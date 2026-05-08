@@ -1,0 +1,16 @@
+{
+  "listenPort": 9091,
+  "updateRateMs": 500,
+  "connectionTimeoutMs": 10000,
+
+  "_comment": "以下 opcServers 仅供文档参考，实际 OPC 连接参数由 collector 从数据库动态获取",
+  "opcServers": [
+    {
+      "vmHost": "172.27.18.222",
+      "serverProgId": "ZPMC.OPCServer",
+      "channel": "OPD_Server",
+      "devices": ["AGV811", "AGV812", "AGV813", "AGV814", "AGV815",
+                  "AGV816", "AGV817", "AGV818", "AGV819", "AGV820"]
+    }
+  ]
+}

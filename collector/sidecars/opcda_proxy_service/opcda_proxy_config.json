@@ -1,0 +1,13 @@
+{
+  "listenPort": 9090,
+  "opcServers": [
+    {
+      "vmHost": "",
+      "serverProgId": "ZPMC.OPCServer",
+      "channel": "OPD_Server",
+      "devices": ["AGV801"]
+    }
+  ],
+  "updateRateMs": 500,
+  "connectionTimeoutMs": 10000
+}

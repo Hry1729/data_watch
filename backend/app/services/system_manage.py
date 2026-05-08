@@ -1,0 +1,637 @@
+﻿from __future__ import annotations
+
+from collections import defaultdict
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import ApiError
+from app.core.security import hash_password
+from app.models import (
+    SysDataPermission,
+    SysMenu,
+    SysPermission,
+    SysRole,
+    SysRoleMenu,
+    SysRolePermission,
+    SysUser,
+    SysUserRole,
+)
+from app.schemas.auth import MenuPayload, PasswordResetPayload, PermissionPayload, RoleGrantPayload, RolePayload, UserPayload
+from app.services.auth import AuthService
+
+
+class SystemManageService:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+        self.auth_service = AuthService(session)
+
+    async def list_users(self, params: dict[str, Any]) -> dict[str, Any]:
+        current, size = _normalize_pagination(params)
+        stmt = select(SysUser).where(SysUser.deleted.is_(False))
+
+        if params.get("userName"):
+            stmt = stmt.where(SysUser.user_name.like(f"%{str(params['userName']).strip()}%"))
+        if params.get("userPhone"):
+            stmt = stmt.where(SysUser.phone.like(f"%{str(params['userPhone']).strip()}%"))
+        if params.get("userEmail"):
+            stmt = stmt.where(SysUser.email.like(f"%{str(params['userEmail']).strip()}%"))
+        if params.get("userGender"):
+            stmt = stmt.where(SysUser.gender == str(params["userGender"]).strip())
+        if params.get("status"):
+            stmt = stmt.where(SysUser.status == str(params["status"]).strip())
+
+        total = await self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = (
+            await self.session.execute(
+                stmt.order_by(SysUser.id.desc()).offset((current - 1) * size).limit(size)
+            )
+        ).scalars().all()
+        role_map = await self._load_user_role_map([row.id for row in rows])
+        return {
+            "records": [self._serialize_user(row, role_map.get(row.id, [])) for row in rows],
+            "current": current,
+            "size": size,
+            "total": int(total),
+        }
+
+    async def get_user(self, user_id: int) -> dict[str, Any]:
+        user = await self._get_user_or_raise(user_id)
+        role_map = await self._load_user_role_map([user.id])
+        return self._serialize_user(user, role_map.get(user.id, []))
+
+    async def create_user(self, payload: UserPayload, *, actor: str) -> dict[str, int]:
+        existing = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
+        if existing is not None and not existing.deleted:
+            raise ApiError(400, "用户名已存在")
+
+        role_ids = await self._resolve_role_ids(payload.user_roles)
+        user = SysUser(
+            user_name=payload.user_name,
+            password_hash=hash_password(payload.password or "123456"),
+            nick_name=payload.nick_name or payload.user_name,
+            email=payload.user_email,
+            phone=payload.user_phone,
+            gender=payload.user_gender,
+            avatar=payload.avatar,
+            status=payload.status,
+            create_by=actor,
+            update_by=actor,
+            deleted=False,
+        )
+        self.session.add(user)
+        await self.session.flush()
+        for role_id in role_ids:
+            self.session.add(SysUserRole(user_id=user.id, role_id=role_id))
+        await self.session.commit()
+        return {"id": user.id}
+
+    async def update_user(self, user_id: int, payload: UserPayload, *, actor: str) -> dict[str, int]:
+        user = await self._get_user_or_raise(user_id)
+        if payload.user_name and payload.user_name != user.user_name:
+            duplicate = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
+            if duplicate is not None and duplicate.id != user.id and not duplicate.deleted:
+                raise ApiError(400, "用户名已存在")
+            user.user_name = payload.user_name
+
+        role_ids = await self._resolve_role_ids(payload.user_roles)
+        user.nick_name = payload.nick_name or user.user_name
+        user.email = payload.user_email
+        user.phone = payload.user_phone
+        user.gender = payload.user_gender
+        user.avatar = payload.avatar
+        user.status = payload.status
+        user.update_by = actor
+        await self.session.execute(delete(SysUserRole).where(SysUserRole.user_id == user.id))
+        for role_id in role_ids:
+            self.session.add(SysUserRole(user_id=user.id, role_id=role_id))
+        await self.session.commit()
+        return {"id": user.id}
+
+    async def update_user_status(self, user_id: int, *, status: str, actor: str) -> dict[str, int]:
+        user = await self._get_user_or_raise(user_id)
+        user.status = status
+        user.update_by = actor
+        await self.session.commit()
+        return {"id": user.id}
+
+    async def reset_user_password(self, user_id: int, payload: PasswordResetPayload, *, actor: str) -> dict[str, int]:
+        user = await self._get_user_or_raise(user_id)
+        user.password_hash = hash_password(payload.password)
+        user.update_by = actor
+        await self.session.commit()
+        return {"id": user.id}
+
+    async def delete_user(self, user_id: int, *, actor: str) -> dict[str, int]:
+        user = await self._get_user_or_raise(user_id)
+        user.deleted = True
+        user.status = "2"
+        user.update_by = actor
+        await self.session.execute(delete(SysUserRole).where(SysUserRole.user_id == user.id))
+        await self.session.commit()
+        return {"id": user.id}
+
+    async def list_roles(self, params: dict[str, Any]) -> dict[str, Any]:
+        current, size = _normalize_pagination(params)
+        stmt = select(SysRole)
+        if params.get("roleName"):
+            stmt = stmt.where(SysRole.role_name.like(f"%{str(params['roleName']).strip()}%"))
+        if params.get("roleCode"):
+            stmt = stmt.where(SysRole.role_code.like(f"%{str(params['roleCode']).strip()}%"))
+        if params.get("description"):
+            stmt = stmt.where(SysRole.description.like(f"%{str(params['description']).strip()}%"))
+        if params.get("enabled") not in (None, ""):
+            stmt = stmt.where(SysRole.enabled.is_(bool(_coerce_bool(params.get("enabled")))))
+        if params.get("startTime"):
+            stmt = stmt.where(SysRole.create_time >= _parse_datetime(str(params["startTime"])))
+        if params.get("endTime"):
+            stmt = stmt.where(SysRole.create_time <= _parse_datetime(str(params["endTime"])))
+
+        total = await self.session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+        rows = (
+            await self.session.execute(
+                stmt.order_by(SysRole.sort.asc(), SysRole.id.asc()).offset((current - 1) * size).limit(size)
+            )
+        ).scalars().all()
+        return {
+            "records": [self._serialize_role(row) for row in rows],
+            "current": current,
+            "size": size,
+            "total": int(total),
+        }
+
+    async def get_role(self, role_id: int) -> dict[str, Any]:
+        role = await self._get_role_or_raise(role_id)
+        return self._serialize_role(role)
+
+    async def create_role(self, payload: RolePayload) -> dict[str, int]:
+        duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
+        if duplicate is not None:
+            raise ApiError(400, "角色编码已存在")
+        role = SysRole(
+            role_code=payload.role_code,
+            role_name=payload.role_name,
+            description=payload.description,
+            enabled=payload.enabled,
+            sort=100,
+        )
+        self.session.add(role)
+        await self.session.commit()
+        return {"id": role.id}
+
+    async def update_role(self, role_id: int, payload: RolePayload) -> dict[str, int]:
+        role = await self._get_role_or_raise(role_id)
+        if payload.role_code != role.role_code:
+            duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
+            if duplicate is not None and duplicate.id != role.id:
+                raise ApiError(400, "角色编码已存在")
+        role.role_name = payload.role_name
+        role.role_code = payload.role_code
+        role.description = payload.description
+        role.enabled = payload.enabled
+        await self.session.commit()
+        return {"id": role.id}
+
+    async def update_role_status(self, role_id: int, *, enabled: bool) -> dict[str, int]:
+        role = await self._get_role_or_raise(role_id)
+        role.enabled = enabled
+        await self.session.commit()
+        return {"id": role.id}
+
+    async def delete_role(self, role_id: int) -> dict[str, int]:
+        role = await self._get_role_or_raise(role_id)
+        in_use = await self.session.scalar(
+            select(func.count()).select_from(SysUserRole).where(SysUserRole.role_id == role.id)
+        )
+        if in_use:
+            raise ApiError(400, "该角色仍被用户占用，无法删除")
+        await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role.id))
+        await self.session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role.id))
+        await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role.id))
+        await self.session.delete(role)
+        await self.session.commit()
+        return {"id": role_id}
+
+    async def list_role_options(self) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(select(SysRole).where(SysRole.enabled.is_(True)).order_by(SysRole.sort.asc(), SysRole.id.asc()))
+        ).scalars().all()
+        return [
+            {
+                "roleId": row.id,
+                "roleName": row.role_name,
+                "roleCode": row.role_code,
+                "enabled": row.enabled,
+            }
+            for row in rows
+        ]
+
+    async def get_role_grant(self, role_id: int) -> dict[str, Any]:
+        await self._get_role_or_raise(role_id)
+        menu_ids = (
+            await self.session.execute(select(SysRoleMenu.menu_id).where(SysRoleMenu.role_id == role_id))
+        ).scalars().all()
+        permission_ids = (
+            await self.session.execute(
+                select(SysRolePermission.permission_id).where(SysRolePermission.role_id == role_id)
+            )
+        ).scalars().all()
+        data_scopes = (
+            await self.session.execute(select(SysDataPermission).where(SysDataPermission.role_id == role_id))
+        ).scalars().all()
+        return {
+            "menuIds": list(menu_ids),
+            "permissionIds": list(permission_ids),
+            "dataScopes": [
+                {"id": item.id, "scopeType": item.scope_type, "scopeValue": item.scope_value, "enabled": item.enabled}
+                for item in data_scopes
+            ],
+        }
+
+    async def update_role_grant(self, role_id: int, payload: RoleGrantPayload) -> dict[str, int]:
+        await self._get_role_or_raise(role_id)
+        menu_ids = await self._expand_menu_ids(payload.menu_ids)
+        permission_ids = await self._resolve_permission_ids(payload.permission_ids)
+        await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role_id))
+        await self.session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
+        await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role_id))
+        for menu_id in sorted(set(menu_ids)):
+            self.session.add(SysRoleMenu(role_id=role_id, menu_id=menu_id))
+        for permission_id in sorted(set(permission_ids)):
+            self.session.add(SysRolePermission(role_id=role_id, permission_id=permission_id))
+        for scope in payload.data_scopes:
+            self.session.add(
+                SysDataPermission(
+                    role_id=role_id,
+                    scope_type=str(scope.get("scopeType") or scope.get("scope_type") or "all"),
+                    scope_value=str(scope.get("scopeValue") or scope.get("scope_value") or "*"),
+                    enabled=bool(scope.get("enabled", True)),
+                )
+            )
+        await self.session.commit()
+        return {"id": role_id}
+
+    async def get_menu_tree_for_current_user(self, authorization: str | None) -> list[dict[str, Any]]:
+        principal = await self.auth_service.resolve_principal(authorization)
+        menu_ids = (
+            await self.session.execute(
+                select(SysRoleMenu.menu_id)
+                .join(SysUserRole, SysUserRole.role_id == SysRoleMenu.role_id)
+                .join(SysRole, SysRole.id == SysUserRole.role_id)
+                .where(SysUserRole.user_id == principal["user_id"])
+                .where(SysRole.enabled.is_(True))
+            )
+        ).scalars().all()
+        permission_rows = (
+            await self.session.execute(
+                select(SysPermission)
+                .join(SysRolePermission, SysRolePermission.permission_id == SysPermission.id)
+                .join(SysUserRole, SysUserRole.role_id == SysRolePermission.role_id)
+                .join(SysRole, SysRole.id == SysUserRole.role_id)
+                .where(SysUserRole.user_id == principal["user_id"])
+                .where(SysPermission.enabled.is_(True))
+                .where(SysRole.enabled.is_(True))
+            )
+        ).scalars().all()
+        return await self._build_menu_tree(allowed_menu_ids=set(menu_ids), permissions=permission_rows)
+
+    async def get_menu_tree_admin(self) -> list[dict[str, Any]]:
+        permissions = (await self.session.execute(select(SysPermission).where(SysPermission.enabled.is_(True)))).scalars().all()
+        return await self._build_menu_tree(allowed_menu_ids=None, permissions=permissions)
+
+    async def create_menu(self, payload: MenuPayload) -> dict[str, int]:
+        duplicate = await self.session.scalar(select(SysMenu).where(SysMenu.name == payload.name))
+        if duplicate is not None:
+            raise ApiError(400, "菜单名称已存在")
+        if payload.parent_id is not None:
+            await self._get_menu_or_raise(payload.parent_id)
+        menu = SysMenu(
+            name=payload.name,
+            parent_id=payload.parent_id,
+            path=payload.path,
+            component=payload.component,
+            title_key=payload.title_key,
+            icon=payload.icon,
+            menu_type=payload.menu_type,
+            link=payload.link,
+            is_iframe=payload.is_iframe,
+            keep_alive=payload.keep_alive,
+            is_hide=payload.is_hide,
+            is_hide_tab=payload.is_hide_tab,
+            fixed_tab=payload.fixed_tab,
+            active_path=payload.active_path,
+            is_full_page=payload.is_full_page,
+            sort=payload.sort,
+            enabled=payload.enabled,
+        )
+        self.session.add(menu)
+        await self.session.commit()
+        return {"id": menu.id}
+
+    async def update_menu(self, menu_id: int, payload: MenuPayload) -> dict[str, int]:
+        menu = await self._get_menu_or_raise(menu_id)
+        if payload.name != menu.name:
+            duplicate = await self.session.scalar(select(SysMenu).where(SysMenu.name == payload.name))
+            if duplicate is not None and duplicate.id != menu.id:
+                raise ApiError(400, "菜单名称已存在")
+        if payload.parent_id == menu.id:
+            raise ApiError(400, "parentId cannot equal menu id")
+        if payload.parent_id is not None:
+            await self._get_menu_or_raise(payload.parent_id)
+        menu.name = payload.name
+        menu.parent_id = payload.parent_id
+        menu.path = payload.path
+        menu.component = payload.component
+        menu.title_key = payload.title_key
+        menu.icon = payload.icon
+        menu.menu_type = payload.menu_type
+        menu.link = payload.link
+        menu.is_iframe = payload.is_iframe
+        menu.keep_alive = payload.keep_alive
+        menu.is_hide = payload.is_hide
+        menu.is_hide_tab = payload.is_hide_tab
+        menu.fixed_tab = payload.fixed_tab
+        menu.active_path = payload.active_path
+        menu.is_full_page = payload.is_full_page
+        menu.sort = payload.sort
+        menu.enabled = payload.enabled
+        await self.session.commit()
+        return {"id": menu.id}
+
+    async def delete_menu(self, menu_id: int) -> dict[str, int]:
+        menu = await self._get_menu_or_raise(menu_id)
+        await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.menu_id == menu.id))
+        await self.session.delete(menu)
+        await self.session.commit()
+        return {"id": menu_id}
+
+    async def list_menu_permissions(self, menu_id: int) -> list[dict[str, Any]]:
+        await self._get_menu_or_raise(menu_id)
+        rows = (
+            await self.session.execute(
+                select(SysPermission)
+                .where(SysPermission.menu_id == menu_id)
+                .order_by(SysPermission.sort.asc(), SysPermission.id.asc())
+            )
+        ).scalars().all()
+        return [self._serialize_permission(row) for row in rows]
+
+    async def create_menu_permission(self, menu_id: int, payload: PermissionPayload) -> dict[str, int]:
+        await self._get_menu_or_raise(menu_id)
+        duplicate = await self.session.scalar(
+            select(SysPermission).where(SysPermission.permission_code == payload.permission_code)
+        )
+        if duplicate is not None:
+            raise ApiError(400, "权限编码已存在")
+        permission = SysPermission(
+            permission_code=payload.permission_code,
+            permission_name=payload.permission_name,
+            permission_type=payload.permission_type,
+            menu_id=menu_id,
+            auth_mark=payload.auth_mark,
+            description=payload.description,
+            sort=payload.sort,
+            enabled=payload.enabled,
+        )
+        self.session.add(permission)
+        await self.session.commit()
+        return {"id": permission.id}
+
+    async def update_menu_permission(self, menu_id: int, permission_id: int, payload: PermissionPayload) -> dict[str, int]:
+        await self._get_menu_or_raise(menu_id)
+        permission = await self._get_permission_or_raise(permission_id)
+        if payload.permission_code != permission.permission_code:
+            duplicate = await self.session.scalar(
+                select(SysPermission).where(SysPermission.permission_code == payload.permission_code)
+            )
+            if duplicate is not None and duplicate.id != permission.id:
+                raise ApiError(400, "权限编码已存在")
+        permission.permission_code = payload.permission_code
+        permission.permission_name = payload.permission_name
+        permission.permission_type = payload.permission_type
+        permission.menu_id = menu_id
+        permission.auth_mark = payload.auth_mark
+        permission.description = payload.description
+        permission.sort = payload.sort
+        permission.enabled = payload.enabled
+        await self.session.commit()
+        return {"id": permission.id}
+
+    async def delete_menu_permission(self, permission_id: int) -> dict[str, int]:
+        permission = await self._get_permission_or_raise(permission_id)
+        await self.session.execute(delete(SysRolePermission).where(SysRolePermission.permission_id == permission.id))
+        await self.session.delete(permission)
+        await self.session.commit()
+        return {"id": permission_id}
+
+    async def _build_menu_tree(
+        self,
+        *,
+        allowed_menu_ids: set[int] | None,
+        permissions: list[SysPermission],
+    ) -> list[dict[str, Any]]:
+        menu_stmt = select(SysMenu).where(SysMenu.enabled.is_(True)).order_by(SysMenu.sort.asc(), SysMenu.id.asc())
+        menus = (await self.session.execute(menu_stmt)).scalars().all()
+        if allowed_menu_ids is not None:
+            menus = [menu for menu in menus if menu.id in allowed_menu_ids]
+
+        permission_map: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for permission in permissions:
+            if permission.menu_id is None or permission.permission_type != "action":
+                continue
+            if allowed_menu_ids is not None and permission.menu_id not in allowed_menu_ids:
+                continue
+            permission_map[permission.menu_id].append(
+                {
+                    "id": permission.id,
+                    "title": permission.permission_name,
+                    "authMark": permission.auth_mark,
+                }
+            )
+
+        node_map: dict[int, dict[str, Any]] = {}
+        roots: list[dict[str, Any]] = []
+        for menu in menus:
+            node_map[menu.id] = {
+                "id": menu.id,
+                "path": menu.path,
+                "name": menu.name,
+                "component": menu.component,
+                "meta": {
+                    "title": menu.title_key,
+                    "icon": menu.icon,
+                    "keepAlive": menu.keep_alive,
+                    "isHide": menu.is_hide,
+                    "isHideTab": menu.is_hide_tab,
+                    "link": menu.link,
+                    "isIframe": menu.is_iframe,
+                    "fixedTab": menu.fixed_tab,
+                    "activePath": menu.active_path,
+                    "isFullPage": menu.is_full_page,
+                    "authList": permission_map.get(menu.id, []),
+                },
+                "children": [],
+            }
+
+        for menu in menus:
+            node = node_map[menu.id]
+            if menu.parent_id and menu.parent_id in node_map:
+                node_map[menu.parent_id]["children"].append(node)
+            else:
+                roots.append(node)
+
+        for node in node_map.values():
+            if not node["children"]:
+                node.pop("children")
+            if not node["meta"]["authList"]:
+                node["meta"].pop("authList")
+        return roots
+
+    async def _load_user_role_map(self, user_ids: list[int]) -> dict[int, list[str]]:
+        if not user_ids:
+            return {}
+        rows = (
+            await self.session.execute(
+                select(SysUserRole.user_id, SysRole.role_code)
+                .join(SysRole, SysRole.id == SysUserRole.role_id)
+                .where(SysUserRole.user_id.in_(user_ids))
+                .order_by(SysRole.sort.asc(), SysRole.id.asc())
+            )
+        ).all()
+        result: dict[int, list[str]] = defaultdict(list)
+        for user_id, role_code in rows:
+            result[int(user_id)].append(str(role_code))
+        return result
+
+    async def _resolve_role_ids(self, role_codes: list[str]) -> list[int]:
+        if not role_codes:
+            return []
+        rows = (
+            await self.session.execute(select(SysRole).where(SysRole.role_code.in_(role_codes)))
+        ).scalars().all()
+        found = {row.role_code: row.id for row in rows}
+        missing = [role_code for role_code in role_codes if role_code not in found]
+        if missing:
+            raise ApiError(400, f"角色不存在: {', '.join(missing)}")
+        return [found[role_code] for role_code in role_codes]
+
+    async def _resolve_permission_ids(self, permission_ids: list[int]) -> list[int]:
+        if not permission_ids:
+            return []
+        rows = (
+            await self.session.execute(select(SysPermission.id).where(SysPermission.id.in_(permission_ids)))
+        ).scalars().all()
+        found = set(int(item) for item in rows)
+        missing = [str(permission_id) for permission_id in permission_ids if permission_id not in found]
+        if missing:
+            raise ApiError(400, f"权限不存在: {', '.join(missing)}")
+        return permission_ids
+
+    async def _expand_menu_ids(self, menu_ids: list[int]) -> list[int]:
+        if not menu_ids:
+            return []
+        menu_rows = (await self.session.execute(select(SysMenu))).scalars().all()
+        by_id = {row.id: row for row in menu_rows}
+        expanded = set(menu_ids)
+        for menu_id in list(menu_ids):
+            if menu_id not in by_id:
+                raise ApiError(400, f"菜单不存在: {menu_id}")
+            parent_id = by_id[menu_id].parent_id
+            while parent_id is not None:
+                expanded.add(parent_id)
+                parent_id = by_id[parent_id].parent_id if parent_id in by_id else None
+        return list(expanded)
+
+    async def _get_user_or_raise(self, user_id: int) -> SysUser:
+        user = await self.session.scalar(select(SysUser).where(SysUser.id == user_id, SysUser.deleted.is_(False)))
+        if user is None:
+            raise ApiError(404, "用户不存在")
+        return user
+
+    async def _get_role_or_raise(self, role_id: int) -> SysRole:
+        role = await self.session.scalar(select(SysRole).where(SysRole.id == role_id))
+        if role is None:
+            raise ApiError(404, "角色不存在")
+        return role
+
+    async def _get_menu_or_raise(self, menu_id: int) -> SysMenu:
+        menu = await self.session.scalar(select(SysMenu).where(SysMenu.id == menu_id))
+        if menu is None:
+            raise ApiError(404, "菜单不存在")
+        return menu
+
+    async def _get_permission_or_raise(self, permission_id: int) -> SysPermission:
+        permission = await self.session.scalar(select(SysPermission).where(SysPermission.id == permission_id))
+        if permission is None:
+            raise ApiError(404, "权限不存在")
+        return permission
+
+    def _serialize_user(self, user: SysUser, role_codes: list[str]) -> dict[str, Any]:
+        return {
+            "id": user.id,
+            "avatar": user.avatar,
+            "status": user.status,
+            "userName": user.user_name,
+            "userGender": user.gender,
+            "nickName": user.nick_name,
+            "userPhone": user.phone,
+            "userEmail": user.email,
+            "userRoles": role_codes,
+            "createBy": user.create_by,
+            "createTime": _format_datetime(user.create_time),
+            "updateBy": user.update_by,
+            "updateTime": _format_datetime(user.update_time),
+        }
+
+    def _serialize_role(self, role: SysRole) -> dict[str, Any]:
+        return {
+            "roleId": role.id,
+            "roleName": role.role_name,
+            "roleCode": role.role_code,
+            "description": role.description,
+            "enabled": role.enabled,
+            "createTime": _format_datetime(role.create_time),
+        }
+
+    def _serialize_permission(self, permission: SysPermission) -> dict[str, Any]:
+        return {
+            "id": permission.id,
+            "permissionCode": permission.permission_code,
+            "permissionName": permission.permission_name,
+            "permissionType": permission.permission_type,
+            "authMark": permission.auth_mark,
+            "description": permission.description,
+            "sort": permission.sort,
+            "enabled": permission.enabled,
+            "menuId": permission.menu_id,
+        }
+
+
+def _normalize_pagination(params: dict[str, Any]) -> tuple[int, int]:
+    current = int(params.get("current") or params.get("pageNo") or 1)
+    size = int(params.get("size") or params.get("pageSize") or 20)
+    current = max(current, 1)
+    size = max(size, 1)
+    return current, size
+
+
+def _format_datetime(value: datetime | None) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
+
+
+def _parse_datetime(value: str) -> datetime:
+    normalized = value.strip().replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    raise ApiError(400, f"Invalid datetime value: {value}")
+
+
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

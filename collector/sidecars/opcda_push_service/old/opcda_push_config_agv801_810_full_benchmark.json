@@ -1,0 +1,172 @@
+{
+  "serverProgId": "ZPMC.OPCServer",
+  "comHost": "",
+  "channel": "OPD_Server",
+  "itemFormat": "{channel}.{device}.{group}.{tag}",
+  "readMode": "subscription",
+  "postEnabled": false,
+  "collectorUrl": "",
+  "apiKey": "",
+  "source": "cache",
+  "updateRateMs": 500,
+  "readIntervalMs": 1000,
+  "pushIntervalMs": 500,
+  "reportIntervalMs": 5000,
+  "batchSize": 500,
+  "postTimeoutMs": 5000,
+  "maxPostRetries": 2,
+  "retryDelayMs": 1000,
+  "includeBadQuality": true,
+  "devices": [
+    {
+      "deviceId": "agv801",
+      "opcDevice": "AGV801",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv802",
+      "opcDevice": "AGV802",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv803",
+      "opcDevice": "AGV803",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv804",
+      "opcDevice": "AGV804",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv805",
+      "opcDevice": "AGV805",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv806",
+      "opcDevice": "AGV806",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv807",
+      "opcDevice": "AGV807",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv808",
+      "opcDevice": "AGV808",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv809",
+      "opcDevice": "AGV809",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    },
+    {
+      "deviceId": "agv810",
+      "opcDevice": "AGV810",
+      "groups": [
+        { "name": "Control", "csv": "data/AGV801/Control.csv", "skip": 0, "limit": 0 },
+        { "name": "Fault", "csv": "data/AGV801/Fault.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewMain", "csv": "data/AGV801/ViewMain.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage1", "csv": "data/AGV801/ViewPage1.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage2", "csv": "data/AGV801/ViewPage2.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage3", "csv": "data/AGV801/ViewPage3.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage4", "csv": "data/AGV801/ViewPage4.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage5", "csv": "data/AGV801/ViewPage5.csv", "skip": 0, "limit": 0 },
+        { "name": "ViewPage6", "csv": "data/AGV801/ViewPage6.csv", "skip": 0, "limit": 0 }
+      ]
+    }
+  ]
+}

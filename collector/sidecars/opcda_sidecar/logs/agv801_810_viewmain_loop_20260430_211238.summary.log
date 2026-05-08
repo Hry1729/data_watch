@@ -1,0 +1,162 @@
+﻿2026-04-30 21:12:38.175 Starting AGV801-AGV810 ViewMain full-point continuous read.
+2026-04-30 21:12:38.188 Probe=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\bin\OpcDaProbe.exe
+2026-04-30 21:12:38.188 Csv=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
+2026-04-30 21:12:38.192 Server=ZPMC.OPCServer Channel=OPD_Server Group=ViewMain ItemFormat={channel}.{device}.{group}.{tag} Source=cache ReadDelayMs=200
+2026-04-30 21:12:38.192 Mode=direct-process-concurrent devices=10 DeviceTimeoutSeconds=120
+2026-04-30 21:12:38.192 Full output log=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\logs\agv801_810_viewmain_loop_20260430_211238.full.log
+2026-04-30 21:12:38.192 Console shows statistics only. Per-point probe output is saved to the full log.
+2026-04-30 21:12:38.192 Press Ctrl+C to stop.
+2026-04-30 21:12:38.192 ===== Cycle 1 start concurrentDevices=10 =====
+2026-04-30 21:12:38.219 Cycle 1 AGV801 process-start pid=20584
+2026-04-30 21:12:38.226 Cycle 1 AGV802 process-start pid=23100
+2026-04-30 21:12:38.239 Cycle 1 AGV803 process-start pid=21456
+2026-04-30 21:12:38.249 Cycle 1 AGV804 process-start pid=1960
+2026-04-30 21:12:38.249 Cycle 1 AGV805 process-start pid=23684
+2026-04-30 21:12:38.268 Cycle 1 AGV806 process-start pid=20392
+2026-04-30 21:12:38.275 Cycle 1 AGV807 process-start pid=23640
+2026-04-30 21:12:38.285 Cycle 1 AGV808 process-start pid=4568
+2026-04-30 21:12:38.286 Cycle 1 AGV809 process-start pid=14040
+2026-04-30 21:12:38.295 Cycle 1 AGV810 process-start pid=17756
+2026-04-30 21:12:39.202 Cycle 1 AGV801 end exit= elapsed=0.925s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.252 Cycle 1 AGV802 end exit= elapsed=0.978s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:39.305 Cycle 1 AGV803 end exit= elapsed=1.048s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.356 Cycle 1 AGV804 end exit= elapsed=1.066s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.387 Cycle 1 AGV805 end exit= elapsed=1.113s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.424 Cycle 1 AGV806 end exit= elapsed=1.145s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.470 Cycle 1 AGV807 end exit= elapsed=1.163s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.500 Cycle 1 AGV808 end exit= elapsed=1.195s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.545 Cycle 1 AGV809 end exit= elapsed=1.228s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.586 Cycle 1 AGV810 end exit= elapsed=1.253s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:39.589 ===== Cycle 1 end elapsed=1.397s =====
+2026-04-30 21:12:40.590 ===== Cycle 2 start concurrentDevices=10 =====
+2026-04-30 21:12:40.590 Cycle 2 AGV801 process-start pid=20716
+2026-04-30 21:12:40.603 Cycle 2 AGV802 process-start pid=16320
+2026-04-30 21:12:40.609 Cycle 2 AGV803 process-start pid=17336
+2026-04-30 21:12:40.617 Cycle 2 AGV804 process-start pid=14292
+2026-04-30 21:12:40.623 Cycle 2 AGV805 process-start pid=23960
+2026-04-30 21:12:40.631 Cycle 2 AGV806 process-start pid=15860
+2026-04-30 21:12:40.639 Cycle 2 AGV807 process-start pid=21932
+2026-04-30 21:12:40.645 Cycle 2 AGV808 process-start pid=2324
+2026-04-30 21:12:40.652 Cycle 2 AGV809 process-start pid=19564
+2026-04-30 21:12:40.660 Cycle 2 AGV810 process-start pid=23996
+2026-04-30 21:12:41.496 Cycle 2 AGV801 end exit= elapsed=0.862s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.529 Cycle 2 AGV802 end exit= elapsed=0.913s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:41.580 Cycle 2 AGV803 end exit= elapsed=0.94s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.622 Cycle 2 AGV804 end exit= elapsed=0.976s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.660 Cycle 2 AGV805 end exit= elapsed=1.01s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.706 Cycle 2 AGV806 end exit= elapsed=1.033s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.755 Cycle 2 AGV807 end exit= elapsed=1.083s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.794 Cycle 2 AGV808 end exit= elapsed=1.12s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.835 Cycle 2 AGV809 end exit= elapsed=1.151s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.875 Cycle 2 AGV810 end exit= elapsed=1.186s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:41.878 ===== Cycle 2 end elapsed=1.288s =====
+2026-04-30 21:12:42.894 ===== Cycle 3 start concurrentDevices=10 =====
+2026-04-30 21:12:42.902 Cycle 3 AGV801 process-start pid=23876
+2026-04-30 21:12:42.908 Cycle 3 AGV802 process-start pid=20612
+2026-04-30 21:12:42.919 Cycle 3 AGV803 process-start pid=22840
+2026-04-30 21:12:42.928 Cycle 3 AGV804 process-start pid=22544
+2026-04-30 21:12:42.936 Cycle 3 AGV805 process-start pid=19160
+2026-04-30 21:12:42.944 Cycle 3 AGV806 process-start pid=12540
+2026-04-30 21:12:42.952 Cycle 3 AGV807 process-start pid=17596
+2026-04-30 21:12:42.961 Cycle 3 AGV808 process-start pid=7112
+2026-04-30 21:12:42.968 Cycle 3 AGV809 process-start pid=23320
+2026-04-30 21:12:42.976 Cycle 3 AGV810 process-start pid=24084
+2026-04-30 21:12:43.810 Cycle 3 AGV801 end exit= elapsed=0.874s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:43.852 Cycle 3 AGV802 end exit= elapsed=0.913s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:43.896 Cycle 3 AGV803 end exit= elapsed=0.943s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:43.926 Cycle 3 AGV804 end exit= elapsed=0.974s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:43.971 Cycle 3 AGV805 end exit= elapsed=1.008s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.012 Cycle 3 AGV806 end exit= elapsed=1.038s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.047 Cycle 3 AGV807 end exit= elapsed=1.072s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.094 Cycle 3 AGV808 end exit= elapsed=1.107s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.131 Cycle 3 AGV809 end exit= elapsed=1.132s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.172 Cycle 3 AGV810 end exit= elapsed=1.167s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:44.172 ===== Cycle 3 end elapsed=1.28s =====
+2026-04-30 21:12:45.187 ===== Cycle 4 start concurrentDevices=10 =====
+2026-04-30 21:12:45.187 Cycle 4 AGV801 process-start pid=21960
+2026-04-30 21:12:45.202 Cycle 4 AGV802 process-start pid=23820
+2026-04-30 21:12:45.215 Cycle 4 AGV803 process-start pid=3180
+2026-04-30 21:12:45.223 Cycle 4 AGV804 process-start pid=9516
+2026-04-30 21:12:45.231 Cycle 4 AGV805 process-start pid=23888
+2026-04-30 21:12:45.238 Cycle 4 AGV806 process-start pid=22256
+2026-04-30 21:12:45.245 Cycle 4 AGV807 process-start pid=23560
+2026-04-30 21:12:45.254 Cycle 4 AGV808 process-start pid=21264
+2026-04-30 21:12:45.258 Cycle 4 AGV809 process-start pid=23264
+2026-04-30 21:12:45.263 Cycle 4 AGV810 process-start pid=19332
+2026-04-30 21:12:46.092 Cycle 4 AGV801 end exit= elapsed=0.874s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.137 Cycle 4 AGV802 end exit= elapsed=0.901s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:46.183 Cycle 4 AGV803 end exit= elapsed=0.942s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.224 Cycle 4 AGV804 end exit= elapsed=0.968s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.261 Cycle 4 AGV805 end exit= elapsed=1.004s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.299 Cycle 4 AGV806 end exit= elapsed=1.032s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.336 Cycle 4 AGV807 end exit= elapsed=1.066s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.377 Cycle 4 AGV808 end exit= elapsed=1.091s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.408 Cycle 4 AGV809 end exit= elapsed=1.121s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.453 Cycle 4 AGV810 end exit= elapsed=1.154s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:46.458 ===== Cycle 4 end elapsed=1.271s =====
+2026-04-30 21:12:47.471 ===== Cycle 5 start concurrentDevices=10 =====
+2026-04-30 21:12:47.481 Cycle 5 AGV801 process-start pid=3596
+2026-04-30 21:12:47.493 Cycle 5 AGV802 process-start pid=13184
+2026-04-30 21:12:47.501 Cycle 5 AGV803 process-start pid=17968
+2026-04-30 21:12:47.504 Cycle 5 AGV804 process-start pid=13308
+2026-04-30 21:12:47.519 Cycle 5 AGV805 process-start pid=19564
+2026-04-30 21:12:47.519 Cycle 5 AGV806 process-start pid=2420
+2026-04-30 21:12:47.529 Cycle 5 AGV807 process-start pid=7164
+2026-04-30 21:12:47.534 Cycle 5 AGV808 process-start pid=24020
+2026-04-30 21:12:47.548 Cycle 5 AGV809 process-start pid=3892
+2026-04-30 21:12:47.551 Cycle 5 AGV810 process-start pid=23332
+2026-04-30 21:12:48.379 Cycle 5 AGV801 end exit= elapsed=0.878s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.420 Cycle 5 AGV802 end exit= elapsed=0.891s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:48.456 Cycle 5 AGV803 end exit= elapsed=0.926s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.500 Cycle 5 AGV804 end exit= elapsed=0.966s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.545 Cycle 5 AGV805 end exit= elapsed=1s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.581 Cycle 5 AGV806 end exit= elapsed=1.029s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.622 Cycle 5 AGV807 end exit= elapsed=1.058s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.660 Cycle 5 AGV808 end exit= elapsed=1.093s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.691 Cycle 5 AGV809 end exit= elapsed=1.129s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.737 Cycle 5 AGV810 end exit= elapsed=1.151s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:48.737 ===== Cycle 5 end elapsed=1.266s =====
+2026-04-30 21:12:49.750 ===== Cycle 6 start concurrentDevices=10 =====
+2026-04-30 21:12:49.759 Cycle 6 AGV801 process-start pid=15484
+2026-04-30 21:12:49.780 Cycle 6 AGV802 process-start pid=15624
+2026-04-30 21:12:49.787 Cycle 6 AGV803 process-start pid=11636
+2026-04-30 21:12:49.789 Cycle 6 AGV804 process-start pid=14152
+2026-04-30 21:12:49.804 Cycle 6 AGV805 process-start pid=7272
+2026-04-30 21:12:49.811 Cycle 6 AGV806 process-start pid=24336
+2026-04-30 21:12:49.817 Cycle 6 AGV807 process-start pid=12804
+2026-04-30 21:12:49.820 Cycle 6 AGV808 process-start pid=24540
+2026-04-30 21:12:49.829 Cycle 6 AGV809 process-start pid=6836
+2026-04-30 21:12:49.834 Cycle 6 AGV810 process-start pid=20396
+2026-04-30 21:12:50.562 Cycle 6 AGV801 end exit= elapsed=0.783s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.610 Cycle 6 AGV802 end exit= elapsed=0.797s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:50.647 Cycle 6 AGV803 end exit= elapsed=0.831s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.686 Cycle 6 AGV804 end exit= elapsed=0.863s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.723 Cycle 6 AGV805 end exit= elapsed=0.892s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.767 Cycle 6 AGV806 end exit= elapsed=0.926s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.803 Cycle 6 AGV807 end exit= elapsed=0.958s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.848 Cycle 6 AGV808 end exit= elapsed=0.991s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.879 Cycle 6 AGV809 end exit= elapsed=1.034s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.923 Cycle 6 AGV810 end exit= elapsed=1.057s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:50.927 ===== Cycle 6 end elapsed=1.178s =====
+2026-04-30 21:12:51.928 ===== Cycle 7 start concurrentDevices=10 =====
+2026-04-30 21:12:51.972 Cycle 7 AGV801 process-start pid=18896
+2026-04-30 21:12:51.979 Cycle 7 AGV802 process-start pid=18108
+2026-04-30 21:12:51.988 Cycle 7 AGV803 process-start pid=8768
+2026-04-30 21:12:52.004 Cycle 7 AGV804 process-start pid=1348
+2026-04-30 21:12:52.004 Cycle 7 AGV805 process-start pid=24252
+2026-04-30 21:12:52.023 Cycle 7 AGV806 process-start pid=16416
+2026-04-30 21:12:52.023 Cycle 7 AGV807 process-start pid=9664
+2026-04-30 21:12:52.036 Cycle 7 AGV808 process-start pid=3180
+2026-04-30 21:12:52.036 Cycle 7 AGV809 process-start pid=23452
+2026-04-30 21:12:52.051 Cycle 7 AGV810 process-start pid=23264
+2026-04-30 21:12:52.783 Cycle 7 AGV801 end exit= elapsed=0.794s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:52.835 Cycle 7 AGV802 end exit= elapsed=0.808s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 21:12:52.874 Cycle 7 AGV803 end exit= elapsed=0.853s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:52.918 Cycle 7 AGV804 end exit= elapsed=0.876s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:52.956 Cycle 7 AGV805 end exit= elapsed=0.921s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:52.988 Cycle 7 AGV806 end exit= elapsed=0.954s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:53.018 Cycle 7 AGV807 end exit= elapsed=0.98s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:53.066 Cycle 7 AGV808 end exit= elapsed=1.004s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:53.113 Cycle 7 AGV809 end exit= elapsed=1.038s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:53.154 Cycle 7 AGV810 end exit= elapsed=1.083s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 21:12:53.154 ===== Cycle 7 end elapsed=1.226s =====

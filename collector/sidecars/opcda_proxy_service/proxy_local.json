@@ -1,0 +1,7 @@
+{
+  "listenPort": 9090,
+  "updateRateMs": 500,
+  "connectionTimeoutMs": 10000,
+
+  "_comment": "本地 OPC DA 代理配置，实际 OPC 连接参数由 collector 从数据库动态获取"
+}

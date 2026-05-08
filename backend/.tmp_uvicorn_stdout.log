@@ -1,0 +1,27 @@
+ℹ️  Using pure Python implementation (slower)
+[WARN] Native core not available - running in simulation mode
+✅ TurboAPI: Python 3.14.4 free-threading active
+[WARN] Native core not available - running in simulation mode
+✅ Registered route: GET /api/device-monitor/monitor/device-tree
+✅ Registered route: GET /api/device-monitor/monitor/realtime-init
+✅ Registered route: GET /healthz
+✅ Registered route: GET /api/device-monitor/system/ping
+✅ Registered route: GET /healthz
+✅ Registered route: GET /api/device-monitor/system/ping
+✅ Registered route: GET /api/device-monitor/monitor/device-tree
+✅ Registered route: GET /api/device-monitor/monitor/realtime-init
+🚀 TurboAPI application created: Industrial Device Monitor Backend v0.1.0
+🚀 ZigIntegratedTurboAPI created - direct Zig integration
+[CONFIG] Added middleware: CORSMiddleware
+✅ Registered route: GET /healthz
+✅ Registered route: GET /api/device-monitor/system/ping
+✅ Registered route: GET /api/device-monitor/monitor/device-tree
+✅ Registered route: GET /api/device-monitor/monitor/realtime-init
+[ROUTER] Included router with prefix: 
+INFO:     127.0.0.1:1477 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1478 - "GET /api/device-monitor/system/ping HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1479 - "GET /api/device-monitor/monitor/device-tree HTTP/1.1" 200 OK
+INFO:     127.0.0.1:1480 - "GET /api/device-monitor/monitor/realtime-init HTTP/1.1" 200 OK
+INFO:     127.0.0.1:9539 - "GET /api/device-monitor/monitor/realtime-init?deviceId=991001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:9543 - "GET /api/device-monitor/monitor/realtime-init?deviceId=991002 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:9545 - "GET /api/device-monitor/monitor/realtime-init?deviceId=991003 HTTP/1.1" 200 OK

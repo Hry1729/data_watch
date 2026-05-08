@@ -1,0 +1,141 @@
+{
+  "serverProgId": "ZPMC.OPCServer",
+  "comHost": "",
+  "channel": "OPD_Server",
+  "itemFormat": "{channel}.{device}.{group}.{tag}",
+  "readMode": "poll",
+  "postEnabled": true,
+  "collectorUrl": "http://127.0.0.1:8090/ingest/opcda-tags",
+  "apiKey": "",
+  "source": "cache",
+  "updateRateMs": 1000,
+  "readIntervalMs": 1000,
+  "reportIntervalMs": 5000,
+  "batchSize": 500,
+  "postTimeoutMs": 5000,
+  "maxPostRetries": 2,
+  "retryDelayMs": 1000,
+  "includeBadQuality": true,
+  "devices": [
+    {
+      "deviceId": "agv801",
+      "opcDevice": "AGV801",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv802",
+      "opcDevice": "AGV802",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv803",
+      "opcDevice": "AGV803",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv804",
+      "opcDevice": "AGV804",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv805",
+      "opcDevice": "AGV805",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv806",
+      "opcDevice": "AGV806",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv807",
+      "opcDevice": "AGV807",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv808",
+      "opcDevice": "AGV808",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv809",
+      "opcDevice": "AGV809",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    },
+    {
+      "deviceId": "agv810",
+      "opcDevice": "AGV810",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 0
+        }
+      ]
+    }
+  ]
+}

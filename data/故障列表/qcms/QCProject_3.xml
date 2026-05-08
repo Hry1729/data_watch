@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<Config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+<EcsDbConfig DbType="Oracle" ConnectionString="Data Source=172.28.10.125/testecs;User ID=sdagv;Password=sdagv"/>
+<TosDbConfig DbType="Oracle" ConnectionString="Data Source=172.28.10.125/testecs;User ID=sdecs;Password=sdecs"/>
+  <AccsConfig AssemblyName="STSAccs" ConfigFile="User\qcms\AccsInterface.xml"/>
+
+  <QCs>127</QCs>
+  <RetryTimes>5</RetryTimes>
+  <RetryDelay>3000</RetryDelay>
+</Config>

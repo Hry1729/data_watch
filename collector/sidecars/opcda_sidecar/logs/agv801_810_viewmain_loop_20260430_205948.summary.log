@@ -1,0 +1,41 @@
+﻿2026-04-30 20:59:48.379 Starting AGV801-AGV810 ViewMain full-point continuous read.
+2026-04-30 20:59:48.393 Probe=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\bin\OpcDaProbe.exe
+2026-04-30 20:59:48.393 Csv=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
+2026-04-30 20:59:48.393 Server=ZPMC.OPCServer Channel=OPD_Server Group=ViewMain Source=cache ReadDelayMs=200
+2026-04-30 20:59:48.393 Mode=concurrent devices=10 DeviceTimeoutSeconds=120
+2026-04-30 20:59:48.393 Full output log=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\logs\agv801_810_viewmain_loop_20260430_205948.full.log
+2026-04-30 20:59:48.393 Console shows statistics only. Per-point probe output is saved to the full log.
+2026-04-30 20:59:48.409 Press Ctrl+C to stop.
+2026-04-30 20:59:48.412 ===== Cycle 1 start concurrentDevices=10 =====
+2026-04-30 20:59:48.414 Cycle 1 AGV801 job-start
+2026-04-30 20:59:48.643 Cycle 1 AGV802 job-start
+2026-04-30 20:59:48.709 Cycle 1 AGV803 job-start
+2026-04-30 20:59:48.787 Cycle 1 AGV804 job-start
+2026-04-30 20:59:48.863 Cycle 1 AGV805 job-start
+2026-04-30 20:59:48.950 Cycle 1 AGV806 job-start
+2026-04-30 20:59:49.025 Cycle 1 AGV807 job-start
+2026-04-30 20:59:49.098 Cycle 1 AGV808 job-start
+2026-04-30 20:59:49.174 Cycle 1 AGV809 job-start
+2026-04-30 20:59:49.254 Cycle 1 AGV810 job-start
+2026-04-30 20:59:54.707 Cycle 1 AGV801 end exit=0 elapsed=0.884s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.745 Cycle 1 AGV802 end exit=0 elapsed=0.735s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 20:59:54.806 Cycle 1 AGV803 end exit=0 elapsed=0.669s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.852 Cycle 1 AGV804 end exit=0 elapsed=0.583s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.886 Cycle 1 AGV805 end exit=0 elapsed=0.5s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.916 Cycle 1 AGV806 end exit=0 elapsed=0.413s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.953 Cycle 1 AGV807 end exit=0 elapsed=0.659s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:54.983 Cycle 1 AGV808 end exit=0 elapsed=0.621s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:55.020 Cycle 1 AGV809 end exit=0 elapsed=0.62s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:55.057 Cycle 1 AGV810 end exit=0 elapsed=0.673s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 20:59:55.065 ===== Cycle 1 end elapsed=6.648s =====
+2026-04-30 20:59:56.078 ===== Cycle 2 start concurrentDevices=10 =====
+2026-04-30 20:59:56.078 Cycle 2 AGV801 job-start
+2026-04-30 20:59:56.167 Cycle 2 AGV802 job-start
+2026-04-30 20:59:56.233 Cycle 2 AGV803 job-start
+2026-04-30 20:59:56.305 Cycle 2 AGV804 job-start
+2026-04-30 20:59:56.375 Cycle 2 AGV805 job-start
+2026-04-30 20:59:56.450 Cycle 2 AGV806 job-start
+2026-04-30 20:59:56.523 Cycle 2 AGV807 job-start
+2026-04-30 20:59:56.600 Cycle 2 AGV808 job-start
+2026-04-30 20:59:56.691 Cycle 2 AGV809 job-start
+2026-04-30 20:59:56.759 Cycle 2 AGV810 job-start

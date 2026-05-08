@@ -1,0 +1,220 @@
+﻿from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+from app.core.exceptions import ApiError
+
+
+@dataclass(slots=True)
+class LoginPayload:
+    user_name: str
+    password: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "LoginPayload":
+        user_name = str(payload.get("userName") or payload.get("user_name") or "").strip()
+        password = str(payload.get("password") or "").strip()
+        if not user_name or not password:
+            raise ApiError(400, "userName and password are required")
+        return cls(user_name=user_name, password=password)
+
+
+@dataclass(slots=True)
+class UserPayload:
+    user_name: str
+    nick_name: str = ""
+    user_phone: str = ""
+    user_email: str = ""
+    user_gender: str = "unknown"
+    avatar: str = ""
+    status: str = "1"
+    user_roles: list[str] = field(default_factory=list)
+    password: str | None = None
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any], *, require_user_name: bool = True) -> "UserPayload":
+        user_name = str(payload.get("userName") or payload.get("user_name") or "").strip()
+        if require_user_name and not user_name:
+            raise ApiError(400, "userName is required")
+
+        raw_roles = payload.get("userRoles") or payload.get("user_roles") or []
+        if not isinstance(raw_roles, list):
+            raise ApiError(400, "userRoles must be an array")
+
+        status = str(payload.get("status") or "1").strip() or "1"
+        return cls(
+            user_name=user_name,
+            nick_name=str(payload.get("nickName") or payload.get("nick_name") or "").strip(),
+            user_phone=str(payload.get("userPhone") or payload.get("user_phone") or "").strip(),
+            user_email=str(payload.get("userEmail") or payload.get("user_email") or "").strip(),
+            user_gender=str(payload.get("userGender") or payload.get("user_gender") or "unknown").strip() or "unknown",
+            avatar=str(payload.get("avatar") or "").strip(),
+            status=status,
+            user_roles=[str(item).strip() for item in raw_roles if str(item).strip()],
+            password=(str(payload.get("password")).strip() if payload.get("password") is not None else None),
+        )
+
+
+@dataclass(slots=True)
+class UserStatusPayload:
+    status: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "UserStatusPayload":
+        status = str(payload.get("status") or "").strip()
+        if not status:
+            raise ApiError(400, "status is required")
+        return cls(status=status)
+
+
+@dataclass(slots=True)
+class PasswordResetPayload:
+    password: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "PasswordResetPayload":
+        password = str(payload.get("password") or "123456").strip()
+        if not password:
+            raise ApiError(400, "password is required")
+        return cls(password=password)
+
+
+@dataclass(slots=True)
+class RolePayload:
+    role_name: str
+    role_code: str
+    description: str = ""
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RolePayload":
+        role_name = str(payload.get("roleName") or payload.get("role_name") or "").strip()
+        role_code = str(payload.get("roleCode") or payload.get("role_code") or "").strip()
+        if not role_name or not role_code:
+            raise ApiError(400, "roleName and roleCode are required")
+        return cls(
+            role_name=role_name,
+            role_code=role_code,
+            description=str(payload.get("description") or "").strip(),
+            enabled=bool(payload.get("enabled", True)),
+        )
+
+
+@dataclass(slots=True)
+class RoleStatusPayload:
+    enabled: bool
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RoleStatusPayload":
+        if "enabled" not in payload:
+            raise ApiError(400, "enabled is required")
+        return cls(enabled=bool(payload.get("enabled")))
+
+
+@dataclass(slots=True)
+class RoleGrantPayload:
+    menu_ids: list[int] = field(default_factory=list)
+    permission_ids: list[int] = field(default_factory=list)
+    data_scopes: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RoleGrantPayload":
+        menu_ids = _coerce_int_list(payload.get("menuIds") or payload.get("menu_ids") or [])
+        permission_ids = _coerce_int_list(payload.get("permissionIds") or payload.get("permission_ids") or [])
+        data_scopes = payload.get("dataScopes") or payload.get("data_scopes") or []
+        if not isinstance(data_scopes, list):
+            raise ApiError(400, "dataScopes must be an array")
+        return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=data_scopes)
+
+
+@dataclass(slots=True)
+class MenuPayload:
+    name: str
+    path: str
+    component: str
+    title_key: str
+    icon: str = ""
+    parent_id: int | None = None
+    menu_type: str = "menu"
+    link: str = ""
+    is_iframe: bool = False
+    keep_alive: bool = False
+    is_hide: bool = False
+    is_hide_tab: bool = False
+    fixed_tab: bool = False
+    active_path: str = ""
+    is_full_page: bool = False
+    sort: int = 1
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MenuPayload":
+        name = str(payload.get("name") or "").strip()
+        title_key = str(payload.get("titleKey") or payload.get("title_key") or payload.get("meta", {}).get("title") or "").strip()
+        path = str(payload.get("path") or "").strip()
+        component = str(payload.get("component") or "").strip()
+        if not name or not title_key:
+            raise ApiError(400, "name and titleKey are required")
+        parent_raw = payload.get("parentId") if "parentId" in payload else payload.get("parent_id")
+        parent_id = int(parent_raw) if parent_raw not in (None, "") else None
+        return cls(
+            name=name,
+            path=path,
+            component=component,
+            title_key=title_key,
+            icon=str(payload.get("icon") or payload.get("meta", {}).get("icon") or "").strip(),
+            parent_id=parent_id,
+            menu_type=str(payload.get("menuType") or payload.get("menu_type") or "menu").strip() or "menu",
+            link=str(payload.get("link") or "").strip(),
+            is_iframe=bool(payload.get("isIframe", payload.get("is_iframe", False))),
+            keep_alive=bool(payload.get("keepAlive", payload.get("keep_alive", False))),
+            is_hide=bool(payload.get("isHide", payload.get("is_hide", False))),
+            is_hide_tab=bool(payload.get("isHideTab", payload.get("is_hide_tab", False))),
+            fixed_tab=bool(payload.get("fixedTab", payload.get("fixed_tab", False))),
+            active_path=str(payload.get("activePath") or payload.get("active_path") or "").strip(),
+            is_full_page=bool(payload.get("isFullPage", payload.get("is_full_page", False))),
+            sort=int(payload.get("sort") or 1),
+            enabled=bool(payload.get("enabled", True)),
+        )
+
+
+@dataclass(slots=True)
+class PermissionPayload:
+    permission_code: str
+    permission_name: str
+    permission_type: str = "action"
+    auth_mark: str = ""
+    description: str = ""
+    sort: int = 1
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "PermissionPayload":
+        permission_code = str(payload.get("permissionCode") or payload.get("permission_code") or "").strip()
+        permission_name = str(payload.get("permissionName") or payload.get("permission_name") or "").strip()
+        if not permission_code or not permission_name:
+            raise ApiError(400, "permissionCode and permissionName are required")
+        return cls(
+            permission_code=permission_code,
+            permission_name=permission_name,
+            permission_type=str(payload.get("permissionType") or payload.get("permission_type") or "action").strip() or "action",
+            auth_mark=str(payload.get("authMark") or payload.get("auth_mark") or permission_code).strip(),
+            description=str(payload.get("description") or "").strip(),
+            sort=int(payload.get("sort") or 1),
+            enabled=bool(payload.get("enabled", True)),
+        )
+
+
+def _coerce_int_list(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ApiError(400, "Expected an array of integers")
+    result: list[int] = []
+    for item in value:
+        try:
+            result.append(int(item))
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, f"Invalid integer value: {item}") from exc
+    return result

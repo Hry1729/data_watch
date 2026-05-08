@@ -1,0 +1,819 @@
+﻿2026-04-30 22:46:00.004 Starting AGV801-AGV810 ViewMain full-point continuous read.
+2026-04-30 22:46:00.026 Probe=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\bin\OpcDaProbe.exe
+2026-04-30 22:46:00.027 Csv=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
+2026-04-30 22:46:00.029 Server=ZPMC.OPCServer Channel=OPD_Server Group=ViewMain ItemFormat={channel}.{device}.{group}.{tag} Source=cache ReadDelayMs=200
+2026-04-30 22:46:00.031 Mode=per-device-fixed-interval devices=10 ReadIntervalMs=1000 DeviceTimeoutSeconds=120
+2026-04-30 22:46:00.033 Full output log=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\logs\agv801_810_viewmain_loop_20260430_224600.full.log
+2026-04-30 22:46:00.035 Console shows statistics only. Per-point probe output is saved to the full log.
+2026-04-30 22:46:00.036 Press Ctrl+C to stop.
+2026-04-30 22:46:00.315 AGV801 run=1 start pid=22048 nextDue=22:46:01.049
+2026-04-30 22:46:00.325 AGV802 run=1 start pid=11140 nextDue=22:46:01.318
+2026-04-30 22:46:00.332 AGV803 run=1 start pid=20180 nextDue=22:46:01.327
+2026-04-30 22:46:00.339 AGV804 run=1 start pid=23944 nextDue=22:46:01.334
+2026-04-30 22:46:00.347 AGV805 run=1 start pid=15812 nextDue=22:46:01.342
+2026-04-30 22:46:00.358 AGV806 run=1 start pid=23084 nextDue=22:46:01.351
+2026-04-30 22:46:00.365 AGV807 run=1 start pid=22800 nextDue=22:46:01.360
+2026-04-30 22:46:00.374 AGV808 run=1 start pid=9844 nextDue=22:46:01.368
+2026-04-30 22:46:00.381 AGV809 run=1 start pid=8496 nextDue=22:46:01.376
+2026-04-30 22:46:00.391 AGV810 run=1 start pid=23204 nextDue=22:46:01.384
+2026-04-30 22:46:01.786 AGV801 run=1 end exit= elapsed=1.626s nextDue=22:46:01.049 lagMs=630 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:01.829 AGV802 run=1 end exit= elapsed=1.477s nextDue=22:46:01.318 lagMs=477 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:01.878 AGV803 run=1 end exit= elapsed=1.508s nextDue=22:46:01.327 lagMs=508 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:01.918 AGV804 run=1 end exit= elapsed=1.55s nextDue=22:46:01.334 lagMs=550 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:01.958 AGV805 run=1 end exit= elapsed=1.581s nextDue=22:46:01.342 lagMs=581 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:01.996 AGV806 run=1 end exit= elapsed=1.614s nextDue=22:46:01.351 lagMs=614 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:02.034 AGV807 run=1 end exit= elapsed=1.643s nextDue=22:46:01.360 lagMs=643 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:02.070 AGV808 run=1 end exit= elapsed=1.672s nextDue=22:46:01.368 lagMs=672 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:02.109 AGV809 run=1 end exit= elapsed=1.7s nextDue=22:46:01.376 lagMs=700 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:02.149 AGV810 run=1 end exit= elapsed=1.731s nextDue=22:46:01.384 lagMs=732 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:02.156 AGV801 run=2 start pid=1568 nextDue=22:46:03.151
+2026-04-30 22:46:02.161 AGV802 run=2 start pid=22048 nextDue=22:46:03.158
+2026-04-30 22:46:02.167 AGV803 run=2 start pid=23204 nextDue=22:46:03.163
+2026-04-30 22:46:02.173 AGV804 run=2 start pid=23156 nextDue=22:46:03.168
+2026-04-30 22:46:02.179 AGV805 run=2 start pid=14156 nextDue=22:46:03.175
+2026-04-30 22:46:02.185 AGV806 run=2 start pid=1532 nextDue=22:46:03.181
+2026-04-30 22:46:02.191 AGV807 run=2 start pid=14456 nextDue=22:46:03.187
+2026-04-30 22:46:02.198 AGV808 run=2 start pid=9320 nextDue=22:46:03.194
+2026-04-30 22:46:02.204 AGV809 run=2 start pid=14392 nextDue=22:46:03.200
+2026-04-30 22:46:02.210 AGV810 run=2 start pid=6028 nextDue=22:46:03.206
+2026-04-30 22:46:03.137 AGV802 run=2 end exit= elapsed=0.936s nextDue=22:46:03.158 lagMs=-64 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:03.184 AGV803 run=2 end exit= elapsed=0.981s nextDue=22:46:03.163 lagMs=-19 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.224 AGV804 run=2 end exit= elapsed=1.023s nextDue=22:46:03.168 lagMs=23 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.267 AGV805 run=2 end exit= elapsed=1.06s nextDue=22:46:03.175 lagMs=60 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.321 AGV806 run=2 end exit= elapsed=1.108s nextDue=22:46:03.181 lagMs=108 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.359 AGV807 run=2 end exit= elapsed=1.14s nextDue=22:46:03.187 lagMs=140 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.400 AGV808 run=2 end exit= elapsed=1.172s nextDue=22:46:03.194 lagMs=172 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.437 AGV809 run=2 end exit= elapsed=1.206s nextDue=22:46:03.200 lagMs=206 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.476 AGV810 run=2 end exit= elapsed=1.236s nextDue=22:46:03.206 lagMs=236 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.481 AGV802 run=3 start pid=24728 nextDue=22:46:04.479
+2026-04-30 22:46:03.496 AGV803 run=3 start pid=24752 nextDue=22:46:04.492
+2026-04-30 22:46:03.506 AGV804 run=3 start pid=24796 nextDue=22:46:04.503
+2026-04-30 22:46:03.516 AGV805 run=3 start pid=24840 nextDue=22:46:04.513
+2026-04-30 22:46:03.523 AGV806 run=3 start pid=24876 nextDue=22:46:04.520
+2026-04-30 22:46:03.531 AGV807 run=3 start pid=24912 nextDue=22:46:04.527
+2026-04-30 22:46:03.540 AGV808 run=3 start pid=24964 nextDue=22:46:04.534
+2026-04-30 22:46:03.549 AGV809 run=3 start pid=25016 nextDue=22:46:04.543
+2026-04-30 22:46:03.556 AGV810 run=3 start pid=25056 nextDue=22:46:04.552
+2026-04-30 22:46:03.667 AGV801 run=2 end exit= elapsed=1.474s nextDue=22:46:03.151 lagMs=474 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:03.673 AGV801 run=3 start pid=25476 nextDue=22:46:04.670
+2026-04-30 22:46:04.470 AGV803 run=3 end exit= elapsed=0.942s nextDue=22:46:04.492 lagMs=-58 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.514 AGV804 run=3 end exit= elapsed=0.975s nextDue=22:46:04.503 lagMs=-25 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.554 AGV805 run=3 end exit= elapsed=1.007s nextDue=22:46:04.513 lagMs=7 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.594 AGV806 run=3 end exit= elapsed=1.041s nextDue=22:46:04.520 lagMs=41 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.633 AGV807 run=3 end exit= elapsed=1.074s nextDue=22:46:04.527 lagMs=74 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.672 AGV808 run=3 end exit= elapsed=1.106s nextDue=22:46:04.534 lagMs=106 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.709 AGV809 run=3 end exit= elapsed=1.135s nextDue=22:46:04.543 lagMs=135 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.748 AGV810 run=3 end exit= elapsed=1.165s nextDue=22:46:04.552 lagMs=165 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.751 AGV803 run=4 start pid=24608 nextDue=22:46:05.751
+2026-04-30 22:46:04.766 AGV804 run=4 start pid=14292 nextDue=22:46:05.751
+2026-04-30 22:46:04.774 AGV805 run=4 start pid=22748 nextDue=22:46:05.769
+2026-04-30 22:46:04.780 AGV806 run=4 start pid=14768 nextDue=22:46:05.776
+2026-04-30 22:46:04.789 AGV807 run=4 start pid=15812 nextDue=22:46:05.782
+2026-04-30 22:46:04.796 AGV808 run=4 start pid=18436 nextDue=22:46:05.793
+2026-04-30 22:46:04.803 AGV809 run=4 start pid=13388 nextDue=22:46:05.799
+2026-04-30 22:46:04.812 AGV810 run=4 start pid=24700 nextDue=22:46:05.807
+2026-04-30 22:46:04.940 AGV801 run=3 end exit= elapsed=1.224s nextDue=22:46:04.670 lagMs=224 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:04.997 AGV802 run=3 end exit= elapsed=1.48s nextDue=22:46:04.479 lagMs=480 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:05.006 AGV801 run=4 start pid=13172 nextDue=22:46:06.002
+2026-04-30 22:46:05.012 AGV802 run=4 start pid=24784 nextDue=22:46:06.008
+2026-04-30 22:46:05.780 AGV802 run=4 end exit= elapsed=0.742s nextDue=22:46:06.008 lagMs=-258 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:05.825 AGV803 run=4 end exit= elapsed=1.037s nextDue=22:46:05.751 lagMs=37 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:05.868 AGV804 run=4 end exit= elapsed=1.079s nextDue=22:46:05.751 lagMs=79 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:05.911 AGV805 run=4 end exit= elapsed=1.11s nextDue=22:46:05.769 lagMs=111 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:05.951 AGV806 run=4 end exit= elapsed=1.141s nextDue=22:46:05.776 lagMs=141 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:05.997 AGV807 run=4 end exit= elapsed=1.176s nextDue=22:46:05.782 lagMs=176 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:06.034 AGV808 run=4 end exit= elapsed=1.21s nextDue=22:46:05.793 lagMs=210 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:06.075 AGV809 run=4 end exit= elapsed=1.241s nextDue=22:46:05.799 lagMs=241 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:06.113 AGV810 run=4 end exit= elapsed=1.274s nextDue=22:46:05.807 lagMs=274 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:06.119 AGV802 run=5 start pid=25008 nextDue=22:46:07.115
+2026-04-30 22:46:06.141 AGV803 run=5 start pid=25364 nextDue=22:46:07.138
+2026-04-30 22:46:06.151 AGV804 run=5 start pid=25320 nextDue=22:46:07.145
+2026-04-30 22:46:06.160 AGV805 run=5 start pid=25176 nextDue=22:46:07.155
+2026-04-30 22:46:06.166 AGV806 run=5 start pid=25236 nextDue=22:46:07.162
+2026-04-30 22:46:06.177 AGV807 run=5 start pid=24944 nextDue=22:46:07.173
+2026-04-30 22:46:06.184 AGV808 run=5 start pid=20892 nextDue=22:46:07.180
+2026-04-30 22:46:06.191 AGV809 run=5 start pid=24916 nextDue=22:46:07.187
+2026-04-30 22:46:06.197 AGV810 run=5 start pid=24980 nextDue=22:46:07.193
+2026-04-30 22:46:06.312 AGV801 run=4 end exit= elapsed=1.262s nextDue=22:46:06.002 lagMs=262 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:06.319 AGV801 run=5 start pid=23052 nextDue=22:46:07.315
+2026-04-30 22:46:07.111 AGV803 run=5 end exit= elapsed=0.94s nextDue=22:46:07.138 lagMs=-60 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.152 AGV804 run=5 end exit= elapsed=0.973s nextDue=22:46:07.145 lagMs=-27 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.189 AGV805 run=5 end exit= elapsed=1.004s nextDue=22:46:07.155 lagMs=4 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.231 AGV806 run=5 end exit= elapsed=1.033s nextDue=22:46:07.162 lagMs=33 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.270 AGV807 run=5 end exit= elapsed=1.064s nextDue=22:46:07.173 lagMs=65 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.312 AGV808 run=5 end exit= elapsed=1.097s nextDue=22:46:07.180 lagMs=97 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.351 AGV809 run=5 end exit= elapsed=1.132s nextDue=22:46:07.187 lagMs=133 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.392 AGV810 run=5 end exit= elapsed=1.163s nextDue=22:46:07.193 lagMs=163 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.399 AGV803 run=6 start pid=15908 nextDue=22:46:08.394
+2026-04-30 22:46:07.409 AGV804 run=6 start pid=7820 nextDue=22:46:08.405
+2026-04-30 22:46:07.414 AGV805 run=6 start pid=17916 nextDue=22:46:08.411
+2026-04-30 22:46:07.425 AGV806 run=6 start pid=25128 nextDue=22:46:08.421
+2026-04-30 22:46:07.432 AGV807 run=6 start pid=6916 nextDue=22:46:08.428
+2026-04-30 22:46:07.439 AGV808 run=6 start pid=9744 nextDue=22:46:08.435
+2026-04-30 22:46:07.447 AGV809 run=6 start pid=25416 nextDue=22:46:08.443
+2026-04-30 22:46:07.453 AGV810 run=6 start pid=20772 nextDue=22:46:08.449
+2026-04-30 22:46:07.554 AGV801 run=5 end exit= elapsed=1.202s nextDue=22:46:07.315 lagMs=202 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:07.595 AGV802 run=5 end exit= elapsed=1.445s nextDue=22:46:07.115 lagMs=445 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:07.602 AGV801 run=6 start pid=13176 nextDue=22:46:08.598
+2026-04-30 22:46:07.608 AGV802 run=6 start pid=8384 nextDue=22:46:08.604
+2026-04-30 22:46:08.395 AGV801 run=6 end exit= elapsed=0.765s nextDue=22:46:08.598 lagMs=-235 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.440 AGV802 run=6 end exit= elapsed=0.798s nextDue=22:46:08.604 lagMs=-202 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:08.475 AGV803 run=6 end exit= elapsed=1.051s nextDue=22:46:08.394 lagMs=51 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.540 AGV804 run=6 end exit= elapsed=1.101s nextDue=22:46:08.405 lagMs=101 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.577 AGV805 run=6 end exit= elapsed=1.135s nextDue=22:46:08.411 lagMs=135 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.618 AGV806 run=6 end exit= elapsed=1.162s nextDue=22:46:08.421 lagMs=162 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.655 AGV807 run=6 end exit= elapsed=1.196s nextDue=22:46:08.428 lagMs=196 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.695 AGV808 run=6 end exit= elapsed=1.225s nextDue=22:46:08.435 lagMs=225 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.732 AGV809 run=6 end exit= elapsed=1.257s nextDue=22:46:08.443 lagMs=257 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.790 AGV810 run=6 end exit= elapsed=1.308s nextDue=22:46:08.449 lagMs=308 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:08.797 AGV801 run=7 start pid=5688 nextDue=22:46:09.793
+2026-04-30 22:46:08.820 AGV802 run=7 start pid=25476 nextDue=22:46:09.814
+2026-04-30 22:46:08.832 AGV803 run=7 start pid=24860 nextDue=22:46:09.829
+2026-04-30 22:46:08.842 AGV804 run=7 start pid=7052 nextDue=22:46:09.837
+2026-04-30 22:46:08.848 AGV805 run=7 start pid=25396 nextDue=22:46:09.844
+2026-04-30 22:46:08.855 AGV806 run=7 start pid=24736 nextDue=22:46:09.851
+2026-04-30 22:46:08.861 AGV807 run=7 start pid=12520 nextDue=22:46:09.857
+2026-04-30 22:46:08.870 AGV808 run=7 start pid=25412 nextDue=22:46:09.864
+2026-04-30 22:46:08.876 AGV809 run=7 start pid=25236 nextDue=22:46:09.873
+2026-04-30 22:46:08.882 AGV810 run=7 start pid=24812 nextDue=22:46:09.878
+2026-04-30 22:46:09.821 AGV802 run=7 end exit= elapsed=0.975s nextDue=22:46:09.814 lagMs=-25 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:09.866 AGV803 run=7 end exit= elapsed=0.999s nextDue=22:46:09.829 lagMs=-1 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:09.903 AGV804 run=7 end exit= elapsed=1.036s nextDue=22:46:09.837 lagMs=36 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:09.944 AGV805 run=7 end exit= elapsed=1.066s nextDue=22:46:09.844 lagMs=66 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:09.982 AGV806 run=7 end exit= elapsed=1.1s nextDue=22:46:09.851 lagMs=100 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.023 AGV807 run=7 end exit= elapsed=1.131s nextDue=22:46:09.857 lagMs=131 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.062 AGV808 run=7 end exit= elapsed=1.165s nextDue=22:46:09.864 lagMs=165 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.102 AGV809 run=7 end exit= elapsed=1.195s nextDue=22:46:09.873 lagMs=195 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.142 AGV810 run=7 end exit= elapsed=1.23s nextDue=22:46:09.878 lagMs=231 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.175 AGV802 run=8 start pid=24652 nextDue=22:46:11.171
+2026-04-30 22:46:10.183 AGV803 run=8 start pid=16332 nextDue=22:46:11.183
+2026-04-30 22:46:10.195 AGV804 run=8 start pid=24864 nextDue=22:46:11.192
+2026-04-30 22:46:10.205 AGV805 run=8 start pid=23820 nextDue=22:46:11.202
+2026-04-30 22:46:10.212 AGV806 run=8 start pid=13056 nextDue=22:46:11.208
+2026-04-30 22:46:10.217 AGV807 run=8 start pid=17952 nextDue=22:46:11.214
+2026-04-30 22:46:10.225 AGV808 run=8 start pid=24704 nextDue=22:46:11.219
+2026-04-30 22:46:10.232 AGV809 run=8 start pid=17400 nextDue=22:46:11.228
+2026-04-30 22:46:10.239 AGV810 run=8 start pid=22272 nextDue=22:46:11.235
+2026-04-30 22:46:10.347 AGV801 run=7 end exit= elapsed=1.517s nextDue=22:46:09.793 lagMs=517 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:10.356 AGV801 run=8 start pid=25160 nextDue=22:46:11.351
+2026-04-30 22:46:11.151 AGV802 run=8 end exit= elapsed=0.946s nextDue=22:46:11.171 lagMs=-54 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:11.197 AGV803 run=8 end exit= elapsed=0.975s nextDue=22:46:11.183 lagMs=-25 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.234 AGV804 run=8 end exit= elapsed=1.011s nextDue=22:46:11.192 lagMs=11 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.273 AGV805 run=8 end exit= elapsed=1.037s nextDue=22:46:11.202 lagMs=37 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.311 AGV806 run=8 end exit= elapsed=1.071s nextDue=22:46:11.208 lagMs=71 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.351 AGV807 run=8 end exit= elapsed=1.103s nextDue=22:46:11.214 lagMs=103 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.388 AGV808 run=8 end exit= elapsed=1.138s nextDue=22:46:11.219 lagMs=138 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.430 AGV809 run=8 end exit= elapsed=1.166s nextDue=22:46:11.228 lagMs=166 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.470 AGV810 run=8 end exit= elapsed=1.204s nextDue=22:46:11.235 lagMs=204 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.476 AGV802 run=9 start pid=10100 nextDue=22:46:12.472
+2026-04-30 22:46:11.481 AGV803 run=9 start pid=25252 nextDue=22:46:12.477
+2026-04-30 22:46:11.490 AGV804 run=9 start pid=25140 nextDue=22:46:12.487
+2026-04-30 22:46:11.496 AGV805 run=9 start pid=25288 nextDue=22:46:12.492
+2026-04-30 22:46:11.505 AGV806 run=9 start pid=20936 nextDue=22:46:12.499
+2026-04-30 22:46:11.513 AGV807 run=9 start pid=10068 nextDue=22:46:12.508
+2026-04-30 22:46:11.521 AGV808 run=9 start pid=25188 nextDue=22:46:12.516
+2026-04-30 22:46:11.529 AGV809 run=9 start pid=25280 nextDue=22:46:12.524
+2026-04-30 22:46:11.535 AGV810 run=9 start pid=24860 nextDue=22:46:12.531
+2026-04-30 22:46:11.664 AGV801 run=8 end exit= elapsed=1.268s nextDue=22:46:11.351 lagMs=269 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:11.673 AGV801 run=9 start pid=22800 nextDue=22:46:12.669
+2026-04-30 22:46:12.455 AGV801 run=9 end exit= elapsed=0.756s nextDue=22:46:12.669 lagMs=-244 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.499 AGV803 run=9 end exit= elapsed=0.984s nextDue=22:46:12.477 lagMs=-16 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.537 AGV804 run=9 end exit= elapsed=1.019s nextDue=22:46:12.487 lagMs=19 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.578 AGV805 run=9 end exit= elapsed=1.051s nextDue=22:46:12.492 lagMs=52 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.613 AGV806 run=9 end exit= elapsed=1.084s nextDue=22:46:12.499 lagMs=84 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.655 AGV807 run=9 end exit= elapsed=1.112s nextDue=22:46:12.508 lagMs=112 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.692 AGV808 run=9 end exit= elapsed=1.144s nextDue=22:46:12.516 lagMs=145 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.739 AGV809 run=9 end exit= elapsed=1.18s nextDue=22:46:12.524 lagMs=180 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.776 AGV810 run=9 end exit= elapsed=1.214s nextDue=22:46:12.531 lagMs=214 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:12.789 AGV801 run=10 start pid=25072 nextDue=22:46:13.779
+2026-04-30 22:46:12.804 AGV803 run=10 start pid=24960 nextDue=22:46:13.799
+2026-04-30 22:46:12.817 AGV804 run=10 start pid=25032 nextDue=22:46:13.810
+2026-04-30 22:46:12.825 AGV805 run=10 start pid=17952 nextDue=22:46:13.821
+2026-04-30 22:46:12.834 AGV806 run=10 start pid=16528 nextDue=22:46:13.829
+2026-04-30 22:46:12.841 AGV807 run=10 start pid=3060 nextDue=22:46:13.837
+2026-04-30 22:46:12.848 AGV808 run=10 start pid=12860 nextDue=22:46:13.844
+2026-04-30 22:46:12.856 AGV809 run=10 start pid=4216 nextDue=22:46:13.852
+2026-04-30 22:46:12.863 AGV810 run=10 start pid=25192 nextDue=22:46:13.859
+2026-04-30 22:46:12.981 AGV802 run=9 end exit= elapsed=1.469s nextDue=22:46:12.472 lagMs=469 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:12.991 AGV802 run=10 start pid=23764 nextDue=22:46:13.986
+2026-04-30 22:46:13.720 AGV808 run=10 end exit= elapsed=0.845s nextDue=22:46:13.844 lagMs=-154 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:13.831 AGV801 run=10 end exit= elapsed=1.014s nextDue=22:46:13.779 lagMs=14 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:13.872 AGV802 run=10 end exit= elapsed=0.851s nextDue=22:46:13.986 lagMs=-149 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:13.915 AGV803 run=10 end exit= elapsed=1.08s nextDue=22:46:13.799 lagMs=80 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:13.953 AGV804 run=10 end exit= elapsed=1.112s nextDue=22:46:13.810 lagMs=112 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:13.996 AGV805 run=10 end exit= elapsed=1.138s nextDue=22:46:13.821 lagMs=138 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:14.033 AGV806 run=10 end exit= elapsed=1.172s nextDue=22:46:13.829 lagMs=172 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:14.075 AGV807 run=10 end exit= elapsed=1.202s nextDue=22:46:13.837 lagMs=202 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:14.113 AGV809 run=10 end exit= elapsed=1.23s nextDue=22:46:13.852 lagMs=230 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:14.162 AGV810 run=10 end exit= elapsed=1.26s nextDue=22:46:13.859 lagMs=260 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:14.168 AGV801 run=11 start pid=13024 nextDue=22:46:15.165
+2026-04-30 22:46:14.183 AGV802 run=11 start pid=20660 nextDue=22:46:15.180
+2026-04-30 22:46:14.192 AGV803 run=11 start pid=25572 nextDue=22:46:15.189
+2026-04-30 22:46:14.197 AGV804 run=11 start pid=8280 nextDue=22:46:15.194
+2026-04-30 22:46:14.206 AGV805 run=11 start pid=25360 nextDue=22:46:15.202
+2026-04-30 22:46:14.213 AGV806 run=11 start pid=5608 nextDue=22:46:15.210
+2026-04-30 22:46:14.222 AGV807 run=11 start pid=1520 nextDue=22:46:15.217
+2026-04-30 22:46:14.227 AGV808 run=11 start pid=25344 nextDue=22:46:15.224
+2026-04-30 22:46:14.235 AGV809 run=11 start pid=25524 nextDue=22:46:15.230
+2026-04-30 22:46:14.242 AGV810 run=11 start pid=24268 nextDue=22:46:15.237
+2026-04-30 22:46:15.130 AGV803 run=11 end exit= elapsed=0.909s nextDue=22:46:15.189 lagMs=-91 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.171 AGV804 run=11 end exit= elapsed=0.943s nextDue=22:46:15.194 lagMs=-57 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.211 AGV805 run=11 end exit= elapsed=0.976s nextDue=22:46:15.202 lagMs=-24 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.251 AGV806 run=11 end exit= elapsed=1.007s nextDue=22:46:15.210 lagMs=8 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.288 AGV807 run=11 end exit= elapsed=1.04s nextDue=22:46:15.217 lagMs=40 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.329 AGV808 run=11 end exit= elapsed=1.069s nextDue=22:46:15.224 lagMs=69 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.365 AGV809 run=11 end exit= elapsed=1.104s nextDue=22:46:15.230 lagMs=104 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.406 AGV810 run=11 end exit= elapsed=1.133s nextDue=22:46:15.237 lagMs=133 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.423 AGV803 run=12 start pid=15908 nextDue=22:46:16.408
+2026-04-30 22:46:15.442 AGV804 run=12 start pid=12284 nextDue=22:46:16.439
+2026-04-30 22:46:15.456 AGV805 run=12 start pid=19228 nextDue=22:46:16.453
+2026-04-30 22:46:15.467 AGV806 run=12 start pid=21740 nextDue=22:46:16.463
+2026-04-30 22:46:15.475 AGV807 run=12 start pid=24972 nextDue=22:46:16.471
+2026-04-30 22:46:15.485 AGV808 run=12 start pid=25528 nextDue=22:46:16.481
+2026-04-30 22:46:15.493 AGV809 run=12 start pid=24884 nextDue=22:46:16.488
+2026-04-30 22:46:15.500 AGV810 run=12 start pid=23764 nextDue=22:46:16.496
+2026-04-30 22:46:15.613 AGV801 run=11 end exit= elapsed=1.411s nextDue=22:46:15.165 lagMs=411 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:15.658 AGV802 run=11 end exit= elapsed=1.441s nextDue=22:46:15.180 lagMs=441 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:15.665 AGV801 run=12 start pid=25484 nextDue=22:46:16.662
+2026-04-30 22:46:15.674 AGV802 run=12 start pid=24660 nextDue=22:46:16.669
+2026-04-30 22:46:16.412 AGV802 run=12 end exit= elapsed=0.701s nextDue=22:46:16.669 lagMs=-299 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:16.458 AGV803 run=12 end exit= elapsed=1.012s nextDue=22:46:16.408 lagMs=13 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.497 AGV804 run=12 end exit= elapsed=1.025s nextDue=22:46:16.439 lagMs=25 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.538 AGV805 run=12 end exit= elapsed=1.051s nextDue=22:46:16.453 lagMs=51 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.576 AGV806 run=12 end exit= elapsed=1.082s nextDue=22:46:16.463 lagMs=82 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.619 AGV807 run=12 end exit= elapsed=1.112s nextDue=22:46:16.471 lagMs=112 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.656 AGV808 run=12 end exit= elapsed=1.144s nextDue=22:46:16.481 lagMs=144 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.698 AGV809 run=12 end exit= elapsed=1.174s nextDue=22:46:16.488 lagMs=174 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.737 AGV810 run=12 end exit= elapsed=1.208s nextDue=22:46:16.496 lagMs=208 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:16.744 AGV802 run=13 start pid=22800 nextDue=22:46:17.740
+2026-04-30 22:46:16.750 AGV803 run=13 start pid=4792 nextDue=22:46:17.747
+2026-04-30 22:46:16.757 AGV804 run=13 start pid=2464 nextDue=22:46:17.754
+2026-04-30 22:46:16.765 AGV805 run=13 start pid=24932 nextDue=22:46:17.762
+2026-04-30 22:46:16.772 AGV806 run=13 start pid=6548 nextDue=22:46:17.768
+2026-04-30 22:46:16.778 AGV807 run=13 start pid=25212 nextDue=22:46:17.775
+2026-04-30 22:46:16.784 AGV808 run=13 start pid=25572 nextDue=22:46:17.781
+2026-04-30 22:46:16.792 AGV809 run=13 start pid=25468 nextDue=22:46:17.787
+2026-04-30 22:46:16.798 AGV810 run=13 start pid=23952 nextDue=22:46:17.794
+2026-04-30 22:46:16.996 AGV801 run=12 end exit= elapsed=1.211s nextDue=22:46:16.662 lagMs=211 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:17.009 AGV801 run=13 start pid=24872 nextDue=22:46:18.001
+2026-04-30 22:46:17.976 AGV802 run=13 end exit= elapsed=1.149s nextDue=22:46:17.740 lagMs=149 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:18.016 AGV803 run=13 end exit= elapsed=1.234s nextDue=22:46:17.747 lagMs=234 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.056 AGV804 run=13 end exit= elapsed=1.269s nextDue=22:46:17.754 lagMs=269 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.100 AGV805 run=13 end exit= elapsed=1.301s nextDue=22:46:17.762 lagMs=301 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.137 AGV806 run=13 end exit= elapsed=1.338s nextDue=22:46:17.768 lagMs=338 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.177 AGV807 run=13 end exit= elapsed=1.368s nextDue=22:46:17.775 lagMs=368 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.222 AGV808 run=13 end exit= elapsed=1.404s nextDue=22:46:17.781 lagMs=404 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.268 AGV809 run=13 end exit= elapsed=1.447s nextDue=22:46:17.787 lagMs=447 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.304 AGV810 run=13 end exit= elapsed=1.481s nextDue=22:46:17.794 lagMs=481 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.313 AGV802 run=14 start pid=5076 nextDue=22:46:19.308
+2026-04-30 22:46:18.327 AGV803 run=14 start pid=23896 nextDue=22:46:19.324
+2026-04-30 22:46:18.338 AGV804 run=14 start pid=24604 nextDue=22:46:19.335
+2026-04-30 22:46:18.351 AGV805 run=14 start pid=22544 nextDue=22:46:19.347
+2026-04-30 22:46:18.358 AGV806 run=14 start pid=25112 nextDue=22:46:19.354
+2026-04-30 22:46:18.368 AGV807 run=14 start pid=25052 nextDue=22:46:19.362
+2026-04-30 22:46:18.377 AGV808 run=14 start pid=24980 nextDue=22:46:19.371
+2026-04-30 22:46:18.386 AGV809 run=14 start pid=15908 nextDue=22:46:19.380
+2026-04-30 22:46:18.396 AGV810 run=14 start pid=16528 nextDue=22:46:19.390
+2026-04-30 22:46:18.581 AGV801 run=13 end exit= elapsed=1.474s nextDue=22:46:18.001 lagMs=475 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:18.592 AGV801 run=14 start pid=24588 nextDue=22:46:19.585
+2026-04-30 22:46:19.316 AGV807 run=14 end exit= elapsed=0.873s nextDue=22:46:19.362 lagMs=-127 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.379 AGV808 run=14 end exit= elapsed=0.955s nextDue=22:46:19.371 lagMs=-45 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.475 AGV809 run=14 end exit= elapsed=1.011s nextDue=22:46:19.380 lagMs=12 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.523 AGV810 run=14 end exit= elapsed=1.092s nextDue=22:46:19.390 lagMs=92 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.531 AGV807 run=15 start pid=24632 nextDue=22:46:20.526
+2026-04-30 22:46:19.538 AGV808 run=15 start pid=7052 nextDue=22:46:20.535
+2026-04-30 22:46:19.545 AGV809 run=15 start pid=24152 nextDue=22:46:20.541
+2026-04-30 22:46:19.552 AGV810 run=15 start pid=25120 nextDue=22:46:20.547
+2026-04-30 22:46:19.709 AGV801 run=14 end exit= elapsed=1.053s nextDue=22:46:19.585 lagMs=53 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.751 AGV802 run=14 end exit= elapsed=1.406s nextDue=22:46:19.308 lagMs=406 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:19.794 AGV803 run=14 end exit= elapsed=1.434s nextDue=22:46:19.324 lagMs=434 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.849 AGV804 run=14 end exit= elapsed=1.466s nextDue=22:46:19.335 lagMs=466 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.890 AGV805 run=14 end exit= elapsed=1.508s nextDue=22:46:19.347 lagMs=508 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.951 AGV806 run=14 end exit= elapsed=1.542s nextDue=22:46:19.354 lagMs=542 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:19.963 AGV801 run=15 start pid=7908 nextDue=22:46:20.955
+2026-04-30 22:46:19.970 AGV802 run=15 start pid=25248 nextDue=22:46:20.965
+2026-04-30 22:46:19.980 AGV803 run=15 start pid=24268 nextDue=22:46:20.973
+2026-04-30 22:46:19.990 AGV804 run=15 start pid=24776 nextDue=22:46:20.984
+2026-04-30 22:46:19.999 AGV805 run=15 start pid=7524 nextDue=22:46:20.993
+2026-04-30 22:46:20.006 AGV806 run=15 start pid=6916 nextDue=22:46:21.001
+2026-04-30 22:46:20.315 AGV807 run=15 end exit= elapsed=0.754s nextDue=22:46:20.526 lagMs=-245 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.364 AGV808 run=15 end exit= elapsed=0.792s nextDue=22:46:20.535 lagMs=-207 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.469 AGV809 run=15 end exit= elapsed=0.829s nextDue=22:46:20.541 lagMs=-171 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.557 AGV810 run=15 end exit= elapsed=0.937s nextDue=22:46:20.547 lagMs=-63 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.565 AGV807 run=16 start pid=19100 nextDue=22:46:21.560
+2026-04-30 22:46:20.571 AGV808 run=16 start pid=21368 nextDue=22:46:21.567
+2026-04-30 22:46:20.576 AGV809 run=16 start pid=20376 nextDue=22:46:21.574
+2026-04-30 22:46:20.583 AGV810 run=16 start pid=25192 nextDue=22:46:21.579
+2026-04-30 22:46:20.718 AGV801 run=15 end exit= elapsed=0.707s nextDue=22:46:20.955 lagMs=-293 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.764 AGV802 run=15 end exit= elapsed=0.762s nextDue=22:46:20.965 lagMs=-238 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:20.805 AGV803 run=15 end exit= elapsed=0.802s nextDue=22:46:20.973 lagMs=-197 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.847 AGV804 run=15 end exit= elapsed=0.829s nextDue=22:46:20.984 lagMs=-171 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.884 AGV805 run=15 end exit= elapsed=0.86s nextDue=22:46:20.993 lagMs=-140 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:20.950 AGV806 run=15 end exit= elapsed=0.899s nextDue=22:46:21.001 lagMs=-101 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.020 AGV801 run=16 start pid=24940 nextDue=22:46:22.016
+2026-04-30 22:46:21.027 AGV802 run=16 start pid=24588 nextDue=22:46:22.023
+2026-04-30 22:46:21.037 AGV803 run=16 start pid=15908 nextDue=22:46:22.033
+2026-04-30 22:46:21.043 AGV804 run=16 start pid=23896 nextDue=22:46:22.040
+2026-04-30 22:46:21.052 AGV805 run=16 start pid=25348 nextDue=22:46:22.048
+2026-04-30 22:46:21.059 AGV806 run=16 start pid=25476 nextDue=22:46:22.054
+2026-04-30 22:46:21.393 AGV807 run=16 end exit= elapsed=0.762s nextDue=22:46:21.560 lagMs=-238 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.465 AGV808 run=16 end exit= elapsed=0.832s nextDue=22:46:21.567 lagMs=-168 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.537 AGV809 run=16 end exit= elapsed=0.905s nextDue=22:46:21.574 lagMs=-95 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.595 AGV810 run=16 end exit= elapsed=0.968s nextDue=22:46:21.579 lagMs=-31 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.605 AGV807 run=17 start pid=24144 nextDue=22:46:22.600
+2026-04-30 22:46:21.613 AGV808 run=17 start pid=24948 nextDue=22:46:22.609
+2026-04-30 22:46:21.621 AGV809 run=17 start pid=5688 nextDue=22:46:22.615
+2026-04-30 22:46:21.631 AGV810 run=17 start pid=25076 nextDue=22:46:22.623
+2026-04-30 22:46:21.786 AGV801 run=16 end exit= elapsed=0.693s nextDue=22:46:22.016 lagMs=-307 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.834 AGV802 run=16 end exit= elapsed=0.775s nextDue=22:46:22.023 lagMs=-225 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:21.877 AGV803 run=16 end exit= elapsed=0.812s nextDue=22:46:22.033 lagMs=-188 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.919 AGV804 run=16 end exit= elapsed=0.842s nextDue=22:46:22.040 lagMs=-157 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:21.961 AGV805 run=16 end exit= elapsed=0.88s nextDue=22:46:22.048 lagMs=-120 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.075 AGV806 run=16 end exit= elapsed=0.915s nextDue=22:46:22.054 lagMs=-85 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.086 AGV801 run=17 start pid=12032 nextDue=22:46:23.079
+2026-04-30 22:46:22.094 AGV802 run=17 start pid=24300 nextDue=22:46:23.090
+2026-04-30 22:46:22.099 AGV803 run=17 start pid=25124 nextDue=22:46:23.096
+2026-04-30 22:46:22.109 AGV804 run=17 start pid=24976 nextDue=22:46:23.104
+2026-04-30 22:46:22.118 AGV805 run=17 start pid=25104 nextDue=22:46:23.113
+2026-04-30 22:46:22.127 AGV806 run=17 start pid=25524 nextDue=22:46:23.122
+2026-04-30 22:46:22.523 AGV807 run=17 end exit= elapsed=0.855s nextDue=22:46:22.600 lagMs=-145 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.589 AGV808 run=17 end exit= elapsed=0.92s nextDue=22:46:22.609 lagMs=-80 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.681 AGV809 run=17 end exit= elapsed=0.99s nextDue=22:46:22.615 lagMs=-10 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.725 AGV810 run=17 end exit= elapsed=1.064s nextDue=22:46:22.623 lagMs=64 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.730 AGV807 run=18 start pid=23084 nextDue=22:46:23.727
+2026-04-30 22:46:22.737 AGV808 run=18 start pid=24756 nextDue=22:46:23.732
+2026-04-30 22:46:22.748 AGV809 run=18 start pid=21368 nextDue=22:46:23.745
+2026-04-30 22:46:22.757 AGV810 run=18 start pid=10248 nextDue=22:46:23.754
+2026-04-30 22:46:22.922 AGV801 run=17 end exit= elapsed=0.755s nextDue=22:46:23.079 lagMs=-245 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:22.981 AGV802 run=17 end exit= elapsed=0.843s nextDue=22:46:23.090 lagMs=-157 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:23.017 AGV803 run=17 end exit= elapsed=0.89s nextDue=22:46:23.096 lagMs=-110 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.057 AGV804 run=17 end exit= elapsed=0.919s nextDue=22:46:23.104 lagMs=-81 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.106 AGV805 run=17 end exit= elapsed=0.954s nextDue=22:46:23.113 lagMs=-46 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.159 AGV806 run=17 end exit= elapsed=0.995s nextDue=22:46:23.122 lagMs=-4 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.167 AGV801 run=18 start pid=25108 nextDue=22:46:24.163
+2026-04-30 22:46:23.173 AGV802 run=18 start pid=20680 nextDue=22:46:24.169
+2026-04-30 22:46:23.177 AGV803 run=18 start pid=25384 nextDue=22:46:24.175
+2026-04-30 22:46:23.185 AGV804 run=18 start pid=12284 nextDue=22:46:24.180
+2026-04-30 22:46:23.192 AGV805 run=18 start pid=3876 nextDue=22:46:24.188
+2026-04-30 22:46:23.201 AGV806 run=18 start pid=12488 nextDue=22:46:24.195
+2026-04-30 22:46:23.505 AGV807 run=18 end exit= elapsed=0.745s nextDue=22:46:23.727 lagMs=-255 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.550 AGV808 run=18 end exit= elapsed=0.78s nextDue=22:46:23.732 lagMs=-220 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.600 AGV809 run=18 end exit= elapsed=0.812s nextDue=22:46:23.745 lagMs=-188 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.647 AGV810 run=18 end exit= elapsed=0.855s nextDue=22:46:23.754 lagMs=-145 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.771 AGV801 run=18 end exit= elapsed=0.56s nextDue=22:46:24.163 lagMs=-439 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.860 AGV802 run=18 end exit= elapsed=0.615s nextDue=22:46:24.169 lagMs=-385 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:23.906 AGV803 run=18 end exit= elapsed=0.695s nextDue=22:46:24.175 lagMs=-304 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.951 AGV804 run=18 end exit= elapsed=0.733s nextDue=22:46:24.180 lagMs=-267 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:23.989 AGV805 run=18 end exit= elapsed=0.769s nextDue=22:46:24.188 lagMs=-230 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:24.032 AGV806 run=18 end exit= elapsed=0.801s nextDue=22:46:24.195 lagMs=-199 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:24.046 AGV807 run=19 start pid=25028 nextDue=22:46:25.034
+2026-04-30 22:46:24.064 AGV808 run=19 start pid=25160 nextDue=22:46:25.061
+2026-04-30 22:46:24.073 AGV809 run=19 start pid=12784 nextDue=22:46:25.068
+2026-04-30 22:46:24.086 AGV810 run=19 start pid=25020 nextDue=22:46:25.080
+2026-04-30 22:46:24.221 AGV801 run=19 start pid=25480 nextDue=22:46:25.216
+2026-04-30 22:46:24.228 AGV802 run=19 start pid=14156 nextDue=22:46:25.224
+2026-04-30 22:46:24.237 AGV803 run=19 start pid=19852 nextDue=22:46:25.233
+2026-04-30 22:46:24.248 AGV804 run=19 start pid=23068 nextDue=22:46:25.243
+2026-04-30 22:46:24.257 AGV805 run=19 start pid=25104 nextDue=22:46:25.251
+2026-04-30 22:46:24.264 AGV806 run=19 start pid=24724 nextDue=22:46:25.260
+2026-04-30 22:46:25.084 AGV802 run=19 end exit= elapsed=0.773s nextDue=22:46:25.224 lagMs=-227 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:25.174 AGV803 run=19 end exit= elapsed=0.861s nextDue=22:46:25.233 lagMs=-139 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.214 AGV804 run=19 end exit= elapsed=0.937s nextDue=22:46:25.243 lagMs=-63 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.254 AGV805 run=19 end exit= elapsed=0.971s nextDue=22:46:25.251 lagMs=-29 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.292 AGV806 run=19 end exit= elapsed=1.001s nextDue=22:46:25.260 lagMs=1 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.333 AGV807 run=19 end exit= elapsed=1.265s nextDue=22:46:25.034 lagMs=265 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.372 AGV808 run=19 end exit= elapsed=1.278s nextDue=22:46:25.061 lagMs=278 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.413 AGV809 run=19 end exit= elapsed=1.311s nextDue=22:46:25.068 lagMs=311 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.451 AGV810 run=19 end exit= elapsed=1.339s nextDue=22:46:25.080 lagMs=339 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.470 AGV802 run=20 start pid=24696 nextDue=22:46:26.453
+2026-04-30 22:46:25.483 AGV803 run=20 start pid=24824 nextDue=22:46:26.480
+2026-04-30 22:46:25.492 AGV804 run=20 start pid=10248 nextDue=22:46:26.487
+2026-04-30 22:46:25.501 AGV805 run=20 start pid=25232 nextDue=22:46:26.497
+2026-04-30 22:46:25.511 AGV806 run=20 start pid=24844 nextDue=22:46:26.504
+2026-04-30 22:46:25.519 AGV807 run=20 start pid=24836 nextDue=22:46:26.514
+2026-04-30 22:46:25.528 AGV808 run=20 start pid=17920 nextDue=22:46:26.522
+2026-04-30 22:46:25.537 AGV809 run=20 start pid=25172 nextDue=22:46:26.530
+2026-04-30 22:46:25.546 AGV810 run=20 start pid=11176 nextDue=22:46:26.540
+2026-04-30 22:46:25.682 AGV801 run=19 end exit= elapsed=1.421s nextDue=22:46:25.216 lagMs=421 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:25.692 AGV801 run=20 start pid=23904 nextDue=22:46:26.687
+2026-04-30 22:46:26.483 AGV804 run=20 end exit= elapsed=0.931s nextDue=22:46:26.487 lagMs=-69 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.547 AGV805 run=20 end exit= elapsed=1s nextDue=22:46:26.497 lagMs=0 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.587 AGV806 run=20 end exit= elapsed=1.049s nextDue=22:46:26.504 lagMs=49 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.645 AGV807 run=20 end exit= elapsed=1.08s nextDue=22:46:26.514 lagMs=80 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.725 AGV808 run=20 end exit= elapsed=1.136s nextDue=22:46:26.522 lagMs=136 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.791 AGV809 run=20 end exit= elapsed=1.209s nextDue=22:46:26.530 lagMs=209 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.875 AGV810 run=20 end exit= elapsed=1.259s nextDue=22:46:26.540 lagMs=259 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:26.891 AGV804 run=21 start pid=25464 nextDue=22:46:27.877
+2026-04-30 22:46:26.899 AGV805 run=21 start pid=6548 nextDue=22:46:27.896
+2026-04-30 22:46:26.913 AGV806 run=21 start pid=22272 nextDue=22:46:27.908
+2026-04-30 22:46:26.920 AGV807 run=21 start pid=24420 nextDue=22:46:27.915
+2026-04-30 22:46:26.929 AGV808 run=21 start pid=20376 nextDue=22:46:27.922
+2026-04-30 22:46:26.938 AGV809 run=21 start pid=22672 nextDue=22:46:27.932
+2026-04-30 22:46:26.949 AGV810 run=21 start pid=23560 nextDue=22:46:27.942
+2026-04-30 22:46:27.133 AGV801 run=20 end exit= elapsed=1.345s nextDue=22:46:26.687 lagMs=345 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:27.209 AGV802 run=20 end exit= elapsed=1.689s nextDue=22:46:26.453 lagMs=689 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:27.248 AGV803 run=20 end exit= elapsed=1.735s nextDue=22:46:26.480 lagMs=735 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:27.256 AGV801 run=21 start pid=25200 nextDue=22:46:28.250
+2026-04-30 22:46:27.269 AGV802 run=21 start pid=19228 nextDue=22:46:28.265
+2026-04-30 22:46:27.276 AGV803 run=21 start pid=24152 nextDue=22:46:28.272
+2026-04-30 22:46:27.942 AGV801 run=21 end exit= elapsed=0.603s nextDue=22:46:28.250 lagMs=-397 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.023 AGV802 run=21 end exit= elapsed=0.687s nextDue=22:46:28.265 lagMs=-313 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:28.069 AGV803 run=21 end exit= elapsed=0.757s nextDue=22:46:28.272 lagMs=-243 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.124 AGV804 run=21 end exit= elapsed=1.2s nextDue=22:46:27.877 lagMs=200 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.179 AGV805 run=21 end exit= elapsed=1.236s nextDue=22:46:27.896 lagMs=236 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.215 AGV806 run=21 end exit= elapsed=1.277s nextDue=22:46:27.908 lagMs=277 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.272 AGV807 run=21 end exit= elapsed=1.317s nextDue=22:46:27.915 lagMs=317 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.349 AGV808 run=21 end exit= elapsed=1.361s nextDue=22:46:27.922 lagMs=361 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.428 AGV809 run=21 end exit= elapsed=1.426s nextDue=22:46:27.932 lagMs=426 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.513 AGV810 run=21 end exit= elapsed=1.496s nextDue=22:46:27.942 lagMs=496 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:28.523 AGV801 run=22 start pid=23204 nextDue=22:46:29.517
+2026-04-30 22:46:28.531 AGV802 run=22 start pid=24616 nextDue=22:46:29.527
+2026-04-30 22:46:28.539 AGV803 run=22 start pid=24584 nextDue=22:46:29.535
+2026-04-30 22:46:28.544 AGV804 run=22 start pid=17824 nextDue=22:46:29.541
+2026-04-30 22:46:28.551 AGV805 run=22 start pid=1532 nextDue=22:46:29.547
+2026-04-30 22:46:28.557 AGV806 run=22 start pid=22536 nextDue=22:46:29.554
+2026-04-30 22:46:28.565 AGV807 run=22 start pid=23016 nextDue=22:46:29.560
+2026-04-30 22:46:28.573 AGV808 run=22 start pid=23084 nextDue=22:46:29.568
+2026-04-30 22:46:28.580 AGV809 run=22 start pid=17920 nextDue=22:46:29.575
+2026-04-30 22:46:28.588 AGV810 run=22 start pid=24784 nextDue=22:46:29.582
+2026-04-30 22:46:29.578 AGV801 run=22 end exit= elapsed=0.976s nextDue=22:46:29.517 lagMs=-24 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.627 AGV802 run=22 end exit= elapsed=1.06s nextDue=22:46:29.527 lagMs=60 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:29.687 AGV803 run=22 end exit= elapsed=1.103s nextDue=22:46:29.535 lagMs=103 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.729 AGV804 run=22 end exit= elapsed=1.153s nextDue=22:46:29.541 lagMs=153 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.766 AGV805 run=22 end exit= elapsed=1.188s nextDue=22:46:29.547 lagMs=189 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.807 AGV806 run=22 end exit= elapsed=1.218s nextDue=22:46:29.554 lagMs=218 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.844 AGV807 run=22 end exit= elapsed=1.253s nextDue=22:46:29.560 lagMs=253 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.884 AGV808 run=22 end exit= elapsed=1.283s nextDue=22:46:29.568 lagMs=283 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.921 AGV809 run=22 end exit= elapsed=1.315s nextDue=22:46:29.575 lagMs=316 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.960 AGV810 run=22 end exit= elapsed=1.344s nextDue=22:46:29.582 lagMs=344 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:29.972 AGV801 run=23 start pid=24852 nextDue=22:46:30.968
+2026-04-30 22:46:29.984 AGV802 run=23 start pid=24644 nextDue=22:46:30.980
+2026-04-30 22:46:29.989 AGV803 run=23 start pid=22544 nextDue=22:46:30.986
+2026-04-30 22:46:29.995 AGV804 run=23 start pid=4248 nextDue=22:46:30.992
+2026-04-30 22:46:30.005 AGV805 run=23 start pid=23152 nextDue=22:46:30.998
+2026-04-30 22:46:30.013 AGV806 run=23 start pid=6028 nextDue=22:46:31.007
+2026-04-30 22:46:30.021 AGV807 run=23 start pid=25448 nextDue=22:46:31.016
+2026-04-30 22:46:30.029 AGV808 run=23 start pid=24736 nextDue=22:46:31.024
+2026-04-30 22:46:30.038 AGV809 run=23 start pid=6548 nextDue=22:46:31.032
+2026-04-30 22:46:30.046 AGV810 run=23 start pid=22672 nextDue=22:46:31.041
+2026-04-30 22:46:31.078 AGV804 run=23 end exit= elapsed=1.029s nextDue=22:46:30.992 lagMs=30 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.137 AGV805 run=23 end exit= elapsed=1.088s nextDue=22:46:30.998 lagMs=89 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.195 AGV806 run=23 end exit= elapsed=1.137s nextDue=22:46:31.007 lagMs=137 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.255 AGV807 run=23 end exit= elapsed=1.189s nextDue=22:46:31.016 lagMs=189 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.294 AGV808 run=23 end exit= elapsed=1.237s nextDue=22:46:31.024 lagMs=237 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.336 AGV809 run=23 end exit= elapsed=1.268s nextDue=22:46:31.032 lagMs=268 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.373 AGV810 run=23 end exit= elapsed=1.301s nextDue=22:46:31.041 lagMs=301 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.388 AGV804 run=24 start pid=18772 nextDue=22:46:32.374
+2026-04-30 22:46:31.411 AGV805 run=24 start pid=20240 nextDue=22:46:32.407
+2026-04-30 22:46:31.423 AGV806 run=24 start pid=2296 nextDue=22:46:32.418
+2026-04-30 22:46:31.432 AGV807 run=24 start pid=2336 nextDue=22:46:32.428
+2026-04-30 22:46:31.444 AGV808 run=24 start pid=23788 nextDue=22:46:32.439
+2026-04-30 22:46:31.454 AGV809 run=24 start pid=25204 nextDue=22:46:32.447
+2026-04-30 22:46:31.464 AGV810 run=24 start pid=24780 nextDue=22:46:32.458
+2026-04-30 22:46:31.588 AGV801 run=23 end exit= elapsed=1.569s nextDue=22:46:30.968 lagMs=569 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.657 AGV802 run=23 end exit= elapsed=1.621s nextDue=22:46:30.980 lagMs=621 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:31.695 AGV803 run=23 end exit= elapsed=1.676s nextDue=22:46:30.986 lagMs=676 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:31.703 AGV801 run=24 start pid=5684 nextDue=22:46:32.698
+2026-04-30 22:46:31.721 AGV802 run=24 start pid=24976 nextDue=22:46:32.717
+2026-04-30 22:46:31.728 AGV803 run=24 start pid=25072 nextDue=22:46:32.725
+2026-04-30 22:46:32.334 AGV802 run=24 end exit= elapsed=0.586s nextDue=22:46:32.717 lagMs=-414 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:32.383 AGV803 run=24 end exit= elapsed=0.616s nextDue=22:46:32.725 lagMs=-384 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.419 AGV804 run=24 end exit= elapsed=1.013s nextDue=22:46:32.374 lagMs=13 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.460 AGV805 run=24 end exit= elapsed=1.018s nextDue=22:46:32.407 lagMs=18 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.500 AGV806 run=24 end exit= elapsed=1.049s nextDue=22:46:32.418 lagMs=50 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.601 AGV807 run=24 end exit= elapsed=1.105s nextDue=22:46:32.428 lagMs=105 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.659 AGV808 run=24 end exit= elapsed=1.173s nextDue=22:46:32.439 lagMs=173 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.697 AGV809 run=24 end exit= elapsed=1.218s nextDue=22:46:32.447 lagMs=218 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.735 AGV810 run=24 end exit= elapsed=1.246s nextDue=22:46:32.458 lagMs=246 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.753 AGV802 run=25 start pid=13640 nextDue=22:46:33.737
+2026-04-30 22:46:32.763 AGV803 run=25 start pid=24100 nextDue=22:46:33.759
+2026-04-30 22:46:32.772 AGV804 run=25 start pid=24736 nextDue=22:46:33.768
+2026-04-30 22:46:32.783 AGV805 run=25 start pid=25484 nextDue=22:46:33.777
+2026-04-30 22:46:32.792 AGV806 run=25 start pid=23752 nextDue=22:46:33.787
+2026-04-30 22:46:32.800 AGV807 run=25 start pid=24920 nextDue=22:46:33.795
+2026-04-30 22:46:32.810 AGV808 run=25 start pid=2464 nextDue=22:46:33.804
+2026-04-30 22:46:32.818 AGV809 run=25 start pid=24652 nextDue=22:46:33.813
+2026-04-30 22:46:32.826 AGV810 run=25 start pid=23536 nextDue=22:46:33.820
+2026-04-30 22:46:32.975 AGV801 run=24 end exit= elapsed=1.211s nextDue=22:46:32.698 lagMs=211 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:32.983 AGV801 run=25 start pid=22272 nextDue=22:46:33.979
+2026-04-30 22:46:33.722 AGV803 run=25 end exit= elapsed=0.89s nextDue=22:46:33.759 lagMs=-110 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.787 AGV804 run=25 end exit= elapsed=0.966s nextDue=22:46:33.768 lagMs=-34 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.828 AGV805 run=25 end exit= elapsed=1.016s nextDue=22:46:33.777 lagMs=16 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.869 AGV806 run=25 end exit= elapsed=1.047s nextDue=22:46:33.787 lagMs=47 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.907 AGV807 run=25 end exit= elapsed=1.081s nextDue=22:46:33.795 lagMs=81 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.947 AGV808 run=25 end exit= elapsed=1.109s nextDue=22:46:33.804 lagMs=109 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:33.984 AGV809 run=25 end exit= elapsed=1.139s nextDue=22:46:33.813 lagMs=140 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:34.024 AGV810 run=25 end exit= elapsed=1.169s nextDue=22:46:33.820 lagMs=169 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:34.057 AGV803 run=26 start pid=25436 nextDue=22:46:35.043
+2026-04-30 22:46:34.069 AGV804 run=26 start pid=16332 nextDue=22:46:35.065
+2026-04-30 22:46:34.076 AGV805 run=26 start pid=20840 nextDue=22:46:35.072
+2026-04-30 22:46:34.086 AGV806 run=26 start pid=24748 nextDue=22:46:35.079
+2026-04-30 22:46:34.094 AGV807 run=26 start pid=25388 nextDue=22:46:35.089
+2026-04-30 22:46:34.105 AGV808 run=26 start pid=25216 nextDue=22:46:35.100
+2026-04-30 22:46:34.111 AGV809 run=26 start pid=25004 nextDue=22:46:35.108
+2026-04-30 22:46:34.121 AGV810 run=26 start pid=23956 nextDue=22:46:35.116
+2026-04-30 22:46:34.320 AGV801 run=25 end exit= elapsed=1.224s nextDue=22:46:33.979 lagMs=224 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:34.363 AGV802 run=25 end exit= elapsed=1.589s nextDue=22:46:33.737 lagMs=589 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:34.370 AGV801 run=26 start pid=24880 nextDue=22:46:35.366
+2026-04-30 22:46:34.385 AGV802 run=26 start pid=25364 nextDue=22:46:35.380
+2026-04-30 22:46:35.053 AGV801 run=26 end exit= elapsed=0.635s nextDue=22:46:35.366 lagMs=-365 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.109 AGV802 run=26 end exit= elapsed=0.69s nextDue=22:46:35.380 lagMs=-310 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:35.149 AGV803 run=26 end exit= elapsed=1.075s nextDue=22:46:35.043 lagMs=75 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.192 AGV804 run=26 end exit= elapsed=1.091s nextDue=22:46:35.065 lagMs=91 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.231 AGV805 run=26 end exit= elapsed=1.127s nextDue=22:46:35.072 lagMs=127 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.270 AGV806 run=26 end exit= elapsed=1.157s nextDue=22:46:35.079 lagMs=157 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.308 AGV807 run=26 end exit= elapsed=1.189s nextDue=22:46:35.089 lagMs=189 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.351 AGV808 run=26 end exit= elapsed=1.215s nextDue=22:46:35.100 lagMs=215 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.389 AGV809 run=26 end exit= elapsed=1.249s nextDue=22:46:35.108 lagMs=249 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.430 AGV810 run=26 end exit= elapsed=1.278s nextDue=22:46:35.116 lagMs=278 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:35.444 AGV801 run=27 start pid=24028 nextDue=22:46:36.433
+2026-04-30 22:46:35.453 AGV802 run=27 start pid=23912 nextDue=22:46:36.450
+2026-04-30 22:46:35.460 AGV803 run=27 start pid=25468 nextDue=22:46:36.456
+2026-04-30 22:46:35.469 AGV804 run=27 start pid=25188 nextDue=22:46:36.464
+2026-04-30 22:46:35.478 AGV805 run=27 start pid=17952 nextDue=22:46:36.473
+2026-04-30 22:46:35.487 AGV806 run=27 start pid=25540 nextDue=22:46:36.480
+2026-04-30 22:46:35.496 AGV807 run=27 start pid=25288 nextDue=22:46:36.491
+2026-04-30 22:46:35.503 AGV808 run=27 start pid=24924 nextDue=22:46:36.498
+2026-04-30 22:46:35.512 AGV809 run=27 start pid=20684 nextDue=22:46:36.506
+2026-04-30 22:46:35.520 AGV810 run=27 start pid=24620 nextDue=22:46:36.515
+2026-04-30 22:46:36.528 AGV801 run=27 end exit= elapsed=1.012s nextDue=22:46:36.433 lagMs=13 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.586 AGV802 run=27 end exit= elapsed=1.092s nextDue=22:46:36.450 lagMs=92 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:36.642 AGV803 run=27 end exit= elapsed=1.138s nextDue=22:46:36.456 lagMs=138 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.711 AGV804 run=27 end exit= elapsed=1.204s nextDue=22:46:36.464 lagMs=204 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.763 AGV805 run=27 end exit= elapsed=1.259s nextDue=22:46:36.473 lagMs=259 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.822 AGV806 run=27 end exit= elapsed=1.302s nextDue=22:46:36.480 lagMs=302 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.862 AGV807 run=27 end exit= elapsed=1.338s nextDue=22:46:36.491 lagMs=338 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.917 AGV808 run=27 end exit= elapsed=1.387s nextDue=22:46:36.498 lagMs=387 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:36.955 AGV809 run=27 end exit= elapsed=1.418s nextDue=22:46:36.506 lagMs=418 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:37.008 AGV810 run=27 end exit= elapsed=1.46s nextDue=22:46:36.515 lagMs=460 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:37.014 AGV801 run=28 start pid=24640 nextDue=22:46:38.009
+2026-04-30 22:46:37.022 AGV802 run=28 start pid=16388 nextDue=22:46:38.018
+2026-04-30 22:46:37.028 AGV803 run=28 start pid=22168 nextDue=22:46:38.025
+2026-04-30 22:46:37.035 AGV804 run=28 start pid=24100 nextDue=22:46:38.031
+2026-04-30 22:46:37.041 AGV805 run=28 start pid=25348 nextDue=22:46:38.038
+2026-04-30 22:46:37.048 AGV806 run=28 start pid=18528 nextDue=22:46:38.045
+2026-04-30 22:46:37.056 AGV807 run=28 start pid=12308 nextDue=22:46:38.052
+2026-04-30 22:46:37.065 AGV808 run=28 start pid=25060 nextDue=22:46:38.059
+2026-04-30 22:46:37.075 AGV809 run=28 start pid=24580 nextDue=22:46:38.068
+2026-04-30 22:46:37.083 AGV810 run=28 start pid=20660 nextDue=22:46:38.078
+2026-04-30 22:46:38.080 AGV801 run=28 end exit= elapsed=0.987s nextDue=22:46:38.009 lagMs=-13 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.143 AGV802 run=28 end exit= elapsed=1.071s nextDue=22:46:38.018 lagMs=71 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:38.182 AGV803 run=28 end exit= elapsed=1.126s nextDue=22:46:38.025 lagMs=126 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.224 AGV804 run=28 end exit= elapsed=1.156s nextDue=22:46:38.031 lagMs=156 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.262 AGV805 run=28 end exit= elapsed=1.191s nextDue=22:46:38.038 lagMs=191 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.305 AGV806 run=28 end exit= elapsed=1.225s nextDue=22:46:38.045 lagMs=225 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.341 AGV807 run=28 end exit= elapsed=1.258s nextDue=22:46:38.052 lagMs=258 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.383 AGV808 run=28 end exit= elapsed=1.289s nextDue=22:46:38.059 lagMs=289 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.418 AGV809 run=28 end exit= elapsed=1.32s nextDue=22:46:38.068 lagMs=320 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.459 AGV810 run=28 end exit= elapsed=1.346s nextDue=22:46:38.078 lagMs=346 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:38.478 AGV801 run=29 start pid=12036 nextDue=22:46:39.463
+2026-04-30 22:46:38.489 AGV802 run=29 start pid=3992 nextDue=22:46:39.486
+2026-04-30 22:46:38.499 AGV803 run=29 start pid=15708 nextDue=22:46:39.496
+2026-04-30 22:46:38.505 AGV804 run=29 start pid=9744 nextDue=22:46:39.502
+2026-04-30 22:46:38.516 AGV805 run=29 start pid=24160 nextDue=22:46:39.512
+2026-04-30 22:46:38.524 AGV806 run=29 start pid=24732 nextDue=22:46:39.520
+2026-04-30 22:46:38.531 AGV807 run=29 start pid=20236 nextDue=22:46:39.527
+2026-04-30 22:46:38.540 AGV808 run=29 start pid=3036 nextDue=22:46:39.535
+2026-04-30 22:46:38.550 AGV809 run=29 start pid=5452 nextDue=22:46:39.543
+2026-04-30 22:46:38.558 AGV810 run=29 start pid=17952 nextDue=22:46:39.553
+2026-04-30 22:46:39.503 AGV801 run=29 end exit= elapsed=0.953s nextDue=22:46:39.463 lagMs=-47 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.603 AGV802 run=29 end exit= elapsed=1.029s nextDue=22:46:39.486 lagMs=29 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:39.639 AGV803 run=29 end exit= elapsed=1.113s nextDue=22:46:39.496 lagMs=113 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.680 AGV804 run=29 end exit= elapsed=1.142s nextDue=22:46:39.502 lagMs=143 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.716 AGV805 run=29 end exit= elapsed=1.174s nextDue=22:46:39.512 lagMs=174 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.758 AGV806 run=29 end exit= elapsed=1.203s nextDue=22:46:39.520 lagMs=203 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.794 AGV807 run=29 end exit= elapsed=1.236s nextDue=22:46:39.527 lagMs=236 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.834 AGV808 run=29 end exit= elapsed=1.265s nextDue=22:46:39.535 lagMs=265 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.871 AGV809 run=29 end exit= elapsed=1.297s nextDue=22:46:39.543 lagMs=298 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.916 AGV810 run=29 end exit= elapsed=1.324s nextDue=22:46:39.553 lagMs=324 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:39.933 AGV801 run=30 start pid=16024 nextDue=22:46:40.919
+2026-04-30 22:46:39.952 AGV802 run=30 start pid=24836 nextDue=22:46:40.948
+2026-04-30 22:46:39.960 AGV803 run=30 start pid=25324 nextDue=22:46:40.956
+2026-04-30 22:46:39.967 AGV804 run=30 start pid=25072 nextDue=22:46:40.963
+2026-04-30 22:46:39.975 AGV805 run=30 start pid=2800 nextDue=22:46:40.970
+2026-04-30 22:46:39.984 AGV806 run=30 start pid=25372 nextDue=22:46:40.980
+2026-04-30 22:46:39.995 AGV807 run=30 start pid=25140 nextDue=22:46:40.988
+2026-04-30 22:46:40.003 AGV808 run=30 start pid=25172 nextDue=22:46:40.997
+2026-04-30 22:46:40.012 AGV809 run=30 start pid=24512 nextDue=22:46:41.007
+2026-04-30 22:46:40.018 AGV810 run=30 start pid=24560 nextDue=22:46:41.014
+2026-04-30 22:46:40.949 AGV804 run=30 end exit= elapsed=0.9s nextDue=22:46:40.963 lagMs=-100 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.027 AGV805 run=30 end exit= elapsed=0.992s nextDue=22:46:40.970 lagMs=-7 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.064 AGV806 run=30 end exit= elapsed=1.052s nextDue=22:46:40.980 lagMs=52 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.113 AGV807 run=30 end exit= elapsed=1.089s nextDue=22:46:40.988 lagMs=89 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.167 AGV808 run=30 end exit= elapsed=1.125s nextDue=22:46:40.997 lagMs=125 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.217 AGV809 run=30 end exit= elapsed=1.169s nextDue=22:46:41.007 lagMs=169 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.271 AGV810 run=30 end exit= elapsed=1.213s nextDue=22:46:41.014 lagMs=213 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.286 AGV804 run=31 start pid=25280 nextDue=22:46:42.273
+2026-04-30 22:46:41.292 AGV805 run=31 start pid=3060 nextDue=22:46:42.288
+2026-04-30 22:46:41.301 AGV806 run=31 start pid=23328 nextDue=22:46:42.297
+2026-04-30 22:46:41.310 AGV807 run=31 start pid=7992 nextDue=22:46:42.305
+2026-04-30 22:46:41.316 AGV808 run=31 start pid=25444 nextDue=22:46:42.312
+2026-04-30 22:46:41.325 AGV809 run=31 start pid=24492 nextDue=22:46:42.320
+2026-04-30 22:46:41.333 AGV810 run=31 start pid=8468 nextDue=22:46:42.328
+2026-04-30 22:46:41.530 AGV801 run=30 end exit= elapsed=1.503s nextDue=22:46:40.919 lagMs=503 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.589 AGV802 run=30 end exit= elapsed=1.589s nextDue=22:46:40.948 lagMs=589 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:41.669 AGV803 run=30 end exit= elapsed=1.643s nextDue=22:46:40.956 lagMs=643 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:41.678 AGV801 run=31 start pid=24892 nextDue=22:46:42.672
+2026-04-30 22:46:41.688 AGV802 run=31 start pid=24792 nextDue=22:46:42.683
+2026-04-30 22:46:41.703 AGV803 run=31 start pid=24912 nextDue=22:46:42.696
+2026-04-30 22:46:42.249 AGV810 run=31 end exit= elapsed=0.837s nextDue=22:46:42.328 lagMs=-162 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.351 AGV801 run=31 end exit= elapsed=0.643s nextDue=22:46:42.672 lagMs=-357 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.389 AGV802 run=31 end exit= elapsed=0.675s nextDue=22:46:42.683 lagMs=-325 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:42.432 AGV803 run=31 end exit= elapsed=0.7s nextDue=22:46:42.696 lagMs=-300 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.472 AGV804 run=31 end exit= elapsed=1.167s nextDue=22:46:42.273 lagMs=167 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.515 AGV805 run=31 end exit= elapsed=1.19s nextDue=22:46:42.288 lagMs=190 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.555 AGV806 run=31 end exit= elapsed=1.223s nextDue=22:46:42.297 lagMs=224 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.595 AGV807 run=31 end exit= elapsed=1.255s nextDue=22:46:42.305 lagMs=255 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.634 AGV808 run=31 end exit= elapsed=1.289s nextDue=22:46:42.312 lagMs=289 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.677 AGV809 run=31 end exit= elapsed=1.32s nextDue=22:46:42.320 lagMs=320 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:42.702 AGV801 run=32 start pid=9844 nextDue=22:46:43.680
+2026-04-30 22:46:42.718 AGV804 run=32 start pid=24728 nextDue=22:46:43.714
+2026-04-30 22:46:42.728 AGV805 run=32 start pid=25264 nextDue=22:46:43.724
+2026-04-30 22:46:42.734 AGV806 run=32 start pid=13196 nextDue=22:46:43.730
+2026-04-30 22:46:42.742 AGV807 run=32 start pid=24268 nextDue=22:46:43.738
+2026-04-30 22:46:42.748 AGV808 run=32 start pid=20712 nextDue=22:46:43.745
+2026-04-30 22:46:42.757 AGV809 run=32 start pid=25164 nextDue=22:46:43.753
+2026-04-30 22:46:42.763 AGV810 run=32 start pid=25532 nextDue=22:46:43.759
+2026-04-30 22:46:42.853 AGV802 run=32 start pid=25176 nextDue=22:46:43.849
+2026-04-30 22:46:42.864 AGV803 run=32 start pid=6396 nextDue=22:46:43.856
+2026-04-30 22:46:43.719 AGV801 run=32 end exit= elapsed=1.007s nextDue=22:46:43.680 lagMs=7 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:43.761 AGV802 run=32 end exit= elapsed=0.876s nextDue=22:46:43.849 lagMs=-124 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:43.798 AGV803 run=32 end exit= elapsed=0.912s nextDue=22:46:43.856 lagMs=-88 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:43.840 AGV804 run=32 end exit= elapsed=1.091s nextDue=22:46:43.714 lagMs=91 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:43.876 AGV805 run=32 end exit= elapsed=1.122s nextDue=22:46:43.724 lagMs=122 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:43.918 AGV806 run=32 end exit= elapsed=1.153s nextDue=22:46:43.730 lagMs=153 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:43.955 AGV807 run=32 end exit= elapsed=1.186s nextDue=22:46:43.738 lagMs=186 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:44.006 AGV808 run=32 end exit= elapsed=1.221s nextDue=22:46:43.745 lagMs=221 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:44.045 AGV809 run=32 end exit= elapsed=1.26s nextDue=22:46:43.753 lagMs=260 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:44.089 AGV810 run=32 end exit= elapsed=1.292s nextDue=22:46:43.759 lagMs=292 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:44.095 AGV801 run=33 start pid=15620 nextDue=22:46:45.091
+2026-04-30 22:46:44.099 AGV802 run=33 start pid=18428 nextDue=22:46:45.096
+2026-04-30 22:46:44.105 AGV803 run=33 start pid=2296 nextDue=22:46:45.102
+2026-04-30 22:46:44.110 AGV804 run=33 start pid=22544 nextDue=22:46:45.107
+2026-04-30 22:46:44.115 AGV805 run=33 start pid=25472 nextDue=22:46:45.112
+2026-04-30 22:46:44.122 AGV806 run=33 start pid=5392 nextDue=22:46:45.118
+2026-04-30 22:46:44.131 AGV807 run=33 start pid=25396 nextDue=22:46:45.126
+2026-04-30 22:46:44.137 AGV808 run=33 start pid=8096 nextDue=22:46:45.133
+2026-04-30 22:46:44.144 AGV809 run=33 start pid=25232 nextDue=22:46:45.139
+2026-04-30 22:46:44.153 AGV810 run=33 start pid=25196 nextDue=22:46:45.147
+2026-04-30 22:46:45.102 AGV801 run=33 end exit= elapsed=0.98s nextDue=22:46:45.091 lagMs=-20 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.146 AGV802 run=33 end exit= elapsed=1.012s nextDue=22:46:45.096 lagMs=12 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:45.186 AGV803 run=33 end exit= elapsed=1.051s nextDue=22:46:45.102 lagMs=51 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.227 AGV804 run=33 end exit= elapsed=1.085s nextDue=22:46:45.107 lagMs=85 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.265 AGV805 run=33 end exit= elapsed=1.121s nextDue=22:46:45.112 lagMs=121 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.308 AGV806 run=33 end exit= elapsed=1.156s nextDue=22:46:45.118 lagMs=156 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.348 AGV807 run=33 end exit= elapsed=1.189s nextDue=22:46:45.126 lagMs=189 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.387 AGV808 run=33 end exit= elapsed=1.22s nextDue=22:46:45.133 lagMs=220 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.426 AGV809 run=33 end exit= elapsed=1.255s nextDue=22:46:45.139 lagMs=255 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.468 AGV810 run=33 end exit= elapsed=1.286s nextDue=22:46:45.147 lagMs=286 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:45.475 AGV801 run=34 start pid=9292 nextDue=22:46:46.470
+2026-04-30 22:46:45.481 AGV802 run=34 start pid=24936 nextDue=22:46:46.478
+2026-04-30 22:46:45.487 AGV803 run=34 start pid=13196 nextDue=22:46:46.484
+2026-04-30 22:46:45.494 AGV804 run=34 start pid=25064 nextDue=22:46:46.490
+2026-04-30 22:46:45.501 AGV805 run=34 start pid=11964 nextDue=22:46:46.496
+2026-04-30 22:46:45.509 AGV806 run=34 start pid=13640 nextDue=22:46:46.505
+2026-04-30 22:46:45.516 AGV807 run=34 start pid=5780 nextDue=22:46:46.512
+2026-04-30 22:46:45.522 AGV808 run=34 start pid=24700 nextDue=22:46:46.518
+2026-04-30 22:46:45.528 AGV809 run=34 start pid=24924 nextDue=22:46:46.524
+2026-04-30 22:46:45.535 AGV810 run=34 start pid=25572 nextDue=22:46:46.531
+2026-04-30 22:46:46.474 AGV801 run=34 end exit= elapsed=0.971s nextDue=22:46:46.470 lagMs=-29 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.517 AGV802 run=34 end exit= elapsed=1.003s nextDue=22:46:46.478 lagMs=3 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:46.555 AGV803 run=34 end exit= elapsed=1.04s nextDue=22:46:46.484 lagMs=40 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.594 AGV804 run=34 end exit= elapsed=1.071s nextDue=22:46:46.490 lagMs=71 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.632 AGV805 run=34 end exit= elapsed=1.104s nextDue=22:46:46.496 lagMs=105 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.673 AGV806 run=34 end exit= elapsed=1.133s nextDue=22:46:46.505 lagMs=133 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.712 AGV807 run=34 end exit= elapsed=1.169s nextDue=22:46:46.512 lagMs=169 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.751 AGV808 run=34 end exit= elapsed=1.199s nextDue=22:46:46.518 lagMs=199 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.790 AGV809 run=34 end exit= elapsed=1.234s nextDue=22:46:46.524 lagMs=234 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.835 AGV810 run=34 end exit= elapsed=1.268s nextDue=22:46:46.531 lagMs=268 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:46.841 AGV801 run=35 start pid=25204 nextDue=22:46:47.836
+2026-04-30 22:46:46.846 AGV802 run=35 start pid=20116 nextDue=22:46:47.843
+2026-04-30 22:46:46.855 AGV803 run=35 start pid=18384 nextDue=22:46:47.850
+2026-04-30 22:46:46.860 AGV804 run=35 start pid=24144 nextDue=22:46:47.856
+2026-04-30 22:46:46.866 AGV805 run=35 start pid=408 nextDue=22:46:47.863
+2026-04-30 22:46:46.872 AGV806 run=35 start pid=15564 nextDue=22:46:47.868
+2026-04-30 22:46:46.878 AGV807 run=35 start pid=25072 nextDue=22:46:47.875
+2026-04-30 22:46:46.885 AGV808 run=35 start pid=25008 nextDue=22:46:47.881
+2026-04-30 22:46:46.890 AGV809 run=35 start pid=25220 nextDue=22:46:47.887
+2026-04-30 22:46:46.897 AGV810 run=35 start pid=19100 nextDue=22:46:47.893
+2026-04-30 22:46:47.850 AGV801 run=35 end exit= elapsed=0.98s nextDue=22:46:47.836 lagMs=-20 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:47.893 AGV802 run=35 end exit= elapsed=1.015s nextDue=22:46:47.843 lagMs=15 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:47.930 AGV803 run=35 end exit= elapsed=1.048s nextDue=22:46:47.850 lagMs=48 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:47.980 AGV804 run=35 end exit= elapsed=1.088s nextDue=22:46:47.856 lagMs=88 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.020 AGV805 run=35 end exit= elapsed=1.124s nextDue=22:46:47.863 lagMs=124 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.062 AGV806 run=35 end exit= elapsed=1.158s nextDue=22:46:47.868 lagMs=158 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.105 AGV807 run=35 end exit= elapsed=1.198s nextDue=22:46:47.875 lagMs=198 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.145 AGV808 run=35 end exit= elapsed=1.229s nextDue=22:46:47.881 lagMs=229 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.185 AGV809 run=35 end exit= elapsed=1.265s nextDue=22:46:47.887 lagMs=265 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.225 AGV810 run=35 end exit= elapsed=1.298s nextDue=22:46:47.893 lagMs=298 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:48.230 AGV801 run=36 start pid=25004 nextDue=22:46:49.228
+2026-04-30 22:46:48.236 AGV802 run=36 start pid=14332 nextDue=22:46:49.233
+2026-04-30 22:46:48.243 AGV803 run=36 start pid=25084 nextDue=22:46:49.238
+2026-04-30 22:46:48.252 AGV804 run=36 start pid=23536 nextDue=22:46:49.247
+2026-04-30 22:46:48.259 AGV805 run=36 start pid=12860 nextDue=22:46:49.255
+2026-04-30 22:46:48.265 AGV806 run=36 start pid=24764 nextDue=22:46:49.261
+2026-04-30 22:46:48.272 AGV807 run=36 start pid=20680 nextDue=22:46:49.268
+2026-04-30 22:46:48.279 AGV808 run=36 start pid=25392 nextDue=22:46:49.275
+2026-04-30 22:46:48.285 AGV809 run=36 start pid=19028 nextDue=22:46:49.281
+2026-04-30 22:46:48.291 AGV810 run=36 start pid=21864 nextDue=22:46:49.287
+2026-04-30 22:46:49.210 AGV801 run=36 end exit= elapsed=0.952s nextDue=22:46:49.228 lagMs=-48 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.256 AGV802 run=36 end exit= elapsed=0.985s nextDue=22:46:49.233 lagMs=-15 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:49.293 AGV803 run=36 end exit= elapsed=1.023s nextDue=22:46:49.238 lagMs=23 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.333 AGV804 run=36 end exit= elapsed=1.051s nextDue=22:46:49.247 lagMs=51 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.369 AGV805 run=36 end exit= elapsed=1.084s nextDue=22:46:49.255 lagMs=85 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.409 AGV806 run=36 end exit= elapsed=1.112s nextDue=22:46:49.261 lagMs=112 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.456 AGV807 run=36 end exit= elapsed=1.157s nextDue=22:46:49.268 lagMs=157 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.497 AGV808 run=36 end exit= elapsed=1.187s nextDue=22:46:49.275 lagMs=187 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.537 AGV809 run=36 end exit= elapsed=1.224s nextDue=22:46:49.281 lagMs=224 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.579 AGV810 run=36 end exit= elapsed=1.255s nextDue=22:46:49.287 lagMs=255 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:49.585 AGV801 run=37 start pid=18056 nextDue=22:46:50.580
+2026-04-30 22:46:49.590 AGV802 run=37 start pid=20872 nextDue=22:46:50.587
+2026-04-30 22:46:49.597 AGV803 run=37 start pid=25568 nextDue=22:46:50.594
+2026-04-30 22:46:49.603 AGV804 run=37 start pid=4840 nextDue=22:46:50.599
+2026-04-30 22:46:49.611 AGV805 run=37 start pid=17132 nextDue=22:46:50.606
+2026-04-30 22:46:49.616 AGV806 run=37 start pid=24832 nextDue=22:46:50.612
+2026-04-30 22:46:49.622 AGV807 run=37 start pid=5364 nextDue=22:46:50.618
+2026-04-30 22:46:49.628 AGV808 run=37 start pid=25484 nextDue=22:46:50.625
+2026-04-30 22:46:49.634 AGV809 run=37 start pid=19852 nextDue=22:46:50.630
+2026-04-30 22:46:49.641 AGV810 run=37 start pid=24888 nextDue=22:46:50.637
+2026-04-30 22:46:50.563 AGV802 run=37 end exit= elapsed=0.945s nextDue=22:46:50.587 lagMs=-55 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:50.604 AGV803 run=37 end exit= elapsed=0.976s nextDue=22:46:50.594 lagMs=-24 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.641 AGV804 run=37 end exit= elapsed=1.01s nextDue=22:46:50.599 lagMs=10 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.679 AGV805 run=37 end exit= elapsed=1.041s nextDue=22:46:50.606 lagMs=41 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.716 AGV806 run=37 end exit= elapsed=1.074s nextDue=22:46:50.612 lagMs=74 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.764 AGV807 run=37 end exit= elapsed=1.11s nextDue=22:46:50.618 lagMs=110 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.800 AGV808 run=37 end exit= elapsed=1.144s nextDue=22:46:50.625 lagMs=144 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.841 AGV809 run=37 end exit= elapsed=1.175s nextDue=22:46:50.630 lagMs=175 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.879 AGV810 run=37 end exit= elapsed=1.211s nextDue=22:46:50.637 lagMs=211 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:50.889 AGV802 run=38 start pid=14432 nextDue=22:46:51.881
+2026-04-30 22:46:50.894 AGV803 run=38 start pid=25076 nextDue=22:46:51.891
+2026-04-30 22:46:50.899 AGV804 run=38 start pid=25544 nextDue=22:46:51.896
+2026-04-30 22:46:50.905 AGV805 run=38 start pid=25376 nextDue=22:46:51.901
+2026-04-30 22:46:50.912 AGV806 run=38 start pid=23788 nextDue=22:46:51.908
+2026-04-30 22:46:50.918 AGV807 run=38 start pid=13188 nextDue=22:46:51.914
+2026-04-30 22:46:50.924 AGV808 run=38 start pid=25408 nextDue=22:46:51.921
+2026-04-30 22:46:50.930 AGV809 run=38 start pid=5452 nextDue=22:46:51.927
+2026-04-30 22:46:50.938 AGV810 run=38 start pid=23536 nextDue=22:46:51.933
+2026-04-30 22:46:51.059 AGV801 run=37 end exit= elapsed=1.428s nextDue=22:46:50.580 lagMs=428 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:51.066 AGV801 run=38 start pid=24804 nextDue=22:46:52.063
+2026-04-30 22:46:51.855 AGV802 run=38 end exit= elapsed=0.943s nextDue=22:46:51.881 lagMs=-57 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:51.898 AGV803 run=38 end exit= elapsed=0.972s nextDue=22:46:51.891 lagMs=-28 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:51.937 AGV804 run=38 end exit= elapsed=1.009s nextDue=22:46:51.896 lagMs=9 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:51.977 AGV805 run=38 end exit= elapsed=1.044s nextDue=22:46:51.901 lagMs=44 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.013 AGV806 run=38 end exit= elapsed=1.073s nextDue=22:46:51.908 lagMs=73 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.052 AGV807 run=38 end exit= elapsed=1.106s nextDue=22:46:51.914 lagMs=106 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.092 AGV808 run=38 end exit= elapsed=1.139s nextDue=22:46:51.921 lagMs=139 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.146 AGV809 run=38 end exit= elapsed=1.184s nextDue=22:46:51.927 lagMs=184 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.182 AGV810 run=38 end exit= elapsed=1.218s nextDue=22:46:51.933 lagMs=218 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.243 AGV802 run=39 start pid=24208 nextDue=22:46:53.228
+2026-04-30 22:46:52.263 AGV803 run=39 start pid=24492 nextDue=22:46:53.251
+2026-04-30 22:46:52.280 AGV804 run=39 start pid=23560 nextDue=22:46:53.271
+2026-04-30 22:46:52.293 AGV805 run=39 start pid=24636 nextDue=22:46:53.285
+2026-04-30 22:46:52.304 AGV806 run=39 start pid=24968 nextDue=22:46:53.298
+2026-04-30 22:46:52.313 AGV807 run=39 start pid=6104 nextDue=22:46:53.309
+2026-04-30 22:46:52.322 AGV808 run=39 start pid=19588 nextDue=22:46:53.317
+2026-04-30 22:46:52.328 AGV809 run=39 start pid=25472 nextDue=22:46:53.324
+2026-04-30 22:46:52.334 AGV810 run=39 start pid=24644 nextDue=22:46:53.330
+2026-04-30 22:46:52.443 AGV801 run=38 end exit= elapsed=1.345s nextDue=22:46:52.063 lagMs=345 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:52.457 AGV801 run=39 start pid=24704 nextDue=22:46:53.453
+2026-04-30 22:46:53.251 AGV805 run=39 end exit= elapsed=0.931s nextDue=22:46:53.285 lagMs=-68 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.297 AGV806 run=39 end exit= elapsed=0.96s nextDue=22:46:53.298 lagMs=-40 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.336 AGV807 run=39 end exit= elapsed=0.994s nextDue=22:46:53.309 lagMs=-6 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.377 AGV808 run=39 end exit= elapsed=1.026s nextDue=22:46:53.317 lagMs=26 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.415 AGV809 run=39 end exit= elapsed=1.059s nextDue=22:46:53.324 lagMs=59 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.474 AGV810 run=39 end exit= elapsed=1.108s nextDue=22:46:53.330 lagMs=109 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.489 AGV805 run=40 start pid=12436 nextDue=22:46:54.484
+2026-04-30 22:46:53.499 AGV806 run=40 start pid=14068 nextDue=22:46:54.492
+2026-04-30 22:46:53.512 AGV807 run=40 start pid=25376 nextDue=22:46:54.508
+2026-04-30 22:46:53.520 AGV808 run=40 start pid=25004 nextDue=22:46:54.517
+2026-04-30 22:46:53.527 AGV809 run=40 start pid=25248 nextDue=22:46:54.523
+2026-04-30 22:46:53.533 AGV810 run=40 start pid=25172 nextDue=22:46:54.529
+2026-04-30 22:46:53.632 AGV801 run=39 end exit= elapsed=1.143s nextDue=22:46:53.453 lagMs=143 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.675 AGV802 run=39 end exit= elapsed=1.41s nextDue=22:46:53.228 lagMs=410 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:53.713 AGV803 run=39 end exit= elapsed=1.43s nextDue=22:46:53.251 lagMs=430 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.755 AGV804 run=39 end exit= elapsed=1.448s nextDue=22:46:53.271 lagMs=448 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:53.762 AGV801 run=40 start pid=5364 nextDue=22:46:54.758
+2026-04-30 22:46:53.771 AGV802 run=40 start pid=8100 nextDue=22:46:54.767
+2026-04-30 22:46:53.776 AGV803 run=40 start pid=25392 nextDue=22:46:54.773
+2026-04-30 22:46:53.784 AGV804 run=40 start pid=25184 nextDue=22:46:54.780
+2026-04-30 22:46:54.444 AGV801 run=40 end exit= elapsed=0.654s nextDue=22:46:54.758 lagMs=-346 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.487 AGV802 run=40 end exit= elapsed=0.683s nextDue=22:46:54.767 lagMs=-317 add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-30 22:46:54.524 AGV803 run=40 end exit= elapsed=0.72s nextDue=22:46:54.773 lagMs=-280 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.563 AGV804 run=40 end exit= elapsed=0.748s nextDue=22:46:54.780 lagMs=-252 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.603 AGV805 run=40 end exit= elapsed=1.086s nextDue=22:46:54.484 lagMs=86 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.644 AGV806 run=40 end exit= elapsed=1.117s nextDue=22:46:54.492 lagMs=117 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.683 AGV807 run=40 end exit= elapsed=1.143s nextDue=22:46:54.508 lagMs=143 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.725 AGV808 run=40 end exit= elapsed=1.172s nextDue=22:46:54.517 lagMs=172 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.766 AGV809 run=40 end exit= elapsed=1.21s nextDue=22:46:54.523 lagMs=210 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.807 AGV810 run=40 end exit= elapsed=1.244s nextDue=22:46:54.529 lagMs=244 add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-30 22:46:54.820 AGV801 run=41 start pid=15908 nextDue=22:46:55.809
+2026-04-30 22:46:54.836 AGV802 run=41 start pid=24956 nextDue=22:46:55.833
+2026-04-30 22:46:54.842 AGV803 run=41 start pid=25288 nextDue=22:46:55.838
+2026-04-30 22:46:54.848 AGV804 run=41 start pid=24540 nextDue=22:46:55.844
+2026-04-30 22:46:54.855 AGV805 run=41 start pid=23752 nextDue=22:46:55.850
+2026-04-30 22:46:54.862 AGV806 run=41 start pid=23560 nextDue=22:46:55.858
+2026-04-30 22:46:54.870 AGV807 run=41 start pid=19588 nextDue=22:46:55.865
+2026-04-30 22:46:54.877 AGV808 run=41 start pid=25388 nextDue=22:46:55.873
+2026-04-30 22:46:54.884 AGV809 run=41 start pid=25044 nextDue=22:46:55.880
+2026-04-30 22:46:54.891 AGV810 run=41 start pid=1568 nextDue=22:46:55.887
+2026-04-30 22:46:55.785 Stopping; terminating running probe processes.

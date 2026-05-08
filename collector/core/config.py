@@ -1,0 +1,129 @@
+"""配置管理模块"""
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+from urllib.parse import quote_plus
+
+
+@dataclass
+class TDengineConfig:
+    """TDengine 连接配置（仅 WebSocket，经 taosAdapter，与官方推荐一致）"""
+    host: str = "localhost"
+    port: int = 6041
+    user: str = "root"
+    password: str = "taosdata"
+    database: str = "device_data"
+    # 可选时区；同一内网且无需跨时区处理时可留空
+    timezone: Optional[str] = None
+    # True 时使用 wss://（TLS），仍为 WebSocket，非原生客户端连接
+    use_ssl: bool = False
+    # 连接超时（秒），防止启动阶段无限等待
+    connect_timeout_seconds: int = 10
+    # 数据库创建参数
+    db_keep: int = 365  # 数据保留天数
+    db_duration: int = 30  # 数据文件存储时间单位
+    db_buffer: int = 16  # 缓冲区大小 (MB)
+    db_pages: int = 128  # 内存页数
+
+    def to_rest_url(self) -> str:
+        """构造 TDengine REST API URL（密码安全转义）。"""
+        protocol = "https" if self.use_ssl else "http"
+        user_enc = quote_plus(self.user)
+        password_enc = quote_plus(self.password)
+        return f"{protocol}://{user_enc}:{password_enc}@{self.host}:{self.port}/rest/sql"
+
+
+@dataclass
+class MySQLConfig:
+    """后台配置数据库连接信息"""
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = "root"
+    password: str = "password"
+    database: str = "device_watch"
+    charset: str = "utf8mb4"
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    pool_recycle: int = 3600
+
+    def to_sqlalchemy_url(self, async_mode: bool = True) -> str:
+        """构造 SQLAlchemy DSN（密码安全转义）。"""
+        driver = "mysql+aiomysql" if async_mode else "mysql+pymysql"
+        user_enc = quote_plus(self.user)
+        password_enc = quote_plus(self.password)
+        return (
+            f"{driver}://{user_enc}:{password_enc}"
+            f"@{self.host}:{self.port}/{self.database}?charset={self.charset}"
+        )
+
+
+@dataclass
+class InterfaceIngestConfig:
+    """外部接口采集协议配置（HTTP Push）"""
+    enabled: bool = False
+    host: str = "127.0.0.1"  # 默认只监听本地，生产环境需配置 API Key
+    port: int = 8090
+    path: str = "/ingest"
+    api_key: Optional[str] = None
+    max_batch_size: int = 1000
+    max_body_bytes: int = 1_048_576  # 请求体字节上限，默认 1MB
+
+
+@dataclass
+class DeviceConfig:
+    """单个设备配置"""
+    device_id: str
+    device_type: str  # QC, RTG, RMG, AGV, etc.
+    protocol: str  # s7, ge_srtp, opcda_center, opcda_sidecar
+    ip: str
+    endpoint: str = ""
+    port: int = 102
+    rack: int = 0
+    slot: int = 1
+    scan_rate: int = 1  # seconds
+    device_pk: Optional[int] = None  # MySQL device.id
+    opc_server: Optional[str] = None  # OPC DA ProgID，从 comm_protocol.server 获取
+
+
+@dataclass
+class VariableConfig:
+    """变量配置"""
+    variable_id: str
+    device_id: str
+    address: str  # e.g., "DB398.DBD0", "%MD1304", "%R100"
+    data_type: str = "INT"  # INT, FLOAT, BOOL, etc.
+    scan_rate: int = 1  # seconds
+    is_storage: bool = True  # whether to store in TDengine
+    var_seq: int = 0  # canonical TDengine point sequence
+
+
+@dataclass
+class CollectorConfig:
+    """采集模块总配置"""
+    # TDengine
+    tdengine: TDengineConfig = field(default_factory=TDengineConfig)
+    mysql: MySQLConfig = field(default_factory=MySQLConfig)
+    interface_ingest: InterfaceIngestConfig = field(default_factory=InterfaceIngestConfig)
+
+    # Devices
+    devices: List[DeviceConfig] = field(default_factory=list)
+    variables: List[VariableConfig] = field(default_factory=list)
+
+    # Aggregator
+    batch_size: int = 1000  # max records per batch write
+    flush_interval: int = 1  # seconds, force flush interval
+    max_window_seconds: int = 600  # 10 min, force write even if unchanged
+    # 当 MySQL 不可用时，是否允许回退到临时假数据拓扑（仅联调验证）
+    enable_fake_bootstrap: bool = False
+    # 运行态标记：当前是否正在使用假数据模式
+    fake_mode_active: bool = False
+
+    # Logging
+    log_level: str = "INFO"
+
+    # Queue
+    queue_max_size: int = 10000
+
+    # Writer thread pool
+    writer_workers: int = 2

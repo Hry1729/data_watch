@@ -1,0 +1,48 @@
+﻿2026-04-27 13:23:32.092 Starting AGV801-AGV810 ViewMain full-point continuous read.
+2026-04-27 13:23:32.147 Probe=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\bin\OpcDaProbe.exe
+2026-04-27 13:23:32.151 Csv=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
+2026-04-27 13:23:32.154 Server=ZPMC.OPCServer Channel=OPD_Server Group=ViewMain Source=cache ReadDelayMs=200
+2026-04-27 13:23:32.158 Full output log=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\logs\agv801_810_viewmain_loop_20260427_132332.full.log
+2026-04-27 13:23:32.163 Press Ctrl+C to stop.
+2026-04-27 13:23:32.169 ===== Cycle 1 start =====
+2026-04-27 13:23:32.175 Cycle 1 AGV801 start
+2026-04-27 13:23:33.257 Cycle 1 AGV801 end exit=0 elapsed=1.06s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:33.260 Cycle 1 AGV802 start
+2026-04-27 13:23:34.095 Cycle 1 AGV802 end exit=0 elapsed=0.836s add='AddItems success: 481/482' read='Read success: 481/481'
+2026-04-27 13:23:34.102 Cycle 1 AGV803 start
+2026-04-27 13:23:34.923 Cycle 1 AGV803 end exit=0 elapsed=0.817s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:34.926 Cycle 1 AGV804 start
+2026-04-27 13:23:35.771 Cycle 1 AGV804 end exit=0 elapsed=0.842s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:35.772 Cycle 1 AGV805 start
+2026-04-27 13:23:36.528 Cycle 1 AGV805 end exit=0 elapsed=0.747s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:36.529 Cycle 1 AGV806 start
+2026-04-27 13:23:37.271 Cycle 1 AGV806 end exit=0 elapsed=0.739s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:37.276 Cycle 1 AGV807 start
+2026-04-27 13:23:38.157 Cycle 1 AGV807 end exit=0 elapsed=0.881s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:38.163 Cycle 1 AGV808 start
+2026-04-27 13:23:38.900 Cycle 1 AGV808 end exit=0 elapsed=0.733s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:38.900 Cycle 1 AGV809 start
+2026-04-27 13:23:39.684 Cycle 1 AGV809 end exit=0 elapsed=0.773s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:39.684 Cycle 1 AGV810 start
+2026-04-27 13:23:40.460 Cycle 1 AGV810 end exit=0 elapsed=0.771s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:40.462 ===== Cycle 1 end elapsed=8.299s =====
+2026-04-27 13:23:41.479 ===== Cycle 2 start =====
+2026-04-27 13:23:41.489 Cycle 2 AGV801 start
+2026-04-27 13:23:42.193 Cycle 2 AGV801 end exit=0 elapsed=0.701s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:42.196 Cycle 2 AGV802 start
+2026-04-27 13:23:42.991 Cycle 2 AGV802 end exit=0 elapsed=0.79s add='AddItems success: 481/482' read='Read success: 481/481'
+2026-04-27 13:23:42.995 Cycle 2 AGV803 start
+2026-04-27 13:23:43.782 Cycle 2 AGV803 end exit=0 elapsed=0.783s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:43.782 Cycle 2 AGV804 start
+2026-04-27 13:23:44.552 Cycle 2 AGV804 end exit=0 elapsed=0.77s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:44.558 Cycle 2 AGV805 start
+2026-04-27 13:23:45.354 Cycle 2 AGV805 end exit=0 elapsed=0.784s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:45.373 Cycle 2 AGV806 start
+2026-04-27 13:23:46.599 Cycle 2 AGV806 end exit=0 elapsed=1.218s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:46.604 Cycle 2 AGV807 start
+2026-04-27 13:23:47.829 Cycle 2 AGV807 end exit=0 elapsed=1.22s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:47.834 Cycle 2 AGV808 start
+2026-04-27 13:23:49.070 Cycle 2 AGV808 end exit=0 elapsed=1.225s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:49.076 Cycle 2 AGV809 start
+2026-04-27 13:23:50.315 Cycle 2 AGV809 end exit=0 elapsed=1.236s add='AddItems success: 482/482' read='Read success: 482/482'
+2026-04-27 13:23:50.321 Cycle 2 AGV810 start

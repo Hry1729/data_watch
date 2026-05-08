@@ -1,0 +1,75 @@
+﻿2026-04-27 13:26:06.191 Starting AGV801-AGV810 ViewMain full-point continuous read.
+2026-04-27 13:26:06.214 Probe=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\bin\OpcDaProbe.exe
+2026-04-27 13:26:06.215 Csv=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
+2026-04-27 13:26:06.217 Server=ZPMC.OPCServer Channel=OPD_Server Group=ViewMain Source=cache ReadDelayMs=200
+2026-04-27 13:26:06.219 Full output log=D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\logs\agv801_810_viewmain_loop_20260427_132606.full.log
+2026-04-27 13:26:06.219 Console shows statistics only. Per-point probe output is saved to the full log.
+2026-04-27 13:26:06.224 Press Ctrl+C to stop.
+2026-04-27 13:26:06.224 ===== Cycle 1 start =====
+2026-04-27 13:26:06.230 Cycle 1 AGV801 start
+2026-04-27 13:26:06.962 Cycle 1 AGV801 end exit=0 elapsed=0.57s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:06.972 Cycle 1 AGV802 start
+2026-04-27 13:26:07.639 Cycle 1 AGV802 end exit=0 elapsed=0.625s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-27 13:26:07.643 Cycle 1 AGV803 start
+2026-04-27 13:26:08.304 Cycle 1 AGV803 end exit=0 elapsed=0.627s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:08.311 Cycle 1 AGV804 start
+2026-04-27 13:26:08.907 Cycle 1 AGV804 end exit=0 elapsed=0.567s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:08.909 Cycle 1 AGV805 start
+2026-04-27 13:26:09.577 Cycle 1 AGV805 end exit=0 elapsed=0.632s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:09.580 Cycle 1 AGV806 start
+2026-04-27 13:26:10.234 Cycle 1 AGV806 end exit=0 elapsed=0.621s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:10.237 Cycle 1 AGV807 start
+2026-04-27 13:26:10.877 Cycle 1 AGV807 end exit=0 elapsed=0.604s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:10.879 Cycle 1 AGV808 start
+2026-04-27 13:26:11.475 Cycle 1 AGV808 end exit=0 elapsed=0.563s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:11.478 Cycle 1 AGV809 start
+2026-04-27 13:26:12.136 Cycle 1 AGV809 end exit=0 elapsed=0.631s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:12.137 Cycle 1 AGV810 start
+2026-04-27 13:26:12.783 Cycle 1 AGV810 end exit=0 elapsed=0.608s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:12.788 ===== Cycle 1 end elapsed=6.564s =====
+2026-04-27 13:26:13.797 ===== Cycle 2 start =====
+2026-04-27 13:26:13.804 Cycle 2 AGV801 start
+2026-04-27 13:26:14.399 Cycle 2 AGV801 end exit=0 elapsed=0.569s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:14.405 Cycle 2 AGV802 start
+2026-04-27 13:26:15.037 Cycle 2 AGV802 end exit=0 elapsed=0.602s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-27 13:26:15.043 Cycle 2 AGV803 start
+2026-04-27 13:26:15.704 Cycle 2 AGV803 end exit=0 elapsed=0.634s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:15.705 Cycle 2 AGV804 start
+2026-04-27 13:26:16.348 Cycle 2 AGV804 end exit=0 elapsed=0.614s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:16.350 Cycle 2 AGV805 start
+2026-04-27 13:26:17.024 Cycle 2 AGV805 end exit=0 elapsed=0.635s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:17.029 Cycle 2 AGV806 start
+2026-04-27 13:26:17.686 Cycle 2 AGV806 end exit=0 elapsed=0.625s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:17.689 Cycle 2 AGV807 start
+2026-04-27 13:26:18.345 Cycle 2 AGV807 end exit=0 elapsed=0.623s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:18.348 Cycle 2 AGV808 start
+2026-04-27 13:26:18.975 Cycle 2 AGV808 end exit=0 elapsed=0.593s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:18.977 Cycle 2 AGV809 start
+2026-04-27 13:26:19.639 Cycle 2 AGV809 end exit=0 elapsed=0.628s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:19.646 Cycle 2 AGV810 start
+2026-04-27 13:26:20.276 Cycle 2 AGV810 end exit=0 elapsed=0.6s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:20.277 ===== Cycle 2 end elapsed=6.48s =====
+2026-04-27 13:26:21.287 ===== Cycle 3 start =====
+2026-04-27 13:26:21.289 Cycle 3 AGV801 start
+2026-04-27 13:26:21.921 Cycle 3 AGV801 end exit=0 elapsed=0.605s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:21.925 Cycle 3 AGV802 start
+2026-04-27 13:26:22.586 Cycle 3 AGV802 end exit=0 elapsed=0.631s add=481/482 read=481/481 readLines=482 null=481 goodQuality=0 badQuality=481 failLines=0
+2026-04-27 13:26:22.589 Cycle 3 AGV803 start
+2026-04-27 13:26:23.189 Cycle 3 AGV803 end exit=0 elapsed=0.57s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:23.190 Cycle 3 AGV804 start
+2026-04-27 13:26:23.843 Cycle 3 AGV804 end exit=0 elapsed=0.626s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:23.847 Cycle 3 AGV805 start
+2026-04-27 13:26:24.484 Cycle 3 AGV805 end exit=0 elapsed=0.609s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:24.487 Cycle 3 AGV806 start
+2026-04-27 13:26:25.130 Cycle 3 AGV806 end exit=0 elapsed=0.614s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:25.136 Cycle 3 AGV807 start
+2026-04-27 13:26:25.784 Cycle 3 AGV807 end exit=0 elapsed=0.619s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:25.790 Cycle 3 AGV808 start
+2026-04-27 13:26:26.422 Cycle 3 AGV808 end exit=0 elapsed=0.598s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:26.425 Cycle 3 AGV809 start
+2026-04-27 13:26:27.064 Cycle 3 AGV809 end exit=0 elapsed=0.609s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:27.064 Cycle 3 AGV810 start
+2026-04-27 13:26:27.708 Cycle 3 AGV810 end exit=0 elapsed=0.613s add=482/482 read=482/482 readLines=483 null=482 goodQuality=0 badQuality=482 failLines=0
+2026-04-27 13:26:27.708 ===== Cycle 3 end elapsed=6.421s =====
+2026-04-27 13:26:28.723 ===== Cycle 4 start =====
+2026-04-27 13:26:28.728 Cycle 4 AGV801 start
