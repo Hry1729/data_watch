@@ -1,0 +1,54 @@
+{
+  "serverProgId": "ZPMC.OPCServer",
+  "comHost": "",
+  "channel": "OPD_Server",
+  "itemFormat": "{channel}.{device}.{group}.{tag}",
+  "readMode": "poll",
+  "postEnabled": true,
+  "collectorUrl": "http://127.0.0.1:8090/ingest/opcda-tags",
+  "apiKey": "",
+  "source": "cache",
+  "updateRateMs": 1000,
+  "readIntervalMs": 1000,
+  "reportIntervalMs": 1000,
+  "batchSize": 500,
+  "postTimeoutMs": 5000,
+  "maxPostRetries": 2,
+  "retryDelayMs": 1000,
+  "includeBadQuality": true,
+  "devices": [
+    {
+      "deviceId": "agv801",
+      "opcDevice": "AGV801",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 20,
+          "points": [
+            {
+              "tag": "Tag30041800",
+              "address": "300418.0",
+              "dataType": "Boolean",
+              "enabled": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "deviceId": "agv802",
+      "opcDevice": "AGV802",
+      "groups": [
+        {
+          "name": "ViewMain",
+          "csv": "../../../data/AGV_OPC/agv/ViewMain.csv",
+          "skip": 0,
+          "limit": 20,
+          "points": []
+        }
+      ]
+    }
+  ]
+}

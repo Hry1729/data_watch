@@ -1,0 +1,8 @@
+turboapi>=1.0.27
+uvicorn>=0.30.0
+websockets>=14.0
+SQLAlchemy>=2.0
+aiomysql>=0.2.0
+taospy>=2.8.9
+perspective-python>=3.0.0
+cryptography

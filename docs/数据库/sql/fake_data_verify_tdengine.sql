@@ -1,0 +1,28 @@
+-- TDengine 测试数据验证 SQL（新模型）
+-- 模型：设备类型数据库 -> 设备超级表 -> 变量子表
+
+SHOW DATABASES;
+
+USE `qc`;
+SHOW STABLES LIKE 'qc100';
+SHOW TABLES LIKE 'qc100_1';
+SHOW TABLES LIKE 'qc100_11901';
+DESCRIBE `qc`.`qc100`;
+SELECT ts, value FROM `qc`.`qc100_1` ORDER BY ts DESC LIMIT 10;
+SELECT ts, value FROM `qc`.`qc100_11901` ORDER BY ts DESC LIMIT 10;
+
+USE `asc`;
+SHOW STABLES LIKE 'asc7011';
+SHOW TABLES LIKE 'asc7011_85';
+SHOW TABLES LIKE 'asc7011_4200';
+DESCRIBE `asc`.`asc7011`;
+SELECT ts, value FROM `asc`.`asc7011_85` ORDER BY ts DESC LIMIT 10;
+SELECT ts, value FROM `asc`.`asc7011_4200` ORDER BY ts DESC LIMIT 10;
+
+USE `agv`;
+SHOW STABLES LIKE 'agv801';
+SHOW TABLES LIKE 'agv801_100';
+SHOW TABLES LIKE 'agv801_200';
+DESCRIBE `agv`.`agv801`;
+SELECT ts, value FROM `agv`.`agv801_100` ORDER BY ts DESC LIMIT 10;
+SELECT ts, value FROM `agv`.`agv801_200` ORDER BY ts DESC LIMIT 10;

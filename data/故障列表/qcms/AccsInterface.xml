@@ -1,0 +1,145 @@
+<?xml version="1.0"?>
+<AccsConfig xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <!--OPCIP>192.168.137.1</OPCIP-->
+  <OPCIP>localhost</OPCIP>
+  <OPCProgID>ZPMC.OPCServer.2</OPCProgID>
+  <SpreaderMode>SingleLift</SpreaderMode>
+  <OpcAddress_Prefix>STS.</OpcAddress_Prefix>
+  <QCArray>
+   <QC Name="STS" FaceName="102"/>
+  </QCArray>
+  <OpcTagItemArray>
+    <OpcTagItem TagName="PC_PLC.Agv1CmdId" OpcAddress="PC_PLC.Agv1CmdId" />
+    <OpcTagItem TagName="PC_PLC.Agv2CmdId" OpcAddress="PC_PLC.Agv2CmdId" />
+    <OpcTagItem TagName="PC_PLC.AgvArriveForMt" OpcAddress="PC_PLC.AgvArriveForMt" />
+    <OpcTagItem TagName="PC_PLC.AgvArriveForPt" OpcAddress="PC_PLC.AgvArriveForPt" />
+    <OpcTagItem TagName="PC_PLC.HeartBeat" OpcAddress="PC_PLC.HeartBeat" />
+    <OpcTagItem TagName="PC_PLC.MtAgvOperateStatus" OpcAddress="PC_PLC.MtAgvOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.MtGotoPfPermit" OpcAddress="PC_PLC.MtGotoPfPermit" />
+    <OpcTagItem TagName="PC_PLC.MtInnerApronOperateStatus" OpcAddress="PC_PLC.MtInnerApronOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.MtMacroCmd" OpcAddress="PC_PLC.MtMacroCmd" />
+    <OpcTagItem TagName="PC_PLC.MtOperationID" OpcAddress="PC_PLC.MtOperationID" />
+    <OpcTagItem TagName="PC_PLC.MtPfLsOperateStatus" OpcAddress="PC_PLC.MtPfLsOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.MtPfWsOperateStatus" OpcAddress="PC_PLC.MtPfWsOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.MtShipOperateStatus" OpcAddress="PC_PLC.MtShipOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.PtAgvOperateStatus" OpcAddress="PC_PLC.PtAgvOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.PtGotoPfPermit" OpcAddress="PC_PLC.PtGotoPfPermit" />
+    <OpcTagItem TagName="PC_PLC.PtInnerApronOperateStatus" OpcAddress="PC_PLC.PtInnerApronOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.PtMacroCmd" OpcAddress="PC_PLC.PtMacroCmd" />
+    <OpcTagItem TagName="PC_PLC.PtOperationID" OpcAddress="PC_PLC.PtOperationID" />
+    <OpcTagItem TagName="PC_PLC.PtPfLsOperateStatus" OpcAddress="PC_PLC.PtPfLsOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.PtPfWsOperateStatus" OpcAddress="PC_PLC.PtPfWsOperateStatus" />
+    <OpcTagItem TagName="PC_PLC.PtRemoteReset" OpcAddress="PC_PLC.PtRemoteReset" />
+    <OpcTagItem TagName="PC_PLC.ShipInfo" OpcAddress="PC_PLC.ShipInfo" />
+    <OpcTagItem TagName="PC_PLC.SpareA" OpcAddress="PC_PLC.SpareA" />
+    <OpcTagItem TagName="PC_PLC.SpareE" OpcAddress="PC_PLC.SpareE" />
+    <OpcTagItem TagName="PC_PLC.SpareF5to12" OpcAddress="PC_PLC.SpareF5to12" />
+    <OpcTagItem TagName="PC_PLC.SpareG11to18" OpcAddress="PC_PLC.SpareG11to18" />
+    <OpcTagItem TagName="PC_PLC.SpareG8" OpcAddress="PC_PLC.SpareG8" />
+    <OpcTagItem TagName="PC_PLC.SpareH2to4" OpcAddress="PC_PLC.SpareH2to4" />
+    <OpcTagItem TagName="PC_PLC.SpareI2to4" OpcAddress="PC_PLC.SpareI2to4" />
+    <OpcTagItem TagName="PC_PLC.SpareJ1to16" OpcAddress="PC_PLC.SpareJ1to16" />
+    <OpcTagItem TagName="PC_PLC.TwistLockerMode" OpcAddress="PC_PLC.TwistLockerMode" />
+    <OpcTagItem TagName="PC_PLC.LSPfOperationLight" OpcAddress="PC_PLC.LSPfOperationLight" />
+    <OpcTagItem TagName="PC_PLC.WSPfOperationLight" OpcAddress="PC_PLC.WSPfOperationLight" />
+
+    <OpcTagItem TagName="PLC_PC.PtTrolleyPos" OpcAddress="PLC_PC.PtTrolleyPos"/>
+    <OpcTagItem TagName="PLC_PC.Agv1CmdID" OpcAddress="PLC_PC.Agv1CmdID" />
+    <OpcTagItem TagName="PLC_PC.Agv2CmdID" OpcAddress="PLC_PC.Agv2CmdID" />
+    <OpcTagItem TagName="PLC_PC.BayCmdInfo" OpcAddress="PLC_PC.BayCmdInfo" />
+    <OpcTagItem TagName="PLC_PC.HeartBeat" OpcAddress="PLC_PC.HeartBeat" />
+    <OpcTagItem TagName="PLC_PC.CurrentShipInfo" OpcAddress="PLC_PC.CurrentShipInfo" />
+    <OpcTagItem TagName="PLC_PC.MtDeviceState" OpcAddress="PLC_PC.MtDeviceState" />
+    <OpcTagItem TagName="PLC_PC.MtMacroCmd" OpcAddress="PLC_PC.MtMacroCmd" />
+    <OpcTagItem TagName="PLC_PC.MtOperation" OpcAddress="PLC_PC.MtOperation" />
+    <OpcTagItem TagName="PLC_PC.OcrRef" OpcAddress="PLC_PC.OcrRef" />
+    <OpcTagItem TagName="PLC_PC.PfStatus" OpcAddress="PLC_PC.PfStatus" />
+    <OpcTagItem TagName="PLC_PC.PtDeviceState" OpcAddress="PLC_PC.PtDeviceState" />
+    <OpcTagItem TagName="PLC_PC.PtMacroCmd" OpcAddress="PLC_PC.PtMacroCmd" />
+    <OpcTagItem TagName="PLC_PC.PtOperation" OpcAddress="PLC_PC.PtOperation" />
+    <OpcTagItem TagName="PLC_PC.RecordID" OpcAddress="PLC_PC.RecordID" />
+    <OpcTagItem TagName="PLC_PC.Spare12to16" OpcAddress="PLC_PC.Spare12to16" />
+    <OpcTagItem TagName="PLC_PC.Sparej6" OpcAddress="PLC_PC.Sparej6" />
+    <OpcTagItem TagName="PLC_PC.StsGantryState" OpcAddress="PLC_PC.StsGantryState" />
+
+    <OpcTagItem TagName="PLC_PC.PtSpdSize" OpcAddress="PLC_PC.PtSpdSize" />
+	<OpcTagItem TagName="PLC_PC.MtSpdWsSize" OpcAddress="PLC_PC.MtSpdWsSize" />
+	<OpcTagItem TagName="PLC_PC.MtSpdLsSize" OpcAddress="PLC_PC.MtSpdLsSize" />
+        <OpcTagItem TagName="PLC_PC.TwistLockerMode" OpcAddress="PLC_PC.TwistLockerMode" />
+        <OpcTagItem TagName="PLC_PC.PfWsTwistStatus" OpcAddress="PLC_PC.PfWsTwistStatus" />
+        <OpcTagItem TagName="PLC_PC.PfLsTwistStatus" OpcAddress="PLC_PC.PfLsTwistStatus" />
+        <OpcTagItem TagName="PLC_PC.MtOccupyPf" OpcAddress="PLC_PC.MtOccupyPf" />
+        <OpcTagItem TagName="PLC_PC.PtOccupyPf" OpcAddress="PLC_PC.PtOccupyPf" />
+        <OpcTagItem TagName="PLC_PC.MtInstructionState" OpcAddress="PLC_PC.MtInstructionState" />
+        <OpcTagItem TagName="PLC_PC.PtInstructionState" OpcAddress="PLC_PC.PtInstructionState" />
+        <OpcTagItem TagName="PLC_PC.StsGantryPos" OpcAddress="PLC_PC.StsGantryPos" />
+        <OpcTagItem TagName="PLC_PC.StsGantryStatus" OpcAddress="PLC_PC.StsGantryStatus" />
+        <OpcTagItem TagName="PLC_PC.MtSpdWsTwist" OpcAddress="PLC_PC.MtSpdWsTwist" />
+        <OpcTagItem TagName="PLC_PC.MtSpdLsTwist" OpcAddress="PLC_PC.MtSpdLsTwist" />
+        <OpcTagItem TagName="PLC_PC.PtSpdTwist" OpcAddress="PLC_PC.PtSpdTwist" />
+        <OpcTagItem TagName="PLC_PC.PfWsCntSize" OpcAddress="PLC_PC.PfWsCntSize" />
+        <OpcTagItem TagName="PLC_PC.PfLsCntSize" OpcAddress="PLC_PC.PfLsCntSize" />
+        <OpcTagItem TagName="PLC_PC.OperateId" OpcAddress="PLC_PC.OperateId" />
+        <OpcTagItem TagName="PLC_PC.MtFlowMode" OpcAddress="PLC_PC.MtFlowMode" />
+        <OpcTagItem TagName="PLC_PC.MtCmdResend" OpcAddress="PLC_PC.MtCmdResend" />
+        <OpcTagItem TagName="PLC_PC.PtCmdResend" OpcAddress="PLC_PC.PtCmdResend" />
+
+  </OpcTagItemArray>
+
+  <PortalTrolleyControlPointArray>
+	  <ControlPoint Name="PlatformLandSideWorkPoint"  Id="211" TrolleyPosition="31312" HoistPosition="14000" />
+	  <ControlPoint Name="PlatformLandSideWaitPoint" Id="311" TrolleyPosition="31178" HoistPosition="15600"/>
+	  <ControlPoint Name="PlatformWaterSideWorkPoint" Id="212"  TrolleyPosition="37660" HoistPosition="12300"/>
+	  <ControlPoint Name="PlatformWaterSideWaitPoint" Id="312"  TrolleyPosition="37610" HoistPosition="15600"/>
+	  <ControlPoint Name="PlatformLandSideEnterPoint" Id="0"  TrolleyPosition="17000" HoistPosition="15600"/>
+	  <ControlPoint Name="PlatformWaterSideEnterPoint" Id="0"  TrolleyPosition="42736" HoistPosition="15600"/>
+	  <ControlPoint Name="LandSideStopPoint" Id="0"  TrolleyPosition="10100" HoistPosition="15600"/>
+	  <ControlPoint Name="WaterSideStopPoint" Id="0"  TrolleyPosition="42736" HoistPosition="15600"/>
+	  <ControlPoint Name="StandbyPoint" Id="0"  TrolleyPosition="17000" HoistPosition="15600"/>
+	  <ControlPoint Name="Lane1WorkPoint" Id="106"  TrolleyPosition="15000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane1WaitPoint" Id="306"  TrolleyPosition="15000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane2WorkPoint" Id="105"  TrolleyPosition="11000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane2WaitPoint" Id="305"  TrolleyPosition="11000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane3WorkPoint" Id="104"  TrolleyPosition="7000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane3WaitPoint" Id="304"  TrolleyPosition="7000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane4WorkPoint" Id="103"  TrolleyPosition="3000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane4WaitPoint" Id="303"  TrolleyPosition="3000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane5WorkPoint" Id="102"  TrolleyPosition="3000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane5WaitPoint" Id="302"  TrolleyPosition="3000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane6WorkPoint" Id="101"  TrolleyPosition="3000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane6WaitPoint" Id="301"  TrolleyPosition="3000" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane7WorkPoint" Id="0"  TrolleyPosition="3000" HoistPosition="5300"/>
+	  <ControlPoint Name="Lane7WaitPoint" Id="0"  TrolleyPosition="3000" HoistPosition="31100"/>
+  </PortalTrolleyControlPointArray>
+  
+  <MainTrolleyControlPointArray>
+	  <ControlPoint Name="PlatformLandSideWorkPoint" Id="211" TrolleyPosition="31312" HoistPosition="14000" />
+	  <ControlPoint Name="PlatformLandSideWaitPoint" Id="406"  TrolleyPosition="31312" HoistPosition="31100"/>
+	  <ControlPoint Name="PlatformWaterSideWorkPoint" Id="212"  TrolleyPosition="37660" HoistPosition="14000"/>
+	  <ControlPoint Name="PlatformWaterSideWaitPoint" Id="421"  TrolleyPosition="37660" HoistPosition="31100"/>
+	  <ControlPoint Name="PlatformLandSideEnterPoint" Id="0"  TrolleyPosition="25000" HoistPosition="31100"/>
+	  <ControlPoint Name="PlatformWaterSideEnterPoint" Id="0"  TrolleyPosition="42736" HoistPosition="31100"/>
+	  <ControlPoint Name="StandbyPoint" Id="0"  TrolleyPosition="42736" HoistPosition="31100"/>
+	  <ControlPoint Name="Lane1WorkPoint" Id="106"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane1WaitPoint" Id="406"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane2WorkPoint" Id="105"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane2WaitPoint" Id="405"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane3WorkPoint" Id="104"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane3WaitPoint" Id="404"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane4WorkPoint" Id="103"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane4WaitPoint" Id="403"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane5WorkPoint" Id="102"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane5WaitPoint" Id="402"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane6WorkPoint" Id="101"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane6WaitPoint" Id="401"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane7WorkPoint" Id="0"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="Lane7WaitPoint" Id="0"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  
+	  <ControlPoint Name="TruckLane1WorkPoint" Id="122"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="TruckLane1WaitPoint" Id="322"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="TruckLane2WorkPoint" Id="121"  TrolleyPosition="31178" HoistPosition="12300"/>
+	  <ControlPoint Name="TruckLane2WaitPoint" Id="321"  TrolleyPosition="31178" HoistPosition="12300"/>
+
+  </MainTrolleyControlPointArray>
+ 
+  </AccsConfig>
