@@ -102,6 +102,7 @@ class MonitorService:
                     "ioAddress": point["io_address"],
                     "value": self._normalize_point_value(point["var_type"], latest_point["value"] if latest_point else None),
                     "updateTime": self._format_datetime(latest_point["ts"]) if latest_point else "",
+                    "dataType": point["var_type"],
                 }
             )
 

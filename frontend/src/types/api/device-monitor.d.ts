@@ -220,6 +220,7 @@ declare namespace Api {
       ioAddress: string
       value: string | number | boolean
       updateTime: string
+      dataType?: string
     }
 
     /** 设备实时状态/初始化快照 */
