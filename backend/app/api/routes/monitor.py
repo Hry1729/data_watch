@@ -13,7 +13,7 @@ from app.services.monitor import MonitorService
 
 
 router = APIRouter(tags=["monitor"])
-WS_POLL_INTERVAL_SECONDS = 2.0
+DEFAULT_WS_POLL_INTERVAL = 2.0
 
 
 @router.get("/api/device-monitor/monitor/device-tree")
@@ -40,13 +40,14 @@ def register_realtime_websocket(app: TurboAPI) -> None:
         await websocket.accept()
         subscribed_device_ids: set[int] = set()
         last_signatures: dict[int, str] = {}
+        poll_interval = DEFAULT_WS_POLL_INTERVAL
 
         try:
             while True:
                 try:
                     payload = await asyncio.wait_for(
                         websocket.receive_json(),
-                        timeout=WS_POLL_INTERVAL_SECONDS,
+                        timeout=poll_interval,
                     )
                 except asyncio.TimeoutError:
                     if not subscribed_device_ids:
@@ -82,6 +83,12 @@ def register_realtime_websocket(app: TurboAPI) -> None:
                 action = str(payload.get("action", "")).strip().lower()
                 if action == "ping":
                     await websocket.send_json({"type": "pong", "timestamp": _now_timestamp()})
+                    continue
+
+                if action == "config":
+                    rate_ms = payload.get("refreshRate")
+                    if isinstance(rate_ms, (int, float)) and rate_ms >= 100:
+                        poll_interval = rate_ms / 1000.0
                     continue
 
                 if action == "subscribe":

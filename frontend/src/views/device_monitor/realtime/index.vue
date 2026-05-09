@@ -11,11 +11,14 @@
             <ElIcon class="device-arrow"><ArrowRight /></ElIcon>
           </ElButton>
         </div>
-        <div class="point-selector-box" @click="openPointSelector">
-          <template v-if="selectedPoints.length > 0">
-            <span class="point-tags-text">{{ pointTagsText }}</span>
-          </template>
-          <span v-else class="point-placeholder">点击选择监控点位</span>
+        <div class="control-middle">
+          <span class="device-label">已选点位</span>
+          <div class="point-selector-box" @click="openPointSelector">
+            <template v-if="selectedPoints.length > 0">
+              <span class="point-tags-text">{{ pointTagsText }}</span>
+            </template>
+            <span v-else class="point-placeholder">点击选择监控点位</span>
+          </div>
         </div>
         <div class="control-right">
           <ElButton type="primary" :disabled="!canStartMonitor" @click="startMonitor">
@@ -25,16 +28,19 @@
             停止监控
           </ElButton>
           <ElButton :disabled="selectedPoints.length === 0" @click="clearSelection">清空选择</ElButton>
-          <ElButton :disabled="!isMonitoring" @click="handleExport">导出</ElButton>
+          <ElButton :disabled="!hasData" @click="handleExport">导出</ElButton>
           <div class="ws-status" :class="{ connected: wsConnected }">
             <span class="ws-dot"></span>
             <span>{{ wsConnected ? 'WebSocket已连接' : 'WebSocket未连接' }}</span>
           </div>
-          <ElSelect v-model="refreshRate" class="refresh-select" size="small">
+          <ElSelect v-model="refreshRate" class="refresh-select">
+            <ElOption label="0.1秒" :value="100" />
             <ElOption label="0.5秒" :value="500" />
             <ElOption label="1秒" :value="1000" />
             <ElOption label="2秒" :value="2000" />
             <ElOption label="5秒" :value="5000" />
+            <ElOption label="10秒" :value="10000" />
+            <ElOption label="30秒" :value="30000" />
           </ElSelect>
         </div>
       </div>
@@ -83,9 +89,9 @@
         </div>
 
         <!-- Perspective 图表容器 -->
-        <div v-if="isMonitoring && hasData" ref="perspectiveRef" class="perspective-container"></div>
-        <ElEmpty v-else-if="!isMonitoring" description="点击开始监控以查看实时趋势" :image-size="120" />
-        <ElEmpty v-else description="暂无数据" :image-size="120" />
+        <div v-show="isMonitoring || hasData" ref="perspectiveRef" class="perspective-container"></div>
+        <ElEmpty v-if="!isMonitoring && !hasData" description="点击开始监控以查看实时趋势" :image-size="120" />
+        <ElEmpty v-if="isMonitoring && !hasData" description="正在连接并等待数据..." :image-size="120" />
       </ElCard>
 
       <!-- 右侧实时点位卡片容器 -->
@@ -199,14 +205,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
 import { fetchMonitorDeviceTree, fetchRealtimeInit, getRealtimeWebSocketUrl } from '@/api/device-monitor'
 import {
   ensurePerspectiveViewerRuntime,
-  mapPerspectiveViewerRecords,
   type PerspectiveTableClient,
   type PerspectiveViewerClient,
   type PerspectiveWorkerClient
@@ -403,8 +408,22 @@ const selectDevice = async (device: DeviceInfo) => {
   selectedPoints.value = []
   selectorPoints.value = []
   realtimeValues.value.clear()
+  realtimeRecords.value = []
+  clearPerspectiveTable()
   deviceSelectorVisible.value = false
   await loadSelectorPoints(device.deviceId)
+}
+
+// 清理 Perspective Table
+const clearPerspectiveTable = async () => {
+  if (perspectiveTable.value) {
+    try {
+      await perspectiveTable.value.delete()
+    } catch (e) {
+      console.warn('清理Table失败:', e)
+    }
+    perspectiveTable.value = null
+  }
 }
 
 // 点位选择
@@ -443,23 +462,32 @@ const confirmPointSelection = () => {
     }
   }
   selectedPoints.value = selectorPoints.value.filter((p) => tempSelectedVarSeqs.value.includes(p.varSeq))
+  realtimeRecords.value = []
+  clearPerspectiveTable()
   pointSelectorVisible.value = false
 }
 
 const clearSelection = () => {
   selectedPoints.value = []
+  realtimeRecords.value = []
+  clearPerspectiveTable()
 }
 
 // 监控控制
 const startMonitor = async () => {
   if (!canStartMonitor.value) return
   isMonitoring.value = true
-  realtimeRecords.value = []
-  realtimeValues.value.clear()
 
   await initPerspectiveViewer()
   connectWebSocket()
 }
+
+// 监听刷新率变化
+watch(refreshRate, (val) => {
+  if (wsConnected.value) {
+    sendWsMessage({ action: 'config', refreshRate: val })
+  }
+})
 
 const stopMonitor = () => {
   isMonitoring.value = false
@@ -479,6 +507,9 @@ const connectWebSocket = () => {
       wsConnected.value = true
       reconnectAttempts.value = 0
       startHeartbeat()
+
+      // 同步当前刷新率配置
+      sendWsMessage({ action: 'config', refreshRate: refreshRate.value })
 
       // 订阅当前设备
       if (currentDevice.value) {
@@ -564,45 +595,103 @@ const clearReconnectTimer = () => {
   }
 }
 
+const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
+  if (!perspectiveWorker.value || !perspectiveViewer.value || newRecords.length === 0) return
+
+  try {
+    // 转换数据格式：实时模式直接使用 Date 对象，不走 mapPerspectiveViewerRecords 映射
+    const records = newRecords.map((r) => ({
+      timestamp: r.timestamp,
+      varSeq: r.varSeq,
+      pointName: r.pointName,
+      value: r.value
+    }))
+
+    if (!perspectiveTable.value) {
+      // 首次创建表
+      perspectiveTable.value = await perspectiveWorker.value.table(records as any)
+      const config = buildViewerConfig()
+      await perspectiveViewer.value.load(perspectiveTable.value)
+      await perspectiveViewer.value.restore(config)
+    } else {
+      // 增量更新（核心修复：不再销毁表）
+      await (perspectiveTable.value as any).update(records)
+    }
+
+    await perspectiveViewer.value.flush()
+  } catch (error) {
+    console.error('更新Perspective图表失败:', error)
+  }
+}
+
 // WebSocket 消息处理
 const handleWsMessage = (payload: Record<string, unknown>) => {
   if (payload.action === 'pong' || payload.type === 'pong') return
 
-  // 更新实时值
-  const data = payload.data as Array<Record<string, unknown>> | undefined
-  if (Array.isArray(data)) {
-    const now = new Date()
-    data.forEach((item) => {
-      const varSeq = item.varSeq as number
-      const value = item.value
-      const pointName = item.pointName as string
+  // 提取点位数据：snapshot 使用 devices 字段，update 使用 data 或 data.data
+  let pointsList: Array<Record<string, unknown>> | undefined
 
+  if (payload.type === 'snapshot') {
+    // 订阅响应：{ type: "snapshot", devices: [{ data: [...] }] }
+    const devices = payload.devices as Array<Record<string, unknown>> | undefined
+    if (Array.isArray(devices) && devices.length > 0) {
+      pointsList = devices[0].data as Array<Record<string, unknown>> | undefined
+    }
+  } else if (payload.type === 'update') {
+    // 更新推送：兼容 { data: [...] } 或 { data: { data: [...] } }
+    const rawData = payload.data
+    if (Array.isArray(rawData)) {
+      pointsList = rawData
+    } else if (rawData && typeof rawData === 'object') {
+      pointsList = (rawData as any).data as Array<Record<string, unknown>> | undefined
+    }
+  }
+
+  if (!Array.isArray(pointsList) || pointsList.length === 0) return
+
+  const now = new Date()
+  const newRecords: RealtimeDataRecord[] = []
+
+  pointsList.forEach((item) => {
+    const varSeq = item.varSeq as number
+    const value = item.value
+    const pointName = item.pointName as string
+
+    if (varSeq !== undefined) {
       realtimeValues.value.set(varSeq, value as number | string)
 
       // 添加到趋势记录
       if (selectedPoints.value.some((p) => p.varSeq === varSeq)) {
-        realtimeRecords.value.push({
+        const record = {
           timestamp: now,
           varSeq,
           pointName,
           value: typeof value === 'number' ? value : Number(value) || 0
-        })
+        }
+        realtimeRecords.value.push(record)
+        newRecords.push(record)
       }
-    })
-
-    // 限制记录数量
-    if (realtimeRecords.value.length > MAX_RECORDS) {
-      realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
     }
+  })
 
-    lastSyncTime.value = formatTimestamp()
-    void updatePerspectiveTable()
+  // 限制记录数量
+  if (realtimeRecords.value.length > MAX_RECORDS) {
+    realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
+  }
+
+  lastSyncTime.value = formatTimestamp()
+  if (newRecords.length > 0) {
+    void updatePerspectiveTable(newRecords)
   }
 }
 
 // Perspective 图表
 const initPerspectiveViewer = async () => {
-  if (!perspectiveRef.value) return
+  await nextTick() // 确保 DOM 已渲染
+  if (!perspectiveRef.value) {
+    console.warn('[Perspective] 容器元素未就绪')
+    return
+  }
 
   try {
     const runtime = await ensurePerspectiveViewerRuntime()
@@ -625,38 +714,6 @@ const initPerspectiveViewer = async () => {
   } catch (error) {
     console.error('初始化Perspective失败:', error)
     perspectiveReady.value = false
-  }
-}
-
-const updatePerspectiveTable = async () => {
-  if (!perspectiveWorker.value || !perspectiveViewer.value || realtimeRecords.value.length === 0) return
-
-  try {
-    // 删除旧表
-    if (perspectiveTable.value) {
-      await perspectiveTable.value.delete()
-      perspectiveTable.value = null
-    }
-
-    // 创建新表
-    const records = mapPerspectiveViewerRecords(realtimeRecords.value as unknown as Array<{
-      timestamp: string
-      varSeq: number
-      pointName: string
-      value: number | string
-      ioAddress?: string
-      deviceId?: number
-      deviceCode?: string
-    }>)
-    perspectiveTable.value = await perspectiveWorker.value.table(records as unknown as Record<string, unknown>[])
-
-    // 配置图表
-    const config = buildViewerConfig()
-    await perspectiveViewer.value.load(perspectiveTable.value)
-    await perspectiveViewer.value.restore(config)
-    await perspectiveViewer.value.flush()
-  } catch (error) {
-    console.error('更新Perspective图表失败:', error)
   }
 }
 
@@ -758,26 +815,37 @@ watch(chartType, async () => {
 .control-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 8px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .control-left {
   display: flex;
-  flex-wrap: wrap;
+  flex-shrink: 0;
+  gap: 12px;
+  align-items: center;
+}
+
+.control-middle {
+  display: flex;
+  flex: 1;
   gap: 8px;
   align-items: center;
+  margin-left: 8px;
+  min-width: 300px;
 }
 
 .device-label {
   font-size: 13px;
   color: #6b7a90;
+  white-space: nowrap;
 }
 
 .device-btn {
   display: inline-flex;
   gap: 6px;
+  flex-shrink: 0;
   align-items: center;
   padding: 6px 14px;
   border: 1px solid #e0e5ee;
@@ -805,8 +873,6 @@ watch(chartType, async () => {
 
 .point-selector-box {
   flex: 1;
-  min-width: 200px;
-  max-width: 400px;
   padding: 6px 16px;
   border: 1px solid #e0e5ee;
   border-radius: 10px;
@@ -835,8 +901,9 @@ watch(chartType, async () => {
 .control-right {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
+  margin-left: 8px;
 }
 
 .ws-status {
@@ -844,6 +911,7 @@ watch(chartType, async () => {
   gap: 6px;
   align-items: center;
   padding: 6px 12px;
+  margin-left: 8px;
   border-radius: 16px;
   background: #f5f5f5;
   font-size: 13px;
@@ -868,6 +936,7 @@ watch(chartType, async () => {
 
 .refresh-select {
   width: 100px;
+  margin-left: 8px;
 }
 
 // 主内容区

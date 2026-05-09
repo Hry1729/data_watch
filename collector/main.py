@@ -384,8 +384,13 @@ async def main():
         )
         raise
 
-    # 用配置文件中的日志级别重新初始化
-    setup_logger(level=config.log_level)
+    # 用配置文件中的日志参数重新初始化
+    setup_logger(
+        level=config.log_level,
+        log_file=config.log_file,
+        log_max_bytes=config.log_max_bytes,
+        log_backup_count=config.log_backup_count,
+    )
     logger.info("Using config file: %s", os.getenv("COLLECTOR_CONFIG", "config/settings.toml"))
 
     runtime_db_manager = None

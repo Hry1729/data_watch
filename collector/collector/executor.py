@@ -14,7 +14,7 @@
 import time
 import traceback
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core.exceptions import ReadError
 from core.logger import get_logger
@@ -23,6 +23,9 @@ from data_queue.buffer import DataBuffer, DataPoint
 from device.manager import DeviceManager
 
 logger = get_logger("executor")
+
+# 相同日志抑制间隔（秒）
+LOG_SUPPRESS_INTERVAL = 30
 
 
 class TaskExecutor:
@@ -50,6 +53,8 @@ class TaskExecutor:
         self._total_reads = 0
         self._total_errors = 0
         self._total_dropped = 0  # 队列满时丢弃的点数
+        # 日志抑制：记录每个设备上次 "not connected" 警告的时间
+        self._device_warn_last_time: Dict[str, float] = {}
 
     async def execute(self, task: CollectTask) -> None:
         """
@@ -62,11 +67,16 @@ class TaskExecutor:
         scan_task = task.scan_task
 
         if not device.driver or not device.driver.is_connected:
-            logger.warning(
-                "Device %s not connected, skipping task %s",
-                device.device_id,
-                task.task_name,
-            )
+            # 日志抑制：同一设备在 LOG_SUPPRESS_INTERVAL 秒内只输出一次警告
+            now = time.time()
+            last_warn = self._device_warn_last_time.get(device.device_id, 0)
+            if now - last_warn >= LOG_SUPPRESS_INTERVAL:
+                logger.warning(
+                    "Device %s not connected, skipping task %s",
+                    device.device_id,
+                    task.task_name,
+                )
+                self._device_warn_last_time[device.device_id] = now
             if self.device_manager:
                 await self.device_manager.schedule_reconnect(device)
             return

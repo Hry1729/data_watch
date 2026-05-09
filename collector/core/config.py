@@ -121,6 +121,9 @@ class CollectorConfig:
 
     # Logging
     log_level: str = "INFO"
+    log_file: Optional[str] = None  # 日志文件路径，如 "logs/collector.log"，为空则只输出控制台
+    log_max_bytes: int = 10 * 1024 * 1024  # 单个日志文件最大 10MB
+    log_backup_count: int = 5  # 保留 5 个历史日志文件
 
     # Queue
     queue_max_size: int = 10000
