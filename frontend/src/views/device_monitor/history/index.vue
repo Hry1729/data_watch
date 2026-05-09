@@ -5,21 +5,17 @@
       <div class="card-head card-head--split">
         <div>
           <p class="card-title">历史分析</p>
-          <p class="card-subtitle">Perspective Viewer 主渲染</p>
+          <p class="card-subtitle">ECharts 趋势渲染</p>
         </div>
         <div class="head-actions">
           <ElButtonGroup size="small">
             <ElButton
-              :type="viewerPlugin === 'Y Line' ? 'primary' : 'default'"
-              @click="handleViewerPluginChange('Y Line')"
+              v-for="type in (['line', 'area', 'bar', 'scatter'] as const)"
+              :key="type"
+              :type="chartType === type ? 'primary' : 'default'"
+              @click="handleChartTypeChange(type)"
             >
-              Y Line
-            </ElButton>
-            <ElButton
-              :type="viewerPlugin === 'Datagrid' ? 'primary' : 'default'"
-              @click="handleViewerPluginChange('Datagrid')"
-            >
-              Datagrid
+              {{ { line: '折线图', area: '面积图', bar: '柱状图', scatter: '散点图' }[type] }}
             </ElButton>
           </ElButtonGroup>
           <ElButton size="small" :loading="exporting" @click="handleExport">导出 CSV</ElButton>
@@ -36,9 +32,6 @@
             <ElIcon><Clock /></ElIcon>
             <span>{{ searchForm.startTime }} 至 {{ searchForm.endTime }}</span>
           </div>
-          <ElTag v-if="activeQueryContext" size="small" effect="plain" type="info">
-            Query v{{ activeQueryContext.queryVersion }}
-          </ElTag>
         </div>
         <div class="selected-points">
           <ElTag v-for="point in selectedPoints" :key="point.varSeq" class="point-tag">
@@ -50,11 +43,33 @@
       <MonitorLoadingPlaceholder
         v-if="loading && !hasResultData"
         title="历史数据加载中"
-        description="正在读取历史数据并准备 Perspective 渲染"
+        description="正在读取历史数据并准备图表渲染"
         min-height="520px"
         :rows="6"
       />
-      <div v-else-if="hasResultData" ref="perspectiveRef" class="perspective-container"></div>
+      <template v-else-if="hasResultData">
+        <div class="chart-wrapper">
+          <div ref="chartRef" class="echarts-container" v-show="!loading"></div>
+        </div>
+
+        <div class="table-wrapper">
+          <p class="table-title">历史数据明细</p>
+          <ElTable :data="tableData" border stripe height="400" size="small">
+            <ElTableColumn prop="time" label="采样时间" fixed="left" width="180" sortable />
+            <ElTableColumn
+              v-for="point in selectedPoints"
+              :key="point.varSeq"
+              :prop="`point_${point.varSeq}`"
+              :label="point.pointName"
+              min-width="120"
+            >
+              <template #default="scope">
+                {{ formatValue(scope.row[`point_${point.varSeq}`]) }}
+              </template>
+            </ElTableColumn>
+          </ElTable>
+        </div>
+      </template>
       <ElEmpty v-else :description="emptyDescription" :image-size="120" />
     </ElCard>
 
@@ -140,10 +155,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Setting, Clock, InfoFilled } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
 import { saveBlobAs } from '@/utils/file/save-blob'
 import {
@@ -153,31 +169,12 @@ import {
   fetchHistoryQuery
 } from '@/api/device-monitor'
 import { isHttpError } from '@/utils/http/error'
-import {
-  buildPerspectiveWebSocketUrl,
-  createPerspectiveSessionState,
-  nextPerspectiveQueryVersion,
-  parsePerspectiveWsEvent,
-  resetPerspectiveSession,
-  rotatePerspectiveConnectionId,
-  type HistoryPerspectiveRecord,
-  type HistoryQueryContext,
-  type PerspectiveSessionState,
-  type PerspectiveSnapshotEvent
-} from './perspective-session'
-import {
-  ensurePerspectiveViewerRuntime,
-  mapPerspectiveViewerRecords,
-  type PerspectiveTableClient,
-  type PerspectiveViewerClient,
-  type PerspectiveWorkerClient
-} from './perspective-runtime'
 
 defineOptions({ name: 'HistoryData' })
 
 type PointInfo = Api.DeviceMonitor.HistoryPointItem
 type DeviceInfo = Api.DeviceMonitor.HistoryDeviceItem
-type ViewerPlugin = 'Y Line' | 'Datagrid'
+type ChartType = 'line' | 'bar' | 'scatter' | 'area'
 
 interface HistorySearchForm {
   deviceId?: number
@@ -203,36 +200,125 @@ const selectedPoints = ref<PointInfo[]>([])
 
 const loading = ref(false)
 const exporting = ref(false)
-const viewerPlugin = ref<ViewerPlugin>('Y Line')
+const chartType = ref<ChartType>('line')
 const renderedRecordCount = ref(0)
 
-const perspectiveRef = ref<HTMLElement>()
-const perspectiveWorker = shallowRef<PerspectiveWorkerClient | null>(null)
-const perspectiveTable = shallowRef<PerspectiveTableClient | null>(null)
-const perspectiveViewer = shallowRef<PerspectiveViewerClient | null>(null)
-const perspectiveSocket = shallowRef<WebSocket | null>(null)
-const perspectiveSession = ref<PerspectiveSessionState>(createPerspectiveSessionState())
-const activeQueryContext = ref<HistoryQueryContext | null>(null)
-const latestAppliedQueryVersion = ref(0)
+const chartRef = ref<HTMLElement>()
+let chartInstance: echarts.ECharts | null = null
+const historyData = ref<Api.DeviceMonitor.HistoryDataResponse | null>(null)
 
-let perspectiveMounted = false
-let perspectivePingTimer: number | null = null
-let connectingPerspectiveSocket: Promise<void> | null = null
-let perspectiveRenderTask: Promise<void> = Promise.resolve()
-let suppressDisconnectNotice = false
+const hasResultData = computed(() => !!historyData.value && historyData.value.times.length > 0)
 
-const hasResultData = computed(() => renderedRecordCount.value > 0)
+const tableData = computed(() => {
+  if (!historyData.value) return []
+  const { times, points } = historyData.value
+  return times.map((time, index) => {
+    const row: any = { time }
+    points.forEach((p) => {
+      row[`point_${p.varSeq}`] = p.values[index]
+    })
+    return row
+  })
+})
+
+const formatValue = (val: any) => {
+  if (val === null || val === undefined || val === '') return '--'
+  return typeof val === 'number' ? val.toFixed(2) : val
+}
+
 const emptyDescription = computed(() => {
   if (loading.value) {
     return '正在查询历史数据...'
   }
 
-  if (activeQueryContext.value) {
+  if (historyData.value) {
     return '当前查询范围暂无历史数据'
   }
 
   return '请选择设备和点位后查询数据'
 })
+
+const buildChartOption = (): echarts.EChartsOption => {
+  if (!historyData.value) return {}
+
+  const series = historyData.value.points.map((point) => {
+    const seriesItem: any = {
+      name: point.pointName,
+      data: point.values,
+      type: chartType.value === 'area' ? 'line' : chartType.value,
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 4,
+      showSymbol: false
+    }
+
+    if (chartType.value === 'area') {
+      seriesItem.areaStyle = {
+        opacity: 0.1
+      }
+    }
+
+    return seriesItem
+  })
+
+  return {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: {
+        type: 'cross',
+        label: {
+          backgroundColor: '#6a7985'
+        }
+      }
+    },
+    legend: {
+      data: historyData.value.points.map((p) => p.pointName),
+      bottom: 0,
+      type: 'scroll'
+    },
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: '15%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: historyData.value.times
+    },
+    yAxis: {
+      type: 'value'
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        show: true,
+        xAxisIndex: [0],
+        start: 0,
+        end: 100,
+        bottom: 30
+      },
+      {
+        type: 'inside',
+        xAxisIndex: [0],
+        start: 0,
+        end: 100
+      }
+    ],
+    series
+  }
+}
+
+const initOrUpdateChart = () => {
+  if (!chartRef.value) return
+
+  if (!chartInstance) {
+    chartInstance = echarts.init(chartRef.value)
+  }
+
+  chartInstance.setOption(buildChartOption(), true)
+}
 
 const timeShortcuts = [
   {
@@ -240,6 +326,14 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 3600000)
+      return [start, end]
+    }
+  },
+  {
+    text: '最近3小时',
+    value: () => {
+      const end = new Date()
+      const start = new Date(end.getTime() - 10800000)
       return [start, end]
     }
   },
@@ -252,26 +346,18 @@ const timeShortcuts = [
     }
   },
   {
+    text: '最近12小时',
+    value: () => {
+      const end = new Date()
+      const start = new Date(end.getTime() - 43200000)
+      return [start, end]
+    }
+  },
+  {
     text: '最近24小时',
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 86400000)
-      return [start, end]
-    }
-  },
-  {
-    text: '最近7天',
-    value: () => {
-      const end = new Date()
-      const start = new Date(end.getTime() - 604800000)
-      return [start, end]
-    }
-  },
-  {
-    text: '最近30天',
-    value: () => {
-      const end = new Date()
-      const start = new Date(end.getTime() - 2592000000)
       return [start, end]
     }
   }
@@ -292,7 +378,7 @@ const formatDateTime = (date: Date) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
-const buildDefaultTimeRange = (days: number = 7): [string, string] => {
+const buildDefaultTimeRange = (days: number = 1): [string, string] => {
   const end = new Date()
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000)
   return [formatDateTime(start), formatDateTime(end)]
@@ -302,29 +388,6 @@ const buildFileDate = () => {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-}
-
-const buildViewerConfig = () => {
-  if (viewerPlugin.value === 'Datagrid') {
-    return {
-      plugin: 'Datagrid',
-      group_by: [],
-      split_by: [],
-      columns: ['timestamp', 'pointName', 'value', 'ioAddress'],
-      sort: [['timestamp', 'asc']]
-    }
-  }
-
-  return {
-    plugin: 'Y Line',
-    group_by: ['timestamp'],
-    split_by: ['pointName'],
-    columns: ['value'],
-    sort: [['timestamp', 'asc']],
-    aggregates: {
-      value: 'avg'
-    }
-  }
 }
 
 const buildHistoryErrorMessage = (error: unknown) => {
@@ -345,345 +408,6 @@ const buildHistoryErrorMessage = (error: unknown) => {
   }
 
   return error.message || '查询失败'
-}
-
-const buildPerspectiveRecordsFromResponse = (
-  deviceId: number,
-  result: Api.DeviceMonitor.HistoryDataResponse
-) => {
-  const device = deviceList.value.find((item) => item.id === deviceId)
-  const pointMeta = new Map(pointList.value.map((point) => [point.varSeq, point]))
-  const records: HistoryPerspectiveRecord[] = []
-
-  result.times.forEach((timestamp, timeIndex) => {
-    result.points.forEach((point) => {
-      const rawValue = point.values[timeIndex]
-      if (rawValue === null || rawValue === undefined || rawValue === '' || rawValue === '-') {
-        return
-      }
-
-      const numericValue =
-        typeof rawValue === 'number' ? rawValue : Number.parseFloat(String(rawValue))
-
-      if (!Number.isFinite(numericValue)) {
-        return
-      }
-
-      const pointInfo = pointMeta.get(point.varSeq)
-      records.push({
-        timestamp,
-        deviceId,
-        deviceCode: device?.deviceCode || device?.name || '',
-        varSeq: point.varSeq,
-        pointName: point.pointName,
-        ioAddress: pointInfo?.ioAddress || '',
-        value: numericValue
-      })
-    })
-  })
-
-  return records
-}
-
-const syncSelectionFromSnapshot = (event: PerspectiveSnapshotEvent) => {
-  if (!event.records.length) {
-    return
-  }
-
-  const pointMap = new Map<number, PointInfo>()
-  let minTimestamp = event.records[0].timestamp
-  let maxTimestamp = event.records[0].timestamp
-
-  event.records.forEach((record) => {
-    if (!pointMap.has(record.varSeq)) {
-      pointMap.set(record.varSeq, {
-        varSeq: record.varSeq,
-        pointName: record.pointName,
-        ioAddress: record.ioAddress
-      })
-    }
-
-    if (record.timestamp < minTimestamp) minTimestamp = record.timestamp
-    if (record.timestamp > maxTimestamp) maxTimestamp = record.timestamp
-  })
-
-  const preservedStartTime =
-    activeQueryContext.value?.queryVersion === event.queryVersion
-      ? activeQueryContext.value.startTime
-      : searchForm.value.startTime || minTimestamp
-  const preservedEndTime =
-    activeQueryContext.value?.queryVersion === event.queryVersion
-      ? activeQueryContext.value.endTime
-      : searchForm.value.endTime || maxTimestamp
-  const preservedQueryVersion = activeQueryContext.value?.queryVersion || event.queryVersion
-
-  selectedPoints.value = Array.from(pointMap.values())
-  searchForm.value.startTime = preservedStartTime
-  searchForm.value.endTime = preservedEndTime
-  timeRange.value = [preservedStartTime, preservedEndTime]
-  activeQueryContext.value = {
-    deviceId: event.records[0].deviceId,
-    varSeqs: Array.from(pointMap.keys()),
-    startTime: preservedStartTime,
-    endTime: preservedEndTime,
-    queryVersion: preservedQueryVersion,
-    perspectiveSessionId: perspectiveSession.value.perspectiveSessionId
-  }
-}
-
-const clearPerspectivePing = () => {
-  if (perspectivePingTimer !== null) {
-    window.clearInterval(perspectivePingTimer)
-    perspectivePingTimer = null
-  }
-}
-
-const closePerspectiveSocket = () => {
-  clearPerspectivePing()
-
-  if (!perspectiveSocket.value) return
-
-  const socket = perspectiveSocket.value
-  perspectiveSocket.value = null
-  socket.onopen = null
-  socket.onmessage = null
-  socket.onerror = null
-  socket.onclose = null
-
-  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-    socket.close()
-  }
-}
-
-const initPerspectiveViewer = async () => {
-  if (!perspectiveRef.value) return
-
-  const runtime = await ensurePerspectiveViewerRuntime()
-
-  if (!perspectiveWorker.value) {
-    perspectiveWorker.value = await runtime.perspective.worker()
-  }
-
-  if (!perspectiveViewer.value) {
-    perspectiveRef.value.innerHTML = ''
-    const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
-    viewer.setAttribute('theme', 'Pro Light')
-    viewer.style.display = 'block'
-    viewer.style.width = '100%'
-    viewer.style.height = '520px'
-    perspectiveRef.value.appendChild(viewer)
-    perspectiveViewer.value = viewer
-  }
-}
-
-const destroyPerspectiveViewer = async () => {
-  const viewer = perspectiveViewer.value
-  perspectiveViewer.value = null
-
-  if (!viewer) return
-
-  try {
-    await viewer.delete()
-  } catch (error) {
-    console.warn('清理 Perspective Viewer 失败，继续重建:', error)
-  }
-
-  viewer.remove()
-  if (perspectiveRef.value) {
-    perspectiveRef.value.innerHTML = ''
-  }
-}
-
-const deletePerspectiveTable = async () => {
-  const table = perspectiveTable.value
-  perspectiveTable.value = null
-
-  if (!table) return
-
-  await table.delete()
-}
-
-const cleanupPerspectiveResources = async () => {
-  await destroyPerspectiveViewer()
-  await deletePerspectiveTable()
-}
-
-const applyViewerConfig = async () => {
-  if (!perspectiveViewer.value) return
-
-  try {
-    await perspectiveViewer.value.restore(buildViewerConfig())
-  } catch (error) {
-    if (viewerPlugin.value !== 'Y Line') {
-      throw error
-    }
-
-    console.error('Perspective Y Line 渲染失败，回退到 Datagrid:', error)
-    viewerPlugin.value = 'Datagrid'
-    await perspectiveViewer.value.restore(buildViewerConfig())
-    ElMessage.warning('Y Line 渲染失败，已自动切换到 Datagrid')
-  }
-}
-
-const performPerspectiveRender = async (records: HistoryPerspectiveRecord[]) => {
-  renderedRecordCount.value = records.length
-
-  if (!records.length) {
-    await cleanupPerspectiveResources()
-    return
-  }
-
-  await nextTick()
-  await initPerspectiveViewer()
-
-  if (!perspectiveWorker.value || !perspectiveViewer.value) return
-
-  if (perspectiveTable.value) {
-    await destroyPerspectiveViewer()
-    await deletePerspectiveTable()
-    await initPerspectiveViewer()
-  }
-
-  if (!perspectiveViewer.value) {
-    return
-  }
-
-  const viewerRecords = mapPerspectiveViewerRecords(records)
-  perspectiveTable.value = await perspectiveWorker.value.table(viewerRecords as unknown as Record<string, unknown>[])
-
-  await perspectiveViewer.value.load(perspectiveTable.value)
-  await applyViewerConfig()
-  await perspectiveViewer.value.flush()
-  await perspectiveViewer.value.resize(true)
-}
-
-const renderPerspectiveRecords = (records: HistoryPerspectiveRecord[]) => {
-  const task = perspectiveRenderTask.then(() => performPerspectiveRender(records))
-  perspectiveRenderTask = task.catch(() => undefined)
-  return task
-}
-
-const applyPerspectiveSnapshot = async (event: PerspectiveSnapshotEvent) => {
-  if (event.queryVersion && event.queryVersion < latestAppliedQueryVersion.value) {
-    return
-  }
-
-  latestAppliedQueryVersion.value = Math.max(latestAppliedQueryVersion.value, event.queryVersion)
-  perspectiveSession.value.queryVersion = Math.max(
-    perspectiveSession.value.queryVersion,
-    event.queryVersion
-  )
-
-  syncSelectionFromSnapshot(event)
-  await renderPerspectiveRecords(event.records)
-}
-
-const ensurePerspectiveSocket = async () => {
-  if (!perspectiveMounted) return
-
-  if (perspectiveSocket.value?.readyState === WebSocket.OPEN) {
-    return
-  }
-
-  if (connectingPerspectiveSocket) {
-    return connectingPerspectiveSocket
-  }
-
-  rotatePerspectiveConnectionId(perspectiveSession.value)
-  suppressDisconnectNotice = false
-
-  connectingPerspectiveSocket = new Promise<void>((resolve) => {
-    closePerspectiveSocket()
-
-    const socket = new WebSocket(
-      buildPerspectiveWebSocketUrl(
-        perspectiveSession.value.perspectiveSessionId,
-        perspectiveSession.value.connectionId
-      )
-    )
-
-    let settled = false
-    perspectiveSocket.value = socket
-
-    socket.onopen = () => {
-      clearPerspectivePing()
-      perspectivePingTimer = window.setInterval(() => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ action: 'ping' }))
-        }
-      }, 15000)
-
-      if (!settled) {
-        settled = true
-        resolve()
-      }
-    }
-
-    socket.onmessage = (messageEvent) => {
-      let payload: unknown
-      try {
-        payload = JSON.parse(String(messageEvent.data))
-      } catch (error) {
-        console.error('解析 Perspective websocket 消息失败:', error)
-        return
-      }
-
-      const event = parsePerspectiveWsEvent(payload)
-      if (!event) return
-
-      if (event.type === 'snapshot') {
-        void applyPerspectiveSnapshot(event)
-        return
-      }
-
-      if (event.type === 'session_restored') {
-        ElMessage.success('已恢复当前标签页的历史分析会话')
-        return
-      }
-
-      if (event.type === 'session_conflict') {
-        suppressDisconnectNotice = true
-        resetPerspectiveSession(perspectiveSession.value)
-        latestAppliedQueryVersion.value = 0
-        activeQueryContext.value = null
-        selectedPoints.value = []
-        searchForm.value.varSeqs = []
-        void renderPerspectiveRecords([])
-        ElMessage.warning('当前标签页会话冲突，已切换为新会话，请重新查询历史数据')
-        void ensurePerspectiveSocket()
-        return
-      }
-
-      if (event.type === 'error') {
-        ElMessage.error(event.message || 'Perspective 会话异常')
-      }
-    }
-
-    socket.onerror = () => {
-      if (!settled) {
-        settled = true
-        resolve()
-      }
-    }
-
-    socket.onclose = () => {
-      clearPerspectivePing()
-      perspectiveSocket.value = null
-
-      if (!settled) {
-        settled = true
-        resolve()
-      }
-
-      if (perspectiveMounted && !suppressDisconnectNotice && activeQueryContext.value) {
-        ElMessage.warning('Perspective 会话连接已断开，请重新查询历史数据')
-      }
-    }
-  }).finally(() => {
-    connectingPerspectiveSocket = null
-  })
-
-  return connectingPerspectiveSocket
 }
 
 const openDrawer = () => {
@@ -738,10 +462,10 @@ const clearAllPoints = () => {
   searchForm.value.varSeqs = []
 }
 
-const handleViewerPluginChange = async (plugin: ViewerPlugin) => {
-  viewerPlugin.value = plugin
-  if (perspectiveTable.value) {
-    await applyViewerConfig()
+const handleChartTypeChange = (type: ChartType) => {
+  chartType.value = type
+  if (hasResultData.value) {
+    initOrUpdateChart()
   }
 }
 
@@ -756,6 +480,11 @@ const handleQuery = async () => {
     return
   }
 
+  if (searchForm.value.varSeqs.length > 20) {
+    ElMessage.warning('单次历史查询最多选择 20 个点位')
+    return
+  }
+
   if (timeRange.value && timeRange.value[0] && timeRange.value[1]) {
     searchForm.value.startTime = timeRange.value[0]
     searchForm.value.endTime = timeRange.value[1]
@@ -766,41 +495,30 @@ const handleQuery = async () => {
     timeRange.value = defaultRange
   }
 
+  // 校验时间范围不能超过 24 小时
+  const start = new Date(searchForm.value.startTime).getTime()
+  const end = new Date(searchForm.value.endTime).getTime()
+  if (end - start > 24 * 3600 * 1000) {
+    ElMessage.warning('历史查询时间范围不能超过 24 小时')
+    return
+  }
+
   loading.value = true
   try {
-    await ensurePerspectiveSocket()
-
-    const queryVersion = nextPerspectiveQueryVersion(perspectiveSession.value)
-    const result = await fetchHistoryQuery(
-      {
-        deviceId: searchForm.value.deviceId,
-        varSeqs: searchForm.value.varSeqs,
-        startTime: searchForm.value.startTime,
-        endTime: searchForm.value.endTime
-      },
-      {
-        headers: {
-          'X-Perspective-Session-Id': perspectiveSession.value.perspectiveSessionId,
-          'X-Perspective-Query-Version': String(queryVersion)
-        },
-        skipAuthorization: true
-      }
-    )
-
-    selectedPoints.value = pointList.value.filter((item) => searchForm.value.varSeqs.includes(item.varSeq))
-    activeQueryContext.value = {
+    const result = await fetchHistoryQuery({
       deviceId: searchForm.value.deviceId,
-      varSeqs: [...searchForm.value.varSeqs],
+      varSeqs: searchForm.value.varSeqs,
       startTime: searchForm.value.startTime,
-      endTime: searchForm.value.endTime,
-      queryVersion,
-      perspectiveSessionId: perspectiveSession.value.perspectiveSessionId
-    }
-    latestAppliedQueryVersion.value = Math.max(latestAppliedQueryVersion.value, queryVersion)
+      endTime: searchForm.value.endTime
+    })
 
-    await renderPerspectiveRecords(
-      buildPerspectiveRecordsFromResponse(searchForm.value.deviceId, result)
-    )
+    historyData.value = result
+    renderedRecordCount.value = result.times.length
+    selectedPoints.value = pointList.value.filter((item) => searchForm.value.varSeqs.includes(item.varSeq))
+
+    await nextTick()
+    initOrUpdateChart()
+
     drawerVisible.value = false
   } catch (error) {
     console.error('查询失败:', error)
@@ -808,6 +526,10 @@ const handleQuery = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const handleResize = () => {
+  chartInstance?.resize()
 }
 
 const handleExport = async () => {
@@ -849,28 +571,21 @@ watch(timeRange, (value) => {
 })
 
 onMounted(() => {
-  perspectiveMounted = true
-
-  const defaultRange = buildDefaultTimeRange()
+  const defaultRange = buildDefaultTimeRange(1)
   timeRange.value = defaultRange
   searchForm.value.startTime = defaultRange[0]
   searchForm.value.endTime = defaultRange[1]
 
   void loadDeviceList()
-  void ensurePerspectiveSocket()
+  window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
-  perspectiveMounted = false
-  suppressDisconnectNotice = true
-  closePerspectiveSocket()
-  void (async () => {
-    await cleanupPerspectiveResources()
-    if (perspectiveWorker.value?.terminate) {
-      perspectiveWorker.value.terminate()
-    }
-    perspectiveWorker.value = null
-  })()
+  window.removeEventListener('resize', handleResize)
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
 })
 </script>
 
@@ -967,16 +682,42 @@ onUnmounted(() => {
   border-radius: 999px;
 }
 
-.perspective-container {
-  min-height: 520px;
+.chart-wrapper {
+  background: #fff;
   border-radius: 16px;
   overflow: hidden;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   border: 1px solid #eef1f6;
+}
 
-  perspective-viewer {
-    width: 100%;
-    height: 520px;
+.echarts-container {
+  min-height: 480px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.table-wrapper {
+  margin-top: 8px;
+  background: #fff;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid #eef1f6;
+}
+
+.table-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: #1d2433;
+  display: flex;
+  align-items: center;
+
+  &::before {
+    content: '';
+    display: inline-block;
+    width: 4px;
+    height: 16px;
+    background: #4a6cf7;
+    margin-right: 8px;
+    border-radius: 2px;
   }
 }
 
