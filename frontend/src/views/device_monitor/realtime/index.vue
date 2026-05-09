@@ -62,6 +62,13 @@
             </ElButton>
             <ElButton
               size="small"
+              :class="['chart-type-btn', { active: chartType === 'area' }]"
+              @click="chartType = 'area'"
+            >
+              面积图
+            </ElButton>
+            <ElButton
+              size="small"
               :class="['chart-type-btn', { active: chartType === 'status' }]"
               @click="chartType = 'status'"
             >
@@ -70,26 +77,33 @@
             <ElButton text @click="toggleChartFullscreen">
               <ArtSvgIcon icon="ri:fullscreen-line" />
             </ElButton>
-            <ElButton text @click="openChartSettings">
+            <ElButton text @click="chartSettingsVisible = true">
               <ArtSvgIcon icon="ri:settings-3-line" />
             </ElButton>
           </div>
         </div>
 
-        <!-- 图例 -->
-        <div v-if="selectedPoints.length > 0" class="chart-legend">
-          <span
-            v-for="point in selectedPoints"
-            :key="point.varSeq"
-            class="legend-item"
-            :style="{ color: getPointColor(point.varSeq) }"
-          >
-            {{ point.pointName }}({{ getPointUnit(point) }})
-          </span>
-        </div>
+        <!-- 单图表模式：所有点位在同一图表 -->
+        <div
+          v-show="!separateBoolChart && (isMonitoring || hasData)"
+          ref="perspectiveRef"
+          class="perspective-container perspective-single"
+        ></div>
 
-        <!-- Perspective 图表容器 -->
-        <div v-show="isMonitoring || hasData" ref="perspectiveRef" class="perspective-container"></div>
+        <!-- 分离模式：数值型点位趋势图 -->
+        <div
+          v-show="separateBoolChart && (isMonitoring || hasNumericData) && hasNumericPoints"
+          ref="perspectiveNumericRef"
+          class="perspective-container perspective-numeric"
+        ></div>
+
+        <!-- 分离模式：Bool 型点位趋势图 -->
+        <div
+          v-show="separateBoolChart && (isMonitoring || hasBoolData) && hasBoolPoints"
+          ref="perspectiveBoolRef"
+          class="perspective-container perspective-bool"
+        ></div>
+
         <ElEmpty v-if="!isMonitoring && !hasData" description="点击开始监控以查看实时趋势" :image-size="120" />
         <ElEmpty v-if="isMonitoring && !hasData" description="正在连接并等待数据..." :image-size="120" />
       </ElCard>
@@ -201,6 +215,20 @@
         <ElButton type="primary" @click="confirmPointSelection">确认</ElButton>
       </template>
     </ElDrawer>
+
+    <!-- 图表设置弹窗 -->
+    <ElDialog v-model="chartSettingsVisible" title="图表设置" width="400px">
+      <div class="settings-content">
+        <div class="settings-item">
+          <div class="settings-label">Bool 型变量独立图表</div>
+          <div class="settings-desc">开启后，Bool 型变量将显示在单独的图表中，避免与数值型变量混合</div>
+          <ElSwitch v-model="separateBoolChart" />
+        </div>
+      </div>
+      <template #footer>
+        <ElButton @click="chartSettingsVisible = false">关闭</ElButton>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
@@ -262,7 +290,9 @@ const realtimeRecords = ref<RealtimeDataRecord[]>([])
 const isMonitoring = ref(false)
 const wsConnected = ref(false)
 const refreshRate = ref(1000)
-const chartType = ref<'line' | 'status'>('line')
+const chartType = ref<'line' | 'area' | 'status'>('line')
+const chartSettingsVisible = ref(false)
+const separateBoolChart = ref(true) // 默认分离 Bool 图表
 const lastSyncTime = ref('')
 const tdengineConnected = ref(true)
 const perspectiveReady = ref(false)
@@ -279,10 +309,16 @@ const tempDeviceId = ref<number | undefined>()
 const pointSearchKeyword = ref('')
 
 // Perspective
-const perspectiveRef = ref<HTMLElement>()
+const perspectiveRef = ref<HTMLElement>() // 单图表模式
+const perspectiveNumericRef = ref<HTMLElement>() // 分离模式：数值型
+const perspectiveBoolRef = ref<HTMLElement>() // 分离模式：Bool 型
 const perspectiveWorker = shallowRef<PerspectiveWorkerClient | null>(null)
-const perspectiveTable = shallowRef<PerspectiveTableClient | null>(null)
-const perspectiveViewer = shallowRef<PerspectiveViewerClient | null>(null)
+const perspectiveTable = shallowRef<PerspectiveTableClient | null>(null) // 单图表模式
+const perspectiveViewer = shallowRef<PerspectiveViewerClient | null>(null) // 单图表模式
+const perspectiveNumericTable = shallowRef<PerspectiveTableClient | null>(null) // 分离模式：数值型
+const perspectiveNumericViewer = shallowRef<PerspectiveViewerClient | null>(null) // 分离模式：数值型
+const perspectiveBoolTable = shallowRef<PerspectiveTableClient | null>(null)
+const perspectiveBoolViewer = shallowRef<PerspectiveViewerClient | null>(null)
 
 // WebSocket
 const websocket = ref<WebSocket | null>(null)
@@ -296,6 +332,19 @@ const MAX_RECORDS = 600 // 约10分钟数据(1秒刷新)
 // 计算属性
 const canStartMonitor = computed(() => currentDevice.value !== null && selectedPoints.value.length > 0)
 const hasData = computed(() => realtimeRecords.value.length > 0)
+
+// Bool/非Bool 点位分离
+const boolVarSeqs = computed(() => {
+  return new Set(
+    selectedPoints.value.filter((p) => p.dataType?.toUpperCase() === 'BOOL').map((p) => p.varSeq)
+  )
+})
+
+const hasBoolPoints = computed(() => boolVarSeqs.value.size > 0)
+const hasNumericPoints = computed(() => selectedPoints.value.some((p) => p.dataType?.toUpperCase() !== 'BOOL'))
+
+const hasBoolData = computed(() => realtimeRecords.value.some((r) => boolVarSeqs.value.has(r.varSeq)))
+const hasNumericData = computed(() => realtimeRecords.value.some((r) => !boolVarSeqs.value.has(r.varSeq)))
 
 const pointTagsText = computed(() => {
   if (selectedPoints.value.length === 0) return ''
@@ -596,10 +645,10 @@ const clearReconnectTimer = () => {
 }
 
 const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
-  if (!perspectiveWorker.value || !perspectiveViewer.value || newRecords.length === 0) return
+  if (!perspectiveWorker.value || newRecords.length === 0) return
 
   try {
-    // 转换数据格式：实时模式直接使用 Date 对象，不走 mapPerspectiveViewerRecords 映射
+    const schema = { timestamp: 'datetime', varSeq: 'integer', pointName: 'string', value: 'float' }
     const records = newRecords.map((r) => ({
       timestamp: r.timestamp,
       varSeq: r.varSeq,
@@ -607,18 +656,52 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
       value: r.value
     }))
 
-    if (!perspectiveTable.value) {
-      // 首次创建表
-      perspectiveTable.value = await perspectiveWorker.value.table(records as any)
-      const config = buildViewerConfig()
-      await perspectiveViewer.value.load(perspectiveTable.value)
-      await perspectiveViewer.value.restore(config)
-    } else {
-      // 增量更新（核心修复：不再销毁表）
-      await (perspectiveTable.value as any).update(records)
+    // 单图表模式：所有数据放入同一个图表
+    if (!separateBoolChart.value && perspectiveViewer.value) {
+      if (!perspectiveTable.value) {
+        perspectiveTable.value = await perspectiveWorker.value.table(schema as any)
+        await (perspectiveTable.value as any).update(records)
+        const config = buildViewerConfig(false)
+        await perspectiveViewer.value.load(perspectiveTable.value)
+        await perspectiveViewer.value.restore(config)
+      } else {
+        await (perspectiveTable.value as any).update(records)
+      }
+      await perspectiveViewer.value.flush()
+      return
     }
 
-    await perspectiveViewer.value.flush()
+    // 分离模式：分别更新数值型和 Bool 型图表
+    const numericRecords = records.filter((r) => !boolVarSeqs.value.has(r.varSeq))
+    const boolRecords = records.filter((r) => boolVarSeqs.value.has(r.varSeq))
+
+    // 更新数值型图表
+    if (numericRecords.length > 0 && perspectiveNumericViewer.value) {
+      if (!perspectiveNumericTable.value) {
+        perspectiveNumericTable.value = await perspectiveWorker.value.table(schema as any)
+        await (perspectiveNumericTable.value as any).update(numericRecords)
+        const config = buildViewerConfig(false)
+        await perspectiveNumericViewer.value.load(perspectiveNumericTable.value)
+        await perspectiveNumericViewer.value.restore(config)
+      } else {
+        await (perspectiveNumericTable.value as any).update(numericRecords)
+      }
+      await perspectiveNumericViewer.value.flush()
+    }
+
+    // 更新 Bool 型图表
+    if (boolRecords.length > 0 && perspectiveBoolViewer.value) {
+      if (!perspectiveBoolTable.value) {
+        perspectiveBoolTable.value = await perspectiveWorker.value.table(schema as any)
+        await (perspectiveBoolTable.value as any).update(boolRecords)
+        const config = buildViewerConfig(true)
+        await perspectiveBoolViewer.value.load(perspectiveBoolTable.value)
+        await perspectiveBoolViewer.value.restore(config)
+      } else {
+        await (perspectiveBoolTable.value as any).update(boolRecords)
+      }
+      await perspectiveBoolViewer.value.flush()
+    }
   } catch (error) {
     console.error('更新Perspective图表失败:', error)
   }
@@ -688,10 +771,6 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
 // Perspective 图表
 const initPerspectiveViewer = async () => {
   await nextTick() // 确保 DOM 已渲染
-  if (!perspectiveRef.value) {
-    console.warn('[Perspective] 容器元素未就绪')
-    return
-  }
 
   try {
     const runtime = await ensurePerspectiveViewerRuntime()
@@ -701,7 +780,8 @@ const initPerspectiveViewer = async () => {
       perspectiveWorker.value = await runtime.perspective.worker()
     }
 
-    if (!perspectiveViewer.value) {
+    // 单图表模式
+    if (perspectiveRef.value && !perspectiveViewer.value) {
       perspectiveRef.value.innerHTML = ''
       const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
       viewer.setAttribute('theme', 'Pro Light')
@@ -711,20 +791,120 @@ const initPerspectiveViewer = async () => {
       perspectiveRef.value.appendChild(viewer)
       perspectiveViewer.value = viewer
     }
+
+    // 分离模式：数值型图表
+    if (perspectiveNumericRef.value && !perspectiveNumericViewer.value) {
+      perspectiveNumericRef.value.innerHTML = ''
+      const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
+      viewer.setAttribute('theme', 'Pro Light')
+      viewer.style.display = 'block'
+      viewer.style.width = '100%'
+      viewer.style.height = '100%'
+      perspectiveNumericRef.value.appendChild(viewer)
+      perspectiveNumericViewer.value = viewer
+    }
+
+    // 分离模式：Bool 型图表
+    if (perspectiveBoolRef.value && !perspectiveBoolViewer.value) {
+      perspectiveBoolRef.value.innerHTML = ''
+      const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
+      viewer.setAttribute('theme', 'Pro Light')
+      viewer.style.display = 'block'
+      viewer.style.width = '100%'
+      viewer.style.height = '100%'
+      perspectiveBoolRef.value.appendChild(viewer)
+      perspectiveBoolViewer.value = viewer
+    }
   } catch (error) {
     console.error('初始化Perspective失败:', error)
     perspectiveReady.value = false
   }
 }
 
-const buildViewerConfig = () => {
+const buildViewerConfig = (isBoolChart = false) => {
+  // Bool 图表使用阶梯图样式，Y 轴只显示 0 和 1
+  if (isBoolChart) {
+    if (chartType.value === 'status') {
+      return {
+        plugin: 'Datagrid',
+        group_by: [],
+        split_by: [],
+        columns: ['timestamp', 'pointName', 'value'],
+        sort: [['timestamp', 'desc']],
+        plugin_config: {
+          columns: {
+            timestamp: {},
+            pointName: {},
+            value: {
+              column_style: {
+                type: 'heatmap',
+                color_mode: 'gradient',
+                pos_color: '#18a47a',
+                neg_color: '#d44f63',
+                min: 0,
+                max: 1
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Bool 使用 Y Line，设置整数格式和 Y 轴范围
+    return {
+      plugin: 'Y Line',
+      group_by: ['timestamp'],
+      split_by: ['pointName'],
+      columns: ['value'],
+      sort: [['timestamp', 'asc']],
+      aggregates: { value: 'last' },
+      plugin_config: {
+        columns: {
+          value: {
+            number_format: '0', // 强制整数格式
+            axis_min: 0,
+            axis_max: 1
+          }
+        }
+      }
+    }
+  }
+
+  // 非 Bool 图表的配置
   if (chartType.value === 'status') {
     return {
       plugin: 'Datagrid',
       group_by: [],
       split_by: [],
       columns: ['timestamp', 'pointName', 'value'],
-      sort: [['timestamp', 'desc']]
+      sort: [['timestamp', 'desc']],
+      plugin_config: {
+        columns: {
+          timestamp: {},
+          pointName: {},
+          value: {
+            column_style: {
+              type: 'heatmap',
+              color_mode: 'gradient',
+              pos_color: '#18a47a',
+              neg_color: '#d44f63',
+              min: 0,
+              max: 1
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (chartType.value === 'area') {
+    return {
+      plugin: 'Y Area',
+      group_by: ['timestamp'],
+      split_by: ['pointName'],
+      columns: ['value'],
+      sort: [['timestamp', 'asc']],
+      aggregates: { value: 'last' }
     }
   }
 
@@ -753,10 +933,6 @@ const toggleChartFullscreen = async () => {
   }
 }
 
-const openChartSettings = () => {
-  // 预留图表设置功能
-}
-
 const handleExport = () => {
   // 预留导出功能
 }
@@ -770,11 +946,28 @@ onUnmounted(() => {
   stopMonitor()
 
   void (async () => {
+    // 清理单图表模式
     if (perspectiveViewer.value) {
       try {
         await perspectiveViewer.value.delete()
       } catch (e) {
         console.warn('清理Perspective失败:', e)
+      }
+    }
+    // 清理分离模式：数值型图表
+    if (perspectiveNumericViewer.value) {
+      try {
+        await perspectiveNumericViewer.value.delete()
+      } catch (e) {
+        console.warn('清理数值型Perspective失败:', e)
+      }
+    }
+    // 清理分离模式：Bool 型图表
+    if (perspectiveBoolViewer.value) {
+      try {
+        await perspectiveBoolViewer.value.delete()
+      } catch (e) {
+        console.warn('清理Bool Perspective失败:', e)
       }
     }
     if (perspectiveWorker.value?.terminate) {
@@ -783,13 +976,26 @@ onUnmounted(() => {
     perspectiveWorker.value = null
     perspectiveViewer.value = null
     perspectiveTable.value = null
+    perspectiveNumericViewer.value = null
+    perspectiveNumericTable.value = null
+    perspectiveBoolViewer.value = null
+    perspectiveBoolTable.value = null
   })()
 })
 
 // 监听图表类型变化
 watch(chartType, async () => {
+  // 单图表模式
   if (perspectiveViewer.value && perspectiveTable.value) {
-    await perspectiveViewer.value.restore(buildViewerConfig())
+    await perspectiveViewer.value.restore(buildViewerConfig(false))
+  }
+  // 分离模式：数值型
+  if (perspectiveNumericViewer.value && perspectiveNumericTable.value) {
+    await perspectiveNumericViewer.value.restore(buildViewerConfig(false))
+  }
+  // 分离模式：Bool 型
+  if (perspectiveBoolViewer.value && perspectiveBoolTable.value) {
+    await perspectiveBoolViewer.value.restore(buildViewerConfig(true))
   }
 })
 </script>
@@ -1018,24 +1224,9 @@ watch(chartType, async () => {
   }
 }
 
-.chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: center;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 .perspective-container {
   flex: 1;
-  min-height: 400px;
+  min-height: 200px;
   border-radius: 16px;
   overflow: hidden;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
@@ -1044,6 +1235,24 @@ watch(chartType, async () => {
   perspective-viewer {
     width: 100%;
     height: 100%;
+  }
+}
+
+// 数值型图表占主要空间
+.perspective-numeric {
+  flex: 3;
+  min-height: 300px;
+}
+
+// Bool 型图表高度适中
+.perspective-bool {
+  flex: 1.5;
+  min-height: 200px;
+
+  // 隐藏图表顶部图例（图表内已有图例）
+  :deep(.pd-column-name-label),
+  :deep(perspective-viewer .plugin-legend) {
+    display: none !important;
   }
 }
 
