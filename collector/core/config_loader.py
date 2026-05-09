@@ -62,6 +62,9 @@ def load_collector_config(path: str) -> CollectorConfig:
             max_window_seconds=int(runtime.get("max_window_seconds", 600)),
             enable_fake_bootstrap=bool(runtime.get("enable_fake_bootstrap", False)),
             log_level=str(runtime.get("log_level", "INFO")),
+            log_file=runtime.get("log_file"),  # 可选，为 None 则只输出控制台
+            log_max_bytes=int(runtime.get("log_max_bytes", 10 * 1024 * 1024)),
+            log_backup_count=int(runtime.get("log_backup_count", 5)),
             queue_max_size=int(runtime.get("queue_max_size", 10000)),
             writer_workers=int(runtime.get("writer_workers", 2)),
         )

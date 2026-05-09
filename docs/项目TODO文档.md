@@ -162,7 +162,7 @@
 | BE-002 | 建立配置、MySQL、TDengine、统一响应与异常处理 | ✅ | `@backend` | P0 | 已完成配置回退、数据库客户端封装、统一响应与异常处理，并通过首轮真实接口验证 |
 | BE-003 | 按数据库事实源输出 ORM / Schema 基线 | 📋 | `@backend` | P0 | 设备、点位、报警、日志优先 |
 | BE-004 | 实现设备管理 API（组树 / 列表 / 详情 / CRUD / 导入导出） | 🔄 | `@backend` | P0 | 2026-04-21 已完成组树 / 列表 / 详情 + `POST / PUT / DELETE / batch delete`；2026-04-22 已修复导入 `rows` JSON 字段映射兼容并通过 3006 代理实测，当前剩余页面人工点验 |
-| BE-005 | 实现实时初始化与 WebSocket 推送 | 🔄 | `@backend` | P0 | 已完成 `device-tree` / `realtime-init` 与 `WS /ws/realtime` 首版源码，并通过本地 ASGI、`ws://127.0.0.1:8000`、`ws://127.0.0.1:3006` 的 `subscribe / snapshot / ping-pong` 复验；当前主要剩余页面人工点验 |
+| BE-005 | 实现实时初始化与 WebSocket 推送 | ✅ | `@backend` | P0 | 2026-05-09 已完成载荷兼容性修复（支持对象/数组双口径）与推送去重逻辑优化，命令级与页面级联调均已通过 |
 | BE-006 | 实现历史、日志、Dashboard API | 🔄 | `@backend` | P1 | 历史查询已具备首版真实接口；Dashboard 的概览 / 分布 / 趋势 / 连接健康已落地；报警 / 日志事实表、系统日志策略表、索引和权限已完成；collector 已开始写入系统日志，Log 后端剩余真实查询、统计、清理与 DEBUG 管理接口接入 |
 | BE-007 | 建立 API 契约校验与示例载荷 | 📋 | `@backend` | P0 | 与 `@frontend`, `@test` 联动 |
 | BE-008 | 实现 Perspective 会话管理与历史分析 WebSocket 通道 | 🔄 | `@backend` | P0 | 2026-04-19 已启动后端基础接入：依赖、配置、会话管理骨架与 WS 基线路由先行，待补历史查询落表与前端联调 |
@@ -201,7 +201,7 @@
 | FE-002 | Driver 页面完成列表、分页、搜索联调 | 🔄 | `@frontend` | P1 | 后端 `driver/list`、`driver/options` 已就绪，待页面级冒烟与错误态收口 |
 | FE-003 | Device 页面完成树、列表、编辑、导入导出联调 | 🔄 | `@frontend` | P0 | 已补导入前格式说明、模板下载、`.xlsx` 约束与部分成功反馈；2026-04-22 已修复前端导入字段映射与错误提示，当前剩余页面人工点验 |
 | FE-004 | Point 页面完成树、详情、编辑、导入导出联调 | 🔄 | `@frontend` | P0 | 已补导入前格式说明、模板下载、`.xlsx` 约束、从模板导入入口与部分成功反馈；2026-04-24 已接上“按所选设备类型从 MySQL 模板点位追加导入”后端链路，当前剩余页面人工点验 |
-| FE-005 | Realtime 页面完成 WS 建连、重连、状态恢复 | ✅ | `@frontend` | P0 | 2026-05-08 已完成实时监控页面重新设计：删除旧设备树/实时数据面板，改用顶部控制栏（设备选择按钮+点位选择长框+开始/停止监控按钮）、中央 Perspective 趋势图、右侧点位卡片容器、底部系统状态栏的四段式布局 |
+| FE-005 | Realtime 页面完成 WS 建连、重连、状态恢复 | ✅ | `@frontend` | P0 | 2026-05-09 已完成：1) 四段式新布局重构；2) 兼容后端对象载荷；3) Perspective 改为增量 update 模式修复渲染中断并提升性能；4) 修复容器初始化 race condition |
 | FE-006 | History 页面切换为 Perspective Viewer 并保持当前查询契约 | 🔄 | `@frontend` | P1 | 2026-04-22 已恢复 TypeScript 基线、接入会话协议，并将 History 页主渲染切到 Perspective Viewer；同日已补串行渲染、查询 loading 收口，并按官方 demo 口径补上 `perspective-server.wasm` / `perspective-viewer.wasm` 初始化，当前待页面复验 |
 | FE-007 | Log 页面完成筛选、分页、颜色标识联调 | 🔄 | `@frontend` | P1 | 页面基线已存在，当前主要受 `log/list` 缺失阻塞 |
 | FE-008 | 统一 API wrapper / type / router / store 约束 | 🔄 | `@frontend` | P0 | 防止继续漂移 |
