@@ -303,6 +303,20 @@ declare namespace Api {
       varSeqs: number[]
       startTime: string
       endTime: string
+      interval?: string
+      aggregate?: string
+    }
+
+    /** 历史图表数据响应 */
+    interface HistoryChartResponse {
+      interval: string
+      series: {
+        varSeq: number
+        name: string
+        unit: string
+        dataType?: string
+        data: [string, number | null][]
+      }[]
     }
 
     /** 历史数据项 */
@@ -319,6 +333,59 @@ declare namespace Api {
         pointName: string
         values: (string | number)[]
       }[]
+    }
+
+    /** 历史原始数据项 */
+    interface HistoryRawItem {
+      ts: string
+      value: number | string | boolean | null
+      quality?: number
+    }
+
+    /** 历史原始数据响应 */
+    interface HistoryRawResponse {
+      list: HistoryRawItem[]
+      nextCursor: string | null
+    }
+
+    /** 历史矩阵表列定义 */
+    interface HistoryMatrixColumn {
+      prop: string
+      label: string
+      varSeq?: number
+      unit?: string
+      dataType?: string
+      fixed?: 'left' | 'right'
+    }
+
+    /** 历史矩阵表响应 */
+    interface HistoryRawMatrixResponse {
+      columns: HistoryMatrixColumn[]
+      rows: Record<string, any>[]
+      nextCursor: string | null
+      meta: {
+        alignGranularity: '100ms' | '500ms' | '1s'
+        fillMode: 'none'
+        pageSize: number
+      }
+    }
+
+    /** 历史导出任务响应 */
+    interface HistoryExportTask {
+      taskId: string
+    }
+
+    /** 历史导出状态响应 */
+    interface HistoryExportStatus {
+      taskId: string
+      status: 'pending' | 'processing' | 'completed' | 'failed'
+      progress: number
+      message?: string
+      downloadUrl?: string
+      fileName?: string
+      fileSize?: number
+      createTime?: string
+      completeTime?: string
     }
 
     /** 历史导出参数 */

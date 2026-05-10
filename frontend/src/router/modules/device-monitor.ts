@@ -76,7 +76,7 @@ export const deviceMonitorRoutes: AppRouteRecord = {
       meta: {
         title: 'menus.deviceMonitor.realtime',
         icon: 'ri:pulse-line',
-        keepAlive: false,
+        keepAlive: true,
         roles: ['R_SUPER', 'R_ADMIN', 'R_USER']
       }
     },

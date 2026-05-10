@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any
 
+from turboapi.responses import FileResponse
 from turboapi import APIRouter, Request, Response
 
 from app.core.exceptions import ApiError
@@ -10,6 +12,7 @@ from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
 from app.services.history import HistoryService
+from app.services.task_manager import get_export_task_manager
 
 
 router = APIRouter(tags=["history"])
@@ -64,8 +67,100 @@ async def history_query(
         return success_response(data=data)
 
 
+@router.get("/api/device-monitor/history/chart")
+async def history_chart(
+    request: Request,
+    deviceId: str | int,
+    startTime: str,
+    endTime: str,
+    interval: str = "auto",
+    aggregate: str = "avg",
+):
+    """获取降采样后的趋势数据"""
+    device_id = _require_positive_int(deviceId, "deviceId")
+    var_seqs = _extract_var_seqs(request)
+
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = HistoryService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_chart_data(
+            device_id=device_id,
+            var_seqs=var_seqs,
+            start_time=startTime,
+            end_time=endTime,
+            interval=interval,
+            aggregate=aggregate,
+        )
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/history/raw")
+async def history_raw(
+    request: Request,
+    deviceId: str | int,
+    varSeq: str | int,
+    startTime: str,
+    endTime: str,
+    pageSize: int = 1000,
+    cursorTs: str | None = None
+):
+    device_id = _require_positive_int(deviceId, "deviceId")
+    var_seq = _require_positive_int(varSeq, "varSeq")
+    # 强制转换并限制单页最大 5000 条
+    page_size = min(_require_positive_int(pageSize, "pageSize"), 5000)
+
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = HistoryService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_raw_data(
+            device_id=device_id,
+            var_seq=var_seq,
+            start_time=startTime,
+            end_time=endTime,
+            page_size=page_size,
+            cursor_ts=cursorTs
+        )
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/history/raw-matrix")
+async def history_raw_matrix(
+    request: Request,
+    deviceId: str | int,
+    startTime: str,
+    endTime: str,
+    alignGranularity: str = "1s",
+    pageSize: str | int = 200,
+    cursorTs: str | None = None,
+):
+    device_id = _require_positive_int(deviceId, "deviceId")
+    var_seqs = _extract_var_seqs(request)
+    if len(var_seqs) > 10:
+        raise ApiError(400, "varSeqs 最多 10 个点位")
+
+    page_size = min(_require_positive_int(pageSize, "pageSize"), 500)
+
+    if alignGranularity not in ("100ms", "500ms", "1s"):
+        raise ApiError(400, f"不支持的 alignGranularity: {alignGranularity}")
+
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = HistoryService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_raw_matrix_data(
+            device_id=device_id,
+            var_seqs=var_seqs,
+            start_time=startTime,
+            end_time=endTime,
+            align_granularity=alignGranularity,
+            page_size=page_size,
+            cursor_ts=cursorTs,
+        )
+        return success_response(data=data)
+
+
 @router.post("/api/device-monitor/history/export")
 async def history_export(payload: dict[str, Any]):
+    """创建异步导出任务"""
     device_id = _require_positive_int(payload.get("deviceId"), "deviceId")
     var_seqs = _extract_body_var_seqs(payload)
     start_time = _require_string(payload.get("startTime"), "startTime")
@@ -74,21 +169,55 @@ async def history_export(payload: dict[str, Any]):
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = HistoryService(session=session, tdengine=get_tdengine_client())
-        content = await service.export_history_csv(
+        task_id = await service.create_export_task(
             device_id=device_id,
             var_seqs=var_seqs,
             start_time=start_time,
             end_time=end_time,
         )
+        return success_response(data={"taskId": task_id})
 
-    filename = f"history-data-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
-    return Response(
-        content=content,
-        media_type="text/csv; charset=utf-8",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        },
+
+@router.get("/api/device-monitor/history/export/{task_id}/status")
+async def history_export_status(task_id: str):
+    """查询导出任务状态"""
+    task_manager = get_export_task_manager()
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise ApiError(404, "Export task not found")
+
+    return success_response(data={
+        "status": task.status,
+        "progress": task.progress,
+        "error": task.error,
+        "createdAt": task.created_at
+    })
+
+
+@router.get("/api/device-monitor/history/export/{task_id}/download")
+async def history_export_download(task_id: str):
+    """下载导出结果文件"""
+    task_manager = get_export_task_manager()
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise ApiError(404, "Export task not found")
+
+    if task.status != "completed":
+        raise ApiError(400, f"Task is not completed (status: {task.status})")
+
+    if not task.file_path or not os.path.exists(task.file_path):
+        raise ApiError(404, "Export file not found or expired")
+
+    # 从元数据中获取设备名称作为文件名的一部分
+    device_name = task.metadata.get("device_name", "device")
+    filename = f"历史数据_{device_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+
+    return FileResponse(
+        path=task.file_path,
+        media_type="text/csv",
+        filename=filename
     )
+
 
 
 def _extract_var_seqs(request: Request) -> list[int]:

@@ -277,3 +277,27 @@ Traceback (most recent call last):
     )
 RuntimeError: 'cryptography' package is required for sha256_password or caching_sha2_password auth methods
 
+
+[2026-05-09 20:39:51] Backend startup failed
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\backend\main.py", line 47, in <module>
+    from app.main import create_app
+  File "D:\python\device_alarm\data_watch\backend\app\main.py", line 20, in <module>
+    from app.api.router import api_router
+  File "D:\python\device_alarm\data_watch\backend\app\api\router.py", line 6, in <module>
+    from app.api.routes.history import router as history_router
+  File "D:\python\device_alarm\data_watch\backend\app\api\routes\history.py", line 7, in <module>
+    from starlette.responses import FileResponse
+ModuleNotFoundError: No module named 'starlette'
+
+[2026-05-09 20:40:00] Backend startup failed
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\backend\main.py", line 47, in <module>
+    from app.main import create_app
+  File "D:\python\device_alarm\data_watch\backend\app\main.py", line 20, in <module>
+    from app.api.router import api_router
+  File "D:\python\device_alarm\data_watch\backend\app\api\router.py", line 6, in <module>
+    from app.api.routes.history import router as history_router
+  File "D:\python\device_alarm\data_watch\backend\app\api\routes\history.py", line 7, in <module>
+    from starlette.responses import FileResponse
+ModuleNotFoundError: No module named 'starlette'
