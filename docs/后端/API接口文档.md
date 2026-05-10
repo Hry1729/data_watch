@@ -455,7 +455,7 @@ interface RoleGrantPayload {
 
 #### GET `/api/device-monitor/history/query`
 - Method/Path：`GET /api/device-monitor/history/query`
-- 用途：用于历史数据页查询与导出
+- 用途：用于历史数据页查询与导出（旧版兼容接口）
 - Path 参数：无
 - Query 参数：`deviceId: number`、`varSeqs: number[]`、`startTime: string`、`endTime: string`
 - Body 参数：无
@@ -463,15 +463,50 @@ interface RoleGrantPayload {
 - 默认值与约束：`deviceId/varSeqs/startTime/endTime` 均为必填；时间格式遵循全局约定
 - 错误处理/空数据约定：遵循全局错误码；空结果返回 `times: []`、`points: []`
 
+#### GET `/api/device-monitor/history/chart`
+- Method/Path：`GET /api/device-monitor/history/chart`
+- 用途：获取降采样后的趋势数据，用于图表展示
+- Path 参数：无
+- Query 参数：`deviceId: number`、`varSeqs: number[]`、`startTime: string`、`endTime: string`、`interval?: string`（auto/1s/5s/1m）、`aggregate?: string`（avg/max/min/last）
+- Body 参数：无
+- `data` 字段：`HistoryDataResponse`；结构同 `/query`
+- 默认值与约束：`interval` 默认 `auto`；`aggregate` 默认 `avg`
+
+#### GET `/api/device-monitor/history/raw`
+- Method/Path：`GET /api/device-monitor/history/raw`
+- 用途：获取原始点位数据，支持分页加载
+- Path 参数：无
+- Query 参数：`deviceId: number`、`varSeq: number`、`startTime: string`、`endTime: string`、`pageSize?: number`、`cursorTs?: number`（纳秒或毫秒时间戳，用于游标分页）
+- Body 参数：无
+- `data` 字段：`list[]`（点位数据列表）、`nextCursorTs?`（下一页游标）
+- 默认值与约束：`pageSize` 默认 `100`
+
 #### POST `/api/device-monitor/history/export`
 - Method/Path：`POST /api/device-monitor/history/export`
-- 用途：用于历史数据页查询与导出
+- 用途：创建历史数据异步导出任务
 - Path 参数：无
 - Query 参数：无
 - Body 参数：`HistoryExportParams`：`deviceId`、`varSeqs`、`startTime`、`endTime`
+- `data` 字段：`{ taskId: string }`
+- 默认值与约束：请求体字段要求与历史查询一致
+- 错误处理/空数据约定：成功后返回任务 ID，前端需轮询状态
+
+#### GET `/api/device-monitor/history/export/{task_id}/status`
+- Method/Path：`GET /api/device-monitor/history/export/{task_id}/status`
+- 用途：查询导出任务执行状态
+- Path 参数：`task_id: string`
+- Query 参数：无
+- Body 参数：无
+- `data` 字段：`{ status: 'pending' | 'processing' | 'completed' | 'failed', progress?: number, error?: string }`
+
+#### GET `/api/device-monitor/history/export/{task_id}/download`
+- Method/Path：`GET /api/device-monitor/history/export/{task_id}/download`
+- 用途：下载导出的文件
+- Path 参数：`task_id: string`
+- Query 参数：无
+- Body 参数：无
 - `data` 字段：`Blob`（文件流）
-- 默认值与约束：请求体字段要求与历史查询一致；大数据量建议后端切换异步导出任务模式
-- 错误处理/空数据约定：遵循全局错误码；导出接口前端按二进制下载处理
+- 默认值与约束：仅在任务状态为 `completed` 时可用
 
 ### 4.6 系统日志
 

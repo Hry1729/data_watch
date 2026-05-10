@@ -1,95 +1,25 @@
 ﻿<!-- 历史数据查询页 -->
 <template>
-  <div class="history-page">
-    <ElCard class="panel-card viewer-card">
-      <div class="card-head card-head--split">
-        <div>
-          <p class="card-title">历史分析</p>
-          <p class="card-subtitle">ECharts 趋势渲染</p>
-        </div>
-        <div class="head-actions">
-          <ElButtonGroup size="small">
-            <ElButton
-              v-for="type in (['line', 'area', 'bar', 'scatter'] as const)"
-              :key="type"
-              :type="chartType === type ? 'primary' : 'default'"
-              @click="handleChartTypeChange(type)"
-            >
-              {{ { line: '折线图', area: '面积图', bar: '柱状图', scatter: '散点图' }[type] }}
-            </ElButton>
-          </ElButtonGroup>
-          <ElButton size="small" :loading="exporting" @click="handleExport">导出 CSV</ElButton>
-          <ElButton type="primary" @click="openDrawer">
-            <ElIcon><Setting /></ElIcon>
-            <span>选择数据</span>
+  <div class="history-page art-full-height">
+    <!-- 顶部控制栏 -->
+    <ElCard class="control-bar-card">
+      <div class="control-bar">
+        <div class="control-left">
+          <span class="control-label">当前设备</span>
+          <ElButton class="device-btn" @click="openDeviceSelector">
+            <span class="device-name">{{ currentDevice?.name || '未选择' }}</span>
+            <ElIcon class="device-arrow"><ArrowRight /></ElIcon>
           </ElButton>
         </div>
-      </div>
-
-      <div v-if="selectedPoints.length" class="selected-info">
-        <div class="selected-header">
-          <div class="selected-meta">
-            <ElIcon><Clock /></ElIcon>
-            <span>{{ searchForm.startTime }} 至 {{ searchForm.endTime }}</span>
+        <div class="control-middle">
+          <span class="control-label">已选点位</span>
+          <div class="point-selector-box" @click="openPointSelector">
+            <template v-if="selectedPoints.length > 0">
+              <span class="point-tags-text">{{ pointTagsText }}</span>
+            </template>
+            <span v-else class="point-placeholder">点击选择查询点位</span>
           </div>
-        </div>
-        <div class="selected-points">
-          <ElTag v-for="point in selectedPoints" :key="point.varSeq" class="point-tag">
-            {{ point.pointName }}
-          </ElTag>
-        </div>
-      </div>
-
-      <MonitorLoadingPlaceholder
-        v-if="loading && !hasResultData"
-        title="历史数据加载中"
-        description="正在读取历史数据并准备图表渲染"
-        min-height="520px"
-        :rows="6"
-      />
-      <template v-else-if="hasResultData">
-        <div class="chart-wrapper">
-          <div ref="chartRef" class="echarts-container" v-show="!loading"></div>
-        </div>
-
-        <div class="table-wrapper">
-          <p class="table-title">历史数据明细</p>
-          <ElTable :data="tableData" border stripe height="400" size="small">
-            <ElTableColumn prop="time" label="采样时间" fixed="left" width="180" sortable />
-            <ElTableColumn
-              v-for="point in selectedPoints"
-              :key="point.varSeq"
-              :prop="`point_${point.varSeq}`"
-              :label="point.pointName"
-              min-width="120"
-            >
-              <template #default="scope">
-                {{ formatValue(scope.row[`point_${point.varSeq}`]) }}
-              </template>
-            </ElTableColumn>
-          </ElTable>
-        </div>
-      </template>
-      <ElEmpty v-else :description="emptyDescription" :image-size="120" />
-    </ElCard>
-
-    <ElDrawer v-model="drawerVisible" title="数据选择" direction="rtl" size="520px" :close-on-click-modal="false">
-      <div class="drawer-content">
-        <div class="form-item">
-          <label class="form-label">设备</label>
-          <ElSelect
-            v-model="searchForm.deviceId"
-            placeholder="请选择设备"
-            filterable
-            clearable
-            class="form-control"
-          >
-            <ElOption v-for="item in deviceList" :key="item.id" :label="item.name" :value="item.id" />
-          </ElSelect>
-        </div>
-
-        <div class="form-item">
-          <label class="form-label">时间范围</label>
+          <span class="control-label" style="margin-left: 16px">时间范围</span>
           <ElDatePicker
             v-model="timeRange"
             type="datetimerange"
@@ -97,60 +27,233 @@
             start-placeholder="开始时间"
             end-placeholder="结束时间"
             value-format="YYYY-MM-DD HH:mm:ss"
-            class="form-control"
+            class="time-picker"
             :shortcuts="timeShortcuts"
           />
         </div>
+        <div class="control-right">
+          <ElSelect v-model="chartInterval" class="interval-select" placeholder="聚合粒度">
+            <ElOption label="自动" value="auto" />
+            <ElOption label="100毫秒" value="100ms" />
+            <ElOption label="500毫秒" value="500ms" />
+            <ElOption label="1秒" value="1s" />
+            <ElOption label="5秒" value="5s" />
+            <ElOption label="30秒" value="30s" />
+            <ElOption label="1分钟" value="1m" />
+            <ElOption label="5分钟" value="5m" />
+          </ElSelect>
+          <ElSelect v-model="chartAggregate" class="aggregate-select" placeholder="聚合方式">
+            <ElOption label="平均值" value="avg" />
+            <ElOption label="最大值" value="max" />
+            <ElOption label="最小值" value="min" />
+            <ElOption label="最新值" value="last" />
+          </ElSelect>
+          <ElButton type="primary" :disabled="!canQuery" :loading="loading" @click="handleQuery">
+            查询
+          </ElButton>
+          <ElButton :disabled="!hasResultData" @click="openExportDialog">导出</ElButton>
+        </div>
+      </div>
+    </ElCard>
 
-        <div class="form-item">
-          <label class="form-label">
-            点位选择
-            <span v-if="searchForm.varSeqs.length" class="selected-count">
-              (已选 {{ searchForm.varSeqs.length }} 个)
-            </span>
-          </label>
-          <div class="point-selector">
-            <ElInput
-              v-model="pointSearch"
-              placeholder="搜索点位名称或地址..."
-              prefix-icon="Search"
-              clearable
-              class="point-search"
-            />
-            <div class="point-list">
-              <ElCheckbox
-                v-for="point in filteredPointList"
-                :key="point.varSeq"
-                :label="point.varSeq"
-                :model-value="searchForm.varSeqs.includes(point.varSeq)"
-                class="point-item"
-                @change="(val: CheckboxValueType) => handlePointChange(point.varSeq, Boolean(val))"
-              >
-                <div class="point-info">
-                  <span class="point-name">{{ point.pointName }}</span>
-                  <span class="point-address">{{ point.ioAddress }}</span>
-                </div>
-              </ElCheckbox>
-              <ElEmpty v-if="!filteredPointList.length && pointList.length" description="未找到匹配的点位" :image-size="60" />
-              <ElEmpty v-if="!pointList.length && searchForm.deviceId" description="该设备暂无点位数据" :image-size="60" />
-              <div v-if="!searchForm.deviceId" class="point-placeholder">
-                <ElIcon><InfoFilled /></ElIcon>
-                <span>请先选择设备</span>
-              </div>
+    <!-- 主内容区 -->
+    <div class="main-content">
+      <!-- 图表区域 -->
+      <ElCard class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">历史趋势分析</span>
+          <div class="chart-actions">
+            <ElButton
+              size="small"
+              :class="['chart-type-btn', { active: chartType === 'line' }]"
+              @click="handleChartTypeChange('line')"
+            >
+              折线图
+            </ElButton>
+            <ElButton
+              size="small"
+              :class="['chart-type-btn', { active: chartType === 'area' }]"
+              @click="handleChartTypeChange('area')"
+            >
+              面积图
+            </ElButton>
+            <ElButton
+              size="small"
+              :class="['chart-type-btn', { active: chartType === 'bar' }]"
+              @click="handleChartTypeChange('bar')"
+            >
+              柱状图
+            </ElButton>
+            <ElButton
+              size="small"
+              :class="['chart-type-btn', { active: chartType === 'scatter' }]"
+              @click="handleChartTypeChange('scatter')"
+            >
+              散点图
+            </ElButton>
+          </div>
+        </div>
+
+        <MonitorLoadingPlaceholder
+          v-if="loading && !hasResultData"
+          title="历史数据加载中"
+          description="正在读取历史数据并准备图表渲染"
+          min-height="520px"
+          :rows="6"
+        />
+        <div v-else-if="hasResultData" class="chart-wrapper">
+          <div ref="chartRef" class="echarts-container"></div>
+        </div>
+        <ElEmpty v-else :description="emptyDescription" :image-size="120" />
+      </ElCard>
+
+      <!-- 数据明细矩阵表 -->
+      <ElCard v-if="hasResultData" class="table-card">
+        <template #header>
+          <div class="panel-header">
+            <span class="panel-title">历史数据矩阵</span>
+            <div class="table-controls">
+              <span class="control-label">对齐粒度：</span>
+              <ElSelect v-model="matrixAlignGranularity" size="small" class="granularity-select">
+                <ElOption label="1秒" value="1s" />
+                <ElOption label="500毫秒" value="500ms" />
+                <ElOption label="100毫秒" value="100ms" />
+              </ElSelect>
             </div>
-            <div v-if="pointList.length" class="point-actions">
-              <ElButton text type="primary" size="small" @click="selectAllPoints">全选</ElButton>
-              <ElButton text size="small" @click="clearAllPoints">清空</ElButton>
-            </div>
+          </div>
+        </template>
+        <ElTable :data="matrixRows" border stripe height="400" size="small" v-loading="loadingMatrix">
+          <ElTableColumn prop="ts" label="采样时间" width="240" fixed="left" />
+          <ElTableColumn
+            v-for="col in valueColumns"
+            :key="col.prop"
+            :prop="col.prop"
+            :label="col.label"
+            :min-width="120"
+          >
+            <template #default="scope">
+              {{ formatMatrixValue(scope.row[col.prop], col.dataType) }}
+            </template>
+          </ElTableColumn>
+        </ElTable>
+        <div v-if="matrixNextCursor" class="load-more">
+          <ElButton :loading="loadingMatrix" @click="loadMatrixData()">加载更多</ElButton>
+        </div>
+      </ElCard>
+    </div>
+
+    <!-- 设备选择器抽屉 -->
+    <ElDrawer v-model="deviceDrawerVisible" title="选择设备" direction="rtl" size="360px">
+      <div class="selector-content">
+        <ElInput v-model="deviceSearchKeyword" placeholder="搜索设备名称" prefix-icon="Search" clearable class="device-search" />
+        <div class="device-list">
+          <div
+            v-for="device in filteredDeviceList"
+            :key="device.id"
+            class="device-item"
+            :class="{ active: currentDevice?.id === device.id }"
+            @click="selectDevice(device)"
+          >
+            <span class="device-item-name">{{ device.name }}</span>
           </div>
         </div>
       </div>
+    </ElDrawer>
 
+    <!-- 点位选择器抽屉 -->
+    <ElDrawer v-model="pointDrawerVisible" title="选择查询点位" direction="rtl" size="480px">
+      <div class="selector-content">
+        <div class="selector-item">
+          <label class="selector-label">选择设备</label>
+          <ElSelect v-model="tempDeviceId" placeholder="请选择设备" filterable class="selector-control" @change="loadPointList">
+            <ElOption v-for="device in deviceList" :key="device.id" :label="device.name" :value="device.id" />
+          </ElSelect>
+        </div>
+        <div class="selector-item">
+          <label class="selector-label">
+            选择点位
+            <span v-if="tempSelectedVarSeqs.length" class="selected-count">({{ tempSelectedVarSeqs.length }})</span>
+          </label>
+          <ElInput v-model="pointSearchKeyword" placeholder="搜索点位名称或地址" prefix-icon="Search" clearable class="point-search" />
+          <div class="point-checkbox-list">
+            <ElCheckbox
+              v-for="point in filteredPointList"
+              :key="point.varSeq"
+              :label="point.varSeq"
+              :model-value="tempSelectedVarSeqs.includes(point.varSeq)"
+              @change="(val: CheckboxValueType) => handlePointChange(point.varSeq, Boolean(val))"
+            >
+              <div class="point-checkbox-content">
+                <span class="point-checkbox-name">{{ point.pointName }}</span>
+                <span class="point-checkbox-address">{{ point.ioAddress }}</span>
+              </div>
+            </ElCheckbox>
+          </div>
+          <div v-if="pointList.length > 0" class="point-actions">
+            <ElButton text type="primary" size="small" @click="selectAllPoints">全选</ElButton>
+            <ElButton text size="small" @click="clearAllPoints">清空</ElButton>
+          </div>
+        </div>
+      </div>
       <template #footer>
-        <ElButton @click="drawerVisible = false">取消</ElButton>
-        <ElButton type="primary" :loading="loading" @click="handleQuery">确认查询</ElButton>
+        <ElButton @click="pointDrawerVisible = false">取消</ElButton>
+        <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
       </template>
     </ElDrawer>
+
+    <!-- 导出数据对话框 -->
+    <ElDialog v-model="exportDialogVisible" title="导出历史数据" width="500px">
+      <ElForm :model="exportForm" label-width="80px">
+        <ElFormItem label="设备">
+          <ElInput :value="deviceList.find(d => d.id === exportForm.deviceId)?.name || '未选择'" disabled />
+        </ElFormItem>
+        <ElFormItem label="时间范围">
+          <ElDatePicker
+            v-model="exportTimeRange"
+            type="datetimerange"
+            range-separator="至"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            value-format="YYYY-MM-DD HH:mm:ss"
+            style="width: 100%"
+            :shortcuts="timeShortcuts"
+          />
+        </ElFormItem>
+        <ElFormItem label="导出点位">
+          <ElSelect
+            v-model="exportForm.varSeqs"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请选择导出点位 (最多20个)"
+            style="width: 100%"
+          >
+            <ElOption
+              v-for="p in pointList"
+              :key="p.varSeq"
+              :label="p.pointName"
+              :value="p.varSeq"
+              :disabled="exportForm.varSeqs.length >= 20 && !exportForm.varSeqs.includes(p.varSeq)"
+            />
+          </ElSelect>
+        </ElFormItem>
+        <ElFormItem label="导出格式">
+          <ElSelect v-model="exportForm.format" style="width: 100%">
+            <ElOption label="CSV 文件 (*.csv)" value="csv" />
+          </ElSelect>
+        </ElFormItem>
+      </ElForm>
+      <template #footer>
+        <div v-if="exporting" style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+          <span style="color: var(--el-color-primary); font-size: 13px;">{{ exportStatusMsg }} ({{ exportProgress }}%)</span>
+          <ElProgress :percentage="exportProgress" :show-text="false" style="width: 200px; margin-left: 10px;" />
+        </div>
+        <div v-else>
+          <ElButton @click="exportDialogVisible = false">取消</ElButton>
+          <ElButton type="primary" @click="handleExport">开始导出</ElButton>
+        </div>
+      </template>
+    </ElDialog>
   </div>
 </template>
 
@@ -158,15 +261,17 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { Setting, Clock, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowRight } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
-import { saveBlobAs } from '@/utils/file/save-blob'
 import {
+  fetchHistoryChart,
   fetchHistoryDevices,
   fetchHistoryExport,
+  fetchHistoryExportStatus,
   fetchHistoryPoints,
-  fetchHistoryQuery
+  fetchHistoryRawMatrix,
+  getHistoryExportDownloadUrl
 } from '@/api/device-monitor'
 import { isHttpError } from '@/utils/http/error'
 
@@ -191,39 +296,227 @@ const searchForm = ref<HistorySearchForm>({
 })
 
 const timeRange = ref<[string, string]>(['', ''])
-const pointSearch = ref('')
-const drawerVisible = ref(false)
+
+// 新增：控制栏相关变量
+const deviceDrawerVisible = ref(false)
+const deviceSearchKeyword = ref('')
+const pointDrawerVisible = ref(false)
+const pointSearchKeyword = ref('')
+const tempDeviceId = ref<number | undefined>()
+const tempSelectedVarSeqs = ref<number[]>([])
+
+const selectedPoints = computed(() =>
+  pointList.value.filter((p) => searchForm.value.varSeqs.includes(p.varSeq))
+)
+
+const currentDevice = computed(() =>
+  deviceList.value.find((d) => d.id === searchForm.value.deviceId)
+)
+
+const filteredDeviceList = computed(() => {
+  if (!deviceSearchKeyword.value) return deviceList.value
+  const keyword = deviceSearchKeyword.value.toLowerCase()
+  return deviceList.value.filter((d) => d.name.toLowerCase().includes(keyword))
+})
+
+const filteredPointList = computed(() => {
+  if (!pointSearchKeyword.value) return pointList.value
+  const keyword = pointSearchKeyword.value.toLowerCase()
+  return pointList.value.filter(
+    (point) =>
+      point.pointName.toLowerCase().includes(keyword) ||
+      point.ioAddress.toLowerCase().includes(keyword)
+  )
+})
+
+const pointTagsText = computed(() => {
+  if (selectedPoints.value.length === 0) return ''
+  const names = selectedPoints.value.map((p) => p.pointName)
+  const maxLen = 50
+  let text = ''
+  for (const name of names) {
+    if (text.length + name.length + 2 > maxLen) {
+      text += '...'
+      break
+    }
+    text += (text ? '、' : '') + name
+  }
+  return text
+})
+
+const canQuery = computed(() => {
+  return searchForm.value.deviceId && searchForm.value.varSeqs.length > 0 && searchForm.value.startTime && searchForm.value.endTime
+})
+
+// 设备选择器
+const openDeviceSelector = () => {
+  deviceDrawerVisible.value = true
+}
+
+const selectDevice = async (device: DeviceInfo) => {
+  searchForm.value.deviceId = device.id
+  searchForm.value.varSeqs = []
+  tempSelectedVarSeqs.value = []
+  deviceDrawerVisible.value = false
+  await loadPointList(device.id)
+}
+
+// 点位选择器
+const openPointSelector = () => {
+  tempDeviceId.value = searchForm.value.deviceId
+  if (tempDeviceId.value) {
+    void loadPointList(tempDeviceId.value)
+  }
+  tempSelectedVarSeqs.value = [...searchForm.value.varSeqs]
+  pointDrawerVisible.value = true
+}
+
+const handlePointChange = (varSeq: number, checked: boolean) => {
+  if (checked) {
+    if (!tempSelectedVarSeqs.value.includes(varSeq)) {
+      tempSelectedVarSeqs.value.push(varSeq)
+    }
+  } else {
+    tempSelectedVarSeqs.value = tempSelectedVarSeqs.value.filter((v) => v !== varSeq)
+  }
+}
+
+const confirmPointSelection = () => {
+  searchForm.value.varSeqs = [...tempSelectedVarSeqs.value]
+  pointDrawerVisible.value = false
+}
+
+const exportDialogVisible = ref(false)
+const exportTimeRange = ref<[string, string]>(['', ''])
+const exportForm = ref({
+  deviceId: undefined as number | undefined,
+  varSeqs: [] as number[],
+  startTime: '',
+  endTime: '',
+  format: 'csv'
+})
+
+const openExportDialog = () => {
+  if (!searchForm.value.deviceId) {
+    ElMessage.warning('请先选择设备')
+    return
+  }
+  exportForm.value = {
+    deviceId: searchForm.value.deviceId,
+    varSeqs: [...searchForm.value.varSeqs],
+    startTime: searchForm.value.startTime,
+    endTime: searchForm.value.endTime,
+    format: 'csv'
+  }
+  exportTimeRange.value = [searchForm.value.startTime, searchForm.value.endTime]
+  exportDialogVisible.value = true
+}
+
+const chartInterval = ref('auto')
+const chartAggregate = ref('avg')
 
 const deviceList = ref<DeviceInfo[]>([])
 const pointList = ref<PointInfo[]>([])
-const selectedPoints = ref<PointInfo[]>([])
 
 const loading = ref(false)
 const exporting = ref(false)
+const exportProgress = ref(0)
+const exportStatusMsg = ref('')
+let exportTimer: ReturnType<typeof setInterval> | null = null
+
 const chartType = ref<ChartType>('line')
 const renderedRecordCount = ref(0)
 
 const chartRef = ref<HTMLElement>()
 let chartInstance: echarts.ECharts | null = null
-const historyData = ref<Api.DeviceMonitor.HistoryDataResponse | null>(null)
+const chartData = ref<Api.DeviceMonitor.HistoryChartResponse | null>(null)
 
-const hasResultData = computed(() => !!historyData.value && historyData.value.times.length > 0)
+// 矩阵表相关
+const matrixRows = ref<Record<string, any>[]>([])
+const matrixColumns = ref<Api.DeviceMonitor.HistoryMatrixColumn[]>([])
+const matrixNextCursor = ref<string | null>(null)
+const loadingMatrix = ref(false)
+const matrixAlignGranularity = ref<'1s' | '500ms' | '100ms'>('1s')
+const matrixQueryVersion = ref(0)
 
-const tableData = computed(() => {
-  if (!historyData.value) return []
-  const { times, points } = historyData.value
-  return times.map((time, index) => {
-    const row: any = { time }
-    points.forEach((p) => {
-      row[`point_${p.varSeq}`] = p.values[index]
-    })
-    return row
-  })
-})
+const clearMatrixData = () => {
+  matrixQueryVersion.value += 1
+  matrixRows.value = []
+  matrixColumns.value = []
+  matrixNextCursor.value = null
+}
+
+const valueColumns = computed(() =>
+  matrixColumns.value.filter((column) => column.prop !== 'ts')
+)
+
+// 全选/清空点位
+const selectAllPoints = () => {
+  tempSelectedVarSeqs.value = pointList.value.map((p) => p.varSeq)
+}
+
+const clearAllPoints = () => {
+  tempSelectedVarSeqs.value = []
+}
+
+const hasResultData = computed(() => !!chartData.value && chartData.value.series.length > 0)
 
 const formatValue = (val: any) => {
-  if (val === null || val === undefined || val === '') return '--'
+  if (val === null || val === undefined || val === '' || val === '-') return '--'
   return typeof val === 'number' ? val.toFixed(2) : val
+}
+
+const loadMatrixData = async (reset = false) => {
+  if (!searchForm.value.deviceId || searchForm.value.varSeqs.length === 0) return
+
+  if (reset) {
+    clearMatrixData()
+  }
+
+  const currentVersion = ++matrixQueryVersion.value
+  loadingMatrix.value = true
+
+  try {
+    const result = await fetchHistoryRawMatrix({
+      deviceId: searchForm.value.deviceId,
+      varSeqs: searchForm.value.varSeqs,
+      startTime: searchForm.value.startTime,
+      endTime: searchForm.value.endTime,
+      alignGranularity: matrixAlignGranularity.value,
+      pageSize: 200,
+      cursorTs: matrixNextCursor.value || undefined,
+    })
+
+    if (currentVersion !== matrixQueryVersion.value) return
+
+    if (reset) {
+      matrixColumns.value = result.columns
+    }
+    matrixRows.value = [...matrixRows.value, ...result.rows]
+    matrixNextCursor.value = result.nextCursor
+  } catch (error) {
+    if (currentVersion !== matrixQueryVersion.value) return
+
+    console.error('加载矩阵数据失败:', error)
+    ElMessage.error('加载矩阵数据失败')
+    if (reset) {
+      clearMatrixData()
+    }
+  } finally {
+    if (currentVersion === matrixQueryVersion.value) {
+      loadingMatrix.value = false
+    }
+  }
+}
+
+const formatMatrixValue = (value: any, dataType?: string): string => {
+  if (value === null || value === undefined) return '--'
+
+  const type = (dataType || '').toUpperCase()
+  if (type === 'BOOL') return value ? '1' : '0'
+  if (['INT', 'DINT', 'WORD', 'DWORD'].includes(type)) return String(Math.round(value))
+  if (type === 'REAL') return typeof value === 'number' ? value.toFixed(2) : String(value)
+  return String(value)
 }
 
 const emptyDescription = computed(() => {
@@ -231,25 +524,49 @@ const emptyDescription = computed(() => {
     return '正在查询历史数据...'
   }
 
-  if (historyData.value) {
+  if (chartData.value) {
     return '当前查询范围暂无历史数据'
   }
 
   return '请选择设备和点位后查询数据'
 })
 
-const buildChartOption = (): echarts.EChartsOption => {
-  if (!historyData.value) return {}
+/** 判断是否为布尔型点位，用于设置阶梯线 */
+const isStepPoint = (series: Api.DeviceMonitor.HistoryChartResponse['series'][0]) => {
+  // Use exact dataType if provided by backend
+  if (series.dataType && series.dataType.toLowerCase() === 'bool') {
+    return true
+  }
 
-  const series = historyData.value.points.map((point) => {
+  // 1. 根据名称关键词判断
+  const name = series.name.toLowerCase()
+  const stepKeywords = ['status', 'running', 'fault', 'alarm', 'switch', 'state', '状态', '运行', '故障', '告警', '开关']
+  if (stepKeywords.some(k => name.includes(k))) return true
+
+  // 2. 根据数据值判断（仅包含 0, 1, null）
+  const values = series.data.map(d => d[1]).filter(v => v !== null)
+  if (values.length > 0 && values.every(v => v === 0 || v === 1)) return true
+
+  return false
+}
+
+const buildChartOption = (): echarts.EChartsOption => {
+  if (!chartData.value) return {}
+
+  const series = chartData.value.series.map((s) => {
+    const isStep = isStepPoint(s)
     const seriesItem: any = {
-      name: point.pointName,
-      data: point.values,
+      name: s.name,
+      data: s.data,
       type: chartType.value === 'area' ? 'line' : chartType.value,
-      smooth: true,
+      smooth: !isStep,
+      step: isStep ? 'end' : false,
       symbol: 'circle',
       symbolSize: 4,
-      showSymbol: false
+      showSymbol: false,
+      // 性能优化配置
+      sampling: 'lttb',
+      large: true
     }
 
     if (chartType.value === 'area') {
@@ -262,8 +579,12 @@ const buildChartOption = (): echarts.EChartsOption => {
   })
 
   return {
+    animation: false, // 禁用动画提升性能
+    progressive: 5000,
+    progressiveThreshold: 10000,
     tooltip: {
       trigger: 'axis',
+      confine: true,
       axisPointer: {
         type: 'cross',
         label: {
@@ -272,7 +593,7 @@ const buildChartOption = (): echarts.EChartsOption => {
       }
     },
     legend: {
-      data: historyData.value.points.map((p) => p.pointName),
+      data: chartData.value.series.map((s) => s.name),
       bottom: 0,
       type: 'scroll'
     },
@@ -283,9 +604,8 @@ const buildChartOption = (): echarts.EChartsOption => {
       containLabel: true
     },
     xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: historyData.value.times
+      type: 'time',
+      boundaryGap: ['0%', '0%']
     },
     yAxis: {
       type: 'value'
@@ -311,13 +631,27 @@ const buildChartOption = (): echarts.EChartsOption => {
 }
 
 const initOrUpdateChart = () => {
-  if (!chartRef.value) return
+  requestAnimationFrame(() => {
+    if (!chartRef.value) {
+      console.warn('Chart ref is not available')
+      return
+    }
 
-  if (!chartInstance) {
-    chartInstance = echarts.init(chartRef.value)
-  }
+    const clientWidth = chartRef.value.clientWidth
+    const clientHeight = chartRef.value.clientHeight
 
-  chartInstance.setOption(buildChartOption(), true)
+    if (clientWidth === 0 || clientHeight === 0) {
+      console.warn('Chart container has no dimensions, retrying...', { clientWidth, clientHeight })
+      setTimeout(() => initOrUpdateChart(), 50)
+      return
+    }
+
+    if (!chartInstance) {
+      chartInstance = echarts.init(chartRef.value)
+    }
+
+    chartInstance.setOption(buildChartOption(), true)
+  })
 }
 
 const timeShortcuts = [
@@ -326,7 +660,7 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 3600000)
-      return [start, end]
+      return [formatDateTime(start), formatDateTime(end)]
     }
   },
   {
@@ -334,7 +668,7 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 10800000)
-      return [start, end]
+      return [formatDateTime(start), formatDateTime(end)]
     }
   },
   {
@@ -342,7 +676,7 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 21600000)
-      return [start, end]
+      return [formatDateTime(start), formatDateTime(end)]
     }
   },
   {
@@ -350,7 +684,7 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 43200000)
-      return [start, end]
+      return [formatDateTime(start), formatDateTime(end)]
     }
   },
   {
@@ -358,20 +692,10 @@ const timeShortcuts = [
     value: () => {
       const end = new Date()
       const start = new Date(end.getTime() - 86400000)
-      return [start, end]
+      return [formatDateTime(start), formatDateTime(end)]
     }
   }
 ]
-
-const filteredPointList = computed(() => {
-  if (!pointSearch.value) return pointList.value
-  const keyword = pointSearch.value.toLowerCase()
-  return pointList.value.filter(
-    (point) =>
-      point.pointName.toLowerCase().includes(keyword) ||
-      point.ioAddress.toLowerCase().includes(keyword)
-  )
-})
 
 const formatDateTime = (date: Date) => {
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -400,7 +724,7 @@ const buildHistoryErrorMessage = (error: unknown) => {
   }
 
   if (error.message.includes('varSeqs exceeds the limit') || error.message.includes('pointIds exceeds the limit')) {
-    return '单次历史查询最多选择 20 个点位'
+    return '单次历史查询最多选择 10 个点位'
   }
 
   if (error.message.includes('session protection limit')) {
@@ -408,10 +732,6 @@ const buildHistoryErrorMessage = (error: unknown) => {
   }
 
   return error.message || '查询失败'
-}
-
-const openDrawer = () => {
-  drawerVisible.value = true
 }
 
 const loadDeviceList = async () => {
@@ -432,7 +752,7 @@ const loadDeviceList = async () => {
 const loadPointList = async (deviceId?: number) => {
   pointList.value = []
   searchForm.value.varSeqs = []
-  selectedPoints.value = []
+  tempSelectedVarSeqs.value = []
 
   if (!deviceId) return
 
@@ -442,24 +762,6 @@ const loadPointList = async (deviceId?: number) => {
     console.error('加载点位列表失败:', error)
     ElMessage.error('加载点位列表失败')
   }
-}
-
-const handlePointChange = (varSeq: number, checked: boolean) => {
-  if (checked) {
-    if (!searchForm.value.varSeqs.includes(varSeq)) {
-      searchForm.value.varSeqs.push(varSeq)
-    }
-  } else {
-    searchForm.value.varSeqs = searchForm.value.varSeqs.filter((item) => item !== varSeq)
-  }
-}
-
-const selectAllPoints = () => {
-  searchForm.value.varSeqs = pointList.value.map((point) => point.varSeq)
-}
-
-const clearAllPoints = () => {
-  searchForm.value.varSeqs = []
 }
 
 const handleChartTypeChange = (type: ChartType) => {
@@ -480,8 +782,8 @@ const handleQuery = async () => {
     return
   }
 
-  if (searchForm.value.varSeqs.length > 20) {
-    ElMessage.warning('单次历史查询最多选择 20 个点位')
+  if (searchForm.value.varSeqs.length > 10) {
+    ElMessage.warning('单次历史查询最多选择 10 个点位')
     return
   }
 
@@ -505,53 +807,106 @@ const handleQuery = async () => {
 
   loading.value = true
   try {
-    const result = await fetchHistoryQuery({
+    const result = await fetchHistoryChart({
       deviceId: searchForm.value.deviceId,
       varSeqs: searchForm.value.varSeqs,
       startTime: searchForm.value.startTime,
-      endTime: searchForm.value.endTime
+      endTime: searchForm.value.endTime,
+      interval: chartInterval.value,
+      aggregate: chartAggregate.value
     })
 
-    historyData.value = result
-    renderedRecordCount.value = result.times.length
-    selectedPoints.value = pointList.value.filter((item) => searchForm.value.varSeqs.includes(item.varSeq))
+    chartData.value = result
+    renderedRecordCount.value = result.series.reduce((acc, s) => acc + s.data.length, 0)
 
-    await nextTick()
+    // 加载矩阵表数据
+    if (searchForm.value.varSeqs.length > 0) {
+      void loadMatrixData(true)
+    }
+
+    // 先关闭loading让图表容器显示，再初始化图表
+    loading.value = false
     initOrUpdateChart()
 
-    drawerVisible.value = false
+    pointDrawerVisible.value = false
   } catch (error) {
     console.error('查询失败:', error)
     ElMessage.error(buildHistoryErrorMessage(error))
-  } finally {
     loading.value = false
   }
 }
 
 const handleResize = () => {
-  chartInstance?.resize()
+  if (chartInstance && chartRef.value?.clientWidth && chartRef.value?.clientHeight) {
+    chartInstance.resize()
+  }
 }
 
 const handleExport = async () => {
-  if (!searchForm.value.deviceId || !searchForm.value.varSeqs.length) {
-    ElMessage.warning('请先完成查询')
+  if (exportTimeRange.value && exportTimeRange.value[0] && exportTimeRange.value[1]) {
+    exportForm.value.startTime = exportTimeRange.value[0]
+    exportForm.value.endTime = exportTimeRange.value[1]
+  }
+
+  if (!exportForm.value.deviceId || !exportForm.value.varSeqs.length) {
+    ElMessage.warning('请选择要导出的点位')
+    return
+  }
+  if (!exportForm.value.startTime || !exportForm.value.endTime) {
+    ElMessage.warning('请选择导出时间范围')
+    return
+  }
+  if (exportForm.value.varSeqs.length > 20) {
+    ElMessage.warning('单次导出最多选择 20 个点位')
     return
   }
 
+  if (exporting.value) return
+
   exporting.value = true
+  exportProgress.value = 0
+  exportStatusMsg.value = '正在创建导出任务...'
+
   try {
-    const blob = await fetchHistoryExport({
-      deviceId: searchForm.value.deviceId,
-      varSeqs: searchForm.value.varSeqs,
-      startTime: searchForm.value.startTime,
-      endTime: searchForm.value.endTime
+    const { taskId } = await fetchHistoryExport({
+      deviceId: exportForm.value.deviceId,
+      varSeqs: exportForm.value.varSeqs,
+      startTime: exportForm.value.startTime,
+      endTime: exportForm.value.endTime
     })
 
-    await saveBlobAs(blob, `历史数据_${buildFileDate()}.csv`)
+    ElMessage.info('导出任务已创建，请稍候...')
+
+    exportTimer = setInterval(async () => {
+      try {
+        const result = await fetchHistoryExportStatus(taskId)
+        exportProgress.value = result.progress || 0
+        exportStatusMsg.value = result.message || '正在处理...'
+
+        if (result.status === 'completed') {
+          if (exportTimer) clearInterval(exportTimer)
+          exporting.value = false
+          exportProgress.value = 100
+          ElMessage.success('导出成功，即将开始下载')
+          window.open(getHistoryExportDownloadUrl(taskId))
+          setTimeout(() => {
+            exportDialogVisible.value = false
+          }, 1000)
+        } else if (result.status === 'failed') {
+          if (exportTimer) clearInterval(exportTimer)
+          exporting.value = false
+          ElMessage.error(result.message || '导出失败')
+        }
+      } catch (err) {
+        console.error('获取导出状态失败:', err)
+        if (exportTimer) clearInterval(exportTimer)
+        exporting.value = false
+        ElMessage.error('获取导出状态失败')
+      }
+    }, 2000)
   } catch (error) {
     console.error('导出失败:', error)
-    ElMessage.error('导出失败')
-  } finally {
+    ElMessage.error('创建导出任务失败')
     exporting.value = false
   }
 }
@@ -562,6 +917,12 @@ watch(
     void loadPointList(value)
   }
 )
+
+watch(matrixAlignGranularity, () => {
+  if (hasResultData.value) {
+    void loadMatrixData(true)
+  }
+})
 
 watch(timeRange, (value) => {
   if (value && value[0] && value[1]) {
@@ -582,6 +943,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  if (exportTimer) {
+    clearInterval(exportTimer)
+    exportTimer = null
+  }
   if (chartInstance) {
     chartInstance.dispose()
     chartInstance = null
@@ -594,11 +959,132 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  height: 100%;
+  overflow-y: auto;
+  padding-bottom: 24px;
 }
 
-.panel-card {
+// 顶部控制栏
+.control-bar-card {
   border: 1px solid var(--art-card-border);
-  border-radius: 22px;
+  border-radius: 18px;
+
+  :deep(.el-card__body) {
+    padding: 16px 22px;
+  }
+}
+
+.control-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.control-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.control-label {
+  font-size: 13px;
+  color: #8a94a6;
+  white-space: nowrap;
+}
+
+.device-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #f7f9fc;
+  border: 1px solid #e5e9f2;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #eef1f6;
+  }
+}
+
+.device-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d2433;
+}
+
+.device-arrow {
+  color: #8a94a6;
+}
+
+.control-middle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.point-selector-box {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background: #f7f9fc;
+  border: 1px solid #e5e9f2;
+  border-radius: 10px;
+  cursor: pointer;
+  min-width: 200px;
+  max-width: 300px;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #eef1f6;
+  }
+}
+
+.point-tags-text {
+  font-size: 14px;
+  color: #1d2433;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.point-placeholder {
+  font-size: 14px;
+  color: #8a94a6;
+}
+
+.time-picker {
+  width: 360px;
+}
+
+.control-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.interval-select {
+  width: 120px;
+}
+
+.aggregate-select {
+  width: 120px;
+}
+
+// 主内容区
+.main-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.chart-card {
+  border: 1px solid var(--art-card-border);
+  border-radius: 18px;
 
   :deep(.el-card__body) {
     display: flex;
@@ -608,78 +1094,44 @@ onUnmounted(() => {
   }
 }
 
-.card-head {
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 4px;
 }
 
-.card-head--split {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.card-title {
-  margin: 0;
-  font-size: 18px;
+.chart-title {
+  font-size: 16px;
   font-weight: 600;
   color: #1d2433;
 }
 
-.card-subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #8a94a6;
-}
-
-.head-actions {
+.chart-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
   margin-left: auto;
-  align-items: center;
-  justify-content: flex-end;
-
-  :deep(.el-button-group),
-  :deep(.el-button) {
-    display: inline-flex;
-    align-items: center;
-  }
 }
 
-.selected-info {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 16px;
-  background: #f7f9fc;
-  border-radius: 12px;
-}
-
-.selected-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  color: #516075;
+.chart-type-btn {
+  padding: 6px 14px;
+  border: 1px solid #e0e5ee;
+  border-radius: 8px;
+  background: #fff;
   font-size: 13px;
-}
+  color: #516075;
+  transition: background 0.2s, color 0.2s;
 
-.selected-meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
+  &:hover {
+    background: #f7f9fc;
+  }
 
-.selected-points {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.point-tag {
-  padding: 6px 12px;
-  border-radius: 999px;
+  &.active {
+    background: #4a6cf7;
+    border-color: #4a6cf7;
+    color: #fff;
+  }
 }
 
 .chart-wrapper {
@@ -690,50 +1142,98 @@ onUnmounted(() => {
 }
 
 .echarts-container {
-  min-height: 480px;
+  width: 100%;
+  height: clamp(360px, 45vh, 520px);
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
-.table-wrapper {
-  margin-top: 8px;
-  background: #fff;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid #eef1f6;
+.table-card {
+  border: 1px solid var(--art-card-border);
+  border-radius: 18px;
 }
 
-.table-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 12px;
-  color: #1d2433;
+.panel-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
 
-  &::before {
-    content: '';
-    display: inline-block;
-    width: 4px;
-    height: 16px;
+.panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d2433;
+}
+
+.table-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.granularity-select {
+  width: 120px;
+}
+
+.load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+// 设备选择器
+.selector-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.device-search {
+  margin-bottom: 12px;
+}
+
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.device-item {
+  display: flex;
+  align-items: center;
+  padding: 12px 16px;
+  background: #f7f9fc;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    background: #eef1f6;
+  }
+
+  &.active {
     background: #4a6cf7;
-    margin-right: 8px;
-    border-radius: 2px;
+    .device-item-name {
+      color: #fff;
+    }
   }
 }
 
-.drawer-content {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+.device-item-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1d2433;
 }
 
-.form-item {
+// 点位选择器
+.selector-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.form-label {
+.selector-label {
   font-size: 14px;
   font-weight: 500;
   color: #1d2433;
@@ -745,98 +1245,72 @@ onUnmounted(() => {
   }
 }
 
-.form-control {
+.selector-control {
   width: 100%;
-}
-
-.point-selector {
-  border: 1px solid #e5e9f2;
-  border-radius: 12px;
-  overflow: hidden;
 }
 
 .point-search {
-  :deep(.el-input__wrapper) {
-    border: 0;
-    border-bottom: 1px solid #e5e9f2;
-    border-radius: 0;
-    box-shadow: none;
-  }
+  margin-bottom: 12px;
 }
 
-.point-list {
-  max-height: 320px;
-  padding: 8px;
-  overflow-y: auto;
-}
-
-.point-item {
+.point-checkbox-list {
   display: flex;
-  width: 100%;
-  height: auto;
-  padding: 10px 12px;
-  margin-bottom: 4px;
-  border-radius: 8px;
-
-  &:hover {
-    background: #f7f9fc;
-  }
-
-  :deep(.el-checkbox__label) {
-    flex: 1;
-  }
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 10px;
 }
 
-.point-info {
+.point-checkbox-content {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.point-name {
+.point-checkbox-name {
   font-size: 14px;
   color: #1d2433;
 }
 
-.point-address {
+.point-checkbox-address {
   font-size: 12px;
   color: #8a94a6;
-}
-
-.point-placeholder {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  justify-content: center;
-  height: 160px;
-  color: #8a94a6;
-  font-size: 14px;
 }
 
 .point-actions {
   display: flex;
   gap: 16px;
-  align-items: center;
   justify-content: flex-end;
-  padding: 8px 12px;
-  background: #f7f9fc;
-  border-top: 1px solid #e5e9f2;
+  padding: 8px 0;
 }
 
-@media (max-width: 960px) {
-  .card-head--split {
-    flex-direction: column;
+@media (max-width: 1200px) {
+  .control-bar {
+    flex-wrap: wrap;
   }
 
-  .head-actions {
-    width: 100%;
-    justify-content: flex-start;
+  .control-middle {
+    flex-wrap: wrap;
   }
 
-  .selected-header {
-    align-items: flex-start;
+  .time-picker {
+    width: 300px;
+  }
+}
+
+@media (max-width: 768px) {
+  .control-bar {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .control-left,
+  .control-middle,
+  .control-right {
+    margin-left: 0;
   }
 }
 </style>

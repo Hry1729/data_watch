@@ -480,13 +480,66 @@ export function fetchHistoryQuery(
   })
 }
 
+/** 查询历史趋势图表数据（带降采样） */
+export function fetchHistoryChart(params: Api.DeviceMonitor.HistorySearchParams) {
+  return request.get<Api.DeviceMonitor.HistoryChartResponse>({
+    url: `${BASE_URL}/history/chart`,
+    params
+  })
+}
+
+/** 查询历史原始数据（带分页） */
+export function fetchHistoryRaw(params: {
+  deviceId: number
+  varSeq: number
+  startTime: string
+  endTime: string
+  pageSize?: number
+  cursorTs?: string
+}) {
+  return request.get<Api.DeviceMonitor.HistoryRawResponse>({
+    url: `${BASE_URL}/history/raw`,
+    params
+  })
+}
+
+/** 查询历史数据矩阵表（多点位桶对齐） */
+export function fetchHistoryRawMatrix(params: {
+  deviceId: number
+  varSeqs: number[]
+  startTime: string
+  endTime: string
+  alignGranularity?: '100ms' | '500ms' | '1s'
+  pageSize?: number
+  cursorTs?: string
+}) {
+  return request.get<Api.DeviceMonitor.HistoryRawMatrixResponse>({
+    url: `${BASE_URL}/history/raw-matrix`,
+    params
+  })
+}
+
 /** 导出历史数据 */
 export function fetchHistoryExport(params: Api.DeviceMonitor.HistoryExportParams) {
-  return request.post<Blob>({
+  return request.post<Api.DeviceMonitor.HistoryExportTask>({
     url: `${BASE_URL}/history/export`,
-    data: params,
-    responseType: 'blob'
+    data: params
   })
+}
+
+/** 获取历史导出任务状态 */
+export function fetchHistoryExportStatus(taskId: string) {
+  return request.get<Api.DeviceMonitor.HistoryExportStatus>({
+    url: `${BASE_URL}/history/export/${taskId}/status`
+  })
+}
+
+/** 获取历史导出文件下载链接 */
+export function getHistoryExportDownloadUrl(taskId: string) {
+  const { VITE_API_URL } = import.meta.env
+  const baseUrl = VITE_API_URL && VITE_API_URL !== '/' ? VITE_API_URL : window.location.origin
+  const normalizedBase = baseUrl.replace(/\/$/, '')
+  return `${normalizedBase}${BASE_URL}/history/export/${taskId}/download`
 }
 
 /** 兼容旧函数：查询历史数据 */

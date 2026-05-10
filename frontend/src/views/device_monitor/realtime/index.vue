@@ -235,6 +235,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
 import { fetchMonitorDeviceTree, fetchRealtimeInit, getRealtimeWebSocketUrl } from '@/api/device-monitor'
@@ -297,6 +298,138 @@ const lastSyncTime = ref('')
 const tdengineConnected = ref(true)
 const perspectiveReady = ref(false)
 
+// 状态持久化
+const STORAGE_KEY = 'realtime-monitor-state'
+const CHART_STATE_KEY = 'realtime-monitor-chart-state'
+const MAX_SNAPSHOT_RECORDS = 500 // 保存最近500条数据快照
+
+const saveStateToStorage = () => {
+  const state = {
+    deviceId: currentDevice.value?.deviceId,
+    deviceCode: currentDevice.value?.deviceCode,
+    deviceName: currentDevice.value?.deviceName,
+    selectedPoints: selectedPoints.value.map((p) => ({
+      varSeq: p.varSeq,
+      pointName: p.pointName,
+      ioAddress: p.ioAddress,
+      dataType: p.dataType
+    })),
+    refreshRate: refreshRate.value,
+    chartType: chartType.value,
+    separateBoolChart: separateBoolChart.value,
+    wasMonitoring: isMonitoring.value // 记录是否正在监控
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+
+  // 保存数据快照（异步）
+  saveChartSnapshot()
+}
+
+const saveChartSnapshot = async () => {
+  try {
+    // 保存最近的数据记录
+    const dataSnapshot = realtimeRecords.value.slice(-MAX_SNAPSHOT_RECORDS).map((r) => ({
+      timestamp: r.timestamp.toISOString(),
+      varSeq: r.varSeq,
+      pointName: r.pointName,
+      value: r.value
+    }))
+
+    // 保存图表配置
+    const chartConfigs: Record<string, unknown> = {}
+
+    if (perspectiveViewer.value) {
+      chartConfigs.single = await (perspectiveViewer.value as any).save()
+    }
+    if (perspectiveNumericViewer.value) {
+      chartConfigs.numeric = await (perspectiveNumericViewer.value as any).save()
+    }
+    if (perspectiveBoolViewer.value) {
+      chartConfigs.bool = await (perspectiveBoolViewer.value as any).save()
+    }
+
+    const chartState = {
+      data: dataSnapshot,
+      configs: chartConfigs,
+      timestamp: Date.now()
+    }
+
+    localStorage.setItem(CHART_STATE_KEY, JSON.stringify(chartState))
+  } catch (error) {
+    console.warn('保存图表快照失败:', error)
+  }
+}
+
+const loadStateFromStorage = (): boolean => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return false
+
+    const state = JSON.parse(raw)
+    if (state.deviceId && state.selectedPoints?.length > 0) {
+      currentDevice.value = {
+        deviceId: state.deviceId,
+        deviceCode: state.deviceCode || '',
+        deviceName: state.deviceName
+      }
+      selectedPoints.value = state.selectedPoints.map((p: any) => ({
+        varSeq: p.varSeq,
+        pointName: p.pointName,
+        ioAddress: p.ioAddress,
+        dataType: p.dataType
+      }))
+      refreshRate.value = state.refreshRate || 1000
+      chartType.value = state.chartType || 'line'
+      separateBoolChart.value = state.separateBoolChart ?? true
+      return state.wasMonitoring === true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
+const loadChartSnapshot = async (): Promise<boolean> => {
+  try {
+    const raw = localStorage.getItem(CHART_STATE_KEY)
+    if (!raw) return false
+
+    const chartState = JSON.parse(raw)
+
+    // 检查快照是否过期（超过10分钟则不恢复）
+    const snapshotAge = Date.now() - (chartState.timestamp || 0)
+    if (snapshotAge > 10 * 60 * 1000) {
+      localStorage.removeItem(CHART_STATE_KEY)
+      return false
+    }
+
+    // 恢复数据记录
+    if (chartState.data?.length > 0) {
+      realtimeRecords.value = chartState.data.map((item: any) => ({
+        timestamp: new Date(item.timestamp),
+        varSeq: item.varSeq,
+        pointName: item.pointName,
+        value: item.value
+      }))
+
+      // 恢复实时值
+      realtimeRecords.value.forEach((record) => {
+        realtimeValues.value.set(record.varSeq, record.value)
+      })
+    }
+
+    return true
+  } catch (error) {
+    console.warn('加载图表快照失败:', error)
+    return false
+  }
+}
+
+const clearStateFromStorage = () => {
+  localStorage.removeItem(STORAGE_KEY)
+  localStorage.removeItem(CHART_STATE_KEY)
+}
+
 // 设备选择器
 const deviceSelectorVisible = ref(false)
 const deviceSearchKeyword = ref('')
@@ -345,6 +478,27 @@ const hasNumericPoints = computed(() => selectedPoints.value.some((p) => p.dataT
 
 const hasBoolData = computed(() => realtimeRecords.value.some((r) => boolVarSeqs.value.has(r.varSeq)))
 const hasNumericData = computed(() => realtimeRecords.value.some((r) => !boolVarSeqs.value.has(r.varSeq)))
+
+// 图表重建标志，防止并发操作
+const rebuildingChart = ref(false)
+
+// 重建 Perspective 图表（清空后用现有数据重建）
+const rebuildPerspectiveFromRecords = async () => {
+  if (rebuildingChart.value) return
+  rebuildingChart.value = true
+
+  try {
+    await nextTick()
+    await clearPerspectiveTable()
+    await initPerspectiveViewer()
+
+    if (realtimeRecords.value.length > 0) {
+      await updatePerspectiveTable(realtimeRecords.value)
+    }
+  } finally {
+    rebuildingChart.value = false
+  }
+}
 
 const pointTagsText = computed(() => {
   if (selectedPoints.value.length === 0) return ''
@@ -411,11 +565,13 @@ const loadDeviceTree = async () => {
     const devices: DeviceInfo[] = []
     tree?.forEach((group) => {
       group.children?.forEach((device) => {
-        devices.push({
-          deviceId: device.deviceId,
-          deviceCode: device.deviceCode || device.name || '',
-          deviceName: device.deviceName
-        })
+        if (device.deviceId) {
+          devices.push({
+            deviceId: device.deviceId,
+            deviceCode: device.deviceCode || device.name || '',
+            deviceName: device.deviceName
+          })
+        }
       })
     })
     deviceList.value = devices
@@ -465,6 +621,7 @@ const selectDevice = async (device: DeviceInfo) => {
 
 // 清理 Perspective Table
 const clearPerspectiveTable = async () => {
+  // 清理单图表模式
   if (perspectiveTable.value) {
     try {
       await perspectiveTable.value.delete()
@@ -472,6 +629,24 @@ const clearPerspectiveTable = async () => {
       console.warn('清理Table失败:', e)
     }
     perspectiveTable.value = null
+  }
+  // 清理分离模式：数值型
+  if (perspectiveNumericTable.value) {
+    try {
+      await perspectiveNumericTable.value.delete()
+    } catch (e) {
+      console.warn('清理数值型Table失败:', e)
+    }
+    perspectiveNumericTable.value = null
+  }
+  // 清理分离模式：Bool 型
+  if (perspectiveBoolTable.value) {
+    try {
+      await perspectiveBoolTable.value.delete()
+    } catch (e) {
+      console.warn('清理Bool Table失败:', e)
+    }
+    perspectiveBoolTable.value = null
   }
 }
 
@@ -516,10 +691,13 @@ const confirmPointSelection = () => {
   pointSelectorVisible.value = false
 }
 
-const clearSelection = () => {
+const clearSelection = async () => {
   selectedPoints.value = []
+  realtimeValues.value.clear()
   realtimeRecords.value = []
-  clearPerspectiveTable()
+  await clearPerspectiveTable()
+  // 清除快照
+  localStorage.removeItem(CHART_STATE_KEY)
 }
 
 // 监控控制
@@ -528,6 +706,15 @@ const startMonitor = async () => {
   isMonitoring.value = true
 
   await initPerspectiveViewer()
+
+  // 尝试恢复数据快照
+  const snapshotLoaded = await loadChartSnapshot()
+
+  // 如果有恢复的数据，立即写入图表
+  if (snapshotLoaded && realtimeRecords.value.length > 0) {
+    await updatePerspectiveTable(realtimeRecords.value)
+  }
+
   connectWebSocket()
 }
 
@@ -539,6 +726,21 @@ watch(refreshRate, (val) => {
 })
 
 const stopMonitor = () => {
+  // 停止接收新数据，但不清空历史数据
+  isMonitoring.value = false
+  closeWebSocket()
+}
+
+const clearMonitorData = async () => {
+  // 清空历史数据和快照（用户主动清空）
+  realtimeRecords.value = []
+  realtimeValues.value.clear()
+  await clearPerspectiveTable()
+  localStorage.removeItem(CHART_STATE_KEY)
+}
+
+const disconnectForUnmount = () => {
+  // 页面卸载时的轻量清理：只断开连接，不清空数据
   isMonitoring.value = false
   closeWebSocket()
 }
@@ -763,7 +965,8 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
   }
 
   lastSyncTime.value = formatTimestamp()
-  if (newRecords.length > 0) {
+  // 如果正在重建图表，只追加数据，等重建完成后统一刷新
+  if (newRecords.length > 0 && !rebuildingChart.value) {
     void updatePerspectiveTable(newRecords)
   }
 }
@@ -933,20 +1136,186 @@ const toggleChartFullscreen = async () => {
   }
 }
 
-const handleExport = () => {
-  // 预留导出功能
+const handleExport = async () => {
+  if (realtimeRecords.value.length === 0) {
+    ElMessage.warning('暂无数据可导出')
+    return
+  }
+
+  try {
+    const ExcelJS = await import('exceljs')
+    const { toPng } = await import('html-to-image')
+
+    const workbook = new ExcelJS.Workbook()
+
+    // 生成文件名
+    const deviceName = currentDevice.value?.deviceName || currentDevice.value?.deviceCode || '设备'
+    const timestampStr = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const filename = `${deviceName}_实时监控_${timestampStr}.xlsx`
+
+    // Sheet 1: 趋势图截图
+    const chartSheet = workbook.addWorksheet('趋势图')
+
+    // 截取图表
+    const chartElements: HTMLElement[] = []
+    if (!separateBoolChart.value && perspectiveRef.value) {
+      chartElements.push(perspectiveRef.value)
+    } else {
+      if (perspectiveNumericRef.value) chartElements.push(perspectiveNumericRef.value)
+      if (perspectiveBoolRef.value) chartElements.push(perspectiveBoolRef.value)
+    }
+
+    // 在 Excel 中嵌入图表截图
+    let imageRow = 1
+    for (const chartEl of chartElements) {
+      try {
+        const pngData = await toPng(chartEl, { quality: 0.9, pixelRatio: 2 })
+        const imageBase64 = pngData.split(',')[1]
+        const imageId = workbook.addImage({
+          base64: imageBase64,
+          extension: 'png'
+        })
+        // 根据图表实际尺寸计算 Excel 中的大小
+        const width = chartEl.offsetWidth / 8 // 约换算为 Excel 列宽单位
+        const height = chartEl.offsetHeight / 1.5 // 约换算为 Excel 行高单位
+        chartSheet.addImage(imageId, {
+          tl: { col: 0, row: imageRow },
+          ext: { width: Math.min(width, 60), height: Math.min(height, 40) }
+        })
+        imageRow += Math.ceil(height / 15) + 2
+      } catch (e) {
+        console.warn('图表截图失败:', e)
+      }
+    }
+
+    // Sheet 2: 趋势数据（宽表格式）
+    const dataSheet = workbook.addWorksheet('趋势数据')
+
+    // 构建宽表数据
+    // 1. 获取所有变量列（按选中顺序）
+    const varColumns = selectedPoints.value.map((p) => {
+      const name = p.pointName
+      // 如果名称重复，添加序号区分
+      const duplicateCount = selectedPoints.value.filter((x) => x.pointName === name).length
+      return duplicateCount > 1 ? `${name}(${p.varSeq})` : name
+    })
+
+    // 2. 按时间分组聚合数据
+    const timeMap = new Map<string, Map<number, number | string>>()
+    for (const record of realtimeRecords.value) {
+      // 格式化时间：YYYY-MM-DD HH:mm:ss.SSS
+      const timeKey = formatExportTime(record.timestamp)
+      if (!timeMap.has(timeKey)) {
+        timeMap.set(timeKey, new Map())
+      }
+      timeMap.get(timeKey)!.set(record.varSeq, record.value)
+    }
+
+    // 3. 构建表头和行数据
+    const header = ['时间', ...varColumns]
+    dataSheet.columns = header.map((h) => ({ header: h, key: h, width: 18 }))
+
+    // 添加数据行
+    const sortedTimes = Array.from(timeMap.keys()).sort()
+    for (const time of sortedTimes) {
+      const row: Record<string, number | string> = { '时间': time }
+      const valuesMap = timeMap.get(time)!
+      selectedPoints.value.forEach((p) => {
+        const colName = varColumns[selectedPoints.value.indexOf(p)]
+        row[colName] = valuesMap.get(p.varSeq) ?? ''
+      })
+      dataSheet.addRow(row)
+    }
+
+    // 设置表头样式
+    dataSheet.getRow(1).font = { bold: true }
+    dataSheet.getRow(1).alignment = { horizontal: 'center' }
+
+    // 导出文件
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    URL.revokeObjectURL(url)
+
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error('导出失败:', error)
+    ElMessage.error('导出失败')
+  }
+}
+
+// 格式化导出时间：YYYY-MM-DD HH:mm:ss.SSS
+const formatExportTime = (date: Date): string => {
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`
 }
 
 // 生命周期
-onMounted(() => {
-  void loadDeviceTree()
+onMounted(async () => {
+  await loadDeviceTree()
+
+  // 恢复之前的状态
+  const wasMonitoring = loadStateFromStorage()
+
+  // 无论是否正在监控，都先初始化 Perspective 并恢复快照
+  if (currentDevice.value && selectedPoints.value.length > 0) {
+    await nextTick()
+    await initPerspectiveViewer()
+
+    // 恢复数据快照（如果有）
+    const snapshotLoaded = await loadChartSnapshot()
+    if (snapshotLoaded && realtimeRecords.value.length > 0) {
+      await updatePerspectiveTable(realtimeRecords.value)
+    }
+
+    // 如果之前正在监控，再连接 WebSocket 继续接收新数据
+    if (wasMonitoring) {
+      connectWebSocket()
+      isMonitoring.value = true
+    }
+  }
 })
 
 onUnmounted(() => {
-  stopMonitor()
+  // 保存状态和数据快照
+  const state = {
+    deviceId: currentDevice.value?.deviceId,
+    deviceCode: currentDevice.value?.deviceCode,
+    deviceName: currentDevice.value?.deviceName,
+    selectedPoints: selectedPoints.value.map((p) => ({
+      varSeq: p.varSeq,
+      pointName: p.pointName,
+      ioAddress: p.ioAddress,
+      dataType: p.dataType
+    })),
+    refreshRate: refreshRate.value,
+    chartType: chartType.value,
+    separateBoolChart: separateBoolChart.value,
+    wasMonitoring: isMonitoring.value
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+
+  // 保存数据快照
+  const dataSnapshot = realtimeRecords.value.slice(-MAX_SNAPSHOT_RECORDS).map((r) => ({
+    timestamp: r.timestamp.toISOString(),
+    varSeq: r.varSeq,
+    pointName: r.pointName,
+    value: r.value
+  }))
+  localStorage.setItem(CHART_STATE_KEY, JSON.stringify({
+    data: dataSnapshot,
+    timestamp: Date.now()
+  }))
+
+  // 轻量清理：只断开连接，不清空数据
+  disconnectForUnmount()
 
   void (async () => {
-    // 清理单图表模式
+    // 清理 Perspective 资源
     if (perspectiveViewer.value) {
       try {
         await perspectiveViewer.value.delete()
@@ -954,7 +1323,6 @@ onUnmounted(() => {
         console.warn('清理Perspective失败:', e)
       }
     }
-    // 清理分离模式：数值型图表
     if (perspectiveNumericViewer.value) {
       try {
         await perspectiveNumericViewer.value.delete()
@@ -962,7 +1330,6 @@ onUnmounted(() => {
         console.warn('清理数值型Perspective失败:', e)
       }
     }
-    // 清理分离模式：Bool 型图表
     if (perspectiveBoolViewer.value) {
       try {
         await perspectiveBoolViewer.value.delete()
@@ -997,6 +1364,12 @@ watch(chartType, async () => {
   if (perspectiveBoolViewer.value && perspectiveBoolTable.value) {
     await perspectiveBoolViewer.value.restore(buildViewerConfig(true))
   }
+})
+
+// 监听分离 Bool 图表设置变化
+watch(separateBoolChart, async () => {
+  // 重建图表，用现有数据重新渲染
+  await rebuildPerspectiveFromRecords()
 })
 </script>
 
@@ -1238,6 +1611,12 @@ watch(chartType, async () => {
   }
 }
 
+// 单图表模式：占满整个空间
+.perspective-single {
+  flex: 1;
+  min-height: 400px;
+}
+
 // 数值型图表占主要空间
 .perspective-numeric {
   flex: 3;
@@ -1254,6 +1633,35 @@ watch(chartType, async () => {
   :deep(perspective-viewer .plugin-legend) {
     display: none !important;
   }
+}
+
+// 设置弹窗
+.settings-content {
+  padding: 8px 0;
+}
+
+.settings-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 1px solid #eee;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.settings-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333;
+}
+
+.settings-desc {
+  font-size: 13px;
+  color: #666;
+  line-height: 1.5;
 }
 
 // 右侧点位卡片
