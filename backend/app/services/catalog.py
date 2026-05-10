@@ -667,14 +667,14 @@ class CatalogService:
         latest_value_map = await self._fetch_latest_point_value_map(points)
 
         # 统计近期更新数量（最近一小时有数据更新的点位）
-        from datetime import datetime, timedelta, timezone
-        one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+        from datetime import datetime, timedelta
+        one_hour_ago = datetime.now() - timedelta(hours=1)
         recent_update_count = 0
         for point in points:
             latest = latest_value_map.get(point.point_id)
             if latest and latest.get("ts"):
-                ts = latest["ts"]
-                if isinstance(ts, datetime) and ts > one_hour_ago:
+                ts = self._coerce_datetime(latest["ts"])
+                if ts and ts > one_hour_ago:
                     recent_update_count += 1
 
         items = [

@@ -1417,7 +1417,7 @@ watch(separateBoolChart, async () => {
 
 .device-label {
   font-size: 13px;
-  color: #6b7a90;
+  color: var(--art-gray-600);
   white-space: nowrap;
 }
 
@@ -1427,9 +1427,9 @@ watch(separateBoolChart, async () => {
   flex-shrink: 0;
   align-items: center;
   padding: 6px 14px;
-  border: 1px solid #e0e5ee;
+  border: 1px solid var(--art-gray-300);
   border-radius: 10px;
-  background: #fff;
+  background: var(--el-bg-color);
   cursor: pointer;
   transition: border-color 0.2s, box-shadow 0.2s;
 
@@ -1442,20 +1442,20 @@ watch(separateBoolChart, async () => {
 .device-name {
   font-size: 14px;
   font-weight: 500;
-  color: #4a6cf7;
+  color: var(--el-color-primary);
 }
 
 .device-arrow {
   font-size: 12px;
-  color: #8b95a7;
+  color: var(--art-gray-600);
 }
 
 .point-selector-box {
   flex: 1;
   padding: 6px 16px;
-  border: 1px solid #e0e5ee;
+  border: 1px solid var(--art-gray-300);
   border-radius: 10px;
-  background: #fff;
+  background: var(--el-bg-color);
   cursor: pointer;
   font-size: 13px;
   transition: border-color 0.2s, box-shadow 0.2s;
@@ -1470,11 +1470,11 @@ watch(separateBoolChart, async () => {
 }
 
 .point-tags-text {
-  color: #4a6cf7;
+  color: var(--el-color-primary);
 }
 
 .point-placeholder {
-  color: #8b95a7;
+  color: var(--art-gray-600);
 }
 
 .control-right {
@@ -1492,12 +1492,12 @@ watch(separateBoolChart, async () => {
   padding: 6px 12px;
   margin-left: 8px;
   border-radius: 16px;
-  background: #f5f5f5;
+  background: var(--art-gray-200);
   font-size: 13px;
-  color: #8b95a7;
+  color: var(--art-gray-600);
 
   &.connected {
-    background: #e8f5e9;
+    background: rgba(24, 164, 122, 0.1);
     color: #18a47a;
   }
 }
@@ -1546,7 +1546,7 @@ watch(separateBoolChart, async () => {
 .point-cards-panel {
   :deep(.el-card__header) {
     padding: 16px 22px;
-    border-bottom: 1px solid #edf0f5;
+    border-bottom: 1px solid var(--art-gray-200);
   }
 
   :deep(.el-card__body) {
@@ -1567,7 +1567,7 @@ watch(separateBoolChart, async () => {
 .chart-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .chart-actions {
@@ -1579,11 +1579,11 @@ watch(separateBoolChart, async () => {
 
 .chart-type-btn {
   padding: 6px 14px;
-  border: 1px solid #e0e5ee;
+  border: 1px solid var(--art-gray-300);
   border-radius: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
   font-size: 13px;
-  color: #516075;
+  color: var(--art-gray-500);
   transition: background 0.2s, color 0.2s;
 
   &:hover {
@@ -1591,8 +1591,8 @@ watch(separateBoolChart, async () => {
   }
 
   &.active {
-    background: #4a6cf7;
-    border-color: #4a6cf7;
+    background: var(--el-color-primary);
+    border-color: var(--el-color-primary);
     color: #fff;
   }
 }
@@ -1602,8 +1602,8 @@ watch(separateBoolChart, async () => {
   min-height: 200px;
   border-radius: 16px;
   overflow: hidden;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border: 1px solid #eef1f6;
+  background: var(--el-bg-color);
+  border: 1px solid var(--art-gray-200);
 
   perspective-viewer {
     width: 100%;
@@ -1674,7 +1674,7 @@ watch(separateBoolChart, async () => {
 .panel-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .point-cards-list {
@@ -1686,8 +1686,8 @@ watch(separateBoolChart, async () => {
 .point-card {
   padding: 14px 16px;
   border-radius: 14px;
-  background: linear-gradient(135deg, #f8fbff 0%, #f4f8ff 100%);
-  border: 1px solid #edf0f5;
+  background: var(--art-gray-100);
+  border: 1px solid var(--art-gray-200);
   transition: box-shadow 0.2s ease;
 
   &:hover {
@@ -1698,13 +1698,13 @@ watch(separateBoolChart, async () => {
 .point-card-name {
   font-size: 14px;
   font-weight: 500;
-  color: #1d2433;
+  color: var(--art-gray-900);
   margin-bottom: 4px;
 }
 
 .point-card-address {
   font-size: 12px;
-  color: #8b95a7;
+  color: var(--art-gray-600);
   margin-bottom: 8px;
 }
 
@@ -1721,7 +1721,7 @@ watch(separateBoolChart, async () => {
   justify-content: center;
   height: 100%;
   min-height: 200px;
-  color: #8b95a7;
+  color: var(--art-gray-600);
   text-align: center;
 }
 
@@ -1734,7 +1734,7 @@ watch(separateBoolChart, async () => {
   margin: 0;
   font-size: 15px;
   font-weight: 500;
-  color: #6b7a90;
+  color: var(--art-gray-600);
 }
 
 .empty-hint {
@@ -1763,7 +1763,7 @@ watch(separateBoolChart, async () => {
   gap: 8px;
   align-items: center;
   font-size: 13px;
-  color: #516075;
+  color: var(--art-gray-500);
   flex: 1;
   justify-content: center;
 }
@@ -1824,7 +1824,7 @@ watch(separateBoolChart, async () => {
 .device-item-code {
   font-size: 14px;
   font-weight: 600;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .device-item-name {
@@ -1848,11 +1848,11 @@ watch(separateBoolChart, async () => {
 .selector-label {
   font-size: 14px;
   font-weight: 500;
-  color: #1d2433;
+  color: var(--art-gray-900);
 
   .selected-count {
     margin-left: 4px;
-    color: #4a6cf7;
+    color: var(--el-color-primary);
     font-weight: 400;
   }
 }
@@ -1869,7 +1869,7 @@ watch(separateBoolChart, async () => {
   max-height: 280px;
   padding: 8px;
   overflow-y: auto;
-  border: 1px solid #e5e9f2;
+  border: 1px solid var(--art-gray-300);
   border-radius: 12px;
 }
 
@@ -1881,7 +1881,7 @@ watch(separateBoolChart, async () => {
 
 .point-checkbox-name {
   font-size: 14px;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .point-checkbox-address {

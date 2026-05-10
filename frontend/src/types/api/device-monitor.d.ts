@@ -548,12 +548,22 @@ declare namespace Api {
 
     // ==================== 仪表盘统计相关（评审版） ====================
 
+    /** 告警较上周期比较 */
+    interface AlarmComparePrev {
+      countDiff: number
+      ratioDiff: number
+    }
+
     /** 工作台概览 */
     interface DashboardOverview {
       deviceTotal: number
       onlineDeviceTotal: number
+      offlineDeviceTotal: number
+      riskDeviceTotal: number
       pointTotal: number
-      activeAlarmTotal: number
+      systemAlertTotal: number
+      systemAlertComparePrev: AlarmComparePrev
+      generatedAt: string
     }
 
     /** 设备类型分布分组 */
