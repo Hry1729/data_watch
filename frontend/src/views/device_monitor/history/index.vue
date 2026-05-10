@@ -165,7 +165,7 @@
       <div class="selector-content">
         <div class="selector-item">
           <label class="selector-label">选择设备</label>
-          <ElSelect v-model="tempDeviceId" placeholder="请选择设备" filterable class="selector-control" @change="loadPointList">
+          <ElSelect v-model="tempDeviceId" placeholder="请选择设备" filterable class="selector-control" @change="handleTempDeviceChange">
             <ElOption v-for="device in deviceList" :key="device.id" :label="device.name" :value="device.id" />
           </ElSelect>
         </div>
@@ -260,8 +260,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import * as echarts from 'echarts'
 import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
 import {
@@ -276,6 +277,14 @@ import {
 import { isHttpError } from '@/utils/http/error'
 
 defineOptions({ name: 'HistoryData' })
+
+// 缓存相关常量
+const HISTORY_CACHE_KEY = 'history_query_cache'
+const HISTORY_CACHE_MAX_CHART_POINTS = 5000
+const HISTORY_CACHE_MAX_MATRIX_ROWS = 2000
+const HISTORY_CACHE_MAX_POINTS = 10
+const HISTORY_CONDITION_CACHE_MAX_AGE = 24 * 60 * 60 * 1000
+const HISTORY_DATA_CACHE_MAX_AGE = 10 * 60 * 1000
 
 type PointInfo = Api.DeviceMonitor.HistoryPointItem
 type DeviceInfo = Api.DeviceMonitor.HistoryDeviceItem
@@ -371,6 +380,11 @@ const openPointSelector = () => {
   pointDrawerVisible.value = true
 }
 
+const handleTempDeviceChange = async (deviceId?: number) => {
+  tempSelectedVarSeqs.value = []
+  await loadPointList(deviceId)
+}
+
 const handlePointChange = (varSeq: number, checked: boolean) => {
   if (checked) {
     if (!tempSelectedVarSeqs.value.includes(varSeq)) {
@@ -382,6 +396,9 @@ const handlePointChange = (varSeq: number, checked: boolean) => {
 }
 
 const confirmPointSelection = () => {
+  if (tempDeviceId.value && tempDeviceId.value !== searchForm.value.deviceId) {
+    searchForm.value.deviceId = tempDeviceId.value
+  }
   searchForm.value.varSeqs = [...tempSelectedVarSeqs.value]
   pointDrawerVisible.value = false
 }
@@ -751,8 +768,6 @@ const loadDeviceList = async () => {
 
 const loadPointList = async (deviceId?: number) => {
   pointList.value = []
-  searchForm.value.varSeqs = []
-  tempSelectedVarSeqs.value = []
 
   if (!deviceId) return
 
@@ -931,14 +946,184 @@ watch(timeRange, (value) => {
   }
 })
 
-onMounted(() => {
+// 缓存判断：是否可以缓存当前结果
+const canCacheHistoryResult = computed(() => {
+  return (
+    renderedRecordCount.value <= HISTORY_CACHE_MAX_CHART_POINTS &&
+    matrixRows.value.length <= HISTORY_CACHE_MAX_MATRIX_ROWS &&
+    searchForm.value.varSeqs.length <= HISTORY_CACHE_MAX_POINTS
+  )
+})
+
+// 保存缓存（查询条件始终保存，数据根据大小决定）
+const saveHistoryCache = () => {
+  try {
+    const cacheData: any = {
+      // 查询条件始终保存
+      searchForm: {
+        deviceId: searchForm.value.deviceId,
+        varSeqs: [...searchForm.value.varSeqs],
+        startTime: searchForm.value.startTime,
+        endTime: searchForm.value.endTime
+      },
+      timeRange: [...timeRange.value],
+      chartInterval: chartInterval.value,
+      chartAggregate: chartAggregate.value,
+      chartType: chartType.value,
+      matrixAlignGranularity: matrixAlignGranularity.value,
+      timestamp: Date.now()
+    }
+
+    // 数据仅在满足条件时保存
+    if (canCacheHistoryResult.value) {
+      cacheData.chartData = chartData.value
+      cacheData.matrixRows = [...matrixRows.value]
+      cacheData.matrixColumns = matrixColumns.value
+      cacheData.matrixNextCursor = matrixNextCursor.value
+    }
+
+    localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(cacheData))
+  } catch (error) {
+    console.warn('保存历史查询缓存失败:', error)
+  }
+}
+
+// 恢复缓存
+const restoreHistoryCache = (): { restoredData: boolean; restoredConditions: boolean } => {
+  const result = { restoredData: false, restoredConditions: false }
+  try {
+    const cached = localStorage.getItem(HISTORY_CACHE_KEY)
+    if (!cached) return result
+
+    const cacheData = JSON.parse(cached)
+
+    const cacheAge = Date.now() - cacheData.timestamp
+
+    // 查询条件保留更久；过期后整体清理
+    if (cacheAge > HISTORY_CONDITION_CACHE_MAX_AGE) {
+      localStorage.removeItem(HISTORY_CACHE_KEY)
+      return result
+    }
+
+    // 恢复查询条件（始终恢复）
+    if (cacheData.searchForm) {
+      searchForm.value.deviceId = cacheData.searchForm.deviceId
+      searchForm.value.varSeqs = cacheData.searchForm.varSeqs || []
+      searchForm.value.startTime = cacheData.searchForm.startTime || ''
+      searchForm.value.endTime = cacheData.searchForm.endTime || ''
+      result.restoredConditions = true
+    }
+
+    if (cacheData.timeRange) {
+      timeRange.value = cacheData.timeRange
+    }
+
+    if (cacheData.chartInterval) chartInterval.value = cacheData.chartInterval
+    if (cacheData.chartAggregate) chartAggregate.value = cacheData.chartAggregate
+    if (cacheData.chartType) chartType.value = cacheData.chartType
+    if (cacheData.matrixAlignGranularity) matrixAlignGranularity.value = cacheData.matrixAlignGranularity
+
+    const canRestoreData = cacheAge <= HISTORY_DATA_CACHE_MAX_AGE
+
+    // 恢复数据（仅当有缓存且未超过数据缓存时间）
+    if (canRestoreData && cacheData.chartData && cacheData.chartData.series?.length > 0) {
+      chartData.value = cacheData.chartData
+      renderedRecordCount.value = cacheData.chartData.series.reduce((acc: number, s: any) => acc + (s.data?.length || 0), 0)
+      result.restoredData = true
+    }
+
+    if (canRestoreData && cacheData.matrixRows?.length > 0) {
+      matrixRows.value = cacheData.matrixRows
+      result.restoredData = true
+    }
+
+    if (canRestoreData && cacheData.matrixColumns?.length > 0) {
+      matrixColumns.value = cacheData.matrixColumns
+    }
+
+    if (canRestoreData && cacheData.matrixNextCursor) {
+      matrixNextCursor.value = cacheData.matrixNextCursor
+    }
+
+    return result
+  } catch (error) {
+    console.warn('恢复历史查询缓存失败:', error)
+    return result
+  }
+}
+
+// 清理缓存
+const clearHistoryCache = () => {
+  localStorage.removeItem(HISTORY_CACHE_KEY)
+}
+
+onMounted(async () => {
+  // 先设置默认时间范围
   const defaultRange = buildDefaultTimeRange(1)
   timeRange.value = defaultRange
   searchForm.value.startTime = defaultRange[0]
   searchForm.value.endTime = defaultRange[1]
 
-  void loadDeviceList()
+  // 加载设备列表
+  await loadDeviceList()
+
+  // 尝试恢复缓存（查询条件 + 数据）
+  const { restoredData, restoredConditions } = restoreHistoryCache()
+
+  // 如果恢复了设备，加载对应点位列表
+  if (restoredConditions && searchForm.value.deviceId) {
+    await loadPointList(searchForm.value.deviceId)
+  }
+
+  // 如果恢复了数据，重新渲染图表
+  if (restoredData && hasResultData.value) {
+    await nextTick()
+    initOrUpdateChart()
+  }
+
   window.addEventListener('resize', handleResize)
+})
+
+// 路由离开处理
+onBeforeRouteLeave(async (to, from, next) => {
+  // 没有选择设备，直接离开并清理缓存
+  if (!searchForm.value.deviceId) {
+    clearHistoryCache()
+    next()
+    return
+  }
+
+  // 已选择设备但尚未选择点位，也保存设备和时间条件
+  if (searchForm.value.varSeqs.length === 0) {
+    saveHistoryCache()
+    next()
+    return
+  }
+
+  // 有大结果数据：提示用户数据会丢失
+  if (hasResultData.value && !canCacheHistoryResult.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前历史查询结果较大，切换页面后图表和表格数据将被释放（设备和点位选择会保留）。是否继续离开？',
+        '提示',
+        {
+          confirmButtonText: '离开',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+      // 用户确认离开，保存查询条件（丢弃大数据）
+      saveHistoryCache()
+      next()
+    } catch {
+      // 用户取消，留在当前页
+      next(false)
+    }
+  } else {
+    // 小结果或无结果：自动缓存后离开
+    saveHistoryCache()
+    next()
+  }
 })
 
 onUnmounted(() => {
@@ -947,6 +1132,7 @@ onUnmounted(() => {
     clearInterval(exportTimer)
     exportTimer = null
   }
+  // 清理图表实例（不清理缓存，缓存通过路由钩子处理）
   if (chartInstance) {
     chartInstance.dispose()
     chartInstance = null
@@ -988,7 +1174,7 @@ onUnmounted(() => {
 
 .control-label {
   font-size: 13px;
-  color: #8a94a6;
+  color: var(--art-gray-600);
   white-space: nowrap;
 }
 
@@ -997,21 +1183,21 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background: #f7f9fc;
-  border: 1px solid #e5e9f2;
+  background: var(--art-gray-100);
+  border: 1px solid var(--art-gray-300);
   border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover {
-    background: #eef1f6;
+    background: var(--art-gray-200);
   }
 }
 
 .device-name {
   font-size: 14px;
   font-weight: 500;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .device-arrow {
@@ -1029,8 +1215,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 8px 16px;
-  background: #f7f9fc;
-  border: 1px solid #e5e9f2;
+  background: var(--art-gray-100);
+  border: 1px solid var(--art-gray-300);
   border-radius: 10px;
   cursor: pointer;
   min-width: 200px;
@@ -1038,13 +1224,13 @@ onUnmounted(() => {
   transition: all 0.2s;
 
   &:hover {
-    background: #eef1f6;
+    background: var(--art-gray-200);
   }
 }
 
 .point-tags-text {
   font-size: 14px;
-  color: #1d2433;
+  color: var(--art-gray-900);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1104,7 +1290,7 @@ onUnmounted(() => {
 .chart-title {
   font-size: 16px;
   font-weight: 600;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .chart-actions {
@@ -1116,11 +1302,11 @@ onUnmounted(() => {
 
 .chart-type-btn {
   padding: 6px 14px;
-  border: 1px solid #e0e5ee;
+  border: 1px solid var(--art-gray-300);
   border-radius: 8px;
-  background: #fff;
+  background: var(--el-bg-color);
   font-size: 13px;
-  color: #516075;
+  color: var(--art-gray-500);
   transition: background 0.2s, color 0.2s;
 
   &:hover {
@@ -1128,23 +1314,23 @@ onUnmounted(() => {
   }
 
   &.active {
-    background: #4a6cf7;
-    border-color: #4a6cf7;
+    background: var(--el-color-primary);
+    border-color: var(--el-color-primary);
     color: #fff;
   }
 }
 
 .chart-wrapper {
-  background: #fff;
+  background: var(--el-bg-color);
   border-radius: 16px;
   overflow: hidden;
-  border: 1px solid #eef1f6;
+  border: 1px solid var(--art-gray-200);
 }
 
 .echarts-container {
   width: 100%;
   height: clamp(360px, 45vh, 520px);
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  background: var(--el-bg-color);
 }
 
 .table-card {
@@ -1161,7 +1347,7 @@ onUnmounted(() => {
 .panel-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .table-controls {
@@ -1209,11 +1395,11 @@ onUnmounted(() => {
   transition: all 0.2s;
 
   &:hover {
-    background: #eef1f6;
+    background: var(--art-gray-200);
   }
 
   &.active {
-    background: #4a6cf7;
+    background: var(--el-color-primary);
     .device-item-name {
       color: #fff;
     }
@@ -1223,7 +1409,7 @@ onUnmounted(() => {
 .device-item-name {
   font-size: 14px;
   font-weight: 500;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 // 点位选择器
@@ -1236,11 +1422,11 @@ onUnmounted(() => {
 .selector-label {
   font-size: 14px;
   font-weight: 500;
-  color: #1d2433;
+  color: var(--art-gray-900);
 
   .selected-count {
     margin-left: 4px;
-    color: #4a6cf7;
+    color: var(--el-color-primary);
     font-weight: 400;
   }
 }
@@ -1260,7 +1446,7 @@ onUnmounted(() => {
   max-height: 300px;
   overflow-y: auto;
   padding: 8px;
-  border: 1px solid #e5e9f2;
+  border: 1px solid var(--art-gray-300);
   border-radius: 10px;
 }
 
@@ -1272,7 +1458,7 @@ onUnmounted(() => {
 
 .point-checkbox-name {
   font-size: 14px;
-  color: #1d2433;
+  color: var(--art-gray-900);
 }
 
 .point-checkbox-address {

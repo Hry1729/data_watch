@@ -173,7 +173,6 @@
   import ArtRingChart from '@/components/core/charts/art-ring-chart/index.vue'
   import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
   import {
-    fetchDashboardAlarmDistribution,
     fetchDashboardDeviceConnectionHealth,
     fetchDashboardDeviceTypeDistribution,
     fetchDashboardOverview,
@@ -194,11 +193,20 @@
     localStorage.setItem(WELCOME_BANNER_KEY, 'true')
   }
 
-  const statsData = ref<Api.DeviceMonitor.DashboardStats>({
+  const statsData = ref<{
+    totalDevices: number
+    onlineDevices: number
+    offlineDevices: number
+    riskDevices: number
+    totalPoints: number
+    systemAlertCount: number
+  }>({
     totalDevices: 0,
     onlineDevices: 0,
+    offlineDevices: 0,
+    riskDevices: 0,
     totalPoints: 0,
-    alarmCount: 0
+    systemAlertCount: 0
   })
 
   const trendSummary = ref<Api.DeviceMonitor.DashboardTrend['summary']>({
@@ -206,7 +214,7 @@
     alarmCountTotal: 0,
     onlineRateAvg: 0
   })
-  const alarmCompare = ref({
+  const systemAlertCompare = ref({
     countDiff: 0,
     ratioDiff: 0
   })
@@ -249,15 +257,15 @@
     const highLatency = connectionHealthList.value.filter((item) => item.exceptionCount > 0 || item.reconnectCount > 0).length
     const timeoutCount = connectionHealthList.value.filter((item) => item.timeoutCount > 0).length
     return [
-      { name: '在线设备', value: connectionHealthOverview.value.onlineDevices },
-      { name: '离线设备', value: connectionHealthOverview.value.offlineDevices },
+      { name: '在线设备', value: statsData.value.onlineDevices },
+      { name: '离线设备', value: statsData.value.offlineDevices },
       { name: '高延迟', value: highLatency },
       { name: '超时', value: timeoutCount }
     ]
   })
 
   const healthCenterText = computed(() => {
-    return `${connectionHealthOverview.value.onlineDevices + connectionHealthOverview.value.offlineDevices} 台`
+    return `${statsData.value.onlineDevices + statsData.value.offlineDevices} 台`
   })
 
   // 设备类型分布 - 水平堆叠图表数据
@@ -283,7 +291,7 @@
   }
 
   const statCards = computed(() => {
-    const alarmTrendPrefix = alarmCompare.value.countDiff > 0 ? '+' : ''
+    const alertTrendPrefix = systemAlertCompare.value.countDiff > 0 ? '+' : ''
 
     return [
       {
@@ -306,8 +314,8 @@
         decimals: 1,
         suffix: '%',
         trendLabel: '风险',
-        trendValue: `${connectionHealthOverview.value.riskDevices}`,
-        trendClass: connectionHealthOverview.value.riskDevices > 0 ? 'text-warning' : 'text-success',
+        trendValue: `${statsData.value.riskDevices}`,
+        trendClass: statsData.value.riskDevices > 0 ? 'text-warning' : 'text-success',
         icon: 'ri:wifi-line',
         iconBg: '#e9fbf5',
         iconColor: '#18a47a'
@@ -326,14 +334,14 @@
         iconColor: '#d18b2f'
       },
       {
-        key: 'alarms',
-        label: '活跃告警',
-        targetValue: Number(statsData.value.alarmCount) || 0,
+        key: 'alerts',
+        label: '近24小时系统告警',
+        targetValue: Number(statsData.value.systemAlertCount) || 0,
         decimals: 0,
         suffix: '',
         trendLabel: '较上周期',
-        trendValue: `${alarmTrendPrefix}${alarmCompare.value.countDiff}`,
-        trendClass: alarmCompare.value.countDiff > 0 ? 'text-danger' : 'text-success',
+        trendValue: `${alertTrendPrefix}${systemAlertCompare.value.countDiff}`,
+        trendClass: systemAlertCompare.value.countDiff > 0 ? 'text-danger' : 'text-success',
         icon: 'ri:alarm-warning-line',
         iconBg: '#fff0f3',
         iconColor: '#d44f63'
@@ -386,9 +394,12 @@
       statsData.value = {
         totalDevices: overview.deviceTotal,
         onlineDevices: overview.onlineDeviceTotal,
+        offlineDevices: overview.offlineDeviceTotal,
+        riskDevices: overview.riskDeviceTotal,
         totalPoints: overview.pointTotal,
-        alarmCount: overview.activeAlarmTotal
+        systemAlertCount: overview.systemAlertTotal
       }
+      systemAlertCompare.value = overview.systemAlertComparePrev || { countDiff: 0, ratioDiff: 0 }
     } finally {
       overviewLoading.value = false
     }
@@ -517,23 +528,12 @@
     }
   }
 
-  const loadAlarmDistribution = async () => {
-    const result = await fetchDashboardAlarmDistribution({
-      statRange: 'last24h',
-      groupBy: 'alarmType',
-      topN: 6,
-      includeOther: true
-    })
-
-    alarmCompare.value = result.comparePrev
-  }
-
   const loadRecentLogs = async () => {
     recentLoading.value = true
     try {
       const now = new Date()
-      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000)
-      const startTime = formatLocalDateTime(oneHourAgo)
+      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      const startTime = formatLocalDateTime(twentyFourHoursAgo)
       const endTime = formatLocalDateTime(now)
 
       // 并行请求 WARN、ERROR、CRITICAL 级别日志
@@ -574,7 +574,6 @@
         loadTrend(),
         loadDeviceTypeDistribution(),
         loadConnectionHealth(),
-        loadAlarmDistribution(),
         loadRecentLogs()
       ]
 
@@ -615,7 +614,8 @@
 
   // 重置数据状态，用于触发动画效果
   const resetDataForAnimation = () => {
-    statsData.value = { totalDevices: 0, onlineDevices: 0, totalPoints: 0, alarmCount: 0 }
+    statsData.value = { totalDevices: 0, onlineDevices: 0, offlineDevices: 0, riskDevices: 0, totalPoints: 0, systemAlertCount: 0 }
+    systemAlertCompare.value = { countDiff: 0, ratioDiff: 0 }
     trendSummary.value = { collectCountTotal: 0, alarmCountTotal: 0, onlineRateAvg: 0 }
     connectionHealthOverview.value = { onlineDevices: 0, offlineDevices: 0, riskDevices: 0 }
     overviewLoading.value = true

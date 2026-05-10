@@ -387,7 +387,7 @@ class HistoryService:
     ) -> dict[datetime, Any]:
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
-        interval = {"100ms": "100ms", "500ms": "500ms", "1s": "1s"}[granularity]
+        td_interval = self._to_tdengine_interval(granularity)
 
         var_type = (point.var_type or "").upper()
         agg = "AVG" if var_type == "REAL" else "LAST"
@@ -412,7 +412,7 @@ class HistoryService:
                 f"SELECT _wstart AS ts, {agg}(`value`) AS `value` "
                 f"FROM {table_name} "
                 f"WHERE ts >= '{start_sql}' AND ts <= '{end_sql}' "
-                f"INTERVAL({interval}) "
+                f"INTERVAL({td_interval}) "
                 f"ORDER BY ts ASC LIMIT {limit}"
             )
             try:
@@ -434,7 +434,7 @@ class HistoryService:
                 f"FROM {stable_name} "
                 f"WHERE var_seq = {int(point.var_seq)} "
                 f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
-                f"INTERVAL({interval}) "
+                f"INTERVAL({td_interval}) "
                 f"ORDER BY ts ASC LIMIT {limit}"
             )
         stable_statements.append(
@@ -442,7 +442,7 @@ class HistoryService:
             f"FROM {stable_name} "
             f"WHERE variable_id = {int(point.point_id)} "
             f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
-            f"INTERVAL({interval}) "
+            f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC LIMIT {limit}"
         )
 
@@ -590,6 +590,7 @@ class HistoryService:
         database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
+        td_interval = self._to_tdengine_interval(interval)
 
         subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
@@ -602,7 +603,7 @@ class HistoryService:
             f"SELECT _wstart AS ts, {agg_func}(`value`) AS `value` "
             f"FROM {table_name} "
             f"WHERE ts >= '{start_sql}' AND ts <= '{end_sql}' "
-            f"INTERVAL({interval}) "
+            f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC"
         )
 
@@ -622,7 +623,7 @@ class HistoryService:
             f"FROM {stable_name} "
             f"WHERE var_seq = {point.var_seq} "
             f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
-            f"INTERVAL({interval}) "
+            f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC"
         )
 
@@ -1078,6 +1079,27 @@ class HistoryService:
     def _format_timestamp(self, value: datetime) -> str:
         return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
+    def _to_tdengine_interval(self, interval: str) -> str:
+        """将interval字符串转换为TDengine支持的格式
+
+        TDengine 毫秒级 INTERVAL 使用 'a' 后缀：
+        - 100ms -> 100a
+        - 500ms -> 500a
+        - 1s/5s/30s/1m/5m/30m/1h 保持原样
+        """
+        mapping = {
+            "100ms": "100a",
+            "500ms": "500a",
+            "1s": "1s",
+            "5s": "5s",
+            "30s": "30s",
+            "1m": "1m",
+            "5m": "5m",
+            "30m": "30m",
+            "1h": "1h",
+        }
+        return mapping.get(interval, interval)
+
     def _format_sql_timestamp(self, value: datetime) -> str:
         """格式化用于 TDengine SQL 的时间戳，添加本地时区信息
 
@@ -1086,7 +1108,6 @@ class HistoryService:
         中国时区 UTC+8，格式为: '2026-05-09 17:00:00+08:00'
         """
         base_str = value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        # 中国标准时间 UTC+8
         return f"{base_str}+08:00"
 
     def _normalize_point_value(self, var_type: str | None, value: Any) -> str | int | float:

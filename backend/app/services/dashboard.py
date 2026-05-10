@@ -75,40 +75,91 @@ class DashboardService:
         self.tdengine = tdengine
         self._fact_tables: set[str] | None = None
 
-    async def get_overview(self) -> dict[str, int]:
-        row = (
-            await self.session.execute(
+    async def get_overview(self) -> dict[str, Any]:
+        # 获取设备列表和最后采集时间，动态计算在线/风险/离线设备数
+        devices = await self._fetch_dashboard_devices()
+        latest_time_map = await self._fetch_latest_collect_times(devices)
+
+        online_devices = 0
+        risk_devices = 0
+        offline_devices = 0
+        for d in devices:
+            status = self._build_dynamic_connect_status(d, latest_time_map.get(d.device_code))
+            if status == "online":
+                online_devices += 1
+            elif status == "unstable":
+                risk_devices += 1
+            else:
+                offline_devices += 1
+
+        # 点位总数
+        point_total = (
+            await self.session.execute(text("SELECT COUNT(*) FROM device_variable"))
+        ).scalar_one() or 0
+
+        # 系统告警统计（从 system_log + operation_log 统计 WARN/ERROR/CRITICAL）
+        now = now_local()
+        current_start = now - timedelta(hours=24)
+        previous_start = current_start - timedelta(hours=24)
+
+        system_alert_total = 0
+        system_alert_compare_prev = {"countDiff": 0, "ratioDiff": 0}
+
+        try:
+            # 近24小时系统告警数
+            current_result = await self.session.execute(
                 text(
                     """
-                    SELECT
-                        (SELECT COUNT(*) FROM device) AS device_total,
-                        (SELECT COUNT(*) FROM device_variable) AS point_total,
-                        (SELECT COUNT(*) FROM device WHERE COALESCE(status, 0) = 1) AS online_total
+                    SELECT COUNT(*) FROM (
+                        SELECT 1 FROM system_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :current_start
+                        UNION ALL
+                        SELECT 1 FROM operation_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :current_start
+                    ) AS combined
                     """
-                )
+                ),
+                {"current_start": current_start},
             )
-        ).mappings().one()
+            system_alert_total = int(current_result.scalar_one() or 0)
 
-        active_alarm_total = 0
-        fact_tables = await self._get_fact_tables()
-        if "alarm_active" in fact_tables:
-            try:
-                active_alarm_total = int(
-                    (
-                        await self.session.execute(
-                            text("SELECT COUNT(*) AS total FROM alarm_active")
-                        )
-                    ).scalar_one()
-                    or 0
-                )
-            except Exception:
-                active_alarm_total = 0
+            # 上个24小时系统告警数
+            previous_result = await self.session.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM (
+                        SELECT 1 FROM system_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :prev_start AND log_time < :curr_start
+                        UNION ALL
+                        SELECT 1 FROM operation_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :prev_start AND log_time < :curr_start
+                    ) AS combined
+                    """
+                ),
+                {"prev_start": previous_start, "curr_start": current_start},
+            )
+            previous_count = int(previous_result.scalar_one() or 0)
+
+            system_alert_compare_prev = {
+                "countDiff": system_alert_total - previous_count,
+                "ratioDiff": self._calculate_ratio_diff(system_alert_total, previous_count),
+            }
+        except Exception:
+            pass
 
         return {
-            "deviceTotal": int(row["device_total"] or 0),
-            "onlineDeviceTotal": int(row["online_total"] or 0),
-            "pointTotal": int(row["point_total"] or 0),
-            "activeAlarmTotal": active_alarm_total,
+            "deviceTotal": len(devices),
+            "onlineDeviceTotal": online_devices,
+            "offlineDeviceTotal": offline_devices,
+            "riskDeviceTotal": risk_devices,
+            "pointTotal": int(point_total),
+            "systemAlertTotal": system_alert_total,
+            "systemAlertComparePrev": system_alert_compare_prev,
+            "generatedAt": now_local().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
     async def get_device_type_distribution(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -250,17 +301,34 @@ class DashboardService:
         include_offline = self._to_bool(params.get("includeOffline"), default=True)
 
         devices = await self._fetch_dashboard_devices()
-        online_devices = sum(1 for device in devices if self._build_connect_status_from_raw(device.raw_status) == "online")
-        risk_devices = sum(1 for device in devices if self._build_connect_status_from_raw(device.raw_status) == "unstable")
-        offline_devices = sum(1 for device in devices if self._build_connect_status_from_raw(device.raw_status) == "offline")
+        latest_time_map = await self._fetch_latest_collect_times(devices)
 
-        candidate_devices = [device for device in devices if include_offline or device.raw_status in {1, 2}]
-        candidate_devices.sort(key=self._connection_health_sort_key)
+        online_devices = 0
+        risk_devices = 0
+        offline_devices = 0
+        for device in devices:
+            status = self._build_dynamic_connect_status(device, latest_time_map.get(device.device_code))
+            if status == "online":
+                online_devices += 1
+            elif status == "unstable":
+                risk_devices += 1
+            else:
+                offline_devices += 1
+
+        # 使用动态状态筛选
+        candidate_devices = [
+            device for device in devices
+            if include_offline or self._build_dynamic_connect_status(
+                device, latest_time_map.get(device.device_code)
+            ) in {"online", "unstable"}
+        ]
+        candidate_devices.sort(
+            key=lambda d: self._connection_health_dynamic_sort_key(d, latest_time_map.get(d.device_code))
+        )
         selected_devices = candidate_devices[:top_n]
-        latest_map = await self._fetch_latest_collect_times(selected_devices)
 
         items = [
-            self._serialize_connection_health_item(device, latest_map.get(device.device_code))
+            self._serialize_connection_health_item(device, latest_time_map.get(device.device_code))
             for device in selected_devices
         ]
 
@@ -990,25 +1058,25 @@ class DashboardService:
             return {}
 
         results = await asyncio.gather(
-            *(self._fetch_device_latest_collect_time(device) for device in devices)
+            *(self._fetch_device_latest_collect_time(device) for device in devices),
+            return_exceptions=True,
         )
         return {
             device.device_code: latest_time
             for device, latest_time in zip(devices, results, strict=False)
-            if latest_time is not None
+            if isinstance(latest_time, datetime)
         }
 
     async def _fetch_device_latest_collect_time(
         self,
         device: DashboardDeviceItem,
     ) -> datetime | None:
-        database_name = self._resolve_tdengine_database(device.device_code, device.device_type_code)
-        table_name = self.tdengine.qualify_table(
-            database_name,
-            self._normalize_identifier(device.device_code).lower(),
-        )
-
         try:
+            database_name = self._resolve_tdengine_database(device.device_code, device.device_type_code)
+            table_name = self.tdengine.qualify_table(
+                database_name,
+                self._normalize_identifier(device.device_code).lower(),
+            )
             rows = await self.tdengine.fetch_all(
                 f"SELECT LAST(ts) AS last_ts FROM {table_name}",
                 database=database_name,
@@ -1025,7 +1093,7 @@ class DashboardService:
         device: DashboardDeviceItem,
         last_heartbeat_time: datetime | None,
     ) -> dict[str, Any]:
-        connect_status = self._build_connect_status_from_raw(device.raw_status)
+        connect_status = self._build_dynamic_connect_status(device, last_heartbeat_time)
         age_seconds = (
             max(0.0, (now_local() - last_heartbeat_time).total_seconds())
             if last_heartbeat_time is not None
@@ -1063,6 +1131,15 @@ class DashboardService:
 
     def _connection_health_sort_key(self, device: DashboardDeviceItem) -> tuple[int, int]:
         status = self._build_connect_status_from_raw(device.raw_status)
+        priority = {"offline": 0, "unstable": 1, "online": 2}.get(status, 3)
+        return (priority, device.device_id)
+
+    def _connection_health_dynamic_sort_key(
+        self,
+        device: DashboardDeviceItem,
+        last_collect_time: datetime | None,
+    ) -> tuple[int, int]:
+        status = self._build_dynamic_connect_status(device, last_collect_time)
         priority = {"offline": 0, "unstable": 1, "online": 2}.get(status, 3)
         return (priority, device.device_id)
 
@@ -1193,6 +1270,20 @@ class DashboardService:
         if raw_status == 1:
             return "online"
         if raw_status == 2:
+            return "unstable"
+        return "offline"
+
+    def _build_dynamic_connect_status(
+        self,
+        device: DashboardDeviceItem,
+        last_collect_time: datetime | None,
+    ) -> str:
+        if last_collect_time is None:
+            return "offline"
+        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
+        if age_seconds <= ONLINE_MAX_AGE_SECONDS:
+            return "online"
+        if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
             return "unstable"
         return "offline"
 
