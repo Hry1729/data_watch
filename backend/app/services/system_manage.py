@@ -62,12 +62,26 @@ class SystemManageService:
         role_map = await self._load_user_role_map([user.id])
         return self._serialize_user(user, role_map.get(user.id, []))
 
-    async def create_user(self, payload: UserPayload, *, actor: str) -> dict[str, int]:
+    async def create_user(
+        self,
+        payload: UserPayload,
+        *,
+        actor: str,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
         existing = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
         if existing is not None and not existing.deleted:
             raise ApiError(400, "用户名已存在")
 
+        current_is_super = self._is_current_super(current_user_roles)
         role_ids = await self._resolve_role_ids(payload.user_roles)
+        if not current_is_super:
+            default_role_id = await self._get_required_role_id("R_USER")
+            if role_ids and set(role_ids) != {default_role_id}:
+                raise ApiError(403, "只有超级管理员可以指定用户角色")
+            role_ids = [default_role_id]
+        if await self._role_ids_include_super(role_ids) and not current_is_super:
+            raise ApiError(403, "只有超级管理员可以分配超级管理员角色")
         user = SysUser(
             user_name=payload.user_name,
             password_hash=hash_password(payload.password or "123456"),
@@ -88,7 +102,15 @@ class SystemManageService:
         await self.session.commit()
         return {"id": user.id}
 
-    async def update_user(self, user_id: int, payload: UserPayload, *, actor: str) -> dict[str, int]:
+    async def update_user(
+        self,
+        user_id: int,
+        payload: UserPayload,
+        *,
+        actor: str,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
         user = await self._get_user_or_raise(user_id)
         if payload.user_name and payload.user_name != user.user_name:
             duplicate = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
@@ -97,6 +119,23 @@ class SystemManageService:
             user.user_name = payload.user_name
 
         role_ids = await self._resolve_role_ids(payload.user_roles)
+        current_role_ids = await self._load_user_role_ids(user_id)
+        target_is_super = await self._user_has_role(user_id, "R_SUPER")
+        keeps_super_role = await self._role_ids_include_super(role_ids)
+        current_is_super = self._is_current_super(current_user_roles)
+        if not current_is_super and set(role_ids) != current_role_ids:
+            raise ApiError(403, "只有超级管理员可以修改用户角色")
+        if (target_is_super or keeps_super_role) and not current_is_super:
+            raise ApiError(403, "只有超级管理员可以管理超级管理员用户")
+        if user_id == current_user_id and payload.status == "2":
+            raise ApiError(400, "不能禁用当前登录用户")
+        if target_is_super and payload.status != "1":
+            raise ApiError(400, "超级管理员用户不能禁用")
+        if target_is_super and user.user_name == "Super" and not keeps_super_role:
+            raise ApiError(400, "内置超级管理员不能移除超级管理员角色")
+        if target_is_super and user_id == current_user_id and not keeps_super_role:
+            raise ApiError(400, "不能移除当前登录用户的超级管理员角色")
+
         user.nick_name = payload.nick_name or user.user_name
         user.email = payload.user_email
         user.phone = payload.user_phone
@@ -110,22 +149,57 @@ class SystemManageService:
         await self.session.commit()
         return {"id": user.id}
 
-    async def update_user_status(self, user_id: int, *, status: str, actor: str) -> dict[str, int]:
+    async def update_user_status(
+        self,
+        user_id: int,
+        *,
+        status: str,
+        actor: str,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
+        if user_id == current_user_id and status == "2":
+            raise ApiError(400, "不能禁用当前登录用户")
+        target_is_super = await self._user_has_role(user_id, "R_SUPER")
+        if target_is_super and not self._is_current_super(current_user_roles):
+            raise ApiError(403, "只有超级管理员可以管理超级管理员用户")
+        if target_is_super and status != "1":
+            raise ApiError(400, "超级管理员用户不能禁用")
         user = await self._get_user_or_raise(user_id)
         user.status = status
         user.update_by = actor
         await self.session.commit()
         return {"id": user.id}
 
-    async def reset_user_password(self, user_id: int, payload: PasswordResetPayload, *, actor: str) -> dict[str, int]:
+    async def reset_user_password(
+        self,
+        user_id: int,
+        payload: PasswordResetPayload,
+        *,
+        actor: str,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
+        if await self._user_has_role(user_id, "R_SUPER") and not self._is_current_super(current_user_roles):
+            raise ApiError(403, "只有超级管理员可以重置超级管理员密码")
         user = await self._get_user_or_raise(user_id)
         user.password_hash = hash_password(payload.password)
         user.update_by = actor
         await self.session.commit()
         return {"id": user.id}
 
-    async def delete_user(self, user_id: int, *, actor: str) -> dict[str, int]:
+    async def delete_user(
+        self,
+        user_id: int,
+        *,
+        actor: str,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
+        if user_id == current_user_id:
+            raise ApiError(400, "不能删除当前登录用户")
         user = await self._get_user_or_raise(user_id)
+        if await self._user_has_role(user_id, "R_SUPER"):
+            raise ApiError(400, "超级管理员用户不能删除")
         user.deleted = True
         user.status = "2"
         user.update_by = actor
@@ -196,12 +270,16 @@ class SystemManageService:
 
     async def update_role_status(self, role_id: int, *, enabled: bool) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
+        if role.role_code == "R_SUPER" and not enabled:
+            raise ApiError(400, "超级管理员角色不能禁用")
         role.enabled = enabled
         await self.session.commit()
         return {"id": role.id}
 
     async def delete_role(self, role_id: int) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
+        if role.role_code == "R_SUPER":
+            raise ApiError(400, "超级管理员角色不能删除")
         in_use = await self.session.scalar(
             select(func.count()).select_from(SysUserRole).where(SysUserRole.role_id == role.id)
         )
@@ -298,8 +376,9 @@ class SystemManageService:
         return await self._build_menu_tree(allowed_menu_ids=set(menu_ids), permissions=permission_rows)
 
     async def get_menu_tree_admin(self) -> list[dict[str, Any]]:
-        permissions = (await self.session.execute(select(SysPermission).where(SysPermission.enabled.is_(True)))).scalars().all()
-        return await self._build_menu_tree(allowed_menu_ids=None, permissions=permissions)
+        """返回管理员菜单树，包含所有菜单（含禁用菜单）和所有权限"""
+        permissions = (await self.session.execute(select(SysPermission))).scalars().all()
+        return await self._build_menu_tree_admin(permissions=permissions)
 
     async def create_menu(self, payload: MenuPayload) -> dict[str, int]:
         duplicate = await self.session.scalar(select(SysMenu).where(SysMenu.name == payload.name))
@@ -362,7 +441,27 @@ class SystemManageService:
 
     async def delete_menu(self, menu_id: int) -> dict[str, int]:
         menu = await self._get_menu_or_raise(menu_id)
+        # 检查是否存在子菜单
+        child_count = await self.session.scalar(
+            select(func.count()).select_from(SysMenu).where(SysMenu.parent_id == menu.id)
+        )
+        if child_count and child_count > 0:
+            raise ApiError(400, "请先删除子菜单")
+        # 删除角色菜单关联
         await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.menu_id == menu.id))
+        # 查找该菜单下的权限
+        permission_ids = (
+            await self.session.execute(
+                select(SysPermission.id).where(SysPermission.menu_id == menu.id)
+            )
+        ).scalars().all()
+        if permission_ids:
+            # 删除角色权限关联
+            await self.session.execute(
+                delete(SysRolePermission).where(SysRolePermission.permission_id.in_(permission_ids))
+            )
+            # 删除权限
+            await self.session.execute(delete(SysPermission).where(SysPermission.menu_id == menu.id))
         await self.session.delete(menu)
         await self.session.commit()
         return {"id": menu_id}
@@ -489,6 +588,70 @@ class SystemManageService:
                 node["meta"].pop("authList")
         return roots
 
+    async def _build_menu_tree_admin(self, *, permissions: list[SysPermission]) -> list[dict[str, Any]]:
+        """构建管理员菜单树，返回所有菜单（含禁用菜单）"""
+        menus = (
+            await self.session.execute(select(SysMenu).order_by(SysMenu.sort.asc(), SysMenu.id.asc()))
+        ).scalars().all()
+
+        permission_map: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        for permission in permissions:
+            if permission.menu_id is None:
+                continue
+            permission_map[permission.menu_id].append(
+                {
+                    "id": permission.id,
+                    "title": permission.permission_name,
+                    "authMark": permission.auth_mark,
+                    "enabled": permission.enabled,
+                    "permissionCode": permission.permission_code,
+                    "permissionType": permission.permission_type,
+                    "sort": permission.sort,
+                }
+            )
+
+        node_map: dict[int, dict[str, Any]] = {}
+        roots: list[dict[str, Any]] = []
+        for menu in menus:
+            node_map[menu.id] = {
+                "id": menu.id,
+                "parentId": menu.parent_id,
+                "path": menu.path,
+                "name": menu.name,
+                "component": menu.component,
+                "menuType": menu.menu_type,
+                "sort": menu.sort,
+                "enabled": menu.enabled,
+                "meta": {
+                    "title": menu.title_key,
+                    "icon": menu.icon,
+                    "keepAlive": menu.keep_alive,
+                    "isHide": menu.is_hide,
+                    "isHideTab": menu.is_hide_tab,
+                    "link": menu.link,
+                    "isIframe": menu.is_iframe,
+                    "fixedTab": menu.fixed_tab,
+                    "activePath": menu.active_path,
+                    "isFullPage": menu.is_full_page,
+                    "authList": permission_map.get(menu.id, []),
+                },
+                "children": [],
+            }
+
+        for menu in menus:
+            node = node_map[menu.id]
+            if menu.parent_id and menu.parent_id in node_map:
+                node_map[menu.parent_id]["children"].append(node)
+            else:
+                roots.append(node)
+
+        for node in node_map.values():
+            if not node["children"]:
+                node.pop("children")
+            if not node["meta"]["authList"]:
+                node["meta"].pop("authList")
+        return roots
+
     async def _load_user_role_map(self, user_ids: list[int]) -> dict[int, list[str]]:
         if not user_ids:
             return {}
@@ -567,6 +730,35 @@ class SystemManageService:
         if permission is None:
             raise ApiError(404, "权限不存在")
         return permission
+
+    async def _user_has_role(self, user_id: int, role_code: str) -> bool:
+        role_count = await self.session.scalar(
+            select(func.count())
+            .select_from(SysUserRole)
+            .join(SysRole, SysRole.id == SysUserRole.role_id)
+            .where(SysUserRole.user_id == user_id)
+            .where(SysRole.role_code == role_code)
+        )
+        return bool(role_count)
+
+    async def _role_ids_include_super(self, role_ids: list[int]) -> bool:
+        if not role_ids:
+            return False
+        super_role = await self.session.scalar(select(SysRole).where(SysRole.role_code == "R_SUPER"))
+        return super_role is not None and super_role.id in role_ids
+
+    async def _get_required_role_id(self, role_code: str) -> int:
+        role = await self.session.scalar(select(SysRole).where(SysRole.role_code == role_code))
+        if role is None:
+            raise ApiError(500, f"系统角色不存在: {role_code}")
+        return role.id
+
+    async def _load_user_role_ids(self, user_id: int) -> set[int]:
+        result = await self.session.execute(select(SysUserRole.role_id).where(SysUserRole.user_id == user_id))
+        return {int(role_id) for role_id in result.scalars().all()}
+
+    def _is_current_super(self, current_user_roles: list[str]) -> bool:
+        return "R_SUPER" in set(current_user_roles)
 
     def _serialize_user(self, user: SysUser, role_codes: list[str]) -> dict[str, Any]:
         return {

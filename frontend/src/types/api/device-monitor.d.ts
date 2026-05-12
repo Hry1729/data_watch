@@ -279,10 +279,40 @@ declare namespace Api {
 
     /** 历史查询设备项 */
     interface HistoryDeviceItem {
-      id: number
+      id: number | null
       name: string
       deviceCode?: string
       deviceName?: string
+      groupId?: number
+      groupName?: string
+      typeCode?: string
+      typeName?: string
+    }
+
+    /** 设备类型项（用于级联选择） */
+    interface DeviceTypeItem {
+      typeCode: string
+      typeName: string
+      deviceCount: number
+    }
+
+    /** 历史查询有效设备项（id非null） */
+    interface HistoryValidDeviceItem {
+      id: number
+      name: string
+      deviceCode: string
+      deviceName: string
+      groupId: number
+      groupName: string
+      typeCode: string
+      typeName: string
+    }
+
+    /** 历史查询设备分组（按类型） */
+    interface HistoryDeviceTypeGroup {
+      typeCode: string
+      typeName: string
+      devices: HistoryValidDeviceItem[]
     }
 
     /** 历史查询点位项 */

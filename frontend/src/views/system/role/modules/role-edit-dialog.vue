@@ -2,16 +2,20 @@
   <ElDialog
     v-model="visible"
     :title="dialogType === 'add' ? '新增角色' : '编辑角色'"
-    width="30%"
+    width="500px"
     align-center
     @close="handleClose"
   >
-    <ElForm ref="formRef" :model="form" :rules="rules" label-width="120px">
+    <ElForm ref="formRef" :model="form" :rules="rules" label-width="100px">
       <ElFormItem label="角色名称" prop="roleName">
         <ElInput v-model="form.roleName" placeholder="请输入角色名称" />
       </ElFormItem>
       <ElFormItem label="角色编码" prop="roleCode">
-        <ElInput v-model="form.roleCode" placeholder="请输入角色编码" />
+        <ElInput
+          v-model="form.roleCode"
+          placeholder="请输入角色编码（如 R_TEST_001）"
+          :disabled="dialogType === 'edit'"
+        />
       </ElFormItem>
       <ElFormItem label="描述" prop="description">
         <ElInput
@@ -21,18 +25,19 @@
           placeholder="请输入角色描述"
         />
       </ElFormItem>
-      <ElFormItem label="启用">
-        <ElSwitch v-model="form.enabled" />
+      <ElFormItem label="状态" prop="enabled">
+        <ElSwitch v-model="form.enabled" active-text="启用" inactive-text="禁用" />
       </ElFormItem>
     </ElForm>
     <template #footer>
       <ElButton @click="handleClose">取消</ElButton>
-      <ElButton type="primary" @click="handleSubmit">提交</ElButton>
+      <ElButton type="primary" :loading="submitLoading" @click="handleSubmit">提交</ElButton>
     </template>
   </ElDialog>
 </template>
 
 <script setup lang="ts">
+  import { fetchCreateRole, fetchUpdateRole } from '@/api/system-manage'
   import type { FormInstance, FormRules } from 'element-plus'
 
   type RoleListItem = Api.SystemManage.RoleListItem
@@ -57,6 +62,7 @@
   const emit = defineEmits<Emits>()
 
   const formRef = ref<FormInstance>()
+  const submitLoading = ref(false)
 
   /**
    * 弹窗显示状态双向绑定
@@ -76,20 +82,18 @@
     ],
     roleCode: [
       { required: true, message: '请输入角色编码', trigger: 'blur' },
-      { min: 2, max: 50, message: '长度在 2 到 50 个字符', trigger: 'blur' }
-    ],
-    description: [{ required: true, message: '请输入角色描述', trigger: 'blur' }]
+      { min: 2, max: 50, message: '长度在 2 到 50 个字符', trigger: 'blur' },
+      { pattern: /^R_[A-Z0-9_]+$/, message: '角色编码需以 R_ 开头，仅包含大写字母、数字和下划线', trigger: 'blur' }
+    ]
   })
 
   /**
    * 表单数据
    */
-  const form = reactive<RoleListItem>({
-    roleId: 0,
+  const form = reactive<Api.SystemManage.RolePayload>({
     roleName: '',
     roleCode: '',
     description: '',
-    createTime: '',
     enabled: true
   })
 
@@ -104,33 +108,27 @@
   )
 
   /**
-   * 监听角色数据变化，更新表单
-   */
-  watch(
-    () => props.roleData,
-    (newData) => {
-      if (newData && props.modelValue) initForm()
-    },
-    { deep: true }
-  )
-
-  /**
    * 初始化表单数据
-   * 根据弹窗类型填充表单或重置表单
    */
   const initForm = () => {
     if (props.dialogType === 'edit' && props.roleData) {
-      Object.assign(form, props.roleData)
+      Object.assign(form, {
+        roleName: props.roleData.roleName,
+        roleCode: props.roleData.roleCode,
+        description: props.roleData.description || '',
+        enabled: props.roleData.enabled
+      })
     } else {
       Object.assign(form, {
-        roleId: 0,
         roleName: '',
         roleCode: '',
         description: '',
-        createTime: '',
         enabled: true
       })
     }
+    nextTick(() => {
+      formRef.value?.clearValidate()
+    })
   }
 
   /**
@@ -143,20 +141,30 @@
 
   /**
    * 提交表单
-   * 验证通过后调用接口保存数据
    */
   const handleSubmit = async () => {
     if (!formRef.value) return
 
     try {
       await formRef.value.validate()
-      // TODO: 调用新增/编辑接口
-      const message = props.dialogType === 'add' ? '新增成功' : '修改成功'
-      ElMessage.success(message)
+      submitLoading.value = true
+
+      if (props.dialogType === 'add') {
+        await fetchCreateRole(form)
+        ElMessage.success('新增成功')
+      } else if (props.roleData?.roleId) {
+        await fetchUpdateRole(props.roleData.roleId, form)
+        ElMessage.success('修改成功')
+      }
+
       emit('success')
       handleClose()
-    } catch (error) {
-      console.log('表单验证失败:', error)
+    } catch (error: any) {
+      if (error?.message) {
+        ElMessage.error(error.message)
+      }
+    } finally {
+      submitLoading.value = false
     }
   }
 </script>

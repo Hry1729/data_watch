@@ -160,22 +160,60 @@
     </ElCard>
 
     <!-- 设备选择器抽屉 -->
-    <ElDrawer v-model="deviceSelectorVisible" title="选择设备" direction="rtl" size="360px">
+    <ElDrawer v-model="deviceSelectorVisible" title="选择设备" direction="rtl" size="400px">
       <div class="device-selector-content">
-        <ElInput v-model="deviceSearchKeyword" placeholder="搜索设备编号" prefix-icon="Search" clearable class="device-search" />
-        <div class="device-list">
-          <div
-            v-for="device in filteredDeviceList"
-            :key="device.deviceId"
-            class="device-item"
-            :class="{ active: currentDevice?.deviceId === device.deviceId }"
-            @click="selectDevice(device)"
+        <div class="selector-item">
+          <label class="selector-label">设备类型</label>
+          <ElSelect
+            v-model="selectedTypeCode"
+            placeholder="请选择设备类型"
+            class="selector-control"
+            clearable
+            @change="handleTypeChange"
           >
-            <span class="device-item-code">{{ device.deviceCode }}</span>
-            <span class="device-item-name">{{ device.deviceName || '' }}</span>
+            <ElOption
+              v-for="type in deviceTypes"
+              :key="type.typeCode"
+              :label="`${type.typeName} (${type.deviceCount}台)`"
+              :value="type.typeCode"
+            />
+          </ElSelect>
+        </div>
+        <div class="selector-item">
+          <label class="selector-label">设备号</label>
+          <ElSelect
+            v-model="selectedDeviceId"
+            placeholder="请先选择设备类型"
+            class="selector-control"
+            filterable
+            :disabled="!selectedTypeCode"
+            @change="handleDeviceChange"
+          >
+            <ElOption
+              v-for="device in filteredDevicesByType"
+              :key="device.deviceId"
+              :label="device.deviceCode"
+              :value="device.deviceId"
+            >
+              <div class="device-option">
+                <span class="device-option-code">{{ device.deviceCode }}</span>
+                <span class="device-option-name">{{ device.deviceName }}</span>
+              </div>
+            </ElOption>
+          </ElSelect>
+        </div>
+        <div v-if="selectedDeviceId && selectedDeviceDetail" class="selected-device-info">
+          <div class="info-label">已选设备</div>
+          <div class="info-content">
+            <span class="info-code">{{ selectedDeviceDetail.deviceCode }}</span>
+            <span class="info-name">{{ selectedDeviceDetail.deviceName }}</span>
           </div>
         </div>
       </div>
+      <template #footer>
+        <ElButton @click="deviceSelectorVisible = false">取消</ElButton>
+        <ElButton type="primary" :disabled="!selectedDeviceId" @click="confirmDeviceSelection">确认</ElButton>
+      </template>
     </ElDrawer>
 
     <!-- 点位选择器抽屉 -->
@@ -183,20 +221,23 @@
       <div class="selector-content">
         <div class="selector-item">
           <label class="selector-label">选择设备</label>
-          <ElSelect v-model="tempDeviceId" placeholder="请选择设备" filterable class="selector-control" @change="loadSelectorPoints">
+          <ElSelect v-model="tempDeviceId" placeholder="请选择设备" filterable class="selector-control" @change="handleTempDeviceChange">
             <ElOption v-for="device in deviceList" :key="device.deviceId" :label="device.deviceName || device.deviceCode" :value="device.deviceId" />
           </ElSelect>
         </div>
         <div class="selector-item">
-          <label class="selector-label">选择点位</label>
+          <label class="selector-label">
+            选择点位
+            <span v-if="tempSelectedVarSeqs.length" class="selected-count">({{ tempSelectedVarSeqs.length }})</span>
+          </label>
           <ElInput v-model="pointSearchKeyword" placeholder="搜索点位名称或地址" prefix-icon="Search" clearable class="point-search" />
           <div class="point-checkbox-list">
             <ElCheckbox
-              v-for="point in filteredSelectorPoints"
+              v-for="point in filteredPointList"
               :key="point.varSeq"
               :label="point.varSeq"
               :model-value="tempSelectedVarSeqs.includes(point.varSeq)"
-              @change="(val: CheckboxValueType) => handlePointSelect(point.varSeq, Boolean(val))"
+              @change="(val: CheckboxValueType) => handlePointChange(point.varSeq, Boolean(val))"
             >
               <div class="point-checkbox-content">
                 <span class="point-checkbox-name">{{ point.pointName }}</span>
@@ -204,15 +245,15 @@
               </div>
             </ElCheckbox>
           </div>
-          <div v-if="selectorPoints.length > 0" class="point-actions">
-            <ElButton text type="primary" size="small" @click="selectAllInSelector">全选</ElButton>
-            <ElButton text size="small" @click="clearAllInSelector">清空</ElButton>
+          <div v-if="pointList.length > 0" class="point-actions">
+            <ElButton text type="primary" size="small" @click="selectAllPoints">全选</ElButton>
+            <ElButton text size="small" @click="clearAllPoints">清空</ElButton>
           </div>
         </div>
       </div>
       <template #footer>
         <ElButton @click="pointSelectorVisible = false">取消</ElButton>
-        <ElButton type="primary" @click="confirmPointSelection">确认</ElButton>
+        <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
       </template>
     </ElDrawer>
 
@@ -238,7 +279,7 @@ import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
-import { fetchMonitorDeviceTree, fetchRealtimeInit, getRealtimeWebSocketUrl } from '@/api/device-monitor'
+import { fetchMonitorDeviceTree, fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl } from '@/api/device-monitor'
 import {
   ensurePerspectiveViewerRuntime,
   type PerspectiveTableClient,
@@ -247,6 +288,8 @@ import {
 } from '../history/perspective-runtime'
 
 defineOptions({ name: 'RealtimeMonitor' })
+
+type DeviceType = Api.DeviceMonitor.DeviceTypeItem
 
 interface PointInfo {
   varSeq: number
@@ -260,6 +303,8 @@ interface DeviceInfo {
   deviceId: number
   deviceCode: string
   deviceName?: string
+  typeCode?: string
+  typeName?: string
 }
 
 interface RealtimeDataRecord {
@@ -286,6 +331,7 @@ const POINT_UNITS: Record<string, string> = {
 const deviceList = ref<DeviceInfo[]>([])
 const currentDevice = ref<DeviceInfo | null>(null)
 const selectedPoints = ref<PointInfo[]>([])
+const pointList = ref<PointInfo[]>([])
 const realtimeValues = ref<Map<number, number | string>>(new Map())
 const realtimeRecords = ref<RealtimeDataRecord[]>([])
 const isMonitoring = ref(false)
@@ -432,11 +478,12 @@ const clearStateFromStorage = () => {
 
 // 设备选择器
 const deviceSelectorVisible = ref(false)
-const deviceSearchKeyword = ref('')
+const deviceTypes = ref<DeviceType[]>([])
+const selectedTypeCode = ref<string>('')
+const selectedDeviceId = ref<number | undefined>()
 
 // 点位选择器
 const pointSelectorVisible = ref(false)
-const selectorPoints = ref<PointInfo[]>([])
 const tempSelectedVarSeqs = ref<number[]>([])
 const tempDeviceId = ref<number | undefined>()
 const pointSearchKeyword = ref('')
@@ -515,16 +562,40 @@ const pointTagsText = computed(() => {
   return text
 })
 
-const filteredDeviceList = computed(() => {
-  if (!deviceSearchKeyword.value) return deviceList.value
-  const keyword = deviceSearchKeyword.value.toLowerCase()
-  return deviceList.value.filter((d) => d.deviceCode.toLowerCase().includes(keyword))
+// 根据类型过滤的设备列表
+const filteredDevicesByType = computed(() => {
+  if (!selectedTypeCode.value) return []
+  return deviceList.value.filter((d) => d.typeCode === selectedTypeCode.value)
 })
 
-const filteredSelectorPoints = computed(() => {
-  if (!pointSearchKeyword.value) return selectorPoints.value
+// 选中设备的详情
+const selectedDeviceDetail = computed(() =>
+  deviceList.value.find((d) => d.deviceId === selectedDeviceId.value)
+)
+
+// 设备类型变更
+const handleTypeChange = () => {
+  selectedDeviceId.value = undefined
+}
+
+// 设备变更（仅用于显示，不立即确认）
+const handleDeviceChange = () => {
+  // 预览操作
+}
+
+// 确认设备选择
+const confirmDeviceSelection = async () => {
+  if (!selectedDeviceId.value) return
+  const device = deviceList.value.find((d) => d.deviceId === selectedDeviceId.value)
+  if (device) {
+    await selectDevice(device)
+  }
+}
+
+const filteredPointList = computed(() => {
+  if (!pointSearchKeyword.value) return pointList.value
   const keyword = pointSearchKeyword.value.toLowerCase()
-  return selectorPoints.value.filter(
+  return pointList.value.filter(
     (p) => p.pointName.toLowerCase().includes(keyword) || p.ioAddress.toLowerCase().includes(keyword)
   )
 })
@@ -561,38 +632,39 @@ const formatTimestamp = () => {
 // 设备与点位加载
 const loadDeviceTree = async () => {
   try {
-    const tree = await fetchMonitorDeviceTree()
-    const devices: DeviceInfo[] = []
-    tree?.forEach((group) => {
-      group.children?.forEach((device) => {
-        if (device.deviceId) {
-          devices.push({
-            deviceId: device.deviceId,
-            deviceCode: device.deviceCode || device.name || '',
-            deviceName: device.deviceName
-          })
-        }
-      })
-    })
+    // 加载设备类型列表
+    deviceTypes.value = await fetchDeviceTypes()
+
+    // 加载带类型信息的设备列表
+    const devicesWithType = await fetchHistoryDevices()
+    const devices: DeviceInfo[] = devicesWithType
+      .filter((d) => d.id !== null)
+      .map((d) => ({
+        deviceId: d.id!,
+        deviceCode: d.deviceCode || '',
+        deviceName: d.deviceName || '',
+        typeCode: d.typeCode || '',
+        typeName: d.typeName || '其他'
+      }))
     deviceList.value = devices
 
     // 默认选择第一个设备
     if (devices.length > 0) {
       currentDevice.value = devices[0]
-      await loadSelectorPoints(devices[0].deviceId)
+      await loadPointList(devices[0].deviceId)
     }
   } catch (error) {
     console.error('加载设备列表失败:', error)
   }
 }
 
-const loadSelectorPoints = async (deviceId?: number) => {
-  selectorPoints.value = []
+const loadPointList = async (deviceId?: number) => {
+  pointList.value = []
   if (!deviceId) return
 
   try {
     const snapshot = await fetchRealtimeInit({ deviceId })
-    selectorPoints.value = (snapshot.data || []).map((item) => ({
+    pointList.value = (snapshot.data || []).map((item) => ({
       varSeq: item.varSeq,
       pointName: item.pointName,
       ioAddress: item.ioAddress,
@@ -604,24 +676,39 @@ const loadSelectorPoints = async (deviceId?: number) => {
 }
 
 // 设备选择
-const openDeviceSelector = () => {
+const openDeviceSelector = async () => {
+  // 加载设备类型列表（如果还没有）
+  if (deviceTypes.value.length === 0) {
+    deviceTypes.value = await fetchDeviceTypes()
+  }
+  // 重置选择状态
+  selectedTypeCode.value = currentDevice.value?.typeCode || ''
+  selectedDeviceId.value = currentDevice.value?.deviceId
   deviceSelectorVisible.value = true
 }
 
 const selectDevice = async (device: DeviceInfo) => {
   currentDevice.value = device
   selectedPoints.value = []
-  selectorPoints.value = []
+  pointList.value = []
   realtimeValues.value.clear()
   realtimeRecords.value = []
   clearPerspectiveTable()
   deviceSelectorVisible.value = false
-  await loadSelectorPoints(device.deviceId)
+  await loadPointList(device.deviceId)
 }
 
-// 清理 Perspective Table
+// 清理 Perspective Table（先删除 viewer，再删除 table）
 const clearPerspectiveTable = async () => {
-  // 清理单图表模式
+  // 清理单图表模式：先 viewer 后 table
+  if (perspectiveViewer.value) {
+    try {
+      await perspectiveViewer.value.delete()
+    } catch (e) {
+      console.warn('清理Viewer失败:', e)
+    }
+    perspectiveViewer.value = null
+  }
   if (perspectiveTable.value) {
     try {
       await perspectiveTable.value.delete()
@@ -630,7 +717,15 @@ const clearPerspectiveTable = async () => {
     }
     perspectiveTable.value = null
   }
-  // 清理分离模式：数值型
+  // 清理分离模式：数值型 - 先 viewer 后 table
+  if (perspectiveNumericViewer.value) {
+    try {
+      await perspectiveNumericViewer.value.delete()
+    } catch (e) {
+      console.warn('清理数值型Viewer失败:', e)
+    }
+    perspectiveNumericViewer.value = null
+  }
   if (perspectiveNumericTable.value) {
     try {
       await perspectiveNumericTable.value.delete()
@@ -639,7 +734,15 @@ const clearPerspectiveTable = async () => {
     }
     perspectiveNumericTable.value = null
   }
-  // 清理分离模式：Bool 型
+  // 清理分离模式：Bool 型 - 先 viewer 后 table
+  if (perspectiveBoolViewer.value) {
+    try {
+      await perspectiveBoolViewer.value.delete()
+    } catch (e) {
+      console.warn('清理Bool Viewer失败:', e)
+    }
+    perspectiveBoolViewer.value = null
+  }
   if (perspectiveBoolTable.value) {
     try {
       await perspectiveBoolTable.value.delete()
@@ -654,13 +757,18 @@ const clearPerspectiveTable = async () => {
 const openPointSelector = () => {
   tempDeviceId.value = currentDevice.value?.deviceId
   if (tempDeviceId.value) {
-    void loadSelectorPoints(tempDeviceId.value)
+    void loadPointList(tempDeviceId.value)
   }
   tempSelectedVarSeqs.value = selectedPoints.value.map((p) => p.varSeq)
   pointSelectorVisible.value = true
 }
 
-const handlePointSelect = (varSeq: number, checked: boolean) => {
+const handleTempDeviceChange = async (deviceId?: number) => {
+  tempSelectedVarSeqs.value = []
+  await loadPointList(deviceId)
+}
+
+const handlePointChange = (varSeq: number, checked: boolean) => {
   if (checked) {
     if (!tempSelectedVarSeqs.value.includes(varSeq)) {
       tempSelectedVarSeqs.value.push(varSeq)
@@ -670,11 +778,11 @@ const handlePointSelect = (varSeq: number, checked: boolean) => {
   }
 }
 
-const selectAllInSelector = () => {
-  tempSelectedVarSeqs.value = selectorPoints.value.map((p) => p.varSeq)
+const selectAllPoints = () => {
+  tempSelectedVarSeqs.value = pointList.value.map((p) => p.varSeq)
 }
 
-const clearAllInSelector = () => {
+const clearAllPoints = () => {
   tempSelectedVarSeqs.value = []
 }
 
@@ -685,7 +793,7 @@ const confirmPointSelection = () => {
       currentDevice.value = device
     }
   }
-  selectedPoints.value = selectorPoints.value.filter((p) => tempSelectedVarSeqs.value.includes(p.varSeq))
+  selectedPoints.value = pointList.value.filter((p) => tempSelectedVarSeqs.value.includes(p.varSeq))
   realtimeRecords.value = []
   clearPerspectiveTable()
   pointSelectorVisible.value = false
@@ -1791,45 +1899,74 @@ watch(separateBoolChart, async () => {
   }
 }
 
-.device-list {
+.device-selector-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.selector-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
-.device-item {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 16px;
-  border-radius: 10px;
-  border: 1px solid #e5e9f2;
-  background: #fff;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-
-  &:hover {
-    border-color: #c5cde0;
-    background: #f7f9fc;
-  }
-
-  &.active {
-    border-color: #4a6cf7;
-    background: rgba(74, 108, 247, 0.06);
-  }
-}
-
-.device-item-code {
+.selector-label {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--art-gray-900);
 }
 
-.device-item-name {
+.selector-control {
+  width: 100%;
+}
+
+.device-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.device-option-code {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--art-gray-900);
+  min-width: 80px;
+}
+
+.device-option-name {
   font-size: 13px;
-  color: #8b95a7;
+  color: var(--art-gray-600);
+}
+
+.selected-device-info {
+  padding: 16px;
+  background: rgba(74, 108, 247, 0.06);
+  border-radius: 12px;
+  border: 1px solid rgba(74, 108, 247, 0.2);
+}
+
+.info-label {
+  font-size: 12px;
+  color: var(--art-gray-500);
+  margin-bottom: 8px;
+}
+
+.info-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.info-code {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.info-name {
+  font-size: 14px;
+  color: var(--art-gray-700);
 }
 
 // 点位选择器

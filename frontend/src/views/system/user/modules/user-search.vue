@@ -3,7 +3,6 @@
     ref="searchBarRef"
     v-model="formData"
     :items="formItems"
-    :rules="rules"
     @reset="handleReset"
     @search="handleSearch"
   >
@@ -29,31 +28,19 @@
     set: (val) => emit('update:modelValue', val)
   })
 
-  // 校验规则
-  const rules = {
-    // userName: [{ required: true, message: '请输入用户名', trigger: 'blur' }]
-  }
+  // 状态选项（账号状态）
+  const statusOptions = [
+    { label: '启用', value: '1' },
+    { label: '禁用', value: '2' }
+  ]
 
-  // 动态 options
-  const statusOptions = ref<{ label: string; value: string; disabled?: boolean }[]>([])
-
-  // 模拟接口返回状态数据
-  function fetchStatusOptions(): Promise<typeof statusOptions.value> {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve([
-          { label: '在线', value: '1' },
-          { label: '离线', value: '2' },
-          { label: '异常', value: '3' },
-          { label: '注销', value: '4' }
-        ])
-      }, 1000)
-    })
-  }
-
-  onMounted(async () => {
-    statusOptions.value = await fetchStatusOptions()
-  })
+  // 性别选项
+  const genderOptions = [
+    { label: '全部', value: '' },
+    { label: '男', value: 'male' },
+    { label: '女', value: 'female' },
+    { label: '未知', value: 'unknown' }
+  ]
 
   // 表单配置
   const formItems = computed(() => [
@@ -82,31 +69,28 @@
       type: 'select',
       props: {
         placeholder: '请选择状态',
-        options: statusOptions.value
+        options: statusOptions,
+        clearable: true
       }
     },
     {
       label: '性别',
       key: 'userGender',
-      type: 'radiogroup',
+      type: 'select',
       props: {
-        options: [
-          { label: '男', value: '1' },
-          { label: '女', value: '2' }
-        ]
+        placeholder: '请选择性别',
+        options: genderOptions,
+        clearable: true
       }
     }
   ])
 
   // 事件
   function handleReset() {
-    console.log('重置表单')
     emit('reset')
   }
 
   async function handleSearch(params: Api.SystemManage.UserSearchParams) {
-    await searchBarRef.value.validate()
     emit('search', params)
-    console.log('表单数据', params)
   }
 </script>

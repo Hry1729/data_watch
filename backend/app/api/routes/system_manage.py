@@ -85,7 +85,11 @@ async def create_user(
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.create_user(user_payload, actor=principal["user_name"])
+        data = await service.create_user(
+            user_payload,
+            actor=principal["user_name"],
+            current_user_roles=principal["roles"],
+        )
         return success_response(data=data)
 
 
@@ -100,7 +104,13 @@ async def update_user(
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.update_user(user_id, user_payload, actor=principal["user_name"])
+        data = await service.update_user(
+            user_id,
+            user_payload,
+            actor=principal["user_name"],
+            current_user_id=principal["user_id"],
+            current_user_roles=principal["roles"],
+        )
         return success_response(data=data)
 
 
@@ -119,6 +129,8 @@ async def update_user_status(
             user_id,
             status=status_payload.status,
             actor=principal["user_name"],
+            current_user_id=principal["user_id"],
+            current_user_roles=principal["roles"],
         )
         return success_response(data=data)
 
@@ -138,6 +150,7 @@ async def reset_user_password(
             user_id,
             password_payload,
             actor=principal["user_name"],
+            current_user_roles=principal["roles"],
         )
         return success_response(data=data)
 
@@ -151,7 +164,12 @@ async def delete_user(
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.delete_user(user_id, actor=principal["user_name"])
+        data = await service.delete_user(
+            user_id,
+            actor=principal["user_name"],
+            current_user_id=principal["user_id"],
+            current_user_roles=principal["roles"],
+        )
         return success_response(data=data)
 
 

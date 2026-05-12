@@ -128,13 +128,22 @@ MENU_SEEDS = [
                 sort=1,
             ),
             MenuSeed(
+                name="DeviceMonitorCard",
+                path="monitor",
+                component="/device_monitor/monitor/index",
+                title_key="menus.deviceMonitor.monitor",
+                icon="ri:dashboard-3-line",
+                keep_alive=True,
+                sort=2,
+            ),
+            MenuSeed(
                 name="DriverManage",
                 path="driver",
                 component="/device_monitor/driver/index",
                 title_key="menus.deviceMonitor.driver",
                 icon="ri:plug-line",
                 keep_alive=True,
-                sort=2,
+                sort=3,
             ),
             MenuSeed(
                 name="DeviceManage",
@@ -143,7 +152,7 @@ MENU_SEEDS = [
                 title_key="menus.deviceMonitor.device",
                 icon="ri:server-line",
                 keep_alive=True,
-                sort=3,
+                sort=4,
             ),
             MenuSeed(
                 name="PointManage",
@@ -152,7 +161,7 @@ MENU_SEEDS = [
                 title_key="menus.deviceMonitor.point",
                 icon="ri:flashlight-line",
                 keep_alive=True,
-                sort=4,
+                sort=5,
             ),
             MenuSeed(
                 name="RealtimeMonitor",
@@ -161,7 +170,7 @@ MENU_SEEDS = [
                 title_key="menus.deviceMonitor.realtime",
                 icon="ri:pulse-line",
                 keep_alive=False,
-                sort=5,
+                sort=6,
             ),
             MenuSeed(
                 name="HistoryData",
@@ -170,7 +179,7 @@ MENU_SEEDS = [
                 title_key="menus.deviceMonitor.history",
                 icon="ri:line-chart-line",
                 keep_alive=False,
-                sort=6,
+                sort=7,
             ),
             MenuSeed(
                 name="SystemLog",
@@ -179,7 +188,16 @@ MENU_SEEDS = [
                 title_key="menus.deviceMonitor.log",
                 icon="ri:file-list-3-line",
                 keep_alive=True,
-                sort=7,
+                sort=8,
+            ),
+            MenuSeed(
+                name="LogTerminal",
+                path="log-terminal",
+                component="/device_monitor/log-terminal/index",
+                title_key="menus.deviceMonitor.logTerminal",
+                icon="ri:terminal-line",
+                keep_alive=False,
+                sort=9,
             ),
         ],
     ),
@@ -225,6 +243,7 @@ MENU_SEEDS = [
 
 PERMISSION_SEEDS = [
     PermissionSeed("device_monitor:dashboard:view", "工作台查看", "page", "MonitorDashboard", "device_monitor:dashboard:view", sort=10),
+    PermissionSeed("device_monitor:monitor:view", "监控卡片查看", "page", "DeviceMonitorCard", "device_monitor:monitor:view", sort=15),
     PermissionSeed("device_monitor:driver:view", "驱动管理查看", "page", "DriverManage", "device_monitor:driver:view", sort=20),
     PermissionSeed("device_monitor:device:view", "设备管理查看", "page", "DeviceManage", "device_monitor:device:view", sort=30),
     PermissionSeed("device_monitor:device:create", "设备新增", "action", "DeviceManage", "device_monitor:device:create", sort=31),
@@ -248,6 +267,7 @@ PERMISSION_SEEDS = [
     PermissionSeed("device_monitor:log:cleanup", "系统日志清理", "action", "SystemLog", "device_monitor:log:cleanup", sort=72),
     PermissionSeed("device_monitor:log:policy", "系统日志策略配置", "action", "SystemLog", "device_monitor:log:policy", sort=73),
     PermissionSeed("device_monitor:log:debug", "系统日志DEBUG开关", "action", "SystemLog", "device_monitor:log:debug", sort=74),
+    PermissionSeed("device_monitor:log_terminal:view", "日志终端查看", "page", "LogTerminal", "device_monitor:log_terminal:view", sort=80),
     PermissionSeed("system:user:view", "用户管理查看", "page", "User", "system:user:view", sort=110),
     PermissionSeed("system:user:create", "用户新增", "action", "User", "system:user:create", sort=111),
     PermissionSeed("system:user:update", "用户编辑", "action", "User", "system:user:update", sort=112),
@@ -268,12 +288,14 @@ ROLE_MENU_GRANTS = {
     "R_SUPER": [
         "DeviceMonitor",
         "MonitorDashboard",
+        "DeviceMonitorCard",
         "DriverManage",
         "DeviceManage",
         "PointManage",
         "RealtimeMonitor",
         "HistoryData",
         "SystemLog",
+        "LogTerminal",
         "System",
         "User",
         "Role",
@@ -282,14 +304,14 @@ ROLE_MENU_GRANTS = {
     "R_ADMIN": [
         "DeviceMonitor",
         "MonitorDashboard",
+        "DeviceMonitorCard",
         "DriverManage",
         "DeviceManage",
         "PointManage",
         "RealtimeMonitor",
         "HistoryData",
         "SystemLog",
-        "System",
-        "User",
+        "LogTerminal",
     ],
     "R_USER": [
         "DeviceMonitor",
@@ -297,6 +319,7 @@ ROLE_MENU_GRANTS = {
         "RealtimeMonitor",
         "HistoryData",
         "SystemLog",
+        "LogTerminal",
     ],
 }
 
@@ -315,7 +338,6 @@ ROLE_PERMISSION_GRANTS = {
                     "device_monitor:log:debug",
                 }
             )
-            or item.permission_code.startswith("system:user:")
         )
     ],
     "R_USER": [
@@ -325,6 +347,7 @@ ROLE_PERMISSION_GRANTS = {
         "device_monitor:realtime:refresh",
         "device_monitor:history:view",
         "device_monitor:log:view",
+        "device_monitor:log_terminal:view",
     ],
 }
 
@@ -358,64 +381,86 @@ async def bootstrap_auth_schema() -> None:
 
 
 async def _seed_roles(session) -> None:
+    """只新增缺失角色，不覆盖已有角色的任何字段"""
     for seed in ROLE_SEEDS:
         role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
         if role is None:
-            role = SysRole(role_code=seed["role_code"])
+            role = SysRole(
+                role_code=seed["role_code"],
+                role_name=seed["role_name"],
+                description=seed["description"],
+                enabled=True,
+                sort=seed["sort"],
+            )
             session.add(role)
-        role.role_name = seed["role_name"]
-        role.description = seed["description"]
-        role.enabled = True
-        role.sort = seed["sort"]
     await session.flush()
 
 
 async def _seed_users(session) -> None:
+    """只新增缺失用户，不覆盖已有用户的密码、状态、个人信息等字段"""
     default_password_hash = hash_password("123456")
     for seed in USER_SEEDS:
         user = await session.scalar(select(SysUser).where(SysUser.user_name == seed["user_name"]))
-        if user is None:
-            user = SysUser(user_name=seed["user_name"])
+        is_new_user = user is None
+        if is_new_user:
+            user = SysUser(
+                user_name=seed["user_name"],
+                password_hash=default_password_hash,
+                nick_name=seed["nick_name"],
+                email=seed["email"],
+                phone=seed["phone"],
+                gender=seed["gender"],
+                status=seed["status"],
+                deleted=False,
+                create_by="bootstrap",
+                update_by="bootstrap",
+            )
             session.add(user)
-        user.password_hash = default_password_hash
-        user.nick_name = seed["nick_name"]
-        user.email = seed["email"]
-        user.phone = seed["phone"]
-        user.gender = seed["gender"]
-        user.avatar = user.avatar or ""
-        user.status = seed["status"]
-        user.deleted = False
-        user.update_by = "bootstrap"
-        if not user.create_by:
-            user.create_by = "bootstrap"
+        else:
+            # 已有用户：只补齐空字段，不覆盖已有值
+            if seed["user_name"] == "Super":
+                user.deleted = False
+                user.status = seed["status"]
+                user.update_by = "bootstrap"
+            if not user.nick_name:
+                user.nick_name = seed["nick_name"]
+            if not user.email:
+                user.email = seed["email"]
+            if not user.phone:
+                user.phone = seed["phone"]
+            if not user.gender or user.gender == "unknown":
+                user.gender = seed["gender"]
     await session.flush()
 
 
 async def _seed_menus(session) -> dict[str, SysMenu]:
+    """只新增缺失菜单，不覆盖已有菜单的任何字段"""
     menu_by_name: dict[str, SysMenu] = {}
 
     async def upsert(seed: MenuSeed, parent_id: int | None = None) -> None:
         menu = await session.scalar(select(SysMenu).where(SysMenu.name == seed.name))
         if menu is None:
-            menu = SysMenu(name=seed.name)
+            menu = SysMenu(
+                name=seed.name,
+                parent_id=parent_id,
+                path=seed.path,
+                component=seed.component,
+                title_key=seed.title_key,
+                icon=seed.icon,
+                menu_type=seed.menu_type,
+                link=seed.link,
+                is_iframe=seed.is_iframe,
+                keep_alive=seed.keep_alive,
+                is_hide=seed.is_hide,
+                is_hide_tab=seed.is_hide_tab,
+                fixed_tab=seed.fixed_tab,
+                active_path=seed.active_path,
+                is_full_page=seed.is_full_page,
+                sort=seed.sort,
+                enabled=seed.enabled,
+            )
             session.add(menu)
-        menu.parent_id = parent_id
-        menu.path = seed.path
-        menu.component = seed.component
-        menu.title_key = seed.title_key
-        menu.icon = seed.icon
-        menu.menu_type = seed.menu_type
-        menu.link = seed.link
-        menu.is_iframe = seed.is_iframe
-        menu.keep_alive = seed.keep_alive
-        menu.is_hide = seed.is_hide
-        menu.is_hide_tab = seed.is_hide_tab
-        menu.fixed_tab = seed.fixed_tab
-        menu.active_path = seed.active_path
-        menu.is_full_page = seed.is_full_page
-        menu.sort = seed.sort
-        menu.enabled = seed.enabled
-        await session.flush()
+            await session.flush()
         menu_by_name[seed.name] = menu
         for child in seed.children:
             await upsert(child, menu.id)
@@ -427,22 +472,25 @@ async def _seed_menus(session) -> dict[str, SysMenu]:
 
 
 async def _seed_permissions(session, menu_by_name: dict[str, SysMenu]) -> dict[str, SysPermission]:
+    """只新增缺失权限，不覆盖已有权限的任何字段"""
     permission_by_code: dict[str, SysPermission] = {}
     for seed in PERMISSION_SEEDS:
         permission = await session.scalar(
             select(SysPermission).where(SysPermission.permission_code == seed.permission_code)
         )
         if permission is None:
-            permission = SysPermission(permission_code=seed.permission_code)
+            permission = SysPermission(
+                permission_code=seed.permission_code,
+                permission_name=seed.permission_name,
+                permission_type=seed.permission_type,
+                menu_id=menu_by_name[seed.menu_name].id if seed.menu_name else None,
+                auth_mark=seed.auth_mark,
+                description=seed.description,
+                sort=seed.sort,
+                enabled=seed.enabled,
+            )
             session.add(permission)
-        permission.permission_name = seed.permission_name
-        permission.permission_type = seed.permission_type
-        permission.menu_id = menu_by_name[seed.menu_name].id if seed.menu_name else None
-        permission.auth_mark = seed.auth_mark
-        permission.description = seed.description
-        permission.sort = seed.sort
-        permission.enabled = seed.enabled
-        await session.flush()
+            await session.flush()
         permission_by_code[seed.permission_code] = permission
     return permission_by_code
 
@@ -458,21 +506,41 @@ async def _load_user_map(session) -> dict[str, SysUser]:
 
 
 async def _seed_user_roles(session, user_by_name: dict[str, SysUser], role_by_code: dict[str, SysRole]) -> None:
+    """只补齐缺失的用户角色关系，不删除已有关系"""
     for seed in USER_SEEDS:
         user = user_by_name[seed["user_name"]]
-        await session.execute(delete(SysUserRole).where(SysUserRole.user_id == user.id))
         for role_code in seed["roles"]:
-            session.add(SysUserRole(user_id=user.id, role_id=role_by_code[role_code].id))
+            role = role_by_code[role_code]
+            existing = await session.scalar(
+                select(SysUserRole).where(
+                    SysUserRole.user_id == user.id,
+                    SysUserRole.role_id == role.id,
+                )
+            )
+            if existing is None:
+                session.add(SysUserRole(user_id=user.id, role_id=role.id))
     await session.flush()
 
 
 async def _seed_role_menus(session, role_by_code: dict[str, SysRole], menu_by_name: dict[str, SysMenu]) -> None:
+    """只补齐缺失的角色菜单关系，不删除已有关系"""
     for role_code, menu_names in ROLE_MENU_GRANTS.items():
-        role = role_by_code[role_code]
-        await session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role.id))
+        role = role_by_code.get(role_code)
+        if role is None:
+            continue
         expanded_menu_names = _expand_menu_names(menu_names)
-        for menu_name in sorted(expanded_menu_names):
-            session.add(SysRoleMenu(role_id=role.id, menu_id=menu_by_name[menu_name].id))
+        for menu_name in expanded_menu_names:
+            menu = menu_by_name.get(menu_name)
+            if menu is None:
+                continue
+            existing = await session.scalar(
+                select(SysRoleMenu).where(
+                    SysRoleMenu.role_id == role.id,
+                    SysRoleMenu.menu_id == menu.id,
+                )
+            )
+            if existing is None:
+                session.add(SysRoleMenu(role_id=role.id, menu_id=menu.id))
     await session.flush()
 
 
@@ -481,32 +549,54 @@ async def _seed_role_permissions(
     role_by_code: dict[str, SysRole],
     permission_by_code: dict[str, SysPermission],
 ) -> None:
+    """只补齐缺失的角色权限关系，不删除已有关系"""
     for role_code, permission_codes in ROLE_PERMISSION_GRANTS.items():
-        role = role_by_code[role_code]
-        await session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role.id))
-        for permission_code in sorted(set(permission_codes)):
-            session.add(
-                SysRolePermission(
-                    role_id=role.id,
-                    permission_id=permission_by_code[permission_code].id,
+        role = role_by_code.get(role_code)
+        if role is None:
+            continue
+        for permission_code in set(permission_codes):
+            permission = permission_by_code.get(permission_code)
+            if permission is None:
+                continue
+            existing = await session.scalar(
+                select(SysRolePermission).where(
+                    SysRolePermission.role_id == role.id,
+                    SysRolePermission.permission_id == permission.id,
                 )
             )
+            if existing is None:
+                session.add(
+                    SysRolePermission(
+                        role_id=role.id,
+                        permission_id=permission.id,
+                    )
+                )
     await session.flush()
 
 
 async def _seed_data_permissions(session, role_by_code: dict[str, SysRole]) -> None:
+    """只补齐缺失的数据权限，不删除已有数据权限"""
     for role_code, scopes in DATA_SCOPE_GRANTS.items():
-        role = role_by_code[role_code]
-        await session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role.id))
+        role = role_by_code.get(role_code)
+        if role is None:
+            continue
         for scope in scopes:
-            session.add(
-                SysDataPermission(
-                    role_id=role.id,
-                    scope_type=scope["scope_type"],
-                    scope_value=scope["scope_value"],
-                    enabled=True,
+            existing = await session.scalar(
+                select(SysDataPermission).where(
+                    SysDataPermission.role_id == role.id,
+                    SysDataPermission.scope_type == scope["scope_type"],
+                    SysDataPermission.scope_value == scope["scope_value"],
                 )
             )
+            if existing is None:
+                session.add(
+                    SysDataPermission(
+                        role_id=role.id,
+                        scope_type=scope["scope_type"],
+                        scope_value=scope["scope_value"],
+                        enabled=True,
+                    )
+                )
     await session.flush()
 
 

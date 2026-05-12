@@ -5,7 +5,6 @@ import csv
 import io
 import os
 import re
-import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
+from app.core.time_utils import LOCAL_TZ
 from app.db.tdengine import TDengineClient
 from app.services.perspective import get_perspective_session_manager
 from app.services.task_manager import get_export_task_manager
@@ -59,6 +59,7 @@ class HistoryService:
         self.settings = settings or get_settings()
 
     async def get_devices(self) -> list[dict[str, Any]]:
+        """获取设备列表（带类型和分组信息）"""
         rows = (
             await self.session.execute(
                 text(
@@ -66,9 +67,15 @@ class HistoryService:
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
-                        COALESCE(d.device_name, d.device_code) AS device_name
+                        COALESCE(d.device_name, d.device_code) AS device_name,
+                        dg.id AS group_id,
+                        dg.group_name AS group_name,
+                        COALESCE(dt.type_code, '') AS type_code,
+                        COALESCE(dt.type_name, dt.type_code, '其他') AS type_name
                     FROM device AS d
-                    ORDER BY d.id ASC
+                    LEFT JOIN device_group AS dg ON dg.id = d.group_id
+                    LEFT JOIN device_type AS dt ON dt.id = d.type_id
+                    ORDER BY dt.type_code ASC, d.id ASC
                     """
                 )
             )
@@ -76,10 +83,42 @@ class HistoryService:
 
         return [
             {
-                "id": int(row["device_id"]),
-                "name": row["device_name"],
-                "deviceCode": row["device_code"],
-                "deviceName": row["device_name"],
+                "id": int(row["device_id"]) if row["device_id"] else None,
+                "name": row["device_name"] or "",
+                "deviceCode": row["device_code"] or "",
+                "deviceName": row["device_name"] or "",
+                "groupId": int(row["group_id"]) if row["group_id"] else None,
+                "groupName": row["group_name"] or "",
+                "typeCode": row["type_code"] or "",
+                "typeName": row["type_name"] or "其他",
+            }
+            for row in rows
+        ]
+
+    async def get_device_types(self) -> list[dict[str, Any]]:
+        """获取设备类型列表（用于级联选择）"""
+        rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT DISTINCT
+                        COALESCE(dt.type_code, '') AS type_code,
+                        COALESCE(dt.type_name, dt.type_code, '其他') AS type_name,
+                        COUNT(d.id) AS device_count
+                    FROM device AS d
+                    LEFT JOIN device_type AS dt ON dt.id = d.type_id
+                    GROUP BY dt.type_code, dt.type_name
+                    ORDER BY device_count DESC, type_code ASC
+                    """
+                )
+            )
+        ).mappings().all()
+
+        return [
+            {
+                "typeCode": row["type_code"] or "",
+                "typeName": row["type_name"] or "其他",
+                "deviceCount": int(row["device_count"] or 0),
             }
             for row in rows
         ]
@@ -115,7 +154,8 @@ class HistoryService:
         self._validate_query_points(points, var_seqs)
 
         series_list = await asyncio.gather(
-            *(self._fetch_point_series(device, point, start_dt, end_dt) for point in points)
+            *(self._fetch_point_series(device, point, start_dt, end_dt) for point in points),
+            return_exceptions=True
         )
 
         timeline: dict[datetime, str] = {}
@@ -124,6 +164,8 @@ class HistoryService:
         total_record_count = 0
 
         for point, rows in zip(points, series_list, strict=False):
+            if isinstance(rows, Exception):
+                continue
             value_map: dict[str, str | int | float] = {}
             for ts, value in rows:
                 ts_value = self._coerce_datetime(ts)
@@ -272,10 +314,10 @@ class HistoryService:
             # Validate and format cursor_ts to prevent SQL injection
             cursor_dt = self._parse_datetime(cursor_ts.strip(), "cursorTs")
             safe_cursor = self._format_sql_timestamp(cursor_dt)
-            time_filter = f"ts > '{safe_cursor}'"
+            time_filter = f"ts > {safe_cursor}"
         else:
             start_sql = self._format_sql_timestamp(start_dt)
-            time_filter = f"ts >= '{start_sql}'"
+            time_filter = f"ts >= {start_sql}"
 
         subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
@@ -286,7 +328,7 @@ class HistoryService:
 
         query = (
             f"SELECT ts, `value` FROM {table_name} "
-            f"WHERE {time_filter} AND ts <= '{end_sql}' "
+            f"WHERE {time_filter} AND ts <= {end_sql} "
             f"ORDER BY ts ASC LIMIT {page_size}"
         )
 
@@ -303,7 +345,7 @@ class HistoryService:
             query = (
                 f"SELECT ts, `value` FROM {stable_name} "
                 f"WHERE var_seq = {point.var_seq} "
-                f"AND {time_filter} AND ts <= '{end_sql}' "
+                f"AND {time_filter} AND ts <= {end_sql} "
                 f"ORDER BY ts ASC LIMIT {page_size}"
             )
             try:
@@ -411,7 +453,7 @@ class HistoryService:
             query = (
                 f"SELECT _wstart AS ts, {agg}(`value`) AS `value` "
                 f"FROM {table_name} "
-                f"WHERE ts >= '{start_sql}' AND ts <= '{end_sql}' "
+                f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
                 f"INTERVAL({td_interval}) "
                 f"ORDER BY ts ASC LIMIT {limit}"
             )
@@ -433,7 +475,7 @@ class HistoryService:
                 f"SELECT _wstart AS ts, {agg}(`value`) AS `value` "
                 f"FROM {stable_name} "
                 f"WHERE var_seq = {int(point.var_seq)} "
-                f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
+                f"AND ts >= {start_sql} AND ts <= {end_sql} "
                 f"INTERVAL({td_interval}) "
                 f"ORDER BY ts ASC LIMIT {limit}"
             )
@@ -441,7 +483,7 @@ class HistoryService:
             f"SELECT _wstart AS ts, {agg}(`value`) AS `value` "
             f"FROM {stable_name} "
             f"WHERE variable_id = {int(point.point_id)} "
-            f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
+            f"AND ts >= {start_sql} AND ts <= {end_sql} "
             f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC LIMIT {limit}"
         )
@@ -507,22 +549,25 @@ class HistoryService:
                     limit,
                 )
                 for point in points
-            )
+            ),
+            return_exceptions=True
         )
 
         point_data_maps = {
             point.var_seq: point_map
             for point, point_map in zip(points, point_maps, strict=False)
+            if isinstance(point_map, dict)
         }
 
         all_timestamps: set[datetime] = set()
         for point_map in point_maps:
-            all_timestamps.update(point_map.keys())
+            if isinstance(point_map, dict):
+                all_timestamps.update(point_map.keys())
 
         sorted_times = sorted(all_timestamps)
         page_times = sorted_times[:page_size]
         has_more = len(all_timestamps) > page_size or any(
-            len(point_map) >= limit for point_map in point_maps
+            isinstance(point_map, dict) and len(point_map) >= limit for point_map in point_maps
         )
         next_cursor = self._format_timestamp(page_times[-1]) if has_more and page_times else None
 
@@ -530,7 +575,7 @@ class HistoryService:
         for ts in page_times:
             row: dict[str, Any] = {"ts": self._format_timestamp(ts)}
             for point in points:
-                row[f"varSeq_{point.var_seq}"] = point_data_maps[point.var_seq].get(ts)
+                row[f"varSeq_{point.var_seq}"] = point_data_maps.get(point.var_seq, {}).get(ts)
             rows.append(row)
 
         return {
@@ -602,7 +647,7 @@ class HistoryService:
         query = (
             f"SELECT _wstart AS ts, {agg_func}(`value`) AS `value` "
             f"FROM {table_name} "
-            f"WHERE ts >= '{start_sql}' AND ts <= '{end_sql}' "
+            f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
             f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC"
         )
@@ -622,7 +667,7 @@ class HistoryService:
             f"SELECT _wstart AS ts, {agg_func}(`value`) AS `value` "
             f"FROM {stable_name} "
             f"WHERE var_seq = {point.var_seq} "
-            f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
+            f"AND ts >= {start_sql} AND ts <= {end_sql} "
             f"INTERVAL({td_interval}) "
             f"ORDER BY ts ASC"
         )
@@ -732,12 +777,15 @@ class HistoryService:
                     
                     # 获取该时段内所有点位的数据
                     series_list = await asyncio.gather(
-                        *(self._fetch_point_series(device, point, current_start, current_end) for point in points)
+                        *(self._fetch_point_series(device, point, current_start, current_end) for point in points),
+                        return_exceptions=True
                     )
-                    
+
                     # 对齐数据
                     timeline: dict[datetime, dict[int, Any]] = {}
                     for point, rows in zip(points, series_list):
+                        if isinstance(rows, Exception):
+                            continue
                         for ts, value in rows:
                             ts_dt = self._coerce_datetime(ts)
                             if not ts_dt:
@@ -977,7 +1025,7 @@ class HistoryService:
                 rows = await self.tdengine.fetch_all(
                     (
                         f"SELECT ts, `value` FROM {table_name} "
-                        f"WHERE ts >= '{start_sql}' AND ts <= '{end_sql}' "
+                        f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
                         f"ORDER BY ts ASC"
                     ),
                     database=database_name,
@@ -998,7 +1046,7 @@ class HistoryService:
                 (
                     f"SELECT ts, `value` FROM {stable_name} "
                     f"WHERE var_seq = {int(point.var_seq)} "
-                    f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
+                    f"AND ts >= {start_sql} AND ts <= {end_sql} "
                     f"ORDER BY ts ASC"
                 )
             )
@@ -1006,7 +1054,7 @@ class HistoryService:
             (
                 f"SELECT ts, `value` FROM {stable_name} "
                 f"WHERE variable_id = {point.point_id} "
-                f"AND ts >= '{start_sql}' AND ts <= '{end_sql}' "
+                f"AND ts >= {start_sql} AND ts <= {end_sql} "
                 f"ORDER BY ts ASC"
             )
         )
@@ -1101,14 +1149,9 @@ class HistoryService:
         return mapping.get(interval, interval)
 
     def _format_sql_timestamp(self, value: datetime) -> str:
-        """格式化用于 TDengine SQL 的时间戳，添加本地时区信息
-
-        TDengine 默认按 UTC 解释不带时区的时间字符串。
-        为了确保查询本地时间范围的数据，需要添加时区偏移量。
-        中国时区 UTC+8，格式为: '2026-05-09 17:00:00+08:00'
-        """
-        base_str = value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        return f"{base_str}+08:00"
+        """Format TDengine SQL timestamps as Unix milliseconds."""
+        local_value = value if value.tzinfo is not None else value.replace(tzinfo=LOCAL_TZ)
+        return str(int(local_value.timestamp() * 1000))
 
     def _normalize_point_value(self, var_type: str | None, value: Any) -> str | int | float:
         if value is None:

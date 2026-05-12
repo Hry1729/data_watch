@@ -97,7 +97,7 @@ class RolePayload:
             role_name=role_name,
             role_code=role_code,
             description=str(payload.get("description") or "").strip(),
-            enabled=bool(payload.get("enabled", True)),
+            enabled=_coerce_bool(payload.get("enabled"), default=True),
         )
 
 
@@ -109,7 +109,7 @@ class RoleStatusPayload:
     def from_dict(cls, payload: dict[str, Any]) -> "RoleStatusPayload":
         if "enabled" not in payload:
             raise ApiError(400, "enabled is required")
-        return cls(enabled=bool(payload.get("enabled")))
+        return cls(enabled=_coerce_bool(payload.get("enabled")))
 
 
 @dataclass(slots=True)
@@ -167,15 +167,15 @@ class MenuPayload:
             parent_id=parent_id,
             menu_type=str(payload.get("menuType") or payload.get("menu_type") or "menu").strip() or "menu",
             link=str(payload.get("link") or "").strip(),
-            is_iframe=bool(payload.get("isIframe", payload.get("is_iframe", False))),
-            keep_alive=bool(payload.get("keepAlive", payload.get("keep_alive", False))),
-            is_hide=bool(payload.get("isHide", payload.get("is_hide", False))),
-            is_hide_tab=bool(payload.get("isHideTab", payload.get("is_hide_tab", False))),
-            fixed_tab=bool(payload.get("fixedTab", payload.get("fixed_tab", False))),
+            is_iframe=_coerce_bool(payload.get("isIframe", payload.get("is_iframe")), default=False),
+            keep_alive=_coerce_bool(payload.get("keepAlive", payload.get("keep_alive")), default=False),
+            is_hide=_coerce_bool(payload.get("isHide", payload.get("is_hide")), default=False),
+            is_hide_tab=_coerce_bool(payload.get("isHideTab", payload.get("is_hide_tab")), default=False),
+            fixed_tab=_coerce_bool(payload.get("fixedTab", payload.get("fixed_tab")), default=False),
             active_path=str(payload.get("activePath") or payload.get("active_path") or "").strip(),
-            is_full_page=bool(payload.get("isFullPage", payload.get("is_full_page", False))),
+            is_full_page=_coerce_bool(payload.get("isFullPage", payload.get("is_full_page")), default=False),
             sort=int(payload.get("sort") or 1),
-            enabled=bool(payload.get("enabled", True)),
+            enabled=_coerce_bool(payload.get("enabled"), default=True),
         )
 
 
@@ -202,7 +202,7 @@ class PermissionPayload:
             auth_mark=str(payload.get("authMark") or payload.get("auth_mark") or permission_code).strip(),
             description=str(payload.get("description") or "").strip(),
             sort=int(payload.get("sort") or 1),
-            enabled=bool(payload.get("enabled", True)),
+            enabled=_coerce_bool(payload.get("enabled"), default=True),
         )
 
 
@@ -218,3 +218,12 @@ def _coerce_int_list(value: Any) -> list[int]:
         except (TypeError, ValueError) as exc:
             raise ApiError(400, f"Invalid integer value: {item}") from exc
     return result
+
+
+def _coerce_bool(value: Any, default: bool = True) -> bool:
+    """统一布尔解析，避免 bool('false') 被解析为 True"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
