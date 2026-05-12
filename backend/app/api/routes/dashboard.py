@@ -5,11 +5,10 @@ from typing import Any
 from turboapi import APIRouter, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.exceptions import ApiError
+from app.api.permissions import require_permissions
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
-from app.services.auth import AuthService
 from app.services.dashboard import DashboardService
 
 
@@ -21,7 +20,7 @@ auth_scheme = HTTPBearer(auto_error=False)
 async def dashboard_overview(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -34,7 +33,7 @@ async def dashboard_device_type_distribution(
     topN: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -48,7 +47,7 @@ async def dashboard_recent_events(
     eventType: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -70,7 +69,7 @@ async def dashboard_trend(
     metricKeys: list[str] | str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -93,7 +92,7 @@ async def dashboard_device_connection_health(
     includeOffline: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -117,7 +116,7 @@ async def dashboard_alarm_distribution(
     includeOther: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:dashboard:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = DashboardService(session=session, tdengine=get_tdengine_client())
@@ -132,28 +131,6 @@ async def dashboard_alarm_distribution(
             )
         )
         return success_response(data=data)
-
-
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict[str, Any]:
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:

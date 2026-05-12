@@ -7,11 +7,11 @@ import json
 from turboapi import APIRouter, TurboAPI, WebSocket, WebSocketDisconnect, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.permissions import require_permissions, require_permissions_from_authorization
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
-from app.services.auth import AuthService
 from app.services.monitor import MonitorService
 
 
@@ -20,44 +20,11 @@ auth_scheme = HTTPBearer(auto_error=False)
 DEFAULT_WS_POLL_INTERVAL = 2.0
 
 
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict:
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
-
-
-async def _require_ws_roles(authorization: str | None, required_roles: set[str]) -> dict:
-    if not authorization:
-        raise ApiError(401, "未登录")
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(authorization)
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
 @router.get("/api/device-monitor/monitor/device-tree")
 async def monitor_device_tree(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, {"device_monitor:monitor:view", "device_monitor:realtime:view"})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = MonitorService(session=session, tdengine=get_tdengine_client())
@@ -70,7 +37,7 @@ async def monitor_realtime_init(
     deviceId: int | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, {"device_monitor:monitor:view", "device_monitor:realtime:view"})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = MonitorService(session=session, tdengine=get_tdengine_client())
@@ -85,7 +52,10 @@ def register_realtime_websocket(app: TurboAPI) -> None:
         # 从 query 参数或 header 获取 token 进行权限校验
         authorization = websocket.query_params.get("token") or websocket.headers.get("Authorization")
         try:
-            await _require_ws_roles(authorization, {"R_SUPER", "R_ADMIN", "R_USER"})
+            await require_permissions_from_authorization(
+                authorization,
+                {"device_monitor:monitor:view", "device_monitor:realtime:view"},
+            )
         except ApiError as e:
             await websocket.send_json({
                 "type": "error",

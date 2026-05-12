@@ -331,7 +331,9 @@ class SystemManageService:
     async def update_role_grant(self, role_id: int, payload: RoleGrantPayload) -> dict[str, int]:
         await self._get_role_or_raise(role_id)
         menu_ids = await self._expand_menu_ids(payload.menu_ids)
-        permission_ids = await self._resolve_permission_ids(payload.permission_ids)
+        explicit_permission_ids = await self._resolve_permission_ids(payload.permission_ids)
+        page_permission_ids = await self._resolve_page_permission_ids(menu_ids)
+        permission_ids = sorted(set(explicit_permission_ids).union(page_permission_ids))
         await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role_id))
         await self.session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
         await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role_id))
@@ -691,6 +693,19 @@ class SystemManageService:
         if missing:
             raise ApiError(400, f"权限不存在: {', '.join(missing)}")
         return permission_ids
+
+    async def _resolve_page_permission_ids(self, menu_ids: list[int]) -> list[int]:
+        if not menu_ids:
+            return []
+        rows = (
+            await self.session.execute(
+                select(SysPermission.id)
+                .where(SysPermission.menu_id.in_(menu_ids))
+                .where(SysPermission.permission_type == "page")
+                .where(SysPermission.enabled.is_(True))
+            )
+        ).scalars().all()
+        return [int(item) for item in rows]
 
     async def _expand_menu_ids(self, menu_ids: list[int]) -> list[int]:
         if not menu_ids:

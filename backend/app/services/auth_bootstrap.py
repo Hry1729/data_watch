@@ -527,6 +527,7 @@ async def bootstrap_auth_schema() -> None:
         await _seed_user_roles(session, user_by_name, role_by_code)
         await _seed_role_menus(session, role_by_code, menu_by_name)
         await _seed_role_permissions(session, role_by_code, permission_by_code)
+        await _seed_role_menu_page_permissions(session)
         await _seed_data_permissions(session, role_by_code)
         await session.commit()
 
@@ -724,6 +725,28 @@ async def _seed_role_permissions(
                         permission_id=permission.id,
                     )
                 )
+    await session.flush()
+
+
+async def _seed_role_menu_page_permissions(session) -> None:
+    """按已有角色菜单关系补齐页面权限，不删除任何已有授权"""
+    rows = (
+        await session.execute(
+            select(SysRoleMenu.role_id, SysPermission.id)
+            .join(SysPermission, SysPermission.menu_id == SysRoleMenu.menu_id)
+            .where(SysPermission.permission_type == "page")
+            .where(SysPermission.enabled.is_(True))
+        )
+    ).all()
+    for role_id, permission_id in rows:
+        existing = await session.scalar(
+            select(SysRolePermission).where(
+                SysRolePermission.role_id == role_id,
+                SysRolePermission.permission_id == permission_id,
+            )
+        )
+        if existing is None:
+            session.add(SysRolePermission(role_id=role_id, permission_id=permission_id))
     await session.flush()
 
 

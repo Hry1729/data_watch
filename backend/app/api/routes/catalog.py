@@ -5,11 +5,10 @@ from typing import Any
 from turboapi import APIRouter, Depends, Response
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.exceptions import ApiError
+from app.api.permissions import require_permissions
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
-from app.services.auth import AuthService
 from app.services.catalog import CatalogService
 
 
@@ -27,7 +26,7 @@ async def driver_list(
     driverName: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:driver:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -49,7 +48,7 @@ async def driver_list(
 async def driver_options(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:driver:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -61,7 +60,7 @@ async def driver_options(
 async def device_group_tree(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:device:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -83,7 +82,7 @@ async def device_list(
     connectStatus: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:device:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -121,7 +120,7 @@ async def export_devices(
     template: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:device:export")
     session_factory = get_mysql_session_factory()
     template_flag = _parse_bool_param(template)
     async with session_factory() as session:
@@ -159,7 +158,7 @@ async def import_devices(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:device:import")
 
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -173,7 +172,7 @@ async def device_detail(
     device_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:device:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -186,7 +185,7 @@ async def create_device(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:device:create")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -200,7 +199,7 @@ async def update_device(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:device:update")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -213,7 +212,7 @@ async def batch_delete_devices(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:device:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -226,7 +225,7 @@ async def delete_device(
     device_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:device:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -238,7 +237,7 @@ async def delete_device(
 async def point_device_tree(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:point:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -261,7 +260,7 @@ async def point_list(
     ioAddress: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:point:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -300,7 +299,7 @@ async def export_points(
     template: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:point:export")
     session_factory = get_mysql_session_factory()
     template_flag = _parse_bool_param(template)
     async with session_factory() as session:
@@ -338,7 +337,7 @@ async def import_points(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:import")
 
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -352,7 +351,7 @@ async def import_points_from_template(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:import")
 
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -371,7 +370,7 @@ async def point_detail(
     varSeq: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:point:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -388,7 +387,7 @@ async def create_point(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:create")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -404,7 +403,7 @@ async def update_point(
     locatorVarSeq: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:update")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -423,7 +422,7 @@ async def batch_delete_points(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -438,7 +437,7 @@ async def delete_point(
     varSeq: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "device_monitor:point:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
@@ -449,28 +448,6 @@ async def delete_point(
             locator_var_seq=varSeq,
         )
         return success_response(data=data)
-
-
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict[str, Any]:
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:

@@ -8,11 +8,11 @@ from turboapi.responses import FileResponse
 from turboapi import APIRouter, Depends, Request, Response
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.permissions import require_permissions
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
-from app.services.auth import AuthService
 from app.services.history import HistoryService
 from app.services.task_manager import get_export_task_manager
 
@@ -21,33 +21,11 @@ router = APIRouter(tags=["history"])
 auth_scheme = HTTPBearer(auto_error=False)
 
 
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict[str, Any]:
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
-
-
 @router.get("/api/device-monitor/history/devices")
 async def history_devices(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = HistoryService(session=session, tdengine=get_tdengine_client())
@@ -60,7 +38,7 @@ async def history_device_types(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """获取设备类型列表（用于级联选择）"""
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = HistoryService(session=session, tdengine=get_tdengine_client())
@@ -73,7 +51,7 @@ async def history_points(
     deviceId: str | int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -90,7 +68,7 @@ async def history_query(
     endTime: str,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     var_seqs = _extract_var_seqs(request)
     perspective_query_version = _parse_query_version(
@@ -125,7 +103,7 @@ async def history_chart(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """获取降采样后的趋势数据"""
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     var_seqs = _extract_var_seqs(request)
 
@@ -154,7 +132,7 @@ async def history_raw(
     cursorTs: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     var_seq = _require_positive_int(varSeq, "varSeq")
     # 强制转换并限制单页最大 5000 条
@@ -185,7 +163,7 @@ async def history_raw_matrix(
     cursorTs: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     var_seqs = _extract_var_seqs(request)
     if len(var_seqs) > 10:
@@ -217,7 +195,7 @@ async def history_export(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """创建异步导出任务（仅管理员）"""
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:history:export")
     device_id = _require_positive_int(payload.get("deviceId"), "deviceId")
     var_seqs = _extract_body_var_seqs(payload)
     start_time = _require_string(payload.get("startTime"), "startTime")
@@ -241,7 +219,7 @@ async def history_export_status(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """查询导出任务状态（仅管理员）"""
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:history:export")
     task_manager = get_export_task_manager()
     task = task_manager.get_task(task_id)
     if not task:
@@ -261,7 +239,7 @@ async def history_export_download(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """下载导出结果文件（仅管理员）"""
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "device_monitor:history:export")
     task_manager = get_export_task_manager()
     task = task_manager.get_task(task_id)
     if not task:

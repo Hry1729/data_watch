@@ -169,14 +169,16 @@
 
       // 添加权限子节点
       if (menu.meta?.authList?.length) {
-        const permissionNodes: TreeNode[] = menu.meta.authList.map((perm) => ({
-          key: `permission:${perm.id}`,
-          label: perm.title,
-          isPermission: true,
-          enabled: perm.enabled,
-          menuId: menu.id,
-          permissionId: perm.id
-        }))
+        const permissionNodes: TreeNode[] = menu.meta.authList
+          .filter((perm) => perm.permissionType === 'action')
+          .map((perm) => ({
+            key: `permission:${perm.id}`,
+            label: perm.title,
+            isPermission: true,
+            enabled: perm.enabled,
+            menuId: menu.id,
+            permissionId: perm.id
+          }))
         node.children = [...permissionNodes]
       }
 
