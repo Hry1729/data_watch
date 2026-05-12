@@ -1,0 +1,13 @@
+.venv
+.venv-314t
+.py314t-site
+.pip-temp
+__pycache__
+*.pyc
+*.pyo
+*.log
+logs
+exports
+.pytest_cache
+.mypy_cache
+.ruff_cache

@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    image: data-watch-backend:latest
+    container_name: data-watch-backend
+    env_file:
+      - ./backend.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend/logs:/app/logs
+      - ../backend/exports:/app/exports
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    image: data-watch-frontend:latest
+    container_name: data-watch-frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
