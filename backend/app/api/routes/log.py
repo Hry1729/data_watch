@@ -6,11 +6,10 @@ from typing import Any
 from turboapi import APIRouter, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.exceptions import ApiError
+from app.api.permissions import require_permissions
 from app.core.responses import success_response
 from app.core.time_utils import parse_local_datetime
 from app.db.mysql import get_mysql_session_factory
-from app.services.auth import AuthService
 from app.services.log import LogService
 
 
@@ -40,7 +39,7 @@ async def log_list(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """日志列表查询"""
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:log:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = LogService(session=session)
@@ -75,7 +74,7 @@ async def log_stats(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """日志统计"""
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:log:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = LogService(session=session)
@@ -88,7 +87,7 @@ async def get_log_policy(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """获取日志清理策略"""
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN", "R_USER"})
+    await require_permissions(credentials, "device_monitor:log:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = LogService(session=session)
@@ -103,7 +102,7 @@ async def update_log_policy(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """更新日志清理策略（仅 R_SUPER）"""
-    principal = await _require_roles(credentials, {"R_SUPER"})
+    principal = await require_permissions(credentials, "device_monitor:log:policy")
     operator_id = principal.get("user_id")
     operator_name = principal.get("user_name", "system")
 
@@ -121,7 +120,7 @@ async def toggle_log_debug(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """切换 DEBUG 日志落库开关（仅 R_SUPER）"""
-    principal = await _require_roles(credentials, {"R_SUPER"})
+    principal = await require_permissions(credentials, "device_monitor:log:debug")
     operator_id = principal.get("user_id")
     operator_name = principal.get("user_name", "system")
 
@@ -149,7 +148,7 @@ async def cleanup_logs(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """手动清理日志（仅 R_SUPER）"""
-    principal = await _require_roles(credentials, {"R_SUPER"})
+    principal = await require_permissions(credentials, "device_monitor:log:cleanup")
     operator_id = principal.get("user_id")
     operator_name = principal.get("user_name", "system")
 
@@ -196,30 +195,6 @@ async def report_client_log(
 
 
 # ==================== 辅助函数 ====================
-
-
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict[str, Any]:
-    """验证用户角色"""
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    """从 credentials 构造 authorization 字串"""
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:

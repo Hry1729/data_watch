@@ -180,3 +180,17 @@ class AuthService:
         rows = (await self.session.execute(stmt)).scalars().all()
         return list(dict.fromkeys([row for row in rows if row]))
 
+    async def fetch_user_permission_codes(self, user_id: int) -> list[str]:
+        stmt = (
+            select(SysPermission.permission_code)
+            .join(SysRolePermission, SysRolePermission.permission_id == SysPermission.id)
+            .join(SysUserRole, SysUserRole.role_id == SysRolePermission.role_id)
+            .join(SysRole, SysRole.id == SysUserRole.role_id)
+            .where(SysUserRole.user_id == user_id)
+            .where(SysPermission.enabled.is_(True))
+            .where(SysRole.enabled.is_(True))
+            .order_by(SysPermission.sort.asc(), SysPermission.id.asc())
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        return list(dict.fromkeys([row for row in rows if row]))
+

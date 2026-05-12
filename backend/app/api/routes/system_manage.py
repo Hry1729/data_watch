@@ -5,8 +5,8 @@ from typing import Any
 from turboapi import APIRouter, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.permissions import authorization_from_credentials, require_permissions
 from app.core.exceptions import ApiError
-from app.core.log_writer import write_system_log
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.schemas.auth import (
@@ -19,7 +19,6 @@ from app.schemas.auth import (
     UserPayload,
     UserStatusPayload,
 )
-from app.services.auth import AuthService
 from app.services.system_manage import SystemManageService
 
 
@@ -40,7 +39,7 @@ async def user_list(
     status: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "system:user:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -67,7 +66,7 @@ async def user_detail(
     user_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, "system:user:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -80,7 +79,7 @@ async def create_user(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "system:user:create")
     user_payload = UserPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -99,7 +98,7 @@ async def update_user(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "system:user:update")
     user_payload = UserPayload.from_dict(payload, require_user_name=False)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -120,7 +119,7 @@ async def update_user_status(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "system:user:update")
     status_payload = UserStatusPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -141,7 +140,7 @@ async def reset_user_password(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "system:user:password_reset")
     password_payload = PasswordResetPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -160,7 +159,7 @@ async def delete_user(
     user_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    principal = await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    principal = await require_permissions(credentials, "system:user:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -187,7 +186,7 @@ async def role_list(
     endTime: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, {"system:role:view", "system:role:grant"})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -214,7 +213,7 @@ async def role_list(
 async def role_options(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER", "R_ADMIN"})
+    await require_permissions(credentials, {"system:role:view", "system:user:create", "system:user:update"})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -227,7 +226,7 @@ async def role_detail(
     role_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -240,7 +239,7 @@ async def create_role(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:create")
     role_payload = RolePayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -255,7 +254,7 @@ async def update_role(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:update")
     role_payload = RolePayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -270,7 +269,7 @@ async def update_role_status(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:update")
     status_payload = RoleStatusPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -284,7 +283,7 @@ async def delete_role(
     role_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -297,7 +296,7 @@ async def get_role_grant(
     role_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -311,7 +310,7 @@ async def update_role_grant(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:role:grant")
     grant_payload = RoleGrantPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -328,7 +327,7 @@ async def get_current_user_menus(
     async with session_factory() as session:
         service = SystemManageService(session)
         data = await service.get_menu_tree_for_current_user(
-            _authorization_from_credentials(credentials)
+            authorization_from_credentials(credentials)
         )
         return success_response(data=data)
 
@@ -337,7 +336,7 @@ async def get_current_user_menus(
 async def get_admin_menus(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, {"system:menu:view", "system:role:grant"})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -350,7 +349,7 @@ async def create_menu(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:create")
     menu_payload = MenuPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -365,7 +364,7 @@ async def update_menu(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:update")
     menu_payload = MenuPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -379,7 +378,7 @@ async def delete_menu(
     menu_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -392,7 +391,7 @@ async def get_menu_permissions(
     menu_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:view")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
@@ -406,7 +405,7 @@ async def create_menu_permission(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:create")
     permission_payload = PermissionPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -422,7 +421,7 @@ async def update_menu_permission(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:update")
     permission_payload = PermissionPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
@@ -437,7 +436,7 @@ async def delete_menu_permission(
     permission_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await _require_roles(credentials, {"R_SUPER"})
+    await require_permissions(credentials, "system:menu:delete")
     if menu_id <= 0:
         raise ApiError(400, "menu_id must be a positive integer")
     session_factory = get_mysql_session_factory()
@@ -445,41 +444,6 @@ async def delete_menu_permission(
         service = SystemManageService(session)
         data = await service.delete_menu_permission(permission_id)
         return success_response(data=data)
-
-
-async def _require_roles(
-    credentials: HTTPAuthorizationCredentials | None,
-    required_roles: set[str],
-) -> dict[str, Any]:
-    session_factory = get_mysql_session_factory()
-    async with session_factory() as session:
-        principal = await AuthService(session).resolve_principal(
-            _authorization_from_credentials(credentials)
-        )
-    if not required_roles.intersection(set(principal["roles"])):
-        # 记录权限拒绝日志
-        await write_system_log(
-            level="WARN",
-            log_type="security",
-            source="backend.permission",
-            content=f"权限拒绝: 用户 {principal['user_name']} 尝试访问需要 {required_roles} 权限的接口",
-            detail={
-                "user_id": principal["user_id"],
-                "user_name": principal["user_name"],
-                "user_roles": principal["roles"],
-                "required_roles": list(required_roles),
-            },
-        )
-        raise ApiError(403, "无权限访问该接口")
-    return principal
-
-
-def _authorization_from_credentials(
-    credentials: HTTPAuthorizationCredentials | None,
-) -> str | None:
-    if credentials is None:
-        return None
-    return f"{credentials.scheme} {credentials.credentials}".strip()
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:

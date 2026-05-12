@@ -12,20 +12,23 @@
       <MenuStyleSettings />
       <!-- 系统主题色 -->
       <ColorSettings />
-      <!-- 盒子样式 -->
-      <BoxStyleSettings />
-      <!-- 容器宽度 -->
-      <ContainerSettings />
-      <!-- 基础配置 -->
-      <BasicSettings />
-      <!-- 操作按钮 -->
-      <SettingActions />
+      <template v-if="isSuperAdmin">
+        <!-- 盒子样式 -->
+        <BoxStyleSettings />
+        <!-- 容器宽度 -->
+        <ContainerSettings />
+        <!-- 基础配置 -->
+        <BasicSettings />
+        <!-- 操作按钮 -->
+        <SettingActions />
+      </template>
     </SettingDrawer>
   </div>
 </template>
 
 <script setup lang="ts">
   import { useSettingsPanel } from './composables/useSettingsPanel'
+  import { useUserStore } from '@/store/modules/user'
 
   import SettingDrawer from './widget/SettingDrawer.vue'
   import SettingHeader from './widget/SettingHeader.vue'
@@ -50,6 +53,8 @@
   // 使用设置面板逻辑
   const settingsPanel = useSettingsPanel()
   const { showDrawer } = settingsPanel
+  const userStore = useUserStore()
+  const isSuperAdmin = computed(() => userStore.getUserInfo.roles?.includes('R_SUPER') === true)
 
   // 获取各种处理器
   const { handleOpen, handleClose, closeDrawer } = settingsPanel.useDrawerControl()
