@@ -109,6 +109,20 @@ USER_SEEDS = [
 
 MENU_SEEDS = [
     MenuSeed(
+        name="Dashboard",
+        path="/dashboard",
+        component="/index/index",
+        title_key="menus.dashboard.title",
+        icon="ri:pie-chart-line",
+        menu_type="directory",
+        sort=1,
+        children=[
+            MenuSeed("Console", "console", "/dashboard/console", "menus.dashboard.console", icon="ri:home-smile-2-line", fixed_tab=True, sort=1),
+            MenuSeed("Analysis", "analysis", "/dashboard/analysis", "menus.dashboard.analysis", icon="ri:align-item-bottom-line", sort=2),
+            MenuSeed("Ecommerce", "ecommerce", "/dashboard/ecommerce", "menus.dashboard.ecommerce", icon="ri:bar-chart-box-line", sort=3),
+        ],
+    ),
+    MenuSeed(
         name="DeviceMonitor",
         path="/device-monitor",
         component="/index/index",
@@ -202,6 +216,151 @@ MENU_SEEDS = [
         ],
     ),
     MenuSeed(
+        name="Template",
+        path="/template",
+        component="/index/index",
+        title_key="menus.template.title",
+        icon="ri:apps-2-line",
+        menu_type="directory",
+        sort=20,
+        children=[
+            MenuSeed("Cards", "cards", "/template/cards", "menus.template.cards", icon="ri:wallet-line", sort=1),
+            MenuSeed("Banners", "banners", "/template/banners", "menus.template.banners", icon="ri:rectangle-line", sort=2),
+            MenuSeed("Charts", "charts", "/template/charts", "menus.template.charts", icon="ri:bar-chart-box-line", sort=3),
+            MenuSeed("Map", "map", "/template/map", "menus.template.map", icon="ri:map-pin-line", keep_alive=True, sort=4),
+            MenuSeed("Chat", "chat", "/template/chat", "menus.template.chat", icon="ri:message-3-line", keep_alive=True, sort=5),
+            MenuSeed("Calendar", "calendar", "/template/calendar", "menus.template.calendar", icon="ri:calendar-2-line", keep_alive=True, sort=6),
+            MenuSeed("Pricing", "pricing", "/template/pricing", "menus.template.pricing", icon="ri:money-cny-box-line", keep_alive=True, is_full_page=True, sort=7),
+        ],
+    ),
+    MenuSeed(
+        name="Widgets",
+        path="/widgets",
+        component="/index/index",
+        title_key="menus.widgets.title",
+        icon="ri:apps-2-add-line",
+        menu_type="directory",
+        sort=30,
+        children=[
+            MenuSeed("Icon", "icon", "/widgets/icon", "menus.widgets.icon", icon="ri:palette-line", keep_alive=True, sort=1),
+            MenuSeed("ImageCrop", "image-crop", "/widgets/image-crop", "menus.widgets.imageCrop", icon="ri:screenshot-line", keep_alive=True, sort=2),
+            MenuSeed("Excel", "excel", "/widgets/excel", "menus.widgets.excel", icon="ri:download-2-line", keep_alive=True, sort=3),
+            MenuSeed("Video", "video", "/widgets/video", "menus.widgets.video", icon="ri:vidicon-line", keep_alive=True, sort=4),
+            MenuSeed("CountTo", "count-to", "/widgets/count-to", "menus.widgets.countTo", icon="ri:anthropic-line", sort=5),
+            MenuSeed("WangEditor", "wang-editor", "/widgets/wang-editor", "menus.widgets.wangEditor", icon="ri:t-box-line", keep_alive=True, sort=6),
+            MenuSeed("Watermark", "watermark", "/widgets/watermark", "menus.widgets.watermark", icon="ri:water-flash-line", keep_alive=True, sort=7),
+            MenuSeed("ContextMenu", "context-menu", "/widgets/context-menu", "menus.widgets.contextMenu", icon="ri:menu-2-line", keep_alive=True, sort=8),
+            MenuSeed("Qrcode", "qrcode", "/widgets/qrcode", "menus.widgets.qrcode", icon="ri:qr-code-line", keep_alive=True, sort=9),
+            MenuSeed("Drag", "drag", "/widgets/drag", "menus.widgets.drag", icon="ri:drag-move-fill", keep_alive=True, sort=10),
+            MenuSeed("TextScroll", "text-scroll", "/widgets/text-scroll", "menus.widgets.textScroll", icon="ri:input-method-line", keep_alive=True, sort=11),
+            MenuSeed("Fireworks", "fireworks", "/widgets/fireworks", "menus.widgets.fireworks", icon="ri:magic-line", keep_alive=True, sort=12),
+            MenuSeed(
+                "ElementUI",
+                "/outside/iframe/elementui",
+                "",
+                "menus.widgets.elementUI",
+                icon="ri:apps-2-line",
+                link="https://element-plus.org/zh-CN/component/overview.html",
+                is_iframe=True,
+                sort=13,
+            ),
+        ],
+    ),
+    MenuSeed(
+        name="Examples",
+        path="/examples",
+        component="/index/index",
+        title_key="menus.examples.title",
+        icon="ri:sparkling-line",
+        menu_type="directory",
+        sort=40,
+        children=[
+            MenuSeed(
+                name="Permission",
+                path="permission",
+                component="",
+                title_key="menus.examples.permission.title",
+                icon="ri:fingerprint-line",
+                menu_type="directory",
+                sort=1,
+                children=[
+                    MenuSeed("PermissionSwitchRole", "switch-role", "/examples/permission/switch-role", "menus.examples.permission.switchRole", icon="ri:contacts-line", keep_alive=True, sort=1),
+                    MenuSeed("PermissionButtonAuth", "button-auth", "/examples/permission/button-auth", "menus.examples.permission.buttonAuth", icon="ri:mouse-line", keep_alive=True, sort=2),
+                    MenuSeed("PermissionPageVisibility", "page-visibility", "/examples/permission/page-visibility", "menus.examples.permission.pageVisibility", icon="ri:user-3-line", keep_alive=True, sort=3),
+                ],
+            ),
+            MenuSeed("Tabs", "tabs", "/examples/tabs", "menus.examples.tabs", icon="ri:price-tag-line", sort=2),
+            MenuSeed("TablesBasic", "tables/basic", "/examples/tables/basic", "menus.examples.tablesBasic", icon="ri:layout-grid-line", keep_alive=True, sort=3),
+            MenuSeed("Tables", "tables", "/examples/tables", "menus.examples.tables", icon="ri:table-3", keep_alive=True, sort=4),
+            MenuSeed("Forms", "forms", "/examples/forms", "menus.examples.forms", icon="ri:table-view", keep_alive=True, sort=5),
+            MenuSeed("SearchBar", "form/search-bar", "/examples/forms/search-bar", "menus.examples.searchBar", icon="ri:table-line", keep_alive=True, sort=6),
+            MenuSeed("TablesTree", "tables/tree", "/examples/tables/tree", "menus.examples.tablesTree", icon="ri:layout-2-line", keep_alive=True, sort=7),
+            MenuSeed("SocketChat", "socket-chat", "/examples/socket-chat", "menus.examples.socketChat", icon="ri:shake-hands-line", keep_alive=True, sort=8),
+        ],
+    ),
+    MenuSeed(
+        name="Article",
+        path="/article",
+        component="/index/index",
+        title_key="menus.article.title",
+        icon="ri:book-2-line",
+        menu_type="directory",
+        sort=50,
+        children=[
+            MenuSeed("ArticleList", "article-list", "/article/list", "menus.article.articleList", icon="ri:article-line", keep_alive=True, sort=1),
+            MenuSeed("ArticleDetail", "detail/:id", "/article/detail", "menus.article.articleDetail", is_hide=True, keep_alive=True, active_path="/article/article-list", sort=2),
+            MenuSeed("ArticleComment", "comment", "/article/comment", "menus.article.comment", icon="ri:mail-line", keep_alive=True, sort=3),
+            MenuSeed("ArticlePublish", "publish", "/article/publish", "menus.article.articlePublish", icon="ri:telegram-2-line", keep_alive=True, sort=4),
+        ],
+    ),
+    MenuSeed(
+        name="Result",
+        path="/result",
+        component="/index/index",
+        title_key="menus.result.title",
+        icon="ri:checkbox-circle-line",
+        menu_type="directory",
+        sort=60,
+        children=[
+            MenuSeed("ResultSuccess", "success", "/result/success", "menus.result.success", icon="ri:checkbox-circle-line", keep_alive=True, sort=1),
+            MenuSeed("ResultFail", "fail", "/result/fail", "menus.result.fail", icon="ri:close-circle-line", keep_alive=True, sort=2),
+        ],
+    ),
+    MenuSeed(
+        name="Exception",
+        path="/exception",
+        component="/index/index",
+        title_key="menus.exception.title",
+        icon="ri:error-warning-line",
+        menu_type="directory",
+        sort=70,
+        children=[
+            MenuSeed("Exception403", "403", "/exception/403", "menus.exception.forbidden", keep_alive=True, is_hide_tab=True, is_full_page=True, sort=1),
+            MenuSeed("Exception404", "404", "/exception/404", "menus.exception.notFound", keep_alive=True, is_hide_tab=True, is_full_page=True, sort=2),
+            MenuSeed("Exception500", "500", "/exception/500", "menus.exception.serverError", keep_alive=True, is_hide_tab=True, is_full_page=True, sort=3),
+        ],
+    ),
+    MenuSeed(
+        name="Safeguard",
+        path="/safeguard",
+        component="/index/index",
+        title_key="menus.safeguard.title",
+        icon="ri:shield-check-line",
+        menu_type="directory",
+        sort=80,
+        children=[
+            MenuSeed("SafeguardServer", "server", "/safeguard/server", "menus.safeguard.server", icon="ri:hard-drive-3-line", keep_alive=True, sort=1),
+        ],
+    ),
+    MenuSeed(
+        name="ChangeLog",
+        path="/change/log",
+        component="/change/log",
+        title_key="menus.plan.log",
+        icon="ri:gamepad-line",
+        sort=85,
+    ),
+    MenuSeed(
         name="System",
         path="/system",
         component="/index/index",
@@ -240,6 +399,15 @@ MENU_SEEDS = [
         ],
     ),
 ]
+
+
+def _collect_menu_names(seeds: list[MenuSeed]) -> list[str]:
+    names: list[str] = []
+    for seed in seeds:
+        names.append(seed.name)
+        names.extend(_collect_menu_names(seed.children))
+    return names
+
 
 PERMISSION_SEEDS = [
     PermissionSeed("device_monitor:dashboard:view", "工作台查看", "page", "MonitorDashboard", "device_monitor:dashboard:view", sort=10),
@@ -285,22 +453,7 @@ PERMISSION_SEEDS = [
 ]
 
 ROLE_MENU_GRANTS = {
-    "R_SUPER": [
-        "DeviceMonitor",
-        "MonitorDashboard",
-        "DeviceMonitorCard",
-        "DriverManage",
-        "DeviceManage",
-        "PointManage",
-        "RealtimeMonitor",
-        "HistoryData",
-        "SystemLog",
-        "LogTerminal",
-        "System",
-        "User",
-        "Role",
-        "Menus",
-    ],
+    "R_SUPER": _collect_menu_names(MENU_SEEDS),
     "R_ADMIN": [
         "DeviceMonitor",
         "MonitorDashboard",

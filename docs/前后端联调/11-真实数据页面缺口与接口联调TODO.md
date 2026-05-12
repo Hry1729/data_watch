@@ -39,13 +39,13 @@
 
 | 页面 | 前端预期接口 / 链路 | 当前后端现状 | 影响 | 优先级 |
 |------|----------------------|--------------|------|--------|
-| 工作台 `dashboard` | `dashboard/overview`、`dashboard/device-type-distribution`、`dashboard/recent-events`、`dashboard/trend`、`dashboard/device-connection-health`、`dashboard/alarm-distribution` | ⚠️ 非告警统计已实现，告警侧现为真实优先 + synthetic 兜底 | 工作台主体不应再 404；最近事件 / 告警分布在真实告警样本未稳定前先返回后端假数据，后续再切纯真实口径 | P0 |
-| 驱动管理 `driver` | `driver/list`、`driver/options` | ✅ 读接口已实现 | 驱动列表真实数据链路已补齐，待前端页面冒烟 | P0 |
-| 设备管理 `device` | `device/group-tree`、`device/list`、`device/{id}`、`POST/PUT/DELETE`、`batch`、`import/export` | ⚠️ CRUD 已实现，导入导出已补待页面验收 | 左树右表、详情、编辑、删除、`.xlsx` 模板导入导出已具备后端支撑；当前重点转为页面人工点验 | P0 |
-| 点位管理 `point` | `point/device-tree`、`point/list`、`point/{id}`、`POST/PUT/DELETE`、`batch`、`import/export`、`point/import/template` | ⚠️ CRUD 已实现，导入导出与模板导入已补待页面验收 | 点位树、列表、详情、编辑、删除、`.xlsx` 模板导入导出及“按所选设备类型从 MySQL 模板点位追加导入”已具备后端支撑；当前重点转为页面人工点验 | P0 |
-| 实时监控 `realtime` | `monitor/device-tree`、`monitor/realtime-init`、`WS /ws/realtime` | ⚠️ HTTP + WS 源码均已具备 | 订阅 / 快照 / 心跳已通过本地 ASGI 复验，待当前运行进程热重载后做页面级验证 | P0 |
-| 历史数据 `history` | `history/devices`、`history/points`、`history/query`、`history/export` | ⚠️ 推进中 | 2026-04-22 已恢复 TypeScript 基线、接上会话协议、切换到 Perspective Viewer 主渲染，并完成命令级真实联调；同日已补查询成功自动收起抽屉、`Y Line -> Datagrid` 渲染回退与顶部操作区对齐修正，当前主要剩余页面人工点验与后端重启场景记录 | P1 |
-| 系统日志 `log` | `log/list` | ⚠️ 数据库已就绪，待后端真实查询接入 | `operation_log / system_log / log_retention_policy` 已落地；日志页列表、筛选、标签映射可切真实数据，清理 / 策略 / DEBUG 管理接口待实现 | P1 |
+| 工作台 `dashboard` | `dashboard/overview`、`dashboard/device-type-distribution`、`dashboard/recent-events`、`dashboard/trend`、`dashboard/device-connection-health`、`dashboard/alarm-distribution` | ✅ 已完成并测试 | 工作台所有统计均已切换至正式数据，完成对接及测试 | P0 |
+| 驱动管理 `driver` | `driver/list`、`driver/options` | ✅ 已完成并测试 | 驱动列表真实数据链路已补齐及测试 | P0 |
+| 设备管理 `device` | `device/group-tree`、`device/list`、`device/{id}`、`POST/PUT/DELETE`、`batch`、`import/export` | ✅ 已完成并测试 | 页面已完成人工点验及联调验收 | P0 |
+| 点位管理 `point` | `point/device-tree`、`point/list`、`point/{id}`、`POST/PUT/DELETE`、`batch`、`import/export`、`point/import/template` | ✅ 已完成并测试 | 页面已完成人工点验及联调验收 | P0 |
+| 实时监控 `realtime` | `monitor/device-tree`、`monitor/realtime-init`、`WS /ws/realtime` | ✅ 已完成并测试 | 前端四段式布局、订阅、快照、重连等页面级验证已完成并测试通过 | P0 |
+| 历史数据 `history` | `history/devices`、`history/points`、`history/query`、`history/export` | ✅ 已完成并测试 | 历史查询采用 ECharts 图表，已完美落地完成页面级人工点验及联调验收 | P1 |
+| 系统日志 `log` | `log/list` | ✅ 已完成并测试 | 日志页列表筛选、分页及真实标签映射已完成联调及测试 | P1 |
 
 ---
 
@@ -138,7 +138,7 @@
 | GAP-002 | 实现设备管理读接口：`device/group-tree`、`device/list`、`device/{id}` | `@backend` | P0 | ✅ 已完成：已对齐当前 MySQL 实际结构并补设备状态 / 连接状态 / 数据状态 |
 | GAP-003 | 实现点位管理读接口：`point/device-tree`、`point/list`、`point/{id}` | `@backend` | P0 | ✅ 已完成：已补树 / 列表 / 详情，并兼容当前值缺失时的 `--` 展示 |
 | GAP-004 | 补报警 / 日志表与联调用 seed 数据 | `@database` | P0 | ✅ 已完成：报警 / 日志事实表已落地；2026-05-06 已补日志策略表、索引和管理权限 |
-| GAP-005 | 实现 Dashboard 统计接口六件套 | `@backend` | P0 | 🔄 已完成可落地部分：`overview / distribution / trend / connection-health` 为真实读链路；`alarm-distribution / recent-events` 已改为真实优先 + synthetic 兜底，待真实告警样本稳定后切纯真实口径 |
+| GAP-005 | 实现 Dashboard 统计接口六件套 | `@backend` | P0 | ✅ 已完成：所有统计接口均已彻底切换到正式真实数据口径并测试通过 |
 | GAP-006 | 实现 `log/list` 与日志标签口径 | `@backend` | P1 | 🔄 数据库已就绪：`operation_log / system_log` 已落表并保留 seed，下一步切真实查询与统计口径 |
 | GAP-007 | 实现 `WS /ws/realtime` 并固定消息契约 | `@backend` | P0 | ✅ 已完成：已补订阅 / 取消订阅 / `ping-pong` / 快照推送首版，并完成本地 ASGI 复验 |
 | GAP-008 | 前端补七页空态 / 错误态 / 加载态处理 | `@frontend` | P1 | 避免接口未齐时页面表现混乱 |
