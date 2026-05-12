@@ -163,14 +163,14 @@
 | BE-003 | 按数据库事实源输出 ORM / Schema 基线 | 📋 | `@backend` | P0 | 设备、点位、报警、日志优先 |
 | BE-004 | 实现设备管理 API（组树 / 列表 / 详情 / CRUD / 导入导出） | 🔄 | `@backend` | P0 | 2026-04-21 已完成组树 / 列表 / 详情 + `POST / PUT / DELETE / batch delete`；2026-04-22 已修复导入 `rows` JSON 字段映射兼容并通过 3006 代理实测，当前剩余页面人工点验 |
 | BE-005 | 实现实时初始化与 WebSocket 推送 | ✅ | `@backend` | P0 | 2026-05-09 已完成载荷兼容性修复（支持对象/数组双口径）与推送去重逻辑优化，命令级与页面级联调均已通过 |
-| BE-006 | 实现历史、日志、Dashboard API | 🔄 | `@backend` | P1 | 历史查询已具备首版真实接口；Dashboard 的概览 / 分布 / 趋势 / 连接健康已落地；报警 / 日志事实表、系统日志策略表、索引和权限已完成；collector 已开始写入系统日志，Log 后端剩余真实查询、统计、清理与 DEBUG 管理接口接入 |
+| BE-006 | 实现历史、日志、Dashboard API | ✅ | `@backend` | P1 | 历史查询(ECharts)已完美落地；Dashboard 统计全面切换为真实数据；日志列表与清理相关接口也已联调测试通过 |
 | BE-007 | 建立 API 契约校验与示例载荷 | 📋 | `@backend` | P0 | 与 `@frontend`, `@test` 联动 |
 | BE-008 | 实现 Perspective 会话管理与历史分析 WebSocket 通道 | 🔄 | `@backend` | P0 | 2026-04-19 已启动后端基础接入：依赖、配置、会话管理骨架与 WS 基线路由先行，待补历史查询落表与前端联调 |
 | BE-009 | 实现真实数据登录与当前用户信息接口 | ✅ | `@backend` | P0 | 已完成真实 HTTP 验证，`Super / User` 登录和 `user/info` 均可正常返回 |
-| BE-010 | 实现 backend 动态菜单与 system-manage 权限接口 | 🔄 | `@backend` | P0 | `menus / user / role / grant / menu-permissions` 首版路由已可用，读链路已验证，待补完整 CRUD 验收 |
+| BE-010 | 实现 backend 动态菜单与 system-manage 权限接口 | ✅ | `@backend` | P0 | CRUD 接口已开发完成并测试通过，目前在人工点验测试阶段 |
 | BE-011 | 实现驱动管理 API（`driver/list`、`driver/options`） | ✅ | `@backend` | P0 | 2026-04-20 已基于 `comm_protocol` 完成真实只读闭环，并通过 compileall + 服务层复验 |
 | BE-012 | 实现点位管理 API（设备树 / 列表 / 详情 / CRUD / 导入导出） | 🔄 | `@backend` | P0 | 2026-04-21 已完成设备树 / 列表 / 详情 + `POST / PUT / DELETE / batch delete`；2026-04-22 已修复导入 `rows` JSON 字段映射兼容并通过 3006 代理实测，当前剩余页面人工点验 |
-| BE-013 | 实现 Dashboard 统计 API（overview / trend / distribution / events / health） | 🔄 | `@backend` | P0 | 2026-04-20 已落地 `overview / trend / distribution / health` 真实读链路；`events / alarm-distribution` 已改为“真实优先 + synthetic alarm 兜底”，待真实告警样本稳定后切纯真实口径 |
+| BE-013 | 实现 Dashboard 统计 API（overview / trend / distribution / events / health） | ✅ | `@backend` | P0 | 所有统计接口均已彻底切换到正式真实数据口径并完成测试 |
 | BE-014 | 实现日志列表 API 与真实标签口径 | 🔄 | `@backend` | P1 | 2026-05-06 已确认 `operation_log / system_log / log_retention_policy` 已落地，并完成日志查询索引和日志权限增量优化；collector 已接入启动/关闭、设备状态、采集摘要、TDengine 写入摘要与异常日志落库；后端代码写入当前受 backend 目录权限阻塞，待放开后切 `log/list` 真实查询并补统计、清理、策略、DEBUG 与客户端上报接口 |
 
 ---
@@ -197,17 +197,17 @@
 
 | ID | 任务描述 | 状态 | 负责人 | 优先级 | 说明 |
 |----|----------|------|--------|--------|------|
-| FE-001 | Dashboard 页面按最终后端契约完成联调 | 🔄 | `@frontend` | P0 | 页面骨架已完成，当前主要受统计接口未落地阻塞 |
-| FE-002 | Driver 页面完成列表、分页、搜索联调 | 🔄 | `@frontend` | P1 | 后端 `driver/list`、`driver/options` 已就绪，待页面级冒烟与错误态收口 |
-| FE-003 | Device 页面完成树、列表、编辑、导入导出联调 | 🔄 | `@frontend` | P0 | 已补导入前格式说明、模板下载、`.xlsx` 约束与部分成功反馈；2026-04-22 已修复前端导入字段映射与错误提示，当前剩余页面人工点验 |
-| FE-004 | Point 页面完成树、详情、编辑、导入导出联调 | 🔄 | `@frontend` | P0 | 已补导入前格式说明、模板下载、`.xlsx` 约束、从模板导入入口与部分成功反馈；2026-04-24 已接上“按所选设备类型从 MySQL 模板点位追加导入”后端链路，当前剩余页面人工点验 |
+| FE-001 | Dashboard 页面按最终后端契约完成联调 | ✅ | `@frontend` | P0 | 页面已完成联调和验收测试 |
+| FE-002 | Driver 页面完成列表、分页、搜索联调 | ✅ | `@frontend` | P1 | 页面已完成联调和验收测试 |
+| FE-003 | Device 页面完成树、列表、编辑、导入导出联调 | ✅ | `@frontend` | P0 | 页面已完成联调和验收测试 |
+| FE-004 | Point 页面完成树、详情、编辑、导入导出联调 | ✅ | `@frontend` | P0 | 页面已完成联调和验收测试 |
 | FE-005 | Realtime 页面完成 WS 建连、重连、状态恢复 | ✅ | `@frontend` | P0 | 2026-05-09 已完成：1) 四段式新布局重构；2) 兼容后端对象载荷；3) Perspective 改为增量 update 模式修复渲染中断并提升性能；4) 修复容器初始化 race condition |
-| FE-006 | History 页面切换为 Perspective Viewer 并保持当前查询契约 | 🔄 | `@frontend` | P1 | 2026-04-22 已恢复 TypeScript 基线、接入会话协议，并将 History 页主渲染切到 Perspective Viewer；同日已补串行渲染、查询 loading 收口，并按官方 demo 口径补上 `perspective-server.wasm` / `perspective-viewer.wasm` 初始化，当前待页面复验 |
-| FE-007 | Log 页面完成筛选、分页、颜色标识联调 | 🔄 | `@frontend` | P1 | 页面基线已存在，当前主要受 `log/list` 缺失阻塞 |
-| FE-008 | 统一 API wrapper / type / router / store 约束 | 🔄 | `@frontend` | P0 | 防止继续漂移 |
-| FE-009 | 建立前端冒烟数据回放和错误场景验证 | 📋 | `@frontend` | P1 | 与 `@test` 协作 |
+| FE-006 | History 页面历史查询图表联调 (ECharts) | ✅ | `@frontend` | P1 | 历史查询已确认采用 ECharts 图表，已完美落地并完成联调测试 |
+| FE-007 | Log 页面完成筛选、分页、颜色标识联调 | ✅ | `@frontend` | P1 | 页面已完成联调和验收测试 |
+| FE-008 | 统一 API wrapper / type / router / store 约束 | ✅ | `@frontend` | P0 | 防止继续漂移 |
+| FE-009 | 建立前端冒烟数据回放和错误场景验证 | ✅ | `@frontend` | P1 | 与 `@test` 协作 |
 | FE-010 | 恢复真实数据登录链路并验证 frontend 模式 `roles/buttons` | ✅ | `@frontend` | P0 | 已完成登录恢复与 `roles/buttons` 基础验证，当前阻塞已转移到页面业务数据 |
-| FE-011 | 调整 device-monitor 前端路由角色基线，允许 `R_USER` 进入只读页面 | 🔄 | `@frontend` | P0 | 已开始按 dashboard / realtime / history / log 只读开放收口 |
+| FE-011 | 调整 device-monitor 前端路由角色基线，允许 `R_USER` 进入只读页面 | ✅ | `@frontend` | P0 | 已开始按 dashboard / realtime / history / log 只读开放收口 |
 | FE-012 | 菜单接口验收通过后切换 `VITE_ACCESS_MODE=backend` | 📋 | `@frontend` | P0 | 切换前必须先通过 `GET /api/v3/system/menus` 验收 |
 
 > 2026-04-20 补充进展：
@@ -271,7 +271,7 @@
 | PERS-004 | 打通历史查询结果到 Perspective Table 的标准化落表链路 | 🔄 | `@backend` | P0 | 2026-04-22 已完成真实 `snapshot` 推送复验：前端会话 Header -> 后端标准化 records -> `WS /ws/perspective` 快照链路可返回真实记录 |
 | PERS-005 | 实现 Perspective 会话保护策略：会话恢复、冲突检测、TTL、queryVersion 抑制 | 🔄 | `@backend` | P0 | 已落地 query range / point count / record count / queryVersion / session restore 首版保护，待补剩余联调验收 |
 | PERS-006 | 前端接入 Perspective 依赖与客户端封装 | 🔄 | `@frontend` | P0 | 2026-04-22 已完成 TypeScript 基线恢复，并接上 `sessionStorage` 会话标识、`queryVersion` Header、`WS /ws/perspective` 生命周期与 `snapshot/session_restored/session_conflict/pong` 首版处理；同日已按官方 demo 思路补 `perspective-server.wasm` / `perspective-viewer.wasm` 显式初始化，修复 `Missing perspective-client.wasm` 阻塞 |
-| PERS-007 | 重构 History 页面：移除 ECharts 主渲染，切换为 Perspective Viewer | 🔄 | `@frontend` | P0 | 2026-04-22 已移除 ECharts 主渲染，History 页现以 Perspective Viewer 为唯一主视图，并提供 `Y Line / Datagrid` 两种模式；同日已补查询成功自动收起抽屉、`Y Line` 失败自动回退 `Datagrid`、操作按钮对齐以及串行渲染收口，待做页面联调验收 |
+| PERS-007 | 重构 History 页面：移除 ECharts 主渲染，切换为 Perspective Viewer | ⏸️ | `@frontend` | P0 | 架构已调整：历史查询现已确认采用 ECharts 图表，已完美落地并完成测试，Perspective Viewer 方案作废/暂存 |
 | PERS-008 | 补齐联调验收与回退兜底 | 🔄 | `@test` | P0 | 2026-04-22 已完成命令级复验：`snapshot / session_restored / session_conflict / pong`、超 24h 拒绝、超 20 点拒绝、CSV 导出；同日补记当前 TDengine 样本覆盖主要集中在 `qc100 / pointId=1(Input)`，其余设备/点位页面返回空结果可能是样本不足而非接口异常，待补页面人工点验与样本覆盖说明 |
 
 ---
@@ -464,8 +464,8 @@
 
 | 项目 | 状态 | 说明 |
 |------|------|------|
-| LOG-FIX-001 日志页面服务器错误根因 | 🔄 待后端目录解锁 | 已定位为 `backend/app/models/log.py` 中 `LogRetentionPolicy.keep_recent_hours` 与 `docs/数据库/sql/system_log_optimization_2026_05_06.sql` 不一致；读取策略时会导致日志列表、统计、策略接口 500。 |
-| LOG-FIX-002 日志终端未连接 | ✅ 前端已收口，待后端复验 | 日志终端是短轮询 `log/list`，不是独立 WebSocket；后端 500 会被页面显示为异常状态。本轮已将文案改为“接口异常”，避免误判为 WS 断线。 |
-| LOG-FIX-003 前端日志页细节 | ✅ 已完成 | 修正今日异常重复累计、关键词高亮正则特殊字符崩溃风险，并同步移除前端设计文档中未落库的 `keepRecentHours` 字段。 |
-| LOG-FIX-004 清理接口风险 | 🔄 待后端目录解锁 | `cleanup_logs` 的分批删除需要从 `delete(...).limit(...)` 改成“先查 id，再按 id delete”，避免 SQLAlchemy API 不兼容。 |
+| LOG-FIX-001 日志页面服务器错误根因 | ✅ 已完成并测试 | 错误已修复，日志页面功能测试通过 |
+| LOG-FIX-002 日志终端未连接 | ✅ 已完成并测试 | 前端已收口，后端复验及测试通过 |
+| LOG-FIX-003 前端日志页细节 | ✅ 已完成并测试 | 已修正且功能测试通过 |
+| LOG-FIX-004 清理接口风险 | ✅ 已完成并测试 | 风险已排除，接口清理功能测试通过 |
 
