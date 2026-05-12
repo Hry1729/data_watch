@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.time_utils import now_local
 from app.db.tdengine import TDengineClient
 
 
@@ -85,8 +86,9 @@ class MonitorService:
 
         device_id_value = int(device["device_id"])
         device_code = str(device["device_code"])
+        device_type_code = str(device.get("device_type_code") or "")
         points = await self._fetch_device_points(device_id_value)
-        latest_point_map = await self._fetch_latest_point_rows(device_code, points)
+        latest_point_map = await self._fetch_latest_point_rows(device_code, points, device_type_code)
 
         last_collect_time = self._resolve_last_collect_time(latest_point_map)
         connect_status = self._build_connect_status(int(device["device_status"] or 0), last_collect_time)
@@ -140,9 +142,11 @@ class MonitorService:
                     d.device_code AS device_code,
                     COALESCE(d.device_name, d.device_code) AS device_name,
                     COALESCE(cp.protocol, '') AS driver_name,
-                    d.status AS device_status
+                    d.status AS device_status,
+                    COALESCE(dt.type_code, '') AS device_type_code
                 FROM device AS d
                 LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+                LEFT JOIN device_type AS dt ON dt.id = d.type_id
                 ORDER BY d.status DESC, d.id ASC
                 LIMIT 1
                 """
@@ -156,9 +160,11 @@ class MonitorService:
                 d.device_code AS device_code,
                 COALESCE(d.device_name, d.device_code) AS device_name,
                 COALESCE(cp.protocol, '') AS driver_name,
-                d.status AS device_status
+                d.status AS device_status,
+                COALESCE(dt.type_code, '') AS device_type_code
             FROM device AS d
             LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+            LEFT JOIN device_type AS dt ON dt.id = d.type_id
             WHERE d.id = :device_id
             LIMIT 1
             """
@@ -185,11 +191,11 @@ class MonitorService:
 
     async def _fetch_latest_collect_times(self, device_codes: list[str]) -> dict[str, datetime]:
         tasks = [self._fetch_device_latest_collect_time(device_code) for device_code in device_codes]
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         return {
             device_code: latest_time
             for device_code, latest_time in zip(device_codes, results, strict=False)
-            if latest_time is not None
+            if isinstance(latest_time, datetime)
         }
 
     async def _fetch_device_latest_collect_time(self, device_code: str) -> datetime | None:
@@ -212,24 +218,26 @@ class MonitorService:
         self,
         device_code: str,
         points: list[dict[str, Any]],
+        device_type_code: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         if not points:
             return {}
 
-        tasks = [self._fetch_single_point_latest_row(device_code, point) for point in points]
-        results = await asyncio.gather(*tasks)
+        tasks = [self._fetch_single_point_latest_row(device_code, point, device_type_code) for point in points]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         return {
             str(point["var_seq"]): result
             for point, result in zip(points, results, strict=False)
-            if result is not None
+            if isinstance(result, dict)
         }
 
     async def _fetch_single_point_latest_row(
         self,
         device_code: str,
         point: dict[str, Any],
+        device_type_code: str | None = None,
     ) -> dict[str, Any] | None:
-        database_name = self._resolve_tdengine_database(device_code)
+        database_name = self._resolve_tdengine_database(device_code, device_type_code)
         stable_name = self._normalize_identifier(device_code)
         table_name = self.tdengine.qualify_table(database_name, stable_name)
         variable_id = int(point["point_id"])
@@ -303,7 +311,7 @@ class MonitorService:
         if last_collect_time is None:
             return "offline"
 
-        age_seconds = max(0.0, (datetime.now() - last_collect_time).total_seconds())
+        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
         if age_seconds <= ONLINE_MAX_AGE_SECONDS:
             return "online"
         if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
@@ -362,7 +370,13 @@ class MonitorService:
             return int(value)
         return value
 
-    def _resolve_tdengine_database(self, device_code: str) -> str:
+    def _resolve_tdengine_database(self, device_code: str, device_type_code: str | None = None) -> str:
+        # 优先使用设备类型代码作为数据库名
+        if device_type_code:
+            normalized_type_code = self._normalize_identifier(device_type_code).lower()
+            if normalized_type_code:
+                return normalized_type_code
+        # 否则从设备代码前缀解析
         normalized_device_code = self._normalize_identifier(device_code).lower()
         match = DEVICE_PREFIX_RE.match(normalized_device_code)
         if match is None:

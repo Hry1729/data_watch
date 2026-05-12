@@ -3,6 +3,7 @@
  */
 
 import request from '@/utils/http'
+import { useUserStore } from '@/store/modules/user'
 
 const BASE_URL = '/api/device-monitor'
 const DEVICE_IMPORT_FIELD_MAP: Record<string, string> = {
@@ -47,7 +48,7 @@ const mapOverviewToStats = (
   totalDevices: overview.deviceTotal,
   onlineDevices: overview.onlineDeviceTotal,
   totalPoints: overview.pointTotal,
-  alarmCount: overview.activeAlarmTotal
+  alarmCount: overview.systemAlertTotal
 })
 
 const mapDistributionGroupsToLegacy = (
@@ -432,18 +433,24 @@ export function fetchDeviceRealtime(deviceId: number) {
 export function getRealtimeWebSocketUrl() {
   const { VITE_API_URL } = import.meta.env
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  const { accessToken } = useUserStore()
+  const appendToken = (url: string) => {
+    if (!accessToken) return url
+    const separator = url.includes('?') ? '&' : '?'
+    return `${url}${separator}token=${encodeURIComponent(accessToken)}`
+  }
 
   if (!VITE_API_URL || VITE_API_URL === '/') {
-    return `${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime`
+    return appendToken(`${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime`)
   }
 
   if (/^https?:\/\//.test(VITE_API_URL)) {
     const normalizedBase = VITE_API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-    return `${normalizedBase}${BASE_URL}/ws/realtime`
+    return appendToken(`${normalizedBase}${BASE_URL}/ws/realtime`)
   }
 
   const normalizedPath = VITE_API_URL.startsWith('/') ? VITE_API_URL.slice(1) : VITE_API_URL
-  return `${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime`
+  return appendToken(`${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime`)
 }
 
 // ==================== 历史数据 ====================
@@ -452,6 +459,13 @@ export function getRealtimeWebSocketUrl() {
 export function fetchHistoryDevices() {
   return request.get<Api.DeviceMonitor.HistoryDeviceItem[]>({
     url: `${BASE_URL}/history/devices`
+  })
+}
+
+/** 获取设备类型列表（用于级联选择） */
+export function fetchDeviceTypes() {
+  return request.get<Api.DeviceMonitor.DeviceTypeItem[]>({
+    url: `${BASE_URL}/history/device-types`
   })
 }
 
@@ -540,6 +554,14 @@ export function getHistoryExportDownloadUrl(taskId: string) {
   const baseUrl = VITE_API_URL && VITE_API_URL !== '/' ? VITE_API_URL : window.location.origin
   const normalizedBase = baseUrl.replace(/\/$/, '')
   return `${normalizedBase}${BASE_URL}/history/export/${taskId}/download`
+}
+
+/** 下载历史导出文件（带鉴权） */
+export function fetchHistoryExportDownload(taskId: string) {
+  return request.get<Blob>({
+    url: `${BASE_URL}/history/export/${taskId}/download`,
+    responseType: 'blob'
+  })
 }
 
 /** 兼容旧函数：查询历史数据 */

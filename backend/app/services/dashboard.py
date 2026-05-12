@@ -208,7 +208,6 @@ class DashboardService:
         bucket_delta = self._granularity_to_delta(granularity)
         bucket_starts = self._build_bucket_starts(start_dt, end_dt, bucket_delta)
         metric_keys = self._normalize_metric_keys(params.get("metricKeys"))
-        fact_tables = await self._get_fact_tables()
 
         points = await self._fetch_trend_points()
         collect_count_by_bucket: dict[datetime, int] = defaultdict(int)
@@ -240,7 +239,7 @@ class DashboardService:
             else 0
             for bucket_start in bucket_starts
         ]
-        alarm_series = self._build_alarm_series(bucket_starts, fact_tables)
+        alarm_series = await self._build_alarm_series_from_logs(bucket_starts, granularity)
 
         metric_definitions = {
             "collectCount": {
@@ -1124,10 +1123,65 @@ class DashboardService:
             "lastHeartbeatTime": self._format_datetime(last_heartbeat_time),
         }
 
-    def _build_alarm_series(self, bucket_starts: list[datetime], fact_tables: set[str]) -> list[int]:
-        if "alarm_record" not in fact_tables:
-            return [0 for _ in bucket_starts]
-        return [0 for _ in bucket_starts]
+    async def _build_alarm_series_from_logs(
+        self,
+        bucket_starts: list[datetime],
+        granularity: str,
+    ) -> list[int]:
+        """从系统日志统计告警次数（按时间桶）"""
+        if not bucket_starts:
+            return []
+
+        start_dt = bucket_starts[0]
+        bucket_delta = self._granularity_to_delta(granularity)
+        end_dt = bucket_starts[-1] + bucket_delta
+
+        if granularity == "1d":
+            bucket_expr = "DATE_FORMAT(log_time, '%Y-%m-%d')"
+            bucket_key_format = "%Y-%m-%d"
+        elif granularity == "1h":
+            bucket_expr = "DATE_FORMAT(log_time, '%Y-%m-%d %H:00')"
+            bucket_key_format = "%Y-%m-%d %H:00"
+        else:
+            bucket_minutes = 15 if granularity == "15m" else 5
+            bucket_expr = (
+                "CONCAT(DATE_FORMAT(log_time, '%Y-%m-%d %H:'), "
+                f"LPAD(FLOOR(MINUTE(log_time) / {bucket_minutes}) * {bucket_minutes}, 2, '0'))"
+            )
+            bucket_key_format = "%Y-%m-%d %H:%M"
+
+        try:
+            rows = await self.session.execute(
+                text(
+                    f"""
+                    SELECT
+                        {bucket_expr} AS bucket,
+                        COUNT(*) AS count
+                    FROM (
+                        SELECT log_time FROM system_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :start AND log_time < :end
+                        UNION ALL
+                        SELECT log_time FROM operation_log
+                        WHERE level IN ('WARN', 'ERROR', 'CRITICAL')
+                          AND log_time >= :start AND log_time < :end
+                    ) AS combined
+                    GROUP BY bucket
+                    """
+                ),
+                {"start": start_dt, "end": end_dt},
+            )
+            counts_by_bucket = {
+                row["bucket"]: int(row["count"])
+                for row in rows.mappings().all()
+            }
+        except Exception:
+            return [0] * len(bucket_starts)
+
+        return [
+            counts_by_bucket.get(bucket_start.strftime(bucket_key_format), 0)
+            for bucket_start in bucket_starts
+        ]
 
     def _connection_health_sort_key(self, device: DashboardDeviceItem) -> tuple[int, int]:
         status = self._build_connect_status_from_raw(device.raw_status)
@@ -1371,4 +1425,3 @@ class DashboardService:
             "size": page_size,
             "pageNum": page_no,
         }
-

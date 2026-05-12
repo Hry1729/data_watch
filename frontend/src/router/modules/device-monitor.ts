@@ -33,7 +33,7 @@ export const deviceMonitorRoutes: AppRouteRecord = {
         title: 'menus.deviceMonitor.monitor',
         icon: 'ri:dashboard-3-line',
         keepAlive: true,
-        roles: ['R_SUPER', 'R_ADMIN', 'R_USER']
+        roles: ['R_SUPER', 'R_ADMIN']
       }
     },
     {

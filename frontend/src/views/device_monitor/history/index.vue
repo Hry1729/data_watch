@@ -143,21 +143,60 @@
     </div>
 
     <!-- 设备选择器抽屉 -->
-    <ElDrawer v-model="deviceDrawerVisible" title="选择设备" direction="rtl" size="360px">
+    <ElDrawer v-model="deviceDrawerVisible" title="选择设备" direction="rtl" size="400px">
       <div class="selector-content">
-        <ElInput v-model="deviceSearchKeyword" placeholder="搜索设备名称" prefix-icon="Search" clearable class="device-search" />
-        <div class="device-list">
-          <div
-            v-for="device in filteredDeviceList"
-            :key="device.id"
-            class="device-item"
-            :class="{ active: currentDevice?.id === device.id }"
-            @click="selectDevice(device)"
+        <div class="selector-item">
+          <label class="selector-label">设备类型</label>
+          <ElSelect
+            v-model="selectedTypeCode"
+            placeholder="请选择设备类型"
+            class="selector-control"
+            clearable
+            @change="handleTypeChange"
           >
-            <span class="device-item-name">{{ device.name }}</span>
+            <ElOption
+              v-for="type in deviceTypes"
+              :key="type.typeCode"
+              :label="`${type.typeName} (${type.deviceCount}台)`"
+              :value="type.typeCode"
+            />
+          </ElSelect>
+        </div>
+        <div class="selector-item">
+          <label class="selector-label">设备号</label>
+          <ElSelect
+            v-model="selectedDeviceId"
+            placeholder="请先选择设备类型"
+            class="selector-control"
+            filterable
+            :disabled="!selectedTypeCode"
+            @change="handleDeviceChange"
+          >
+            <ElOption
+              v-for="device in filteredDevicesByType"
+              :key="device.id"
+              :label="device.deviceCode"
+              :value="device.id"
+            >
+              <div class="device-option">
+                <span class="device-option-code">{{ device.deviceCode }}</span>
+                <span class="device-option-name">{{ device.deviceName }}</span>
+              </div>
+            </ElOption>
+          </ElSelect>
+        </div>
+        <div v-if="selectedDeviceId && selectedDeviceDetail" class="selected-device-info">
+          <div class="info-label">已选设备</div>
+          <div class="info-content">
+            <span class="info-code">{{ selectedDeviceDetail.deviceCode }}</span>
+            <span class="info-name">{{ selectedDeviceDetail.deviceName }}</span>
           </div>
         </div>
       </div>
+      <template #footer>
+        <ElButton @click="deviceDrawerVisible = false">取消</ElButton>
+        <ElButton type="primary" :disabled="!selectedDeviceId" @click="confirmDeviceSelection">确认</ElButton>
+      </template>
     </ElDrawer>
 
     <!-- 点位选择器抽屉 -->
@@ -268,11 +307,12 @@ import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadin
 import {
   fetchHistoryChart,
   fetchHistoryDevices,
+  fetchDeviceTypes,
   fetchHistoryExport,
+  fetchHistoryExportDownload,
   fetchHistoryExportStatus,
   fetchHistoryPoints,
-  fetchHistoryRawMatrix,
-  getHistoryExportDownloadUrl
+  fetchHistoryRawMatrix
 } from '@/api/device-monitor'
 import { isHttpError } from '@/utils/http/error'
 
@@ -287,7 +327,8 @@ const HISTORY_CONDITION_CACHE_MAX_AGE = 24 * 60 * 60 * 1000
 const HISTORY_DATA_CACHE_MAX_AGE = 10 * 60 * 1000
 
 type PointInfo = Api.DeviceMonitor.HistoryPointItem
-type DeviceInfo = Api.DeviceMonitor.HistoryDeviceItem
+type DeviceInfo = Api.DeviceMonitor.HistoryValidDeviceItem
+type DeviceType = Api.DeviceMonitor.DeviceTypeItem
 type ChartType = 'line' | 'bar' | 'scatter' | 'area'
 
 interface HistorySearchForm {
@@ -306,9 +347,13 @@ const searchForm = ref<HistorySearchForm>({
 
 const timeRange = ref<[string, string]>(['', ''])
 
-// 新增：控制栏相关变量
+// 设备选择器相关
 const deviceDrawerVisible = ref(false)
-const deviceSearchKeyword = ref('')
+const deviceTypes = ref<DeviceType[]>([])
+const selectedTypeCode = ref<string>('')
+const selectedDeviceId = ref<number | undefined>()
+
+// 点位选择器相关
 const pointDrawerVisible = ref(false)
 const pointSearchKeyword = ref('')
 const tempDeviceId = ref<number | undefined>()
@@ -322,11 +367,35 @@ const currentDevice = computed(() =>
   deviceList.value.find((d) => d.id === searchForm.value.deviceId)
 )
 
-const filteredDeviceList = computed(() => {
-  if (!deviceSearchKeyword.value) return deviceList.value
-  const keyword = deviceSearchKeyword.value.toLowerCase()
-  return deviceList.value.filter((d) => d.name.toLowerCase().includes(keyword))
+// 根据类型过滤的设备列表
+const filteredDevicesByType = computed(() => {
+  if (!selectedTypeCode.value) return []
+  return deviceList.value.filter((d) => d.typeCode === selectedTypeCode.value)
 })
+
+// 选中设备的详情
+const selectedDeviceDetail = computed(() =>
+  deviceList.value.find((d) => d.id === selectedDeviceId.value)
+)
+
+// 设备类型变更
+const handleTypeChange = () => {
+  selectedDeviceId.value = undefined
+}
+
+// 设备变更（仅用于显示，不立即确认）
+const handleDeviceChange = () => {
+  // 可以在这里做一些预览操作
+}
+
+// 确认设备选择
+const confirmDeviceSelection = async () => {
+  if (!selectedDeviceId.value) return
+  searchForm.value.deviceId = selectedDeviceId.value
+  searchForm.value.varSeqs = []
+  deviceDrawerVisible.value = false
+  await loadPointList(selectedDeviceId.value)
+}
 
 const filteredPointList = computed(() => {
   if (!pointSearchKeyword.value) return pointList.value
@@ -358,16 +427,13 @@ const canQuery = computed(() => {
 })
 
 // 设备选择器
-const openDeviceSelector = () => {
+const openDeviceSelector = async () => {
+  // 加载设备类型列表
+  await loadDeviceTypes()
+  // 重置选择状态
+  selectedTypeCode.value = currentDevice.value?.typeCode || ''
+  selectedDeviceId.value = currentDevice.value?.id
   deviceDrawerVisible.value = true
-}
-
-const selectDevice = async (device: DeviceInfo) => {
-  searchForm.value.deviceId = device.id
-  searchForm.value.varSeqs = []
-  tempSelectedVarSeqs.value = []
-  deviceDrawerVisible.value = false
-  await loadPointList(device.id)
 }
 
 // 点位选择器
@@ -530,7 +596,11 @@ const formatMatrixValue = (value: any, dataType?: string): string => {
   if (value === null || value === undefined) return '--'
 
   const type = (dataType || '').toUpperCase()
-  if (type === 'BOOL') return value ? '1' : '0'
+  if (type === 'BOOL') {
+    // 显式判断，避免字符串 "0" 被当作 truthy
+    if (value === true || value === 1 || value === '1') return '1'
+    return '0'
+  }
   if (['INT', 'DINT', 'WORD', 'DWORD'].includes(type)) return String(Math.round(value))
   if (type === 'REAL') return typeof value === 'number' ? value.toFixed(2) : String(value)
   return String(value)
@@ -754,15 +824,30 @@ const buildHistoryErrorMessage = (error: unknown) => {
 const loadDeviceList = async () => {
   try {
     const devices = await fetchHistoryDevices()
-    deviceList.value = devices.map((device) => ({
-      id: device.id,
-      name: device.name || device.deviceName || device.deviceCode || `设备-${device.id}`,
-      deviceCode: device.deviceCode,
-      deviceName: device.deviceName
-    }))
+    // 过滤掉没有 id 的设备（空分组行）
+    deviceList.value = devices
+      .filter((device) => device.id !== null)
+      .map((device) => ({
+        id: device.id!,
+        name: device.deviceName || device.deviceCode || `设备-${device.id}`,
+        deviceCode: device.deviceCode || '',
+        deviceName: device.deviceName || '',
+        groupId: device.groupId || 0,
+        groupName: device.groupName || '',
+        typeCode: device.typeCode || '',
+        typeName: device.typeName || '其他'
+      }))
   } catch (error) {
     console.error('加载设备列表失败:', error)
     ElMessage.error('加载设备列表失败')
+  }
+}
+
+const loadDeviceTypes = async () => {
+  try {
+    deviceTypes.value = await fetchDeviceTypes()
+  } catch (error) {
+    console.error('加载设备类型失败:', error)
   }
 }
 
@@ -903,7 +988,7 @@ const handleExport = async () => {
           exporting.value = false
           exportProgress.value = 100
           ElMessage.success('导出成功，即将开始下载')
-          window.open(getHistoryExportDownloadUrl(taskId))
+          await downloadExportFile(taskId)
           setTimeout(() => {
             exportDialogVisible.value = false
           }, 1000)
@@ -924,6 +1009,19 @@ const handleExport = async () => {
     ElMessage.error('创建导出任务失败')
     exporting.value = false
   }
+}
+
+const downloadExportFile = async (taskId: string) => {
+  const blob = await fetchHistoryExportDownload(taskId)
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const timestamp = formatDateTime(new Date()).replace(/[-:\s]/g, '')
+  link.href = url
+  link.download = `历史数据_${timestamp}.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 watch(
@@ -1370,46 +1468,71 @@ onUnmounted(() => {
 .selector-content {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
-.device-search {
-  margin-bottom: 12px;
-}
-
-.device-list {
+.selector-item {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 400px;
-  overflow-y: auto;
 }
 
-.device-item {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  background: #f7f9fc;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: var(--art-gray-200);
-  }
-
-  &.active {
-    background: var(--el-color-primary);
-    .device-item-name {
-      color: #fff;
-    }
-  }
-}
-
-.device-item-name {
+.selector-label {
   font-size: 14px;
   font-weight: 500;
   color: var(--art-gray-900);
+}
+
+.selector-control {
+  width: 100%;
+}
+
+.device-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.device-option-code {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--art-gray-900);
+  min-width: 80px;
+}
+
+.device-option-name {
+  font-size: 13px;
+  color: var(--art-gray-600);
+}
+
+.selected-device-info {
+  padding: 16px;
+  background: rgba(74, 108, 247, 0.06);
+  border-radius: 12px;
+  border: 1px solid rgba(74, 108, 247, 0.2);
+}
+
+.info-label {
+  font-size: 12px;
+  color: var(--art-gray-500);
+  margin-bottom: 8px;
+}
+
+.info-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.info-code {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.info-name {
+  font-size: 14px;
+  color: var(--art-gray-700);
 }
 
 // 点位选择器

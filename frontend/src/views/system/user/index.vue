@@ -1,8 +1,4 @@
 <!-- 用户管理页面 -->
-<!-- art-full-height 自动计算出页面剩余高度 -->
-<!-- art-table-card 一个符合系统样式的 class，同时自动撑满剩余高度 -->
-<!-- 更多 useTable 使用示例请移步至 功能示例 下面的高级表格示例或者查看官方文档 -->
-<!-- useTable 文档：https://www.artd.pro/docs/zh/guide/hooks/use-table.html -->
 <template>
   <div class="user-page art-full-height">
     <!-- 搜索栏 -->
@@ -13,7 +9,7 @@
       <ArtTableHeader v-model:columns="columnChecks" :loading="loading" @refresh="refreshData">
         <template #left>
           <ElSpace wrap>
-            <ElButton @click="showDialog('add')" v-ripple>新增用户</ElButton>
+            <ElButton @click="showDialog('add')" v-ripple v-auth="'system:user:create'">新增用户</ElButton>
           </ElSpace>
         </template>
       </ArtTableHeader>
@@ -43,12 +39,16 @@
 
 <script setup lang="ts">
   import ArtButtonTable from '@/components/core/forms/art-button-table/index.vue'
-  import { ACCOUNT_TABLE_DATA } from '@/mock/temp/formData'
   import { useTable } from '@/hooks/core/useTable'
-  import { fetchGetUserList } from '@/api/system-manage'
+  import {
+    fetchGetUserList,
+    fetchUpdateUserStatus,
+    fetchDeleteUser,
+    fetchResetUserPassword
+  } from '@/api/system-manage'
   import UserSearch from './modules/user-search.vue'
   import UserDialog from './modules/user-dialog.vue'
-  import { ElTag, ElMessageBox, ElImage } from 'element-plus'
+  import { ElButton, ElTag, ElMessageBox, ElImage } from 'element-plus'
   import { DialogType } from '@/types'
 
   defineOptions({ name: 'User' })
@@ -72,12 +72,10 @@
     status: '1'
   })
 
-  // 用户状态配置
+  // 用户状态配置（账号状态）
   const USER_STATUS_CONFIG = {
-    '1': { type: 'success' as const, text: '在线' },
-    '2': { type: 'info' as const, text: '离线' },
-    '3': { type: 'warning' as const, text: '异常' },
-    '4': { type: 'danger' as const, text: '注销' }
+    '1': { type: 'success' as const, text: '启用' },
+    '2': { type: 'danger' as const, text: '禁用' }
   } as const
 
   /**
@@ -92,6 +90,9 @@
     )
   }
 
+  // 默认头像
+  const DEFAULT_AVATAR = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+
   const {
     columns,
     columnChecks,
@@ -105,7 +106,6 @@
     handleCurrentChange,
     refreshData
   } = useTable({
-    // 核心配置
     core: {
       apiFn: fetchGetUserList,
       apiParams: {
@@ -113,42 +113,47 @@
         size: 20,
         ...searchForm.value
       },
-      // 自定义分页字段映射，未设置时将使用全局配置 tableConfig.ts 中的 paginationKey
-      // paginationKey: {
-      //   current: 'pageNum',
-      //   size: 'pageSize'
-      // },
       columnsFactory: () => [
-        { type: 'selection' }, // 勾选列
-        { type: 'index', width: 60, label: '序号' }, // 序号
+        { type: 'selection' },
+        { type: 'index', width: 60, label: '序号' },
         {
           prop: 'userInfo',
           label: '用户名',
           width: 280,
-          // visible: false, // 默认是否显示列
           formatter: (row) => {
             return h('div', { class: 'user flex-c' }, [
               h(ElImage, {
                 class: 'size-9.5 rounded-md',
-                src: row.avatar,
-                previewSrcList: [row.avatar],
-                // 图片预览是否插入至 body 元素上，用于解决表格内部图片预览样式异常
+                src: row.avatar || DEFAULT_AVATAR,
+                previewSrcList: row.avatar ? [row.avatar] : undefined,
                 previewTeleported: true
               }),
               h('div', { class: 'ml-2' }, [
                 h('p', { class: 'user-name' }, row.userName),
-                h('p', { class: 'email' }, row.userEmail)
+                h('p', { class: 'email text-gray-400' }, row.userEmail || '-')
               ])
             ])
           }
         },
         {
+          prop: 'nickName',
+          label: '昵称',
+          formatter: (row) => row.nickName || '-'
+        },
+        {
           prop: 'userGender',
           label: '性别',
           sortable: true,
-          formatter: (row) => row.userGender
+          formatter: (row) => {
+            const genderMap: Record<string, string> = {
+              male: '男',
+              female: '女',
+              unknown: '未知'
+            }
+            return genderMap[row.userGender] || '未知'
+          }
         },
-        { prop: 'userPhone', label: '手机号' },
+        { prop: 'userPhone', label: '手机号', formatter: (row) => row.userPhone || '-' },
         {
           prop: 'status',
           label: '状态',
@@ -165,14 +170,24 @@
         {
           prop: 'operation',
           label: '操作',
-          width: 120,
-          fixed: 'right', // 固定列
+          width: 200,
+          fixed: 'right',
           formatter: (row) =>
-            h('div', [
+            h('div', { class: 'flex gap-1' }, [
               h(ArtButtonTable, {
                 type: 'edit',
                 onClick: () => showDialog('edit', row)
               }),
+              h(
+                ElButton,
+                {
+                  type: 'primary',
+                  link: true,
+                  size: 'small',
+                  onClick: () => handleResetPassword(row)
+                },
+                () => '重置密码'
+              ),
               h(ArtButtonTable, {
                 type: 'delete',
                 onClick: () => deleteUser(row)
@@ -180,31 +195,11 @@
             ])
         }
       ]
-    },
-    // 数据处理
-    transform: {
-      // 数据转换器 - 替换头像
-      dataTransformer: (records) => {
-        // 类型守卫检查
-        if (!Array.isArray(records)) {
-          console.warn('数据转换器: 期望数组类型，实际收到:', typeof records)
-          return []
-        }
-
-        // 使用本地头像替换接口返回的头像
-        return records.map((item, index: number) => {
-          return {
-            ...item,
-            avatar: ACCOUNT_TABLE_DATA[index % ACCOUNT_TABLE_DATA.length].avatar
-          }
-        })
-      }
     }
   })
 
   /**
    * 搜索处理
-   * @param params 参数
    */
   const handleSearch = (params: Api.SystemManage.UserSearchParams) => {
     replaceSearchParams(params)
@@ -215,7 +210,6 @@
    * 显示用户弹窗
    */
   const showDialog = (type: DialogType, row?: UserListItem): void => {
-    console.log('打开弹窗:', { type, row })
     dialogType.value = type
     currentUserData.value = row || {}
     nextTick(() => {
@@ -224,16 +218,39 @@
   }
 
   /**
+   * 重置密码
+   */
+  const handleResetPassword = (row: UserListItem): void => {
+    ElMessageBox.confirm(`确定要重置用户 "${row.userName}" 的密码为 123456 吗？`, '重置密码', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }).then(async () => {
+      try {
+        await fetchResetUserPassword(row.id)
+        ElMessage.success('密码已重置为 123456')
+      } catch (error: any) {
+        ElMessage.error(error?.message || '重置密码失败')
+      }
+    })
+  }
+
+  /**
    * 删除用户
    */
   const deleteUser = (row: UserListItem): void => {
-    console.log('删除用户:', row)
-    ElMessageBox.confirm(`确定要注销该用户吗？`, '注销用户', {
+    ElMessageBox.confirm(`确定要删除用户 "${row.userName}" 吗？`, '删除用户', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'error'
-    }).then(() => {
-      ElMessage.success('注销成功')
+    }).then(async () => {
+      try {
+        await fetchDeleteUser(row.id)
+        ElMessage.success('删除成功')
+        refreshData()
+      } catch (error: any) {
+        ElMessage.error(error?.message || '删除失败')
+      }
     })
   }
 
@@ -241,12 +258,7 @@
    * 处理弹窗提交事件
    */
   const handleDialogSubmit = async () => {
-    try {
-      dialogVisible.value = false
-      currentUserData.value = {}
-    } catch (error) {
-      console.error('提交失败:', error)
-    }
+    refreshData()
   }
 
   /**
@@ -254,6 +266,5 @@
    */
   const handleSelectionChange = (selection: UserListItem[]): void => {
     selectedRows.value = selection
-    console.log('选中行数据:', selectedRows.value)
   }
 </script>

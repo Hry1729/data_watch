@@ -113,6 +113,19 @@ declare namespace Api {
         Api.Common.CommonSearchParams
     >
 
+    /** 用户表单参数 */
+    interface UserPayload {
+      userName: string
+      nickName?: string
+      userPhone?: string
+      userEmail?: string
+      userGender?: string
+      avatar?: string
+      status?: string
+      userRoles?: string[]
+      password?: string
+    }
+
     /** 角色列表 */
     type RoleList = Api.Common.PaginatedResponse<RoleListItem>
 
@@ -134,5 +147,112 @@ declare namespace Api {
           endTime: string | null
         }
     >
+
+    /** 角色选项 */
+    interface RoleOption {
+      roleId: number
+      roleName: string
+      roleCode: string
+      enabled: boolean
+    }
+
+    /** 角色表单参数 */
+    interface RolePayload {
+      roleName: string
+      roleCode: string
+      description?: string
+      enabled?: boolean
+    }
+
+    /** 角色授权响应 */
+    interface RoleGrant {
+      menuIds: number[]
+      permissionIds: number[]
+      dataScopes: DataScopeItem[]
+    }
+
+    /** 角色授权参数 */
+    interface RoleGrantPayload {
+      menuIds: number[]
+      permissionIds: number[]
+      dataScopes: DataScopeItem[]
+    }
+
+    /** 数据权限项 */
+    interface DataScopeItem {
+      id?: number
+      scopeType: string
+      scopeValue: string
+      enabled?: boolean
+    }
+
+    /** 系统菜单树项 */
+    interface SystemMenuTreeItem {
+      id: number
+      parentId?: number
+      path: string
+      name: string
+      component: string
+      menuType?: string
+      sort?: number
+      enabled?: boolean
+      meta: {
+        title: string
+        icon?: string
+        keepAlive?: boolean
+        isHide?: boolean
+        isHideTab?: boolean
+        link?: string
+        isIframe?: boolean
+        fixedTab?: boolean
+        activePath?: string
+        isFullPage?: boolean
+        authList?: PermissionItem[]
+      }
+      children?: SystemMenuTreeItem[]
+    }
+
+    /** 菜单表单参数 */
+    interface MenuPayload {
+      name: string
+      path: string
+      component: string
+      titleKey: string
+      icon?: string
+      parentId?: number
+      menuType?: string
+      link?: string
+      isIframe?: boolean
+      keepAlive?: boolean
+      isHide?: boolean
+      isHideTab?: boolean
+      fixedTab?: boolean
+      activePath?: string
+      isFullPage?: boolean
+      sort?: number
+      enabled?: boolean
+    }
+
+    /** 权限项 */
+    interface PermissionItem {
+      id: number
+      title: string
+      authMark: string
+      enabled?: boolean
+      permissionCode?: string
+      permissionType?: string
+      sort?: number
+    }
+
+    /** 权限表单参数 */
+    interface PermissionPayload {
+      permissionCode: string
+      permissionName: string
+      permissionType?: string
+      authMark?: string
+      description?: string
+      sort?: number
+      enabled?: boolean
+    }
   }
 }

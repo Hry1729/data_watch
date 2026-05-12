@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workbook_bytes
+from app.core.time_utils import now_local
 from app.db.tdengine import TDengineClient
 
 
@@ -664,25 +665,25 @@ class CatalogService:
         rows = await self._fetch_point_rows()
         points = [self._to_point_item(row) for row in rows]
         points = self._filter_point_items(points, params)
-        latest_value_map = await self._fetch_latest_point_value_map(points)
 
-        # 统计近期更新数量（最近一小时有数据更新的点位）
-        from datetime import datetime, timedelta
-        one_hour_ago = datetime.now() - timedelta(hours=1)
-        recent_update_count = 0
-        for point in points:
-            latest = latest_value_map.get(point.point_id)
-            if latest and latest.get("ts"):
-                ts = self._coerce_datetime(latest["ts"])
-                if ts and ts > one_hour_ago:
-                    recent_update_count += 1
+        # 先分页，只对当前页点位查询 TDengine 最新值
+        page_no = self._to_positive_int(params.get("pageNo") or params.get("current"), default=1)
+        page_size = self._to_positive_int(params.get("pageSize") or params.get("size"), default=20)
+        total = len(points)
+        start = (page_no - 1) * page_size
+        end = start + page_size
+        page_points = points[start:end]
+
+        # 只查询当前页点位的最新值
+        latest_value_map = await self._fetch_latest_point_value_map(page_points)
 
         items = [
             self._serialize_point_item(point, latest_value_map.get(point.point_id))
-            for point in points
+            for point in page_points
         ]
-        result = self._paginate(items, params)
-        result["recentUpdateCount"] = recent_update_count
+        result = self._build_page_payload(items, total, page_no, page_size)
+        # recentUpdateCount 保留但不统计（因为只查询了当前页）
+        result["recentUpdateCount"] = 0
         return result
 
     async def get_point(
@@ -2001,87 +2002,94 @@ class CatalogService:
             return {}
 
         tasks = [self._fetch_single_point_latest_row(point) for point in points]
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         return {
             point.point_id: result
             for point, result in zip(points, results, strict=False)
-            if result is not None
+            if isinstance(result, dict)
         }
 
     async def _fetch_single_point_latest_row(
         self,
         point: PointCatalogItem,
     ) -> dict[str, Any] | None:
-        database_name = self._resolve_tdengine_database(point.device_code)
-        subtable_name = self.tdengine.qualify_table(
-            database_name,
-            self._resolve_point_subtable_name(point.device_code, point.var_seq, point.point_id),
-        )
-
         try:
-            rows = await self.tdengine.fetch_all(
-                f"SELECT ts, `value` FROM {subtable_name} ORDER BY ts DESC LIMIT 1",
-                database=database_name,
+            database_name = self._resolve_tdengine_database(point.device_code)
+            subtable_name = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_point_subtable_name(point.device_code, point.var_seq, point.point_id),
             )
-        except Exception:
-            rows = []
 
-        if not rows:
             try:
-                stable_name = self.tdengine.qualify_table(
-                    database_name,
-                    self._normalize_identifier(point.device_code).lower(),
+                rows = await self.tdengine.fetch_all(
+                    f"SELECT ts, `value` FROM {subtable_name} ORDER BY ts DESC LIMIT 1",
+                    database=database_name,
                 )
-                if point.var_seq is not None:
+            except Exception:
+                rows = []
+
+            if not rows:
+                try:
+                    stable_name = self.tdengine.qualify_table(
+                        database_name,
+                        self._normalize_identifier(point.device_code).lower(),
+                    )
+                    if point.var_seq is not None:
+                        rows = await self.tdengine.fetch_all(
+                            (
+                                f"SELECT ts, `value` FROM {stable_name} "
+                                f"WHERE var_seq = {int(point.var_seq)} ORDER BY ts DESC LIMIT 1"
+                            ),
+                            database=database_name,
+                        )
+                except Exception:
+                    rows = []
+
+            if not rows:
+                try:
+                    legacy_subtable_name = self.tdengine.qualify_table(
+                        database_name,
+                        self._resolve_point_subtable_name(point.device_code, None, point.point_id),
+                    )
+                    rows = await self.tdengine.fetch_all(
+                        f"SELECT ts, `value` FROM {legacy_subtable_name} ORDER BY ts DESC LIMIT 1",
+                        database=database_name,
+                    )
+                except Exception:
+                    rows = []
+
+            if not rows:
+                try:
+                    stable_name = self.tdengine.qualify_table(
+                        database_name,
+                        self._normalize_identifier(point.device_code).lower(),
+                    )
                     rows = await self.tdengine.fetch_all(
                         (
                             f"SELECT ts, `value` FROM {stable_name} "
-                            f"WHERE var_seq = {int(point.var_seq)} ORDER BY ts DESC LIMIT 1"
+                            f"WHERE variable_id = {point.point_id} ORDER BY ts DESC LIMIT 1"
                         ),
                         database=database_name,
                     )
-            except Exception:
-                rows = []
+                except Exception:
+                    return None
 
-        if not rows:
-            try:
-                legacy_subtable_name = self.tdengine.qualify_table(
-                    database_name,
-                    self._resolve_point_subtable_name(point.device_code, None, point.point_id),
-                )
-                rows = await self.tdengine.fetch_all(
-                    f"SELECT ts, `value` FROM {legacy_subtable_name} ORDER BY ts DESC LIMIT 1",
-                    database=database_name,
-                )
-            except Exception:
-                rows = []
-
-        if not rows:
-            try:
-                rows = await self.tdengine.fetch_all(
-                    (
-                        f"SELECT ts, `value` FROM {stable_name} "
-                        f"WHERE variable_id = {point.point_id} ORDER BY ts DESC LIMIT 1"
-                    ),
-                    database=database_name,
-                )
-            except Exception:
+            if not rows:
                 return None
 
-        if not rows:
+            ts, value = rows[0]
+            return {
+                "ts": self._coerce_datetime(ts),
+                "value": value,
+            }
+        except Exception:
             return None
-
-        ts, value = rows[0]
-        return {
-            "ts": self._coerce_datetime(ts),
-            "value": value,
-        }
 
     def _build_connect_status(self, last_collect_time: datetime | None) -> str:
         if last_collect_time is None:
             return "offline"
 
-        age_seconds = max(0.0, (datetime.now() - last_collect_time).total_seconds())
+        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
         if age_seconds <= ONLINE_MAX_AGE_SECONDS:
             return "online"
         if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
@@ -2099,7 +2107,7 @@ class CatalogService:
         if last_collect_time is None:
             return "nodata"
 
-        age_seconds = max(0.0, (datetime.now() - last_collect_time).total_seconds())
+        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
         if age_seconds <= ONLINE_MAX_AGE_SECONDS:
             return "normal"
         return "abnormal"
