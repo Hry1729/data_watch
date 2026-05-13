@@ -24,7 +24,7 @@ class Variable:
     variable_id: str
     address: str  # e.g., "DB398.DBD0", "%MD1304", "%R100"
     data_type: str = "INT"
-    scan_rate: int = 1  # 采集周期（秒）
+    scan_rate: float = 1.0  # 采集周期（秒）
     is_storage: bool = True  # 是否存储到TDengine
     last_value: Optional[Any] = None
     last_storage_time: Optional[float] = None  # 上次入库时间戳
@@ -33,7 +33,7 @@ class Variable:
 @dataclass
 class ScanTask:
     """采集任务（同周期的变量合并）"""
-    scan_rate: int  # 周期（秒）
+    scan_rate: float  # 周期（秒）
     variables: List[Variable] = field(default_factory=list)
     last_read_time: float = 0.0
     # 批量读取块：连续地址会被合并
@@ -83,7 +83,7 @@ class Device:
         按scan_rate分组构建采集任务
         同周期同设备的变量合并到一个任务
         """
-        rate_map: Dict[int, List[Variable]] = {}
+        rate_map: Dict[float, List[Variable]] = {}
         for var in self.variables:
             rate_map.setdefault(var.scan_rate, []).append(var)
 

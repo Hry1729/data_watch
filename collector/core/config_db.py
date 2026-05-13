@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import socket
 import threading
 from dataclasses import dataclass
@@ -198,17 +197,17 @@ class ConfigDBManager:
         return raw
 
     @staticmethod
-    def _normalize_scan_rate(value: Optional[int], default_seconds: int = 1) -> int:
-        """兼容毫秒/秒混用配置，最终返回秒。"""
+    def _normalize_scan_rate(value: Optional[int], default_seconds: float = 1.0) -> float:
+        """兼容毫秒/秒混用配置，最终返回秒，允许亚秒采集。"""
         if value is None:
-            return max(1, default_seconds)
+            return max(0.001, float(default_seconds))
 
-        v = int(value)
+        v = float(value)
         if v <= 0:
-            return max(1, default_seconds)
+            return max(0.001, float(default_seconds))
         if v >= 100:
             # 约定 >=100 视为毫秒
-            return max(1, math.ceil(v / 1000))
+            return max(0.001, v / 1000.0)
         return v
 
     @staticmethod
