@@ -29,7 +29,7 @@ class CollectTask:
             )
 
     @property
-    def scan_rate(self) -> int:
+    def scan_rate(self) -> float:
         return self.scan_task.scan_rate
 
     def __repr__(self):

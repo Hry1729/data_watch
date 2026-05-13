@@ -81,7 +81,7 @@ class DeviceConfig:
     port: int = 102
     rack: int = 0
     slot: int = 1
-    scan_rate: int = 1  # seconds
+    scan_rate: float = 1.0  # seconds
     device_pk: Optional[int] = None  # MySQL device.id
     opc_server: Optional[str] = None  # OPC DA ProgID，从 comm_protocol.server 获取
 
@@ -93,7 +93,7 @@ class VariableConfig:
     device_id: str
     address: str  # e.g., "DB398.DBD0", "%MD1304", "%R100"
     data_type: str = "INT"  # INT, FLOAT, BOOL, etc.
-    scan_rate: int = 1  # seconds
+    scan_rate: float = 1.0  # seconds
     is_storage: bool = True  # whether to store in TDengine
     var_seq: int = 0  # canonical TDengine point sequence
 
