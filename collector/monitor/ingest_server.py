@@ -19,6 +19,9 @@ logger = get_logger("ingest_server")
 
 # 采样日志配置：每 N 秒输出一次汇总
 LOG_SAMPLE_INTERVAL_SECONDS = 10
+QUALITY_GOOD = 0
+QUALITY_UNCERTAIN = 2
+VALID_QUALITY_CODES = {0, 1, 2, 3, 4}
 
 
 def _parse_timestamp(raw_value: Any) -> datetime:
@@ -73,6 +76,35 @@ def _normalize_payload(payload: Any, max_batch_size: int) -> List[Dict[str, Any]
     return normalized
 
 
+def _parse_quality_code(raw_value: Any) -> int:
+    """解析内部质量码，允许 0-4；未提供时默认为 Good。"""
+    if raw_value is None:
+        return QUALITY_GOOD
+    try:
+        quality = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quality must be an integer code") from exc
+    if quality not in VALID_QUALITY_CODES:
+        raise ValueError("quality must be one of 0, 1, 2, 3, 4")
+    return quality
+
+
+def _map_opcda_quality(item: Dict[str, Any]) -> int:
+    """将 OPC DA quality/quality_good 映射为内部质量码。"""
+    quality_good = item.get("quality_good")
+    if isinstance(quality_good, bool):
+        return QUALITY_GOOD if quality_good else QUALITY_UNCERTAIN
+
+    raw_quality = item.get("quality")
+    if raw_quality is None:
+        return QUALITY_GOOD
+    try:
+        opc_quality = int(raw_quality)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("quality must be an integer code") from exc
+    return QUALITY_GOOD if opc_quality & 0xC0 == 0xC0 else QUALITY_UNCERTAIN
+
+
 def _point_from_dict(item: Dict[str, Any]) -> DataPoint:
     """将单个字典转换为 DataPoint"""
     device_id = str(item.get("device_id", "")).strip()
@@ -87,12 +119,14 @@ def _point_from_dict(item: Dict[str, Any]) -> DataPoint:
         raise ValueError("value is required")
 
     timestamp = _parse_timestamp(item.get("timestamp"))
+    quality = _parse_quality_code(item.get("quality"))
 
     return DataPoint(
         device_id=device_id,
         variable_id=variable_id,
         value=value,
         timestamp=timestamp,
+        quality=quality,
     )
 
 
@@ -337,6 +371,7 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
 
                 try:
                     timestamp = _parse_timestamp(item.get("timestamp"))
+                    quality = _map_opcda_quality(item)
                 except ValueError as exc:
                     errors.append(f"points[{idx}]: {exc}")
                     continue
@@ -349,6 +384,7 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     variable_id=variable_id,
                     value=value,
                     timestamp=timestamp,
+                    quality=quality,
                 ))
 
             if not points:

@@ -121,24 +121,25 @@
 > 4. `collector/drivers/base.py`
 >
 > **当前代码基线**：
-> - 已有配置、缓存、数据质量、连接池、插件系统等实现；
-> - 已有 `S7`、`GE-SRTP`、`OPC UA` 驱动代码；
-> - 已有 `task/scheduler/executor`、`buffer/aggregator`、`tdengine/batch_writer`、`monitor` 系列代码；
-> - 当前重点不再是“从零建文件”，而是“补完闭环、验证行为、补测试与联调”。
+> - 已有 MySQL 配置加载、协议归一化、地址/类型校验、缓存、连接池、插件系统等实现；
+> - 已有 `S7`、`GE-SRTP`、`OPC UA`、`OPC DA center` 驱动代码，以及 `HTTP Push / OPC DA sidecar` 外部推送入口；
+> - 已有 `task/scheduler/executor`、`DataBuffer/DataAggregator`、`TDengine/BatchWriter`、`monitor/ingest` 系列代码；
+> - 2026-05-14 复审确认采集核心链路已完成模块级闭环验证；GE SRTP 已新增批量合并与单点还原，collector 全量测试 `129 passed`；后续重点转为真实 PLC / TDengine / MySQL 联调、性能压测和数据质量规则引擎接入。
 
 | ID | 任务描述 | 状态 | 负责人 | 优先级 | 说明 |
 |----|----------|------|--------|--------|------|
 | CL-001 | 配置、校验、日志、异常基础能力验收 | ✅ | `@collector` | P0 | 相关代码已落地 |
 | CL-002 | 重试、熔断、自动重连链路完善 | 🔄 | `@collector` | P0 | 与 `device/manager.py` 强相关 |
-| CL-003 | S7 / GE-SRTP 驱动基线维护 | 🔄 | `@collector` | P0 | 基线已实现；2026-05-07 复审新增 DWORD/BOOLEAN 类型口径、GE 现场 smoke 与健康检查补强建议，仍需真机或模拟环境验证 |
-| CL-004 | OPC UA 驱动补完与验证 | 🔄 | `@collector` | P1 | 代码存在，验收不足 |
-| CL-005 | 任务模型、调度器、执行器闭环完善 | 🔄 | `@collector` | P0 | 当前已形成基础链路 |
-| CL-006 | 缓冲队列、聚合去重、时间窗口、批量策略验收 | 🔄 | `@collector` | P0 | 2026-05-07 复审发现 TDengine 最终写失败后已 flush 批次未重入队，需修复后再做故障注入验收 |
-| CL-007 | TDengine WebSocket 连接与批量写入验收 | 🔄 | `@collector` | P0 | 重点关注重连、建库建表、异常恢复；测试 mock 需同步 `_stable_exists/_table_exists` 查询链路 |
-| CL-008 | 监控 API、健康检查、外部接口采集服务验收 | 🔄 | `@collector` | P1 | 已有代码，需统一验收口径 |
+| CL-003 | S7 / GE-SRTP 驱动基线维护 | 🔄 | `@collector` | P0 | S7 标准 DB/I/Q/M 地址、类型校验、同连接串行读、I/Q/M 连续字节合并与还原已完成单测；GE SRTP 已支持 `%R/%AI/%AQ` word 合并、`%I/%Q/%M` BOOL bit 合并和单点还原，真实 PLC 地址基准/字序仍需现场 smoke |
+| CL-004 | OPC UA 驱动补完与验证 | 🔄 | `@collector` | P1 | 驱动接口与只读边界已实现；仍需 OPC UA 服务端联调验收 |
+| CL-005 | 任务模型、调度器、执行器闭环完善 | ✅ | `@collector` | P0 | 已按设备+采集周期构建任务，支持亚秒周期，执行器完成批量读取、S7 合并块还原和入队 |
+| CL-006 | 缓冲队列、聚合去重、时间窗口、批量策略验收 | ✅ | `@collector` | P0 | DataBuffer 非阻塞入队、DataAggregator 按 value+quality 去重、时间窗口、失败 batch 回放、缓存上限和连续失败暂停已完成测试 |
+| CL-007 | TDengine WebSocket 连接与批量写入验收 | ✅ | `@collector` | P0 | 运行时模型已切到设备类型库 -> 设备超级表 -> 变量子表；写入 `ts,value,quality`，旧表缺 quality 会被判定为不兼容并要求迁移 |
+| CL-008 | 监控 API、健康检查、外部接口采集服务验收 | ✅ | `@collector` | P1 | `/ingest/health`、通用 `/ingest`、`/ingest/opcda-tags`、API Key、批量限制、body 限制和 OPC DA quality 映射已纳入单测 |
 | CL-009 | 建立 fake data 启动与 smoke runbook | 📋 | `@collector` | P0 | 联调前必须补齐 |
-| CL-010 | 为关键链路补充模块级测试与冒烟脚本 | 🔄 | `@collector` | P0 | 2026-05-07 pytest 临时跑法结果 69 passed / 7 failed；需修复 venv 路径、cache/aggregator/TDengine mock 测试后恢复绿色 |
-| CL-011 | 测试前复审新增 P1/P2 收口 | 🔄 | `@collector` | P0 | 新增报告 `docs/采集模块/collector测试前代码审查报告_2026-05-07.md`；P1 包括 OPC DA center 端口映射、聚合器失败批次保留、数据类型口径、opc_server 必填、venv 路径修复 |
+| CL-010 | 为关键链路补充模块级测试与冒烟脚本 | ✅ | `@collector` | P0 | 2026-05-14 使用 collector `.venv` 复跑 `pytest tests -q`：129 passed；`asyncio.iscoroutinefunction` 弃用 warning 已改为 `inspect.iscoroutinefunction` |
+| CL-011 | 测试前复审新增 P1/P2 收口 | ✅ | `@collector` | P0 | scan_rate、aggregator pending 去重、cache TTL、TDengine mock、S7 地址类型校验、S7 I/Q/M 合并、TDengine quality 链路已收口 |
+| CL-012 | 数据质量规则引擎接入主采集链路 | 📋 | `@collector` | P1 | `core/data_quality.py` 规则能力存在并有单测，但当前主链路只落 `quality` 基础字段/OPCDA 映射，尚未将规则结果自动转成质量码 |
 
 ---
 
@@ -236,10 +237,10 @@
 
 | ID | 任务描述 | 状态 | 负责人 | 优先级 | 说明 |
 |----|----------|------|--------|--------|------|
-| TEST-001 | 采集侧现有单测基线梳理与验收 | 🔄 | `@test` | P0 | 先确认现有测试覆盖范围 |
+| TEST-001 | 采集侧现有单测基线梳理与验收 | ✅ | `@test` | P0 | 2026-05-14 collector 全量 `pytest tests -q`：129 passed；GE SRTP 专项 `tests/test_ge_addressing.py`：38 passed |
 | TEST-002 | 建立“模块 Owner 同步补单测”的执行规则 | 🔄 | `@test` | P0 | 测试左移 |
 | TEST-003 | 建立 REST / WS 契约测试 | 📋 | `@test` | P0 | 与 `@backend`, `@frontend` 强耦合 |
-| TEST-004 | 建立采集到存储链路的集成测试 | 🔄 | `@test` | P0 | 当前已有部分基础 |
+| TEST-004 | 建立采集到存储链路的集成测试 | ✅ | `@test` | P0 | 已有 S7 标准地址采集 -> DataBuffer -> DataAggregator -> flush 回调的集成测试；真实 TDengine/PLC 联调仍归入 TEST-006 |
 | TEST-005 | 建立前后端联调冒烟测试 | 📋 | `@test` | P0 | 后端骨架完成后立即接入 |
 | TEST-006 | 建立 PLC / TDengine / MySQL 联调环境 | 📋 | `@test` | P0 | 当前最大短板 |
 | TEST-007 | 建立性能测试方案与压测脚本 | 📋 | `@test` | P1 | 聚焦高并发采集与 WS 推送 |
@@ -323,7 +324,7 @@
 | RISK-001 | 前后端再次各自演化导致契约漂移 | 高 | 联调失败、页面返工 | 锁定 `docs/后端/API接口文档.md` 为唯一契约源 | `@backend` |
 | RISK-002 | TODO 再次脱离仓库事实 | 高 | 排期与资源判断失真 | 由 `@coordinator` 统一维护并阶段校准 | `@coordinator` |
 | RISK-003 | 缺少 PLC / TDengine / MySQL 联调环境 | 高 | 无法稳定验收 | 提前建设 fake data、fixture、smoke script | `@test` |
-| RISK-004 | 采集链路已有代码但无统一验收口径 | 中 | “写了很多代码但不可交付” | 以闭环任务和测试结果驱动验收 | `@collector`, `@test` |
+| RISK-004 | 采集链路已有代码但无统一验收口径 | 低 | 模块级可交付性已改善，但真实现场环境仍可能暴露协议差异 | 保持 `pytest tests -q`、compileall、PLC/TDengine/MySQL 联调和 smoke runbook 作为分层验收 | `@collector`, `@test` |
 | RISK-005 | 后端起盘过慢导致前端空转 | 中 | 阶段进度失衡 | 优先只做最小闭环相关接口 | `@backend`, `@coordinator` |
 
 ---
@@ -394,6 +395,8 @@
 
 | 日期 | 变更内容 | 变更人 |
 |------|----------|--------|
+| 2026-05-14 | 完成采集模块 GE SRTP 批量采集复审：真实轨道吊 GE 点位表 4539 个可读变量合并为 476 个读取块，`result_map=4539`；修复 GE `INT` 负数还原、拒绝 GE 0 地址、明确 `low_high` word 序；同时将 DataAggregator 输出回调判断从 `asyncio.iscoroutinefunction` 改为 `inspect.iscoroutinefunction`，collector 全量测试 129 passed | `@collector` |
+| 2026-05-13 | 完成采集模块核心链路复审：确认协议适配、S7 I/Q/M 合并读取、DataBuffer、DataAggregator、BatchWriter、TDengine `quality` 模型和 HTTP/OPCDA ingest 已形成模块级闭环；collector 全量测试 91 passed，剩余重点为真实联调、性能压测和数据质量规则引擎接入 | `@collector` |
 | 2026-05-08 | 完成 STEP-055：实时监控页面按设计文档重新设计，删除旧布局，改用顶部控制栏+中央趋势图+右侧点位卡片+底部状态栏的四段式布局 | `@frontend` |
 | 2026-05-08 | 完成 STEP-054：日志系统 UI 问题修复，包括暂停计数器、pending 重复累计、分页滚动跳回顶部 | `@frontend` |
 | 2026-05-08 | 完成 STEP-053 P1 系列修复：OPC DA center 端口映射、聚合器失败批次保留、数据类型口径统一、opc_server 必填校验、venv 路径修复 | `@collector` |

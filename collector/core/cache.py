@@ -125,10 +125,11 @@ class CacheManager:
             if len(self._cache) >= self.max_size:
                 await self._evict_entry(policy)
 
-            # 设置过期时间
+            # ttl=None 使用默认 TTL；ttl<=0 表示不过期。
             expire_at = None
-            if ttl:
-                expire_at = time.time() + ttl
+            effective_ttl = self.default_ttl if ttl is None else ttl
+            if effective_ttl > 0:
+                expire_at = time.time() + effective_ttl
 
             # 创建条目
             entry = CacheEntry(
@@ -154,10 +155,11 @@ class CacheManager:
 
         注意：同步版本不执行驱逐逻辑，可能超出 max_size。
         """
-        # 设置过期时间
+        # ttl=None 使用默认 TTL；ttl<=0 表示不过期。
         expire_at = None
-        if ttl:
-            expire_at = time.time() + ttl
+        effective_ttl = self.default_ttl if ttl is None else ttl
+        if effective_ttl > 0:
+            expire_at = time.time() + effective_ttl
 
         # 创建条目
         entry = CacheEntry(

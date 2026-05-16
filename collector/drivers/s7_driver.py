@@ -18,6 +18,8 @@ class S7Driver(BaseDriver):
         "I": 0x81,  # process inputs
         "Q": 0x82,  # process outputs
         "M": 0x83,  # merkers / memory
+        "T": 0x1D,  # timers (S7-300/400)
+        "C": 0x1C,  # counters (S7-300/400)
     }
     _DB_ADDRESS_RE = re.compile(
         r"^DB(?P<db>\d+)\.(?P<access>DBX|DBB|DBW|DBD)(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
@@ -25,6 +27,10 @@ class S7Driver(BaseDriver):
     )
     _AREA_ADDRESS_RE = re.compile(
         r"^%?(?P<area>I|Q|M)(?P<width>B|W|D)?(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
+        re.IGNORECASE,
+    )
+    _TIMER_COUNTER_RE = re.compile(
+        r"^%?(?P<type>T|C)(?P<num>\d+)$",
         re.IGNORECASE,
     )
 
@@ -114,6 +120,12 @@ class S7Driver(BaseDriver):
 
         if addr.upper().startswith("DB"):
             return self._read_db_block(addr, data_type, count)
+
+        # 检查是否为 Timer/Counter
+        tc_match = self._TIMER_COUNTER_RE.match(addr.upper())
+        if tc_match:
+            return self._read_timer_counter_block(addr, data_type, count)
+
         return self._read_area_block(addr, data_type, count)
 
     def _read_db_block(self, address: str, data_type: str, count: int) -> List[Any]:
@@ -140,7 +152,8 @@ class S7Driver(BaseDriver):
             if data_type.upper() == "BOOL":
                 raise ReadError(f"BOOL values must use DBX bit address syntax: {address}")
 
-            expected_size = {"DBB": 1, "DBW": 2, "DBD": 4}[access]
+            unit_size = {"DBB": 1, "DBW": 2, "DBD": 4}[access]
+            expected_size = unit_size * count
             actual_size = self._calc_byte_size(data_type, count)
             if actual_size != expected_size:
                 raise ReadError(
@@ -181,7 +194,8 @@ class S7Driver(BaseDriver):
         if data_type.upper() == "BOOL":
             raise ReadError(f"BOOL values must use bit address syntax: {address}")
 
-        expected_size = {"B": 1, "W": 2, "D": 4}.get(width)
+        unit_size = {"B": 1, "W": 2, "D": 4}.get(width)
+        expected_size = unit_size * count if unit_size is not None else None
         actual_size = self._calc_byte_size(data_type, count)
         if expected_size is not None and actual_size != expected_size:
             raise ReadError(
@@ -191,6 +205,111 @@ class S7Driver(BaseDriver):
         byte_size = expected_size if expected_size is not None else actual_size
         raw = self._client.read_area(self._AREA_CODES[area], 0, byte_offset, byte_size)
         return self._parse_bytes(raw, data_type, count)
+
+    def _read_timer_counter_block(self, address: str, data_type: str, count: int) -> List[Any]:
+        """
+        读取 S7 Timer (%T) 或 Counter (%C)。
+
+        Timer 值为 BCD 格式的 S5TIME，单位为 10ms 基准的时基倍数。
+        Counter 值为 BCD 格式的计数值。
+
+        返回：
+            Timer: 毫秒数（int）或原始 BCD 值（视 data_type）
+            Counter: 整数值（int）
+        """
+        match = self._TIMER_COUNTER_RE.match(address.upper())
+        if not match:
+            raise ReadError(f"Invalid Timer/Counter address: {address}")
+
+        area_type = match.group("type").upper()
+        num = int(match.group("num"))
+
+        if area_type not in self._AREA_CODES:
+            raise ReadError(f"Unknown S7 Timer/Counter type: {area_type}")
+
+        # python-snap7 read_area() 对 Timer/Counter 的 size 参数含义是"读取几个",
+        # 不是字节数。每个 Timer/Counter 返回 2 字节。
+        raw = self._client.read_area(
+            self._AREA_CODES[area_type],
+            0,
+            num,
+            count,
+        )
+        expected_bytes = count * 2
+        if len(raw) < expected_bytes:
+            raise ReadError(
+                f"S7 Timer/Counter read returned {len(raw)} bytes, expected {expected_bytes}: {address}"
+            )
+
+        results = []
+        for i in range(count):
+            item_raw = raw[i * 2:(i + 1) * 2]
+            if area_type == "T":
+                # Timer: 解析 S5TIME BCD 格式并转换为毫秒
+                results.append(self._parse_s5time(item_raw, data_type))
+            else:
+                # Counter: 解析 BCD 格式计数值
+                results.append(self._parse_counter_bcd(item_raw, data_type))
+
+        return results
+
+    @staticmethod
+    def _parse_s5time(data: bytearray, data_type: str) -> Any:
+        """
+        解析 S7 S5TIME BCD 格式为毫秒数。
+
+        S5TIME 格式 (2 字节):
+        - 字节 0:
+          - bit 7-6: 时基 (00=10ms, 01=100ms, 10=1s, 11=10s)
+          - bit 5-4: 未使用 (总是 0)
+          - bit 3-0: BCD 百位 (0-9)
+        - 字节 1:
+          - bit 7-4: BCD 十位 (0-9)
+          - bit 3-0: BCD 个位 (0-9)
+
+        返回：
+            data_type 为 "TIMER_MS" 或默认: 毫秒数 (int)
+            data_type 为 "WORD": 原始 2 字节值 (int)
+        """
+        if data_type.upper() == "WORD":
+            return (data[0] << 8) | data[1]
+
+        # 解析 BCD 值: 百位在字节0的低4位，十位和个位在字节1
+        bcd_hundreds = data[0] & 0x0F
+        bcd_tens = (data[1] >> 4) & 0x0F
+        bcd_ones = data[1] & 0x0F
+        bcd_value = bcd_hundreds * 100 + bcd_tens * 10 + bcd_ones
+
+        # 解析时基 (bits 7-6)
+        time_base_bits = (data[0] >> 6) & 0x03
+        time_base_ms = {0: 10, 1: 100, 2: 1000, 3: 10000}.get(time_base_bits, 10)
+
+        return bcd_value * time_base_ms
+
+    @staticmethod
+    def _parse_counter_bcd(data: bytearray, data_type: str) -> Any:
+        """
+        解析 S7 Counter BCD 格式为整数值。
+
+        Counter 格式 (2 字节): BCD 编码的计数值 (0-999)
+        - 字节 0 高 4 位: 未使用 (0)
+        - 字节 0 低 4 位: BCD 百位 (0-9)
+        - 字节 1 高 4 位: BCD 十位 (0-9)
+        - 字节 1 低 4 位: BCD 个位 (0-9)
+
+        返回：
+            data_type 为 "COUNTER" 或默认: 整数值 (int)
+            data_type 为 "WORD": 原始 2 字节值 (int)
+        """
+        if data_type.upper() == "WORD":
+            return (data[0] << 8) | data[1]
+
+        # 解析 BCD 值 (范围 0-999)
+        bcd_hundreds = data[0] & 0x0F
+        bcd_tens = (data[1] >> 4) & 0x0F
+        bcd_ones = data[1] & 0x0F
+
+        return bcd_hundreds * 100 + bcd_tens * 10 + bcd_ones
 
     def _calc_byte_size(self, data_type: str, count: int) -> int:
         """计算需要的字节数"""

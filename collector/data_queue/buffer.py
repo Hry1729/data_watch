@@ -17,10 +17,11 @@ class DataPoint:
     variable_id: str
     value: Any
     timestamp: datetime = field(default_factory=datetime.now)
+    quality: int = 0
 
     def to_tdengine_row(self) -> tuple:
-        """转换为 TDengine 变量子表写入行 (timestamp, value)。"""
-        return (self.timestamp, float(self.value))
+        """转换为 TDengine 变量子表写入行 (timestamp, value, quality)。"""
+        return (self.timestamp, float(self.value), int(self.quality))
 
 
 class DataBuffer:

@@ -48,7 +48,7 @@ class BatchWriter:
     async def write(self, points: List[DataPoint]) -> int:
         """
         批量写入数据点到TDengine
-        每个变量写入对应子表，行结构：(ts, value)
+        每个变量写入对应子表，行结构：(ts, value, quality)
         Returns:
             成功写入的条数
         """
@@ -161,17 +161,13 @@ class BatchWriter:
         points: List[DataPoint],
     ) -> int:
         """写入单个变量子表。"""
-        rows_by_ts: Dict[str, float] = {}
+        rows_by_ts: Dict[str, Tuple[float, int]] = {}
         duplicate_ts_count = 0
         invalid_value_count = 0
+        invalid_quality_count = 0
         for point in points:
             try:
                 val = float(point.value)
-                ts = point.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                if ts in rows_by_ts:
-                    duplicate_ts_count += 1
-                # 同一变量同一时间戳只保留最后一次值，不再篡改采样时间。
-                rows_by_ts[ts] = val
             except (ValueError, TypeError):
                 invalid_value_count += 1
                 logger.warning(
@@ -183,8 +179,29 @@ class BatchWriter:
                 )
                 continue
 
-        if invalid_value_count:
-            self._total_failed += invalid_value_count
+            try:
+                quality = int(getattr(point, "quality", 0))
+                if quality not in {0, 1, 2, 3, 4}:
+                    raise ValueError("quality must be one of 0, 1, 2, 3, 4")
+            except (ValueError, TypeError):
+                invalid_quality_count += 1
+                logger.warning(
+                    "Skip invalid quality device=%s variable_id=%s table=%s quality=%r",
+                    point.device_id,
+                    point.variable_id,
+                    target.table_name,
+                    getattr(point, "quality", None),
+                )
+                continue
+
+            ts = point.timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            if ts in rows_by_ts:
+                duplicate_ts_count += 1
+            # 同一变量同一时间戳只保留最后一次值，不再篡改采样时间。
+            rows_by_ts[ts] = (val, quality)
+
+        if invalid_value_count or invalid_quality_count:
+            self._total_failed += invalid_value_count + invalid_quality_count
 
         if not rows_by_ts:
             return 0
@@ -199,10 +216,10 @@ class BatchWriter:
             )
 
         values_sql = " ".join(
-            f"('{ts}', {val})" for ts, val in rows_by_ts.items()
+            f"('{ts}', {val}, {quality})" for ts, (val, quality) in rows_by_ts.items()
         )
         sql = (
-            f"INSERT INTO `{target.database_name}`.`{target.table_name}` (`ts`, `value`) "
+            f"INSERT INTO `{target.database_name}`.`{target.table_name}` (`ts`, `value`, `quality`) "
             f"VALUES {values_sql}"
         )
         return await self.tdengine.execute(sql)

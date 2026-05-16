@@ -7,8 +7,11 @@
 3. 连接设备
 4. 启动调度器 + 聚合器 + 写入器
 5. 等待信号退出
+
+支持 --dry-run 参数只做配置预检不启动采集。
 """
 
+import argparse
 import asyncio
 import os
 import signal
@@ -27,6 +30,7 @@ from core.logger import setup_logger
 from core.logger import get_logger
 from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
+from core.dry_run import dry_run_main
 from device.manager import DeviceManager
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
@@ -370,8 +374,30 @@ def create_sample_config() -> CollectorConfig:
 
 async def main():
     """程序入口"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(
+        description="设备数据采集平台",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只做配置预检，不启动采集。输出设备数、点位数、合并块数量等统计信息。",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="配置文件路径 (默认: config/settings.toml 或环境变量 COLLECTOR_CONFIG)",
+    )
+    args = parser.parse_args()
+
     # 先用默认级别初始化日志，读取配置后再调整
     setup_logger(level="INFO")
+
+    # 设置配置文件路径
+    if args.config:
+        os.environ["COLLECTOR_CONFIG"] = args.config
 
     # 从配置文件加载
     try:
@@ -440,6 +466,13 @@ async def main():
             await runtime_db_manager.close()
         raise ConfigError("Collector config validation failed; see logs for details.")
 
+    # Dry-run 模式：只做配置预检，不启动采集
+    if args.dry_run:
+        exit_code = await dry_run_main(config)
+        if runtime_db_manager is not None:
+            await runtime_db_manager.close()
+        return exit_code
+
     # 创建并启动应用
     app = CollectorApp(config, config_db_manager=runtime_db_manager)
 
@@ -462,6 +495,10 @@ async def main():
     finally:
         await app.shutdown()
 
+    return 0
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    exit_code = asyncio.run(main())
+    if exit_code is not None and exit_code != 0:
+        raise SystemExit(exit_code)

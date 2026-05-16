@@ -24,6 +24,18 @@ async def test_aggregator_dedupes_unchanged_values():
 
 
 @pytest.mark.asyncio
+async def test_aggregator_keeps_same_value_when_quality_changes():
+    config = CollectorConfig(batch_size=10, flush_interval=10, max_window_seconds=60)
+    buffer = DataBuffer(max_size=100)
+    aggregator = DataAggregator(config, buffer)
+
+    aggregator.add(DataPoint("TEST001", "temp", 25.0, quality=0))
+    aggregator.add(DataPoint("TEST001", "temp", 25.0, quality=2))
+
+    assert aggregator.cache_size == 2
+
+
+@pytest.mark.asyncio
 async def test_aggregator_flush_to_output_submits_batch():
     config = CollectorConfig(batch_size=2, flush_interval=10, max_window_seconds=60)
     buffer = DataBuffer(max_size=100)
