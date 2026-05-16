@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import re
 import sys
 from typing import Any, Dict, List
 
@@ -21,6 +22,9 @@ logger = get_logger("ge_srtp_driver")
 
 class GESRTPDriver(BaseDriver):
     """GE PLC驱动，基于gesrtp-py"""
+
+    # GE 地址正则：匹配 %(R|AI|AQ|I|Q|M)<num>
+    _GE_ADDRESS_RE = re.compile(r"^%(R|AI|AQ|I|Q|M)(\d+)$", re.IGNORECASE)
 
     def __init__(self):
         super().__init__()
@@ -82,36 +86,54 @@ class GESRTPDriver(BaseDriver):
         return result
 
     def _read_block(self, block: ReadBlock) -> List[Any]:
-        """在线程中执行单个block读取"""
+        """
+        在线程中执行单个 block 读取。
+
+        ReadBlock.address 视作 PLC 逻辑地址字符串，如 "%R00001"、"%AI0001"。
+        driver 内部根据地址格式解析区域类型和逻辑编号，转换为 GE 库需要的 protocol offset。
+
+        地址基准（需现场已知点校验后固化）：
+            %R/%AI/%AQ: protocol_offset = logical_number - 1
+            %I/%Q/%M: 保持库示例语义，暂不减 1
+        """
         addr = block.address.upper()
         count = block.count
 
-        if addr.startswith("%R"):
-            address = int(addr[2:])
-            values = self._driver.read_register(address, count)
-            return values if isinstance(values, list) else [values]
-        elif addr.startswith("%AI"):
-            address = int(addr[3:]) - 1  # 1-based to 0-based
-            values = self._driver.read_analog_input(address, count)
-            return values if isinstance(values, list) else [values]
-        elif addr.startswith("%AQ"):
-            address = int(addr[3:]) - 1
-            values = self._driver.read_analog_output(address, count)
-            return values if isinstance(values, list) else [values]
-        elif addr.startswith("%I"):
-            address = int(addr[2:])
-            values = self._driver.read_discrete_input(address, count)
-            return values if isinstance(values, list) else [values]
-        elif addr.startswith("%Q"):
-            address = int(addr[2:])
-            values = self._driver.read_discrete_output(address, count)
-            return values if isinstance(values, list) else [values]
-        elif addr.startswith("%M"):
-            address = int(addr[2:])
-            values = self._driver.read_discrete_internal(address, count)
-            return values if isinstance(values, list) else [values]
-        else:
+        # 匹配 GE 地址格式：%(R|AI|AQ|I|Q|M)<num>
+        match = self._GE_ADDRESS_RE.match(addr)
+        if not match:
             raise ReadError(f"Unsupported GE address format: {addr}")
+
+        area = match.group(1).upper()
+        logical_number = int(match.group(2))
+
+        # 地址基准转换
+        if area in ("R", "AI", "AQ"):
+            protocol_offset = logical_number - 1
+        else:
+            protocol_offset = logical_number
+
+        # 根据区域类型调用对应的读取方法
+        if area == "R":
+            values = self._driver.read_register(protocol_offset, count)
+        elif area == "AI":
+            values = self._driver.read_analog_input(protocol_offset, count)
+        elif area == "AQ":
+            values = self._driver.read_analog_output(protocol_offset, count)
+        elif area == "I":
+            # 离散输入：bit 模式
+            values = self._driver.read_discrete_input(protocol_offset, count, mode='bit')
+        elif area == "Q":
+            # 离散输出：bit 模式
+            values = self._driver.read_discrete_output(protocol_offset, count, mode='bit')
+        elif area == "M":
+            # 内部离散量：bit 模式
+            values = self._driver.read_discrete_internal(protocol_offset, count, mode='bit')
+        else:
+            raise ReadError(f"Unsupported GE area: {area}")
+
+        # 确保返回 list
+        return values if isinstance(values, list) else [values]
 
     async def write(self, points: List[WritePoint]) -> None:
         """GE SRTP驱动只读，不支持写入"""

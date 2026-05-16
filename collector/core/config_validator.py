@@ -93,10 +93,6 @@ class ConfigValidator:
         if not config.user or not config.user.strip():
             result.errors.append("TDengine username is required")
 
-        # 验证数据库名
-        if not config.database or not re.match(r'^[a-zA-Z0-9_]+$', config.database):
-            result.errors.append("Invalid TDengine database name")
-
         return result
 
     def _validate_device_config(self, config: DeviceConfig) -> ValidationResult:
@@ -183,15 +179,29 @@ class ConfigValidator:
             result.errors.append("Device ID is required for variable")
 
         # 验证地址格式
-        if not config.address or not self._validate_address(config.address, protocol=protocol):
+        address_valid = bool(config.address) and self._validate_address(
+            config.address,
+            protocol=protocol,
+        )
+        if not address_valid:
             result.errors.append(f"Invalid variable address: {config.address}")
 
-        # 验证数据类型
+        # 验证数据类型（含 GE PLC 无符号类型、S7 Timer/Counter）
         valid_types = [
-            "BOOL", "BOOLEAN", "BYTE", "INT", "WORD", "REAL", "DINT", "DWORD", "FLOAT", "STRING"
+            "BOOL", "BOOLEAN", "BYTE",
+            "INT", "WORD", "UINT", "USINT",
+            "REAL", "FLOAT",
+            "DINT", "DWORD", "UDINT",
+            "STRING",
+            "TIMER_MS", "COUNTER",  # S7 Timer/Counter
         ]
-        if not config.data_type or config.data_type.upper() not in valid_types:
+        data_type_valid = bool(config.data_type) and config.data_type.upper() in valid_types
+        if not data_type_valid:
             result.errors.append(f"Invalid data type: {config.data_type}")
+        elif address_valid and (protocol or "").strip().lower() in {"s7", "snap7", "siemens"}:
+            ok, message = self._validate_s7_address_data_type(config.address, config.data_type)
+            if not ok:
+                result.errors.append(message)
 
         # 验证扫描周期
         if config.scan_rate <= 0:
@@ -278,8 +288,14 @@ class ConfigValidator:
 
     @staticmethod
     def _validate_s7_address(address: str) -> bool:
-        """验证 S7 标准 DB/I/Q/M 地址，拒绝旧式 DB<num>.<offset>。"""
+        """验证 S7 标准 DB/I/Q/M/T/C 地址，拒绝旧式 DB<num>.<offset>。"""
         upper = address.upper()
+
+        # Timer/Counter: %T<num> or %C<num>
+        tc_match = re.match(r'^%?[TC](\d+)$', upper)
+        if tc_match:
+            return True
+
         db_match = re.match(r'^DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
         if db_match:
             access = db_match.group(1)
@@ -301,6 +317,78 @@ class ConfigValidator:
         if bit_suffix is not None:
             return width is None
         return width is not None
+
+    @staticmethod
+    def _validate_s7_address_data_type(address: str, data_type: str) -> Tuple[bool, str]:
+        """验证 S7 地址宽度与数据类型组合，提前拦截运行期读取错误。"""
+        upper = address.upper()
+        dt = (data_type or "").upper()
+
+        db_match = re.match(r'^DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
+        if db_match:
+            access = db_match.group(1)
+            allowed = {
+                "DBX": {"BOOL"},
+                "DBB": {"BYTE"},
+                "DBW": {"INT", "WORD"},
+                "DBD": {"DINT", "DWORD", "REAL", "FLOAT"},
+            }[access]
+            if dt in allowed:
+                return True, ""
+            return (
+                False,
+                f"Invalid S7 address/data_type combination: {address} requires one of "
+                f"{sorted(allowed)}, got {data_type}",
+            )
+
+        area_match = re.match(r'^%?[IQM](B|W|D)?(\d+)(?:\.([0-7]))?$', upper)
+        if area_match:
+            width = area_match.group(1)
+            bit_suffix = area_match.group(3)
+            if bit_suffix is not None:
+                allowed = {"BOOL"}
+            elif width == "B":
+                allowed = {"BYTE"}
+            elif width == "W":
+                allowed = {"INT", "WORD"}
+            elif width == "D":
+                allowed = {"DINT", "DWORD", "REAL", "FLOAT"}
+            else:
+                allowed = set()
+
+            if dt in allowed:
+                return True, ""
+            return (
+                False,
+                f"Invalid S7 address/data_type combination: {address} requires one of "
+                f"{sorted(allowed)}, got {data_type}",
+            )
+
+        # Timer: %T<num> 支持 TIMER_MS（毫秒）或 WORD（原始值）
+        timer_match = re.match(r'^%?T(\d+)$', upper)
+        if timer_match:
+            allowed = {"TIMER_MS", "WORD", "INT"}
+            if dt in allowed:
+                return True, ""
+            return (
+                False,
+                f"Invalid S7 Timer data_type: {address} requires one of "
+                f"{sorted(allowed)}, got {data_type}",
+            )
+
+        # Counter: %C<num> 支持 COUNTER 或 WORD（原始值）
+        counter_match = re.match(r'^%?C(\d+)$', upper)
+        if counter_match:
+            allowed = {"COUNTER", "WORD", "INT"}
+            if dt in allowed:
+                return True, ""
+            return (
+                False,
+                f"Invalid S7 Counter data_type: {address} requires one of "
+                f"{sorted(allowed)}, got {data_type}",
+            )
+
+        return True, ""
 
     @staticmethod
     def _validate_ge_address(address: str) -> bool:

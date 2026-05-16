@@ -206,7 +206,7 @@ class TDengineConnection:
                     if not stable_exists:
                         await self.execute(
                             f"CREATE STABLE IF NOT EXISTS `{db_name}`.`{stable_name}` "
-                            f"(`ts` TIMESTAMP, `value` DOUBLE) "
+                            f"(`ts` TIMESTAMP, `value` DOUBLE, `quality` TINYINT) "
                             f"TAGS (`var_seq` INT)"
                         )
                         logger.info("创建超级表: %s.%s", db_name, stable_name)
@@ -264,7 +264,7 @@ class TDengineConnection:
 
     async def _stable_has_correct_schema(self, db_name: str, stable_name: str) -> bool:
         """
-        检查超级表是否为当前模型（var_seq TAG）
+        检查超级表是否为当前模型（ts/value/quality + var_seq TAG）
 
         TDengine DESCRIBE 返回字段：
         - field: 列名 (ts, value, var_seq)
@@ -277,17 +277,20 @@ class TDengineConnection:
             if not rows:
                 return False
 
-            # 查找 TAG 列，检查是否有 var_seq
+            # 查找数据列与 TAG 列，检查是否有 quality 与 var_seq
+            column_names = set()
             tag_names = set()
             for row in rows:
                 # TDengine DESCRIBE 字段：field, type, length, note
                 col_name = str(row.get("field", "")).lower()
                 note = str(row.get("note", "")).upper()
+                if note != "TAG":
+                    column_names.add(col_name)
                 # TAG 列的标识：note 字段为 "TAG"
                 if note == "TAG":
                     tag_names.add(col_name)
 
-            return "var_seq" in tag_names
+            return {"ts", "value", "quality"}.issubset(column_names) and "var_seq" in tag_names
         except Exception as e:
             logger.warning("检查超级表 schema 失败: %s.%s, error: %s", db_name, stable_name, e)
             return False
@@ -298,7 +301,7 @@ class TDengineConnection:
 
         兼容性检查：
         1. 超级表存在
-        2. TAG 列包含 var_seq（当前模型）
+        2. 数据列包含 quality，TAG 列包含 var_seq（当前模型）
 
         如果存在同名但 schema 不兼容的超级表，抛出异常提示手动迁移。
         """
@@ -312,7 +315,7 @@ class TDengineConnection:
             if not await self._stable_has_correct_schema(db_name, stable_name):
                 raise StorageError(
                     f"超级表 `{db_name}`.`{stable_name}` 已存在但结构不兼容。"
-                    f"当前模型需要 TAG 'var_seq'。请手动迁移或删除后重建。"
+                    f"当前模型需要数据列 'quality' 和 TAG 'var_seq'。请手动迁移或删除后重建。"
                 )
             return True
         except StorageError:

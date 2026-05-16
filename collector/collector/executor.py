@@ -14,6 +14,7 @@
 import time
 import traceback
 from datetime import datetime
+import struct
 from typing import Any, Dict, List, Optional
 
 from core.exceptions import ReadError
@@ -137,6 +138,29 @@ class TaskExecutor:
             if not variable.is_storage:
                 continue
 
+            result_map = getattr(scan_task, "result_map", {})
+            mapped = result_map.get(variable.variable_id)
+            if mapped:
+                block_addr = mapped["block_address"]
+                raw_values = result.get(block_addr)
+                if raw_values is None:
+                    continue
+
+                # 根据 protocol 选择还原方法
+                protocol = mapped.get("protocol", "")
+                if protocol == "ge_srtp":
+                    value = self._extract_mapped_ge_value(raw_values, mapped)
+                else:
+                    value = self._extract_mapped_s7_value(raw_values, mapped)
+
+                points.append(DataPoint(
+                    device_id=device_id,
+                    variable_id=variable.variable_id,
+                    value=value,
+                    timestamp=now,
+                ))
+                continue
+
             block_addr = variable.address
             raw_values = result.get(block_addr)
 
@@ -156,6 +180,115 @@ class TaskExecutor:
                 points.append(point)
 
         return points
+
+    @staticmethod
+    def _extract_mapped_s7_value(raw_values: Any, mapping: Dict[str, Any]) -> Any:
+        """从合并后的 S7 I/Q/M BYTE 块或 Timer/Counter 块中还原单个变量值。"""
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        if "value_offset" in mapping:
+            return values[int(mapping.get("value_offset", 0))]
+
+        raw = bytearray(int(value) & 0xFF for value in values)
+        offset = int(mapping.get("byte_offset", 0))
+        bit = mapping.get("bit")
+        data_type = str(mapping.get("data_type", "BYTE")).upper()
+
+        if bit is not None:
+            return bool((raw[offset] >> int(bit)) & 1)
+        if data_type == "BYTE":
+            return raw[offset]
+        if data_type == "INT":
+            return struct.unpack(">h", raw[offset:offset + 2])[0]
+        if data_type == "WORD":
+            return struct.unpack(">H", raw[offset:offset + 2])[0]
+        if data_type in {"REAL", "FLOAT"}:
+            return struct.unpack(">f", raw[offset:offset + 4])[0]
+        if data_type == "DINT":
+            return struct.unpack(">i", raw[offset:offset + 4])[0]
+        if data_type == "DWORD":
+            return struct.unpack(">I", raw[offset:offset + 4])[0]
+        return raw[offset]
+
+    @staticmethod
+    def _extract_mapped_ge_value(raw_values: Any, mapping: Dict[str, Any]) -> Any:
+        """
+        从合并后的 GE 块中还原单个变量值。
+
+        寄存器区域 (%R/%AI/%AQ):
+            word_offset 定位起始 word
+            INT: 有符号 16 位
+            WORD/UINT: 无符号 16 位
+            DINT: 2 word 组合为有符号 32 位
+            DWORD/UDINT: 2 word 组合为无符号 32 位
+            REAL/FLOAT: 2 word 组合为 32 位浮点
+
+        离散量区域 (%I/%Q/%M):
+            第一版只支持 BOOL
+            bit_offset 直接从 bit list 中取值
+
+        REAL/DINT/DWORD 字序：
+            当前只支持 word_order="low_high"（低地址 word 在前，高地址 word 在后）
+            与 GE PACSystems 文档和 gesrtp-py 实现一致，但仍需现场已知值校验后固化
+        """
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        area = str(mapping.get("area", ""))
+        data_type = str(mapping.get("data_type", "INT")).upper()
+
+        # 寄存器区域：word 偏移
+        if area in ("R", "AI", "AQ"):
+            word_offset = int(mapping.get("word_offset", 0))
+            word_length = int(mapping.get("word_length", 1))
+            # 获取 word_order 配置（当前只支持 low_high）
+            word_order = str(mapping.get("word_order", "low_high"))
+
+            # 单 word 类型
+            if data_type == "INT":
+                # 有符号 16 位：gesrtp-py 已用 <h 返回 signed，只需处理 unsigned 输入
+                val = int(values[word_offset])
+                if val > 0x7FFF:
+                    return val - 0x10000  # unsigned 转 signed
+                return val
+            if data_type in ("WORD", "UINT"):
+                return values[word_offset] & 0xFFFF
+            if data_type == "USINT":
+                return values[word_offset] & 0xFF
+
+            # 2 word 类型：组合为 32 位值
+            if word_length >= 2 and word_offset + 1 < len(values):
+                if word_order != "low_high":
+                    raise ValueError(f"Unsupported GE word_order: {word_order}. Current only supports low_high.")
+
+                low = values[word_offset] & 0xFFFF
+                high = values[word_offset + 1] & 0xFFFF
+
+                if data_type in ("DINT",):
+                    # 有符号 32 位（low_high word 序：low + high << 16）
+                    val = low | (high << 16)
+                    if val >= 0x80000000:
+                        val -= 0x100000000
+                    return val
+                if data_type in ("DWORD", "UDINT"):
+                    return low | (high << 16)
+                if data_type in ("REAL", "FLOAT"):
+                    # IEEE 754 浮点（low_high word 序）
+                    raw_bytes = struct.pack('<HH', low, high)
+                    return struct.unpack('<f', raw_bytes)[0]
+
+            return values[word_offset]
+
+        # 离散量区域：BOOL bit 偏移
+        if area in ("I", "Q", "M"):
+            if data_type == "BOOL":
+                bit_offset = int(mapping.get("bit_offset", 0))
+                return bool(values[bit_offset])
+            # 第一版不支持离散区的多字节类型
+            logger.warning(
+                "GE discrete area %s does not support %s in this version",
+                area, data_type
+            )
+            return None
+
+        return values[0]
 
     def _emit_read_failure(self, task: CollectTask, error: Exception, elapsed_ms: float) -> None:
         """Record a failed read as a system log without blocking collection."""

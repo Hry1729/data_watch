@@ -3,6 +3,7 @@ import pytest
 from device.device import Device, Variable
 from drivers.base import ReadBlock
 from drivers.s7_driver import S7Driver
+from collector.executor import TaskExecutor
 
 
 def test_device_build_scan_tasks_preserves_standard_db_addresses():
@@ -26,6 +27,62 @@ def test_device_build_scan_tasks_preserves_standard_db_addresses():
         "DB50.DBW20",
         "DB30.DBD100",
     ]
+
+
+def test_device_build_scan_tasks_merges_contiguous_s7_area_bytes():
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1", "rack": 0, "slot": 1},
+    )
+    device.add_variable(Variable(variable_id="1", address="%I101.0", data_type="BOOL"))
+    device.add_variable(Variable(variable_id="2", address="%I101.1", data_type="BOOL"))
+    device.add_variable(Variable(variable_id="3", address="%IB102", data_type="BYTE"))
+    device.add_variable(Variable(variable_id="4", address="%Q101.0", data_type="BOOL"))
+
+    device.build_scan_tasks()
+
+    scan_task = device.scan_tasks[0]
+    assert [(block.address, block.count, block.data_type) for block in scan_task.read_blocks] == [
+        ("%IB101", 2, "BYTE"),
+        ("%QB101", 1, "BYTE"),
+    ]
+    assert scan_task.result_map["1"] == {
+        "block_address": "%IB101",
+        "byte_offset": 0,
+        "bit": 0,
+        "data_type": "BOOL",
+    }
+    assert scan_task.result_map["2"] == {
+        "block_address": "%IB101",
+        "byte_offset": 0,
+        "bit": 1,
+        "data_type": "BOOL",
+    }
+    assert scan_task.result_map["3"] == {
+        "block_address": "%IB101",
+        "byte_offset": 1,
+        "bit": None,
+        "data_type": "BYTE",
+    }
+
+
+def test_executor_extracts_values_from_merged_s7_area_byte_block():
+    raw = [0b00000010, 0x2C, 0x00, 0x2B]
+
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw,
+        {"byte_offset": 0, "bit": 1, "data_type": "BOOL"},
+    ) is True
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw,
+        {"byte_offset": 1, "bit": None, "data_type": "BYTE"},
+    ) == 44
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw,
+        {"byte_offset": 2, "bit": None, "data_type": "INT"},
+    ) == 43
 
 
 def test_device_rejects_odd_dbw_address():
@@ -81,3 +138,65 @@ def test_s7_driver_reads_standard_db_formats():
         (50, 20, 2),
         (30, 100, 4),
     ]
+
+
+# ==================== Timer/Counter Addressing Tests ====================
+
+def test_device_parses_timer_address():
+    """设备解析 %T 地址"""
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1"},
+    )
+    parsed = device._parse_s7_address("%T10")
+    assert parsed["area"] == "T"
+    assert parsed["num"] == 10
+
+
+def test_device_parses_counter_address():
+    """设备解析 %C 地址"""
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1"},
+    )
+    parsed = device._parse_s7_address("%C5")
+    assert parsed["area"] == "C"
+    assert parsed["num"] == 5
+
+
+def test_device_build_scan_tasks_handles_timer_counter():
+    """Timer/Counter 按连续编号合并，不与 I/Q/M 混合。"""
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1"},
+    )
+    device.add_variable(Variable(variable_id="t1", address="%T1", data_type="TIMER_MS"))
+    device.add_variable(Variable(variable_id="t2", address="%T2", data_type="TIMER_MS"))
+    device.add_variable(Variable(variable_id="c1", address="%C1", data_type="COUNTER"))
+    device.add_variable(Variable(variable_id="c2", address="%C2", data_type="COUNTER"))
+    device.add_variable(Variable(variable_id="i1", address="%I101.0", data_type="BOOL"))
+
+    device.build_scan_tasks()
+
+    scan_task = device.scan_tasks[0]
+    blocks = {(block.address, block.count, block.data_type) for block in scan_task.read_blocks}
+    assert ("%T1", 2, "TIMER_MS") in blocks
+    assert ("%C1", 2, "COUNTER") in blocks
+    assert ("%IB101", 1, "BYTE") in blocks
+    assert scan_task.result_map["t1"]["value_offset"] == 0
+    assert scan_task.result_map["t2"]["value_offset"] == 1
+    assert scan_task.result_map["c1"]["value_offset"] == 0
+    assert scan_task.result_map["c2"]["value_offset"] == 1
+
+
+def test_executor_extracts_values_from_merged_timer_counter_block():
+    assert TaskExecutor._extract_mapped_s7_value(
+        [500, 12300],
+        {"value_offset": 1, "data_type": "TIMER_MS"},
+    ) == 12300

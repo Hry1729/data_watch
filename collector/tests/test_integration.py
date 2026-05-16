@@ -48,7 +48,7 @@ async def test_full_collection_flow_with_standard_s7_addresses():
         mock_driver.read = AsyncMock(
             return_value={
                 "DB100.DBW0": [100],
-                "%MD1304": [42],
+                "%MB1304": [0, 0, 0, 42],
             }
         )
         mock_driver.is_connected = True

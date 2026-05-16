@@ -1,6 +1,7 @@
 """数据聚合器"""
 
 import asyncio
+import inspect
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -38,10 +39,10 @@ class DataAggregator:
         self._max_window = config.max_window_seconds
         self._max_cache_size = config.batch_size * self.MAX_CACHE_MULTIPLIER
 
-        # 已确认的上次存储值和时间（写入成功后更新）
+        # 已确认的上次存储值/质量和时间（写入成功后更新）
         self._confirmed_values: Dict[str, Any] = {}
         self._confirmed_time: Dict[str, float] = {}
-        # 待确认的上次存储值和时间（入缓存时记录，用于回滚）
+        # 待确认的上次存储值/质量和时间（入缓存时记录，用于回滚）
         self._pending_values: Dict[str, Any] = {}
         self._pending_time: Dict[str, float] = {}
         self._values_lock = threading.Lock()
@@ -71,32 +72,38 @@ class DataAggregator:
         self._output_callback = callback
 
     def should_store(
-        self, variable_id: str, value: Any
+        self, variable_id: str, value: Any, quality: int = 0
     ) -> bool:
         """
         判断是否需要存储
-        值未变化且未超时 -> 跳过
+        值和质量均未变化且未超时 -> 跳过
 
-        基于已确认的状态判断，避免在写入失败后相同值被误去重。
+        优先基于待写入状态判断；没有待写入值时再看已确认状态。
+        这样同一批次内相同值不会重复入缓存，写入失败后仍会恢复 pending 状态等待重试。
         """
         now = time.time()
         last_time = 0
         last_val = None
+        current_val = (value, quality)
 
-        # 线程安全地获取上次确认的值
+        # 线程安全地获取上次待确认/已确认的值。
         with self._values_lock:
-            last_time = self._confirmed_time.get(variable_id, 0)
-            last_val = self._confirmed_values.get(variable_id)
+            if variable_id in self._pending_values:
+                last_time = self._pending_time.get(variable_id, 0)
+                last_val = self._pending_values.get(variable_id)
+            else:
+                last_time = self._confirmed_time.get(variable_id, 0)
+                last_val = self._confirmed_values.get(variable_id)
 
         # 超过最大窗口，强制写入
         if now - last_time >= self._max_window:
             return True
 
-        # 值发生变化才存储
-        if value != last_val:
+        # 值或质量发生变化才存储
+        if current_val != last_val:
             return True
 
-        # 值相同且未超时，跳过
+        # 值和质量相同且未超时，跳过
         self._total_deduped += 1
         return False
 
@@ -105,7 +112,8 @@ class DataAggregator:
         添加数据点到聚合器
         经过值变化判断后加入缓存，记录待确认状态
         """
-        if not self.should_store(point.variable_id, point.value):
+        point_state = (point.value, point.quality)
+        if not self.should_store(point.variable_id, point.value, point.quality):
             return
 
         # 线程安全地更新缓存和待确认状态
@@ -129,7 +137,7 @@ class DataAggregator:
 
             self._cache.append(point)
             # 记录待确认状态（写入成功后会确认）
-            self._pending_values[point.variable_id] = point.value
+            self._pending_values[point.variable_id] = point_state
             self._pending_time[point.variable_id] = time.time()
 
     def add_batch(self, points: List[DataPoint]) -> None:
@@ -178,7 +186,7 @@ class DataAggregator:
             self._cache = batch + self._cache
             # 恢复 pending 状态
             for point in batch:
-                self._pending_values[point.variable_id] = point.value
+                self._pending_values[point.variable_id] = (point.value, point.quality)
                 self._pending_time[point.variable_id] = point.timestamp / 1000.0 if isinstance(point.timestamp, (int, float)) else time.time()
             logger.warning("写入失败的 batch 已放回缓存，等待重试 batch_size=%d", len(batch))
 
@@ -195,7 +203,7 @@ class DataAggregator:
         if self._output_callback:
             try:
                 # 同步等待写入完成
-                if asyncio.iscoroutinefunction(self._output_callback):
+                if inspect.iscoroutinefunction(self._output_callback):
                     await self._output_callback(batch)
                 else:
                     # 回调返回 Task 时，等待完成

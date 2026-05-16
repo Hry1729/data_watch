@@ -17,6 +17,8 @@ async def test_init_storage_topology_builds_variable_targets():
     """建表拓扑应映射到设备类型数据库 + 设备超级表 + 变量子表。"""
     tdengine = TDengineConnection(TDengineConfig())
     tdengine.execute = AsyncMock(return_value=0)
+    tdengine._stable_exists = AsyncMock(return_value=False)
+    tdengine._table_exists = AsyncMock(return_value=False)
 
     devices = [
         DeviceConfig(
@@ -47,13 +49,18 @@ async def test_init_storage_topology_builds_variable_targets():
     assert target.stable_name == "qc100"
     assert target.table_name == "qc100_30"
     assert tdengine.execute.await_count == 3
+    stable_sql = tdengine.execute.await_args_list[1].args[0]
+    assert "`quality` TINYINT" in stable_sql
+    assert "DEFAULT" not in stable_sql
 
 
 @pytest.mark.asyncio
 async def test_batch_writer_groups_by_variable_subtable_without_variable_id_column():
-    """写入 SQL 应只包含 ts/value，并落到变量子表。"""
+    """写入 SQL 应包含 ts/value/quality，并落到变量子表。"""
     tdengine = TDengineConnection(TDengineConfig())
     tdengine.execute = AsyncMock(return_value=1)
+    tdengine._stable_exists = AsyncMock(return_value=False)
+    tdengine._table_exists = AsyncMock(return_value=False)
 
     devices = [
         DeviceConfig(
@@ -83,18 +90,38 @@ async def test_batch_writer_groups_by_variable_subtable_without_variable_id_colu
     now = datetime(2026, 4, 18, 12, 0, 0, 123000)
     points = [
         DataPoint(device_id="qc100", variable_id="992001", value=1.5, timestamp=now),
-        DataPoint(device_id="qc100", variable_id="992001", value=2.5, timestamp=now),
+        DataPoint(device_id="qc100", variable_id="992001", value=2.5, timestamp=now, quality=2),
     ]
 
     await writer.write(points)
 
     sql = tdengine.execute.await_args.args[0]
-    assert "INSERT INTO `qc`.`qc100_30` (`ts`, `value`)" in sql
+    assert "INSERT INTO `qc`.`qc100_30` (`ts`, `value`, `quality`)" in sql
     assert "variable_id" not in sql
     assert sql.count("('2026-04-18 12:00:00.123'") == 1
-    assert "2.5" in sql
+    assert "2.5, 2" in sql
     assert writer.stats["total_written"] == 1
     assert writer.stats["total_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stable_schema_requires_quality_column_and_var_seq_tag():
+    tdengine = TDengineConnection(TDengineConfig())
+
+    tdengine._fetch_all = AsyncMock(return_value=[
+        {"field": "ts", "note": ""},
+        {"field": "value", "note": ""},
+        {"field": "quality", "note": ""},
+        {"field": "var_seq", "note": "TAG"},
+    ])
+    assert await tdengine._stable_has_correct_schema("qc", "qc100") is True
+
+    tdengine._fetch_all = AsyncMock(return_value=[
+        {"field": "ts", "note": ""},
+        {"field": "value", "note": ""},
+        {"field": "var_seq", "note": "TAG"},
+    ])
+    assert await tdengine._stable_has_correct_schema("qc", "qc100") is False
 
 
 @pytest.mark.asyncio
@@ -110,6 +137,8 @@ async def test_batch_writer_raises_on_partial_subtable_failure():
         VariableConfig("992002", "qc100", "DB104.DBD0", "REAL", 1, True, 31),
     ]
     tdengine.execute = AsyncMock(return_value=0)
+    tdengine._stable_exists = AsyncMock(return_value=False)
+    tdengine._table_exists = AsyncMock(return_value=False)
     await tdengine.init_storage_topology(devices, variables)
 
     async def execute_side_effect(sql):

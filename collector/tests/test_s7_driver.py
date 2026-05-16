@@ -25,13 +25,32 @@ class FakeS7Client:
 
     def read_area(self, area, db_number, start, size):
         self.area_calls.append((area, db_number, start, size))
+        # I/Q/M area
         mapping = {
             (0x81, 0, 101, 1): bytearray([0b00000001]),
+            (0x81, 0, 101, 2): bytearray([0b00000010, 0x2C]),
             (0x82, 0, 101, 1): bytearray([0b00000010]),
             (0x83, 0, 101, 1): bytearray([0b00000100]),
             (0x83, 0, 1304, 4): bytearray([0x00, 0x00, 0x00, 0x2A]),
             (0x83, 0, 1306, 2): bytearray([0x00, 0x2B]),
             (0x83, 0, 1308, 1): bytearray([0x2C]),
+            # Timer area (0x1D): S5TIME BCD format
+            # T1: 50 * 10ms = 500ms (time_base=00, BCD=50)
+            # Byte0 = (0 << 6) | 0 = 0x00, Byte1 = (5 << 4) | 0 = 0x50
+            (0x1D, 0, 1, 1): bytearray([0x00, 0x50]),
+            # T2: 123 * 100ms = 12300ms (time_base=01, BCD=123)
+            # Byte0 = (1 << 6) | 1 = 0x41, Byte1 = (2 << 4) | 3 = 0x23
+            (0x1D, 0, 2, 1): bytearray([0x41, 0x23]),
+            # T1-T2 batch read
+            (0x1D, 0, 1, 2): bytearray([0x00, 0x50, 0x41, 0x23]),
+            # T10: 500 * 1s = 500000ms (time_base=10, BCD=500)
+            # Byte0 = (2 << 6) | 5 = 0x85, Byte1 = (0 << 4) | 0 = 0x00
+            (0x1D, 0, 10, 1): bytearray([0x85, 0x00]),
+            # Counter area (0x1C): BCD format (0-999)
+            # C1: BCD 123 = decimal 123
+            (0x1C, 0, 1, 1): bytearray([0x01, 0x23]),
+            # C5: BCD 99 = decimal 99
+            (0x1C, 0, 5, 1): bytearray([0x00, 0x99]),
         }
         return mapping[(area, db_number, start, size)]
 
@@ -77,6 +96,14 @@ def test_read_s7_area_formats_from_mysql_baseline():
     assert driver._read_single_block(ReadBlock("%MB1308", data_type="BYTE")) == [44]
 
 
+def test_read_s7_area_byte_block_with_count_for_merged_task():
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    assert driver._read_single_block(ReadBlock("%IB101", count=2, data_type="BYTE")) == [2, 44]
+    assert client.area_calls == [(0x81, 0, 101, 2)]
+
+
 def test_rejects_legacy_db_offset_format():
     driver = make_driver(FakeS7Client())
 
@@ -109,3 +136,102 @@ async def test_s7_write_is_disabled():
 
     with pytest.raises(Exception, match="read-only"):
         await driver.write([])
+
+
+# ==================== Timer/Counter Tests ====================
+
+def test_read_timer_as_milliseconds():
+    """Timer 读取为毫秒数"""
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    # T1: 50 * 10ms = 500ms
+    result = driver._read_single_block(ReadBlock("%T1", data_type="TIMER_MS"))
+    assert result == [500]
+
+    # T2: 123 * 100ms = 12300ms
+    result = driver._read_single_block(ReadBlock("%T2", data_type="TIMER_MS"))
+    assert result == [12300]
+
+    # T10: 500 * 1s = 500000ms
+    result = driver._read_single_block(ReadBlock("%T10", data_type="TIMER_MS"))
+    assert result == [500000]
+
+
+def test_read_timer_as_word():
+    """Timer 读取为原始 WORD 值"""
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    result = driver._read_single_block(ReadBlock("%T1", data_type="WORD"))
+    assert result == [0x0050]
+
+
+def test_read_timer_batch_with_count():
+    """Timer count>1 时按 Timer 个数批量读取，不按字节数读取"""
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    result = driver._read_single_block(ReadBlock("%T1", count=2, data_type="TIMER_MS"))
+    assert result == [500, 12300]
+    assert client.area_calls == [(0x1D, 0, 1, 2)]
+
+
+def test_read_counter_as_int():
+    """Counter 读取为整数值"""
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    # C1: BCD 0x0123 = 123
+    result = driver._read_single_block(ReadBlock("%C1", data_type="COUNTER"))
+    assert result == [123]
+
+    # C5: BCD 0x0099 = 99
+    result = driver._read_single_block(ReadBlock("%C5", data_type="COUNTER"))
+    assert result == [99]
+
+
+def test_read_counter_as_word():
+    """Counter 读取为原始 WORD 值"""
+    client = FakeS7Client()
+    driver = make_driver(client)
+
+    result = driver._read_single_block(ReadBlock("%C1", data_type="WORD"))
+    assert result == [0x0123]
+
+
+def test_parse_s5time_bcd():
+    """S5TIME BCD 解析测试"""
+    # 10ms time base, BCD=50 -> 500ms
+    data = bytearray([0x00, 0x50])
+    assert S7Driver._parse_s5time(data, "TIMER_MS") == 500
+
+    # 100ms time base, BCD=123 -> 12300ms
+    # Byte0 = (1 << 6) | 1 = 0x41, Byte1 = (2 << 4) | 3 = 0x23
+    data = bytearray([0x41, 0x23])
+    assert S7Driver._parse_s5time(data, "TIMER_MS") == 12300
+
+    # 1s time base, BCD=500 -> 500000ms
+    # Byte0 = (2 << 6) | 5 = 0x85, Byte1 = 0x00
+    data = bytearray([0x85, 0x00])
+    assert S7Driver._parse_s5time(data, "TIMER_MS") == 500000
+
+    # 10s time base, BCD=999 -> 9990000ms
+    # Byte0 = (3 << 6) | 9 = 0xC9, Byte1 = (9 << 4) | 9 = 0x99
+    data = bytearray([0xC9, 0x99])
+    assert S7Driver._parse_s5time(data, "TIMER_MS") == 9990000
+
+
+def test_parse_counter_bcd():
+    """Counter BCD 解析测试"""
+    # BCD 0x0123 = 123
+    data = bytearray([0x01, 0x23])
+    assert S7Driver._parse_counter_bcd(data, "COUNTER") == 123
+
+    # BCD 0x0999 = 999
+    data = bytearray([0x09, 0x99])
+    assert S7Driver._parse_counter_bcd(data, "COUNTER") == 999
+
+    # BCD 0x0000 = 0
+    data = bytearray([0x00, 0x00])
+    assert S7Driver._parse_counter_bcd(data, "COUNTER") == 0

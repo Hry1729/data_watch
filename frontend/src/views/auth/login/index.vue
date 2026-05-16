@@ -105,9 +105,10 @@
   import { useUserStore } from '@/store/modules/user'
   import { useI18n } from 'vue-i18n'
   import { HttpError } from '@/utils/http/error'
-  import { fetchLogin } from '@/api/auth'
+  import { fetchGetUserInfo, fetchLogin } from '@/api/auth'
   import { ElNotification, type FormInstance, type FormRules } from 'element-plus'
   import { useSettingStore } from '@/store/modules/setting'
+  import { resetRouteInitState } from '@/router/guards/beforeEach'
 
   defineOptions({ name: 'Login' })
 
@@ -187,16 +188,20 @@
         throw new Error('Login failed - no token received')
       }
 
-      // 存储 token 和登录状态
+      // 存储 token，随后用新 token 初始化用户态和路由态。
       userStore.setToken(token, refreshToken)
+      resetRouteInitState()
+      const userInfo = await fetchGetUserInfo()
+      userStore.setUserInfo(userInfo)
       userStore.setLoginStatus(true)
+      userStore.checkAndClearWorktabs()
 
       // 登录成功处理
       showLoginSuccessNotice()
 
       // 获取 redirect 参数，如果存在则跳转到指定页面，否则跳转到首页
       const redirect = route.query.redirect as string
-      router.push(redirect || '/')
+      await router.replace(redirect || '/')
     } catch (error) {
       // 处理 HttpError
       if (error instanceof HttpError) {
