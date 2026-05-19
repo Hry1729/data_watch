@@ -3,8 +3,10 @@
 重建 TDengine 超级表脚本
 
 将 qc、asc、agv 数据库中的超级表重建为新的统一格式：
-- 数据列: ts (TIMESTAMP), value (DOUBLE)
+- 数据列: ts (TIMESTAMP), value (DOUBLE), quality (TINYINT)
 - 标签: var_seq (INT)
+
+注意：该脚本会 DROP STABLE，执行后会删除对应超级表下所有子表和历史数据。
 """
 
 import taosws
@@ -15,7 +17,7 @@ def main():
     conn = taosws.connect('ws://root:Hry19990910@127.0.0.1:6041')
 
     databases = ['qc', 'asc', 'agv']
-    new_stable_schema = "(`ts` TIMESTAMP, `value` DOUBLE) TAGS (`var_seq` INT)"
+    new_stable_schema = "(`ts` TIMESTAMP, `value` DOUBLE, `quality` TINYINT DEFAULT 0) TAGS (`var_seq` INT)"
 
     for db_name in databases:
         print(f"\n=== 处理数据库: {db_name} ===")

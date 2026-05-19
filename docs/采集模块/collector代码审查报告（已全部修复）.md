@@ -232,7 +232,7 @@ async with self._execute_lock:
 ### 18. [P1] 超级表兼容性检查只看名字，不校验 TAG 模型 ✅ 已修复
 
 **问题描述**：
-文档要求新模型是"设备类型数据库 -> 设备超级表 -> 变量子表"，TAG 使用 `var_seq`。但 `_stable_exists()` 只 `SHOW STABLES LIKE`，旧结构同名超级表也会被当成兼容，后续子表创建/写入可能失败或落到错误模型。
+当时文档要求的模型是三库/设备超级表/每点位一个子表，TAG 使用 `var_seq`。但 `_stable_exists()` 只 `SHOW STABLES LIKE`，旧结构同名超级表也会被当成兼容，后续子表创建/写入可能失败或落到错误模型。该模型已在 2026-05-19 被 TDengine 宽表历史落库方案取代。
 
 **影响文件**：
 - `collector/storage/tdengine.py:259-264` (_stable_exists 方法)
