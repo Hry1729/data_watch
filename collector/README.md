@@ -132,7 +132,7 @@ max_batch_size = 1000
 > - 每种设备类型一个数据库（如 `qc`、`asc`、`agv`）
 > - 每个设备一个超级表（如 `qc100`、`asc7011`）
 > - 每个变量一个子表（如 `qc100_30`）
-> - 子表行结构：`ts, value`；子表 TAG 使用 `var_seq`
+> - 子表行结构：`ts, value, quality`；子表 TAG 使用 `var_seq`
 > - `tdengine.database` 仅保留为兼容配置项，实际落库目标由设备类型动态派生
 >
 > 若 MySQL 暂未就绪，可临时将 `runtime.enable_fake_bootstrap=true`：

@@ -79,7 +79,7 @@
 | GOV-009 | 建立前端契约映射清单 | ✅ | `@coordinator` | P0 | 已落地到 `docs/前后端联调/02-前端契约映射清单.md` |
 | GOV-010 | 建立前端设计适配规则 | ✅ | `@coordinator` | P0 | 已落地到 `docs/前后端联调/03-前端设计适配规则.md` |
 | GOV-011 | 建立路由 / 菜单 / 页面 / 权限矩阵 | ✅ | `@coordinator` | P0 | 已落地到 `docs/前后端联调/04-路由菜单页面权限矩阵.md` |
-| GOV-012 | 统一实时态与历史态语义说明，明确 Redis 暂不使用 | ✅ | `@coordinator` | P0 | 已修正 `docs/前后端联调/05-Redis实时态与告警态语义说明.md` 为现网口径说明 |
+| GOV-012 | 统一实时态与历史态语义说明，明确 Redis 实时短窗口 + TDengine 历史落库 | ✅ | `@coordinator` | P0 | 已修正 `docs/前后端联调/05-Redis实时态与告警态语义说明.md` 为现网口径说明 |
 | GOV-013 | 建立联调环境矩阵与验收口径 | ✅ | `@coordinator` | P0 | 已落地到 `docs/前后端联调/06-联调环境矩阵与验收口径.md` |
 | GOV-014 | 建立“最小闭环优先”执行说明 | ✅ | `@coordinator` | P0 | 已落地到 `docs/前后端联调/07-最小闭环优先执行说明.md` |
 | GOV-015 | 明确 M2-A/M2-B 分层验收与 WS 统一归一化原则 | ✅ | `@coordinator` | P0 | 已同步到联调治理文档与 TODO 执行原则 |
@@ -101,8 +101,8 @@
 | DB-001 | 核对 MySQL 主库模型与当前业务域边界 | 🔄 | `@database` | P0 | 先对齐设备、点位、报警、日志、用户等主表 |
 | DB-002 | 输出 MySQL 初始化 DDL | 📋 | `@database` | P0 | 后端起盘前必须具备 |
 | DB-003 | 输出数据库迁移脚本基线 | 📋 | `@database` | P1 | 避免后续手工改表 |
-| DB-004 | 固定 TDengine 最新值查询口径与实时快照语义 | 🔄 | `@database` | P0 | 当前已明确实时与历史统一由 TDengine 提供 |
-| DB-005 | 固定 TDengine 超级表/子表命名与保留策略 | 🔄 | `@database` | P0 | 需与采集写入实现对齐 |
+| DB-004 | 固定 Redis 实时缓存与 TDengine 历史落库口径 | 🔄 | `@database` | P0 | 2026-05-19 压测后调整：前端 100ms 实时态走 Redis latest/window，TDengine 历史落库由独立入库模块从 Redis Stream 500ms/1s 批量消费 |
+| DB-005 | 固定 TDengine 宽表超级表/设备子表/动态列策略 | 🔄 | `@database` | P0 | 统一为 `device_data -> qc/asc/agv 超级表 -> 设备子表 -> 点位列`，列由 MySQL `device_variable.var_seq` 动态生成，不再写 `quality` |
 | DB-006 | 输出 Demo / Seed 数据方案 | 🔄 | `@database` | P1 | 已完成 STEP-003 最小集设计，并在 STEP-004 细化为落库清单与校验模板 |
 | DB-007 | 固定 auth / permission 8 张表结构与索引 | 🔄 | `@database` | P0 | 已在后端 ORM 与文档落地，待补正式 DDL / migration |
 | DB-008 | 输出 auth 种子数据与本地联调账号基线 | 🔄 | `@database` | P0 | 已内置 `Super / Admin / User` 与角色菜单权限矩阵，待数据库脚本化 |
@@ -133,13 +133,14 @@
 | CL-003 | S7 / GE-SRTP 驱动基线维护 | 🔄 | `@collector` | P0 | S7 标准 DB/I/Q/M 地址、类型校验、同连接串行读、I/Q/M 连续字节合并与还原已完成单测；GE SRTP 已支持 `%R/%AI/%AQ` word 合并、`%I/%Q/%M` BOOL bit 合并和单点还原，真实 PLC 地址基准/字序仍需现场 smoke |
 | CL-004 | OPC UA 驱动补完与验证 | 🔄 | `@collector` | P1 | 驱动接口与只读边界已实现；仍需 OPC UA 服务端联调验收 |
 | CL-005 | 任务模型、调度器、执行器闭环完善 | ✅ | `@collector` | P0 | 已按设备+采集周期构建任务，支持亚秒周期，执行器完成批量读取、S7 合并块还原和入队 |
-| CL-006 | 缓冲队列、聚合去重、时间窗口、批量策略验收 | ✅ | `@collector` | P0 | DataBuffer 非阻塞入队、DataAggregator 按 value+quality 去重、时间窗口、失败 batch 回放、缓存上限和连续失败暂停已完成测试 |
-| CL-007 | TDengine WebSocket 连接与批量写入验收 | ✅ | `@collector` | P0 | 运行时模型已切到设备类型库 -> 设备超级表 -> 变量子表；写入 `ts,value,quality`，旧表缺 quality 会被判定为不兼容并要求迁移 |
-| CL-008 | 监控 API、健康检查、外部接口采集服务验收 | ✅ | `@collector` | P1 | `/ingest/health`、通用 `/ingest`、`/ingest/opcda-tags`、API Key、批量限制、body 限制和 OPC DA quality 映射已纳入单测 |
+| CL-006 | 缓冲队列、聚合去重、时间窗口、Redis 写入策略验收 | 🔄 | `@collector` | P0 | 旧质量字段参与去重已不再作为目标口径；后续采集链路只写 Redis latest/window/stream，并按 value / 时间窗口控制待入库帧 |
+| CL-007 | TDengine 入库模块与宽表批量写入验收 | 🔄 | `@collector` | P0 | 目标模型已调整为 `device_data` 单库、`qc/asc/agv` 三个超级表、每台设备一个子表、点位值宽列；入库模块从 Redis Stream 消费并批量写 TDengine，历史表不再存 `quality` |
+| CL-008 | 监控 API、健康检查、外部接口采集服务验收 | 🔄 | `@collector` | P1 | `/ingest/health`、通用 `/ingest`、`/ingest/opcda-tags` 已有基线；后续需确认 OPC DA 原始质量只用于实时态/告警判断，不进入 TDengine 历史宽表 |
 | CL-009 | 建立 fake data 启动与 smoke runbook | 📋 | `@collector` | P0 | 联调前必须补齐 |
 | CL-010 | 为关键链路补充模块级测试与冒烟脚本 | ✅ | `@collector` | P0 | 2026-05-14 使用 collector `.venv` 复跑 `pytest tests -q`：129 passed；`asyncio.iscoroutinefunction` 弃用 warning 已改为 `inspect.iscoroutinefunction` |
-| CL-011 | 测试前复审新增 P1/P2 收口 | ✅ | `@collector` | P0 | scan_rate、aggregator pending 去重、cache TTL、TDengine mock、S7 地址类型校验、S7 I/Q/M 合并、TDengine quality 链路已收口 |
-| CL-012 | 数据质量规则引擎接入主采集链路 | 📋 | `@collector` | P1 | `core/data_quality.py` 规则能力存在并有单测，但当前主链路只落 `quality` 基础字段/OPCDA 映射，尚未将规则结果自动转成质量码 |
+| CL-011 | 测试前复审新增 P1/P2 收口 | 🔄 | `@collector` | P0 | scan_rate、aggregator pending 去重、cache TTL、TDengine mock、S7 地址类型校验、S7 I/Q/M 合并已有历史测试；需按 Redis 实时态 + TDengine 宽表历史态重跑 |
+| CL-012 | 数据质量规则引擎接入主采集链路 | 📋 | `@collector` | P1 | `core/data_quality.py` 规则能力存在并有单测；后续规则结果应进入实时态/告警态，不再作为 TDengine 历史列落库 |
+| CL-013 | 新增 TDengine 入库模块 | 📋 | `@collector` / `@database` | P0 | 从 Redis Stream Consumer Group 批量消费待入库帧，按设备宽表写 TDengine，成功后 ACK，失败保留 pending 重试 |
 
 ---
 
@@ -334,7 +335,7 @@
 | Step ID | 日期 | 范围 | 状态 | 本步产出 | 待审阅点 |
 |---------|------|------|------|----------|----------|
 | STEP-001 | 2026-04-13 | M2-A 第一步设计：设备树 / 设备列表 / 实时初始化 / WebSocket / Realtime 页面 | ✅ 已完成 | 首轮已完成 Realtime 页面状态与最小闭环设计拆分，但其中 Redis 假设已在 STEP-002 中纠偏 | 无 |
-| STEP-002 | 2026-04-13 | 架构纠偏：统一 MySQL / TDengine 口径，移除 Redis 运行依赖 | ✅ 已完成 | 明确 MySQL 仅负责配置/主数据，TDengine 同时负责实时与历史时序数据，Redis 暂不使用；已同步修正 TODO、联调治理文档和旧设计文档 | 无 |
+| STEP-002 | 2026-04-13 | 架构纠偏：统一 MySQL / TDengine 口径，移除 Redis 运行依赖 | ✅ 已完成 | 当时明确 MySQL 仅负责配置/主数据、TDengine 同时负责实时与历史时序数据；该旧口径已在 2026-05-19 被 Redis 实时短窗口 + TDengine 历史落库取代 | 无 |
 | STEP-003 | 2026-04-13 | 设计首批 MySQL / TDengine 测试假数据集与 Realtime 接口落点 | ✅ 已完成 | 明确 device/group/point 等 MySQL 最小主数据集、TDengine 在线/离线/异常/过期样本集、`device-tree` / `realtime-init` / `ws/realtime` 的查询落点与测试数据落库顺序；前端已同步首轮字段依赖、状态覆盖与联调顺序 | 无 |
 | STEP-004 | 2026-04-13 | 细化首批测试假数据落库清单、校验清单与执行前置条件 | ✅ 已完成 | 新增 `docs/前后端联调/08-首批测试假数据落库清单.md`，明确 MySQL / TDengine 测试 ID 段、最小落库表、推荐样本、落库顺序、接口校验点与前端联调顺序；已同步更新 `docs/数据库/fake_data_verify.sql` 与 `docs/数据库/fake_data_cleanup.sql` 为当前真实链路模板 | 无 |
 | STEP-005 | 2026-04-13 | 对齐当前 collector DDL / ORM / TDengine 命名规则与联调落库模板 | ✅ 已完成 | 基于 `collector/device_watch.sql`、`collector/core/config_db.py`、`collector/storage/tdengine.py` 回写联调模板：补充 `variable_group`、明确 `device.id / device_code / device_variable.id` 键映射、修正 TDengine 当前子表命名为 `device_code`、修正验证/清理 SQL 中的字段与表名 | 无 |
@@ -346,7 +347,7 @@
 | STEP-011 | 2026-04-14 | 切换前端开发代理到本地后端并完成首轮 HTTP 联调验证 | ✅ 已完成 | 已将 `frontend/.env.development` 的开发代理目标从 Apifox mock 切到 `http://127.0.0.1:8000`，并在开发环境临时关闭 Realtime 页 WS 自动建连；实际验证 `http://127.0.0.1:3006/api/device-monitor/monitor/device-tree` 与 `realtime-init?deviceId=991001` 可经前端代理返回真实后端数据 | 是否进入下一步“补齐 `/ws/realtime` 并恢复实时页 WS 订阅联调” |
 | STEP-012 | 2026-04-14 | TDengine 数据模型纠偏：从“设备一表”切换为“设备类型分库 + 设备超级表 + 变量子表” | ✅ 已完成（待用户审阅） | 已完成核心设计文档口径修订，并重写 `docs/数据库` 下的 TDengine seed / verify / cleanup SQL 模板；旧“设备子表混存多变量”的执行口径已标记失效，后续待用户审阅通过后再修改实际写入 Python 脚本与运行时代码 | 是否进入下一步“修改 TDengine 写入脚本与 collector / backend 实现” |
 | STEP-013 | 2026-04-14 | 生成 TDengine 全量设备建库脚本，覆盖三类设备数据库、全量设备超级表与抽样测试子表 | ✅ 已完成（待用户审阅） | 已新增 `docs/数据库/tdengine_full_device_schema.sql` 与 `docs/数据库/TDengine全量设备建库说明.md`，脚本会创建 `qc` / `asc` / `agv` 三个数据库、QC 29 台 / ASC 121 台 / AGV 155 台的全部设备超级表，并为每类设备额外创建 1-2 台测试设备的变量子表；当前 ASC 名单按“`asc7011` + `asc7021/asc7022` ... `asc7611/asc7612`”生成以匹配 121 台总量 | 是否确认 ASC 全量编码口径无误，并进入 collector 建表/写入逻辑改造 |
-| STEP-014 | 2026-04-18 | collector 适配最新 MySQL live schema，并切换 TDengine 写入口径到变量子表模型 | ✅ 已完成（待用户审阅） | 已改造 `collector/core/config.py`、`collector/core/config_db.py`、`collector/storage/tdengine.py`、`collector/storage/batch_writer.py`、`collector/main.py`：运行时补充 `device.id` 与 `var_seq`，TDengine 初始化改为”设备类型数据库 -> 设备超级表 -> 变量子表”，子表名统一由 `device_code + '_' + var_seq` 派生，写入改为按变量子表分组且不再通过篡改时间戳规避冲突；同时补充了针对新存储模型的单元测试 | 是否进入下一步”用本机 MySQL/TDengine 真实验证 collector 新链路” |
+| STEP-014 | 2026-04-18 | collector 适配最新 MySQL live schema，并切换 TDengine 写入口径到旧点位子表模型 | ✅ 已完成（已被 STEP-056 取代） | 当时已改造 `collector/core/config.py`、`collector/core/config_db.py`、`collector/storage/tdengine.py`、`collector/storage/batch_writer.py`、`collector/main.py`：运行时补充 `device.id` 与 `var_seq`，TDengine 初始化为三库/设备超级表/点位子表，子表名由 `device_code + '_' + var_seq` 派生；该模型已在 2026-05-19 压测后废弃 | 后续按 Redis 实时短窗口 + TDengine 宽表历史落库改造 |
 | STEP-015 | 2026-04-18 | Perspective 集成设计：历史数据页面可视化增强 | ✅ 已完成 | 已创建 `docs/设计方案/Perspective集成设计.md`，明确采用客户端/服务器复制模式，仅改造历史数据页面，实时监控页保持不变；已同步更新技术方案到 v2 版本 | 是否进入下一步”后端 Perspective Server 实现” |
 | STEP-016 | 2026-04-19 | Perspective 接入执行拆解与后端基础改造启动 | ✅ 已完成（待用户审阅） | 已完成 `docs/后端/Perspective会话隔离与保护策略.md`，并同步项目 TODO；后端已补 Perspective 依赖声明、配置项、会话管理骨架与 `WS /api/device-monitor/ws/perspective` 基线路由 | 是否进入下一步“补齐历史查询真实后端并打通查询结果落表 Perspective Table” |
 | STEP-017 | 2026-04-19 | Perspective 第二步：补齐历史查询后端首版与快照推送链路 | ✅ 已完成（待用户审阅） | 已新增 `history/devices`、`history/points`、`history/query`、`history/export` 首版后端路由与服务层；`history/query` 已支持 `X-Perspective-Session-Id` / `X-Perspective-Query-Version`，并可将标准化 records 写入会话快照后通过 `WS /api/device-monitor/ws/perspective` 推送 `snapshot` | 是否进入下一步“真实接口复验 + 前端 Perspective 客户端接入准备” |
@@ -388,6 +389,8 @@
 | STEP-053 | 2026-05-07 | collector 测试前全面复审 | ✅ 已完成 P1 修复 | 已新增 `docs/采集模块/collector测试前代码审查报告_2026-05-07.md`，复审主链路、S7/GE/OPC、sidecar、聚合、TDengine、日志与测试。语法编译通过；pytest 临时跑法 69 passed / 7 failed。已完成 P1-1（OPC DA center 端口映射）、P1-2（聚合器失败批次保留）、P1-3（数据类型口径统一）、P1-4（opc_server 必填校验）、P1-5（venv 路径修复后重新安装依赖）。P2 问题已记录：modbus 放行、DSN 特殊字符、毫秒周期上取整 | 进入长时间系统测试；S7/GE 需做小范围真机/模拟 smoke |
 | STEP-054 | 2026-05-08 | 日志系统 UI 问题修复 | ✅ 已完成 | 已修复日志终端三个问题：1) 暂停计数器死代码（暂停后不再计数）；2) pending 列表重复累计（pending_count 改为实时计算）；3) 分页滚动跳回顶部（保持当前滚动位置）。已通过语法复验与功能点验 | 继续做日志列表真实数据联调 |
 | STEP-055 | 2026-05-08 | 实时监控页面重新设计 | 🔄 待 Perspective 联调 | 已按 `docs/前端/实时监控核心页面.md` 完成页面重新设计：删除旧设备树和实时数据面板，改用顶部控制栏（设备选择按钮+点位选择长框+操作按钮）、中央 Perspective 趋势图（折线图/状态图切换）、右侧点位卡片容器（实时监测点）、底部系统状态栏的四段式布局。当前待后端依赖安装完成后启动联调 | 下一步：修复后端虚拟环境，安装依赖，启动联调 |
+| STEP-056 | 2026-05-19 | TDengine 宽表模型压测与历史落库口径调整 | ✅ 已完成（待代码落地） | 已完成从“每点位子表”到“每设备子表、点位列”的压测验证：旧 30.5 万子表模型平均吞吐约 8 万点/秒，远低于目标；宽表模型在 305 台设备、每台 1000 点位、`1000ms x 10行` 下基本达到 305 万点/秒目标；目标机 152 台设备测试中 `1000ms x 10行` 稳定、`500ms x 5行` 可用、`100ms x 1行` 明显不达标。TDengine 历史表不再保存 `quality`，异常或 bad 状态由实时态/规则层识别 | 下一步：将 collector 初始化与写入逻辑改为基于 `device_variable.var_seq` 动态创建宽表列，并保留 500ms/1s 批量落库参数 |
+| STEP-057 | 2026-05-19 | Redis 实时短窗口与独立入库模块方案评审 | 📝 计划中 | 为满足前端 100ms 监控体验，计划重新引入 Redis 作为实时短窗口缓存和待入库队列：collector 采集后只写 Redis 最新快照、最近 N 行窗口和 Stream；TDengine 入库模块每 500ms/1s 从 Redis Stream 批量消费并 ACK；backend 实时初始化与 WebSocket 优先读 Redis，历史查询仍读 TDengine | 下一步：先完成文档口径冻结，再分阶段实现 Redis 写入、入库模块和 TDengine 批量落库 |
 
 ---
 
@@ -395,6 +398,7 @@
 
 | 日期 | 变更内容 | 变更人 |
 |------|----------|--------|
+| 2026-05-19 | 完成 TDengine 宽表压测与 Redis 实时缓存方案评审：历史落库调整为 `device_data` 单库、`qc/asc/agv` 三个超级表、每设备一张子表、点位为列；TDengine 仅保存点位数值，不再保存 `quality`；前端 100ms 实时态由 Redis latest/window 承接，历史落库由独立入库模块从 Redis Stream 500ms/1s 批量写入 TDengine | `@collector` / `@database` |
 | 2026-05-14 | 完成采集模块 GE SRTP 批量采集复审：真实轨道吊 GE 点位表 4539 个可读变量合并为 476 个读取块，`result_map=4539`；修复 GE `INT` 负数还原、拒绝 GE 0 地址、明确 `low_high` word 序；同时将 DataAggregator 输出回调判断从 `asyncio.iscoroutinefunction` 改为 `inspect.iscoroutinefunction`，collector 全量测试 129 passed | `@collector` |
 | 2026-05-13 | 完成采集模块核心链路复审：确认协议适配、S7 I/Q/M 合并读取、DataBuffer、DataAggregator、BatchWriter、TDengine `quality` 模型和 HTTP/OPCDA ingest 已形成模块级闭环；collector 全量测试 91 passed，剩余重点为真实联调、性能压测和数据质量规则引擎接入 | `@collector` |
 | 2026-05-08 | 完成 STEP-055：实时监控页面按设计文档重新设计，删除旧布局，改用顶部控制栏+中央趋势图+右侧点位卡片+底部状态栏的四段式布局 | `@frontend` |
@@ -454,7 +458,7 @@
 | 2026-04-13 | 完成 STEP-005：按当前 collector DDL / ORM / TDengine 命名规则修正首批联调落库清单，并更新验证/清理 SQL 模板 | `@coordinator` |
 | 2026-04-13 | 完成 STEP-004：新增首批测试假数据落库清单文档，并更新 MySQL / TDengine 验证与清理 SQL 模板 | `@coordinator` |
 | 2026-04-13 | 完成 STEP-003：明确首批 MySQL / TDengine 测试假数据最小集、Realtime 接口查询落点、前端首轮联调字段依赖与顺序 | `@coordinator` |
-| 2026-04-13 | 完成 STEP-002：统一当前实际架构为“MySQL 管配置/主数据，TDengine 管实时+历史时序数据，Redis 暂不使用”，并同步修正文档口径 | `@coordinator` |
+| 2026-04-13 | 完成 STEP-002：当时统一实际架构为“MySQL 管配置/主数据，TDengine 管实时+历史时序数据”，该口径已于 2026-05-19 被 Redis 实时短窗口 + TDengine 历史落库取代 | `@coordinator` |
 | 2026-04-13 | 启动分步设计流程，完成 STEP-001：明确 M2-A 首轮设计基线，并补充“真实服务 + 测试假数据、禁用 mock 数据”原则 | `@coordinator` |
 | 2026-04-13 | 新增“最小闭环优先执行说明”，明确实时监控闭环优先于历史、日志、统计等扩展模块 | `@doc` |
 | 2026-04-13 | 补充 M2-A/M2-B 分层验收、WS 由后端统一归一化、前端设计冲突裁决与 Pencil 设计稿接入规则 | `@doc` |
