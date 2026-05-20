@@ -11,14 +11,14 @@ consumer_name = "writer-1"
 host = "127.0.0.1"
 port = 6041
 user = "root"
-password = "taosdata"
+password = "Hry19990910"
 database = "device_data"
 
 [mysql]
 host = "127.0.0.1"
 port = 3306
 user = "root"
-password = ""
+password = "19990910"
 database = "device_watch"
 
 [writer]

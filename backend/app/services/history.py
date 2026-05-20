@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import logging
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("backend.history")
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -325,19 +328,29 @@ class HistoryService:
 
         # v0.6: try child table with td_column_name
         if point.td_column_name and point.group_code:
-            child_table = self.tdengine.qualify_table(
-                database_name,
-                self._resolve_child_table_name(device.device_code, point.group_code),
-            )
-            col = self.tdengine.quote_identifier(point.td_column_name)
             try:
+                child_table = self.tdengine.qualify_table(
+                    database_name,
+                    self._resolve_child_table_name(device.device_code, point.group_code),
+                )
+                col = self.tdengine.quote_identifier(point.td_column_name)
                 rows = await self.tdengine.fetch_all(
                     f"SELECT ts, {col} FROM {child_table} "
                     f"WHERE {time_filter} AND ts <= {end_sql} "
                     f"ORDER BY ts ASC LIMIT {page_size}",
                     database=database_name,
                 )
-            except Exception:
+            except ValueError as exc:
+                logger.warning(
+                    "Invalid TDengine identifier for device=%s td_column_name=%r: %s",
+                    device.device_code, point.td_column_name, exc,
+                )
+                rows = []
+            except Exception as exc:
+                logger.warning(
+                    "[history] raw child query failed device=%s point=%s: %s",
+                    device.device_code, point.point_id, exc,
+                )
                 rows = []
 
         if not rows:
@@ -355,7 +368,8 @@ class HistoryService:
                     f"ORDER BY ts ASC LIMIT {page_size}",
                     database=database_name,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("[history] raw subtable query failed table=%s: %s", subtable_name, exc)
                 rows = []
 
         if not rows:
@@ -372,7 +386,11 @@ class HistoryService:
                     f"ORDER BY ts ASC LIMIT {page_size}",
                     database=database_name,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "All fallback tiers failed for device=%s point_id=%s: %s",
+                    device.device_code, point.point_id, exc,
+                )
                 rows = []
 
         results = []
@@ -460,24 +478,32 @@ class HistoryService:
 
         # v0.6: try child table with td_column_name
         if point.td_column_name and point.group_code:
-            child_table = self.tdengine.qualify_table(
-                database_name,
-                self._resolve_child_table_name(device.device_code, point.group_code),
-            )
-            col = self.tdengine.quote_identifier(point.td_column_name)
-            query = (
-                f"SELECT _wstart AS ts, {agg}({col}) AS `value` "
-                f"FROM {child_table} "
-                f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
-                f"INTERVAL({td_interval}) "
-                f"ORDER BY ts ASC LIMIT {limit}"
-            )
             try:
+                child_table = self.tdengine.qualify_table(
+                    database_name,
+                    self._resolve_child_table_name(device.device_code, point.group_code),
+                )
+                col = self.tdengine.quote_identifier(point.td_column_name)
+                query = (
+                    f"SELECT _wstart AS ts, {agg}({col}) AS `value` "
+                    f"FROM {child_table} "
+                    f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                    f"INTERVAL({td_interval}) "
+                    f"ORDER BY ts ASC LIMIT {limit}"
+                )
                 rows = await self.tdengine.fetch_all(query, database=database_name)
                 if rows:
                     return self._filter_bucket_rows(rows)
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.warning(
+                    "[history] invalid bucket identifier td_column_name=%r device=%s: %s",
+                    point.td_column_name, device.device_code, exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[history] bucket child query failed device=%s point=%s: %s",
+                    device.device_code, point.point_id, exc,
+                )
 
         primary_subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
@@ -503,7 +529,8 @@ class HistoryService:
             )
             try:
                 rows = await self.tdengine.fetch_all(query, database=database_name)
-            except Exception:
+            except Exception as exc:
+                logger.warning("[history] bucket query failed table=%s: %s", candidate_table_name, exc)
                 continue
             if rows:
                 return self._filter_bucket_rows(rows)
@@ -535,7 +562,8 @@ class HistoryService:
         for statement in stable_statements:
             try:
                 rows = await self.tdengine.fetch_all(statement, database=database_name)
-            except Exception:
+            except Exception as exc:
+                logger.warning("[history] stable bucket query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
             if rows:
                 return self._filter_bucket_rows(rows)
@@ -637,8 +665,7 @@ class HistoryService:
         total_seconds = (end_dt - start_dt).total_seconds()
         if total_seconds <= 0:
             return "5s"
-        interval_sec = max(1, int(total_seconds / target_points))
-        # 对于短时间范围，使用更合理的间隔
+        interval_sec = int(total_seconds / target_points)
         if interval_sec < 1:
             return "500ms"
         if interval_sec < 5:
@@ -683,24 +710,32 @@ class HistoryService:
 
         # v0.6: try child table with td_column_name
         if point.td_column_name and point.group_code:
-            child_table = self.tdengine.qualify_table(
-                database_name,
-                self._resolve_child_table_name(device.device_code, point.group_code),
-            )
-            col = self.tdengine.quote_identifier(point.td_column_name)
-            query = (
-                f"SELECT _wstart AS ts, {agg_func}({col}) AS `value` "
-                f"FROM {child_table} "
-                f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
-                f"INTERVAL({td_interval}) "
-                f"ORDER BY ts ASC"
-            )
             try:
+                child_table = self.tdengine.qualify_table(
+                    database_name,
+                    self._resolve_child_table_name(device.device_code, point.group_code),
+                )
+                col = self.tdengine.quote_identifier(point.td_column_name)
+                query = (
+                    f"SELECT _wstart AS ts, {agg_func}({col}) AS `value` "
+                    f"FROM {child_table} "
+                    f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                    f"INTERVAL({td_interval}) "
+                    f"ORDER BY ts ASC"
+                )
                 rows = await self.tdengine.fetch_all(query, database=database_name)
                 if rows:
                     return rows
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.warning(
+                    "[history] invalid downsample identifier td_column_name=%r device=%s: %s",
+                    point.td_column_name, device.device_code, exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[history] downsample child query failed device=%s point=%s: %s",
+                    device.device_code, point.point_id, exc,
+                )
 
         # Legacy fallback
         subtable_name = self._resolve_point_subtable_name(
@@ -722,8 +757,8 @@ class HistoryService:
             rows = await self.tdengine.fetch_all(query, database=database_name)
             if rows:
                 return rows
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[history] downsample subtable query failed table=%s: %s", subtable_name, exc)
 
         stable_name = self.tdengine.qualify_table(
             database_name,
@@ -741,7 +776,11 @@ class HistoryService:
         try:
             rows = await self.tdengine.fetch_all(query, database=database_name)
             return rows
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "[history] downsample stable query failed device=%s point=%s: %s",
+                device.device_code, point.point_id, exc,
+            )
             return []
 
     async def export_history_csv(
@@ -751,6 +790,9 @@ class HistoryService:
         start_time: str,
         end_time: str,
     ) -> bytes:
+        start_dt, end_dt = self._validate_query_range(start_time, end_time)
+        if end_dt - start_dt > timedelta(hours=24):
+            raise ApiError(400, "Export time range cannot exceed 24 hours")
         data = await self.query_history(
             device_id=device_id,
             var_seqs=var_seqs,
@@ -1085,12 +1127,12 @@ class HistoryService:
 
         # v0.6: try child table t_{device_code}_{group_code} with td_column_name column
         if point.td_column_name and point.group_code:
-            child_table = self.tdengine.qualify_table(
-                database_name,
-                self._resolve_child_table_name(device.device_code, point.group_code),
-            )
-            col = self.tdengine.quote_identifier(point.td_column_name)
             try:
+                child_table = self.tdengine.qualify_table(
+                    database_name,
+                    self._resolve_child_table_name(device.device_code, point.group_code),
+                )
+                col = self.tdengine.quote_identifier(point.td_column_name)
                 rows = await self.tdengine.fetch_all(
                     (
                         f"SELECT ts, {col} FROM {child_table} "
@@ -1101,8 +1143,16 @@ class HistoryService:
                 )
                 if rows:
                     return rows
-            except Exception:
-                pass
+            except ValueError as exc:
+                logger.warning(
+                    "[history] invalid identifier td_column_name=%r device=%s: %s",
+                    point.td_column_name, device.device_code, exc,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[history] point child query failed device=%s point=%s: %s",
+                    device.device_code, point.point_id, exc,
+                )
 
         # Legacy fallback: per-point subtables with `value` column
         primary_subtable_name = self._resolve_point_subtable_name(
@@ -1129,7 +1179,8 @@ class HistoryService:
                     ),
                     database=database_name,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("[history] subtable query failed table=%s: %s", candidate_table_name, exc)
                 continue
 
             if rows:
@@ -1160,7 +1211,8 @@ class HistoryService:
         for statement in stable_statements:
             try:
                 rows = await self.tdengine.fetch_all(statement, database=database_name)
-            except Exception:
+            except Exception as exc:
+                logger.warning("[history] stable fallback query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
             if rows:
                 return rows

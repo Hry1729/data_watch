@@ -13,6 +13,7 @@ export type PerspectiveTableClient = {
 
 export type PerspectiveViewerClient = HTMLElement & {
   load: (table: PerspectiveTableClient) => Promise<void>
+  save: () => Promise<Record<string, unknown>>
   restore: (config: Record<string, unknown>) => Promise<void>
   flush: () => Promise<void>
   resize: (force?: boolean) => Promise<void>

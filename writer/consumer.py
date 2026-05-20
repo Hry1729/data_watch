@@ -87,6 +87,8 @@ class StreamConsumer:
 
     async def run_loop(self, stream_keys: list[str]) -> None:
         """Main consumption loop. Runs until cancelled."""
+        if not stream_keys:
+            raise ValueError("stream_keys is empty — check writer config device_types/group_codes")
         self._ensure_consumer_groups(stream_keys)
 
         # Drain any pending messages left from a previous run / crashed consumer.
@@ -102,33 +104,41 @@ class StreamConsumer:
         block_ms = max(int(self._flush_interval_s * 1000 / 2), 50)
 
         while True:
-            # --- Read new messages ---
-            streams_arg = {sk: ">" for sk in stream_keys}
-            try:
-                response = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self._r.xreadgroup(
-                        groupname=self._group_name,
-                        consumername=self._consumer_name,
-                        streams=streams_arg,
-                        count=self._batch_count,
-                        block=block_ms,
-                    ),
-                )
-            except Exception as exc:
-                logger.error("[consumer] xreadgroup error: %s", exc)
-                await asyncio.sleep(1)
-                continue
+            # --- Read new messages (skip when buffer is full to apply back-pressure) ---
+            if len(self._buffer) < self._max_buffer_rows:
+                streams_arg = {sk: ">" for sk in stream_keys}
+                try:
+                    response = await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        lambda: self._r.xreadgroup(
+                            groupname=self._group_name,
+                            consumername=self._consumer_name,
+                            streams=streams_arg,
+                            count=self._batch_count,
+                            block=block_ms,
+                        ),
+                    )
+                except Exception as exc:
+                    logger.error("[consumer] xreadgroup error: %s", exc)
+                    await asyncio.sleep(1)
+                    continue
 
-            if response:
-                for stream_key, entries in response:
-                    for entry_id, entry_data in entries:
-                        self._handle_entry(
-                            stream_key=stream_key,
-                            entry_id=entry_id,
-                            entry_data=entry_data,
-                            delivery_count=1,
-                        )
+                if response:
+                    for stream_key, entries in response:
+                        for entry_id, entry_data in entries:
+                            self._handle_entry(
+                                stream_key=stream_key,
+                                entry_id=entry_id,
+                                entry_data=entry_data,
+                                delivery_count=1,
+                            )
+            else:
+                logger.warning(
+                    "[consumer] buffer full (%d/%d rows), pausing xreadgroup until flush clears",
+                    len(self._buffer),
+                    self._max_buffer_rows,
+                )
+                await asyncio.sleep(self._flush_interval_s)
 
             # --- Flush if time or buffer threshold reached ---
             now = time.monotonic()
@@ -151,7 +161,7 @@ class StreamConsumer:
         try:
             await self._drain_with_xautoclaim(stream_key, consumer_name)
         except Exception as exc:
-            if "unknown command" in str(exc).lower() or "ERR" in str(exc):
+            if "unknown command" in str(exc).lower() or "xautoclaim" in str(exc).lower():
                 logger.info(
                     "[consumer] XAUTOCLAIM not supported, falling back to XPENDING+XCLAIM: %s",
                     exc,
@@ -161,7 +171,7 @@ class StreamConsumer:
                 logger.warning("[consumer] drain_pending error: %s", exc)
 
     async def _drain_with_xautoclaim(self, stream_key: str, consumer_name: str) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start_id = "0-0"
         while True:
             result = await loop.run_in_executor(
@@ -189,7 +199,7 @@ class StreamConsumer:
             start_id = next_id
 
     async def _drain_with_xpending_xclaim(self, stream_key: str, consumer_name: str) -> None:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         pending_entries = await loop.run_in_executor(
             None,
             lambda: self._r.xpending_range(
@@ -358,6 +368,7 @@ class StreamConsumer:
         for row in self._buffer:
             by_table.setdefault(row.child_table, []).append(row)
 
+        failed_rows: list[_BufferedRow] = []
         for child_table, buffered_rows in by_table.items():
             rows = [
                 {
@@ -377,13 +388,10 @@ class StreamConsumer:
                     child_table,
                     len(buffered_rows),
                 )
+                failed_rows.extend(buffered_rows)
 
-        self._buffer.clear()
+        self._buffer = failed_rows
         self._last_flush = time.monotonic()
-
-    def _ack_buffer(self) -> None:
-        """XACK all buffered entries, grouped by stream_key."""
-        self._ack_rows(self._buffer)
 
     def _ack_rows(self, rows: list[_BufferedRow]) -> None:
         """XACK rows, grouped by stream_key."""

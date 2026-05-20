@@ -172,7 +172,7 @@
         </div>
         <div class="status-item">
           <span class="status-icon success">🟢</span>
-          <span>TDengine {{ tdengineConnected ? '已连接' : '未连接' }}</span>
+          <span>TDengine {{ tdengineConnected === null ? '检测中' : tdengineConnected ? '已连接' : '未连接' }}</span>
         </div>
         <div class="status-item">
           <span class="status-icon success">🧩</span>
@@ -305,7 +305,7 @@ import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
-import { fetchMonitorDeviceTree, fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl, getDevicePointGroups } from '@/api/device-monitor'
+import { fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl, getAccessToken, getDevicePointGroups } from '@/api/device-monitor'
 import {
   ensurePerspectiveViewerRuntime,
   type PerspectiveTableClient,
@@ -369,7 +369,7 @@ const chartType = ref<'line' | 'area' | 'status'>('line')
 const chartSettingsVisible = ref(false)
 const separateBoolChart = ref(true) // 默认分离 Bool 图表
 const lastSyncTime = ref('')
-const tdengineConnected = ref(true)
+const tdengineConnected = ref<boolean | null>(null)
 const perspectiveReady = ref(false)
 
 // 点位质量（q=0 表示数据无效，显示为红色）
@@ -421,13 +421,13 @@ const saveChartSnapshot = async () => {
     const chartConfigs: Record<string, unknown> = {}
 
     if (perspectiveViewer.value) {
-      chartConfigs.single = await (perspectiveViewer.value as any).save()
+      chartConfigs.single = await perspectiveViewer.value.save()
     }
     if (perspectiveNumericViewer.value) {
-      chartConfigs.numeric = await (perspectiveNumericViewer.value as any).save()
+      chartConfigs.numeric = await perspectiveNumericViewer.value.save()
     }
     if (perspectiveBoolViewer.value) {
-      chartConfigs.bool = await (perspectiveBoolViewer.value as any).save()
+      chartConfigs.bool = await perspectiveBoolViewer.value.save()
     }
 
     const chartState = {
@@ -501,6 +501,31 @@ const loadChartSnapshot = async (): Promise<boolean> => {
       })
     }
 
+    // 恢复图表布局配置
+    if (chartState.configs) {
+      if (perspectiveViewer.value && chartState.configs.single) {
+        try {
+          await perspectiveViewer.value.restore(chartState.configs.single)
+        } catch (e) {
+          console.warn('恢复主图表配置失败:', e)
+        }
+      }
+      if (perspectiveNumericViewer.value && chartState.configs.numeric) {
+        try {
+          await perspectiveNumericViewer.value.restore(chartState.configs.numeric)
+        } catch (e) {
+          console.warn('恢复数值图表配置失败:', e)
+        }
+      }
+      if (perspectiveBoolViewer.value && chartState.configs.bool) {
+        try {
+          await perspectiveBoolViewer.value.restore(chartState.configs.bool)
+        } catch (e) {
+          console.warn('恢复布尔图表配置失败:', e)
+        }
+      }
+    }
+
     return true
   } catch (error) {
     console.warn('加载图表快照失败:', error)
@@ -530,6 +555,7 @@ const perspectiveRef = ref<HTMLElement>() // 单图表模式
 const perspectiveNumericRef = ref<HTMLElement>() // 分离模式：数值型
 const perspectiveBoolRef = ref<HTMLElement>() // 分离模式：Bool 型
 const perspectiveWorker = shallowRef<PerspectiveWorkerClient | null>(null)
+const isPerspectiveCleaning = ref(false)
 const perspectiveTable = shallowRef<PerspectiveTableClient | null>(null) // 单图表模式
 const perspectiveViewer = shallowRef<PerspectiveViewerClient | null>(null) // 单图表模式
 const perspectiveNumericTable = shallowRef<PerspectiveTableClient | null>(null) // 分离模式：数值型
@@ -951,6 +977,8 @@ const connectWebSocket = () => {
     websocket.value.onopen = () => {
       wsConnected.value = true
       reconnectAttempts.value = 0
+      // 发送认证消息（token 不放 URL，避免暴露在日志/历史记录中）
+      websocket.value?.send(JSON.stringify({ type: 'auth', token: getAccessToken() }))
       startHeartbeat()
 
       // 订阅当前设备
@@ -1042,7 +1070,7 @@ const clearReconnectTimer = () => {
 }
 
 const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
-  if (!perspectiveWorker.value || newRecords.length === 0) return
+  if (!perspectiveWorker.value || newRecords.length === 0 || isPerspectiveCleaning.value) return
 
   try {
     const schema = { timestamp: 'datetime', varSeq: 'integer', pointName: 'string', value: 'float' }
@@ -1139,6 +1167,9 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
   ) {
     if (payload.device_code && currentDevice.value?.deviceCode !== payload.device_code) return
     if (payload.group_code && activeGroupCode.value !== payload.group_code) return
+    if (payload.type === 'snapshot' && 'tdengineConnected' in payload) {
+      tdengineConnected.value = payload.tdengineConnected as boolean | null
+    }
     deviceOffline.value = false
 
     const pointById = new Map(
@@ -1555,21 +1586,26 @@ onUnmounted(() => {
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 
-  // 保存数据快照
+  // 保存数据快照（保留已有的 configs，避免覆盖 saveChartSnapshot 写入的图表配置）
   const dataSnapshot = realtimeRecords.value.slice(-MAX_SNAPSHOT_RECORDS).map((r) => ({
     timestamp: r.timestamp.toISOString(),
     varSeq: r.varSeq,
     pointName: r.pointName,
     value: r.value
   }))
+  const existingChartState = (() => {
+    try { return JSON.parse(localStorage.getItem(CHART_STATE_KEY) || '{}') } catch { return {} }
+  })()
   localStorage.setItem(CHART_STATE_KEY, JSON.stringify({
     data: dataSnapshot,
+    configs: existingChartState.configs,
     timestamp: Date.now()
   }))
 
   // 轻量清理：只断开连接，不清空数据
   disconnectForUnmount()
 
+  isPerspectiveCleaning.value = true
   void (async () => {
     // 清理 Perspective 资源
     if (perspectiveViewer.value) {
@@ -1603,6 +1639,7 @@ onUnmounted(() => {
     perspectiveNumericTable.value = null
     perspectiveBoolViewer.value = null
     perspectiveBoolTable.value = null
+    isPerspectiveCleaning.value = false
   })()
 })
 

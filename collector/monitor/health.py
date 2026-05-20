@@ -1,11 +1,10 @@
 """健康检查"""
 
 import asyncio
-from typing import Dict
+from typing import Any, Dict, Optional
 
 from core.logger import get_logger
 from device.manager import DeviceManager
-from storage.tdengine import TDengineConnection
 
 logger = get_logger("health")
 
@@ -16,7 +15,7 @@ class HealthChecker:
     def __init__(
         self,
         device_manager: DeviceManager,
-        tdengine: TDengineConnection,
+        tdengine: Optional[Any] = None,
         interval: int = 30,
     ):
         self.device_manager = device_manager
@@ -41,9 +40,10 @@ class HealthChecker:
     async def check(self) -> Dict:
         """执行一次健康检查"""
         status = {
-            "tdengine": "ok" if self.tdengine.is_connected else "disconnected",
             "devices": {},
         }
+        if self.tdengine is not None:
+            status["tdengine"] = "ok" if self.tdengine.is_connected else "disconnected"
 
         for device in self.device_manager.get_all_devices():
             healthy = await self.device_manager.check_device_health(device)

@@ -108,7 +108,7 @@ class TaskExecutor:
                 point for point in points
                 if point.variable_id in storage_variable_ids
             ]
-            if storage_points:
+            if storage_points and self._redis_writer is None:
                 accepted = await self.buffer.put_batch(storage_points)
                 dropped = len(storage_points) - accepted
                 if dropped > 0:
@@ -122,7 +122,7 @@ class TaskExecutor:
 
             if points:
                 if self._redis_writer is not None:
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     loop.run_in_executor(
                         None, self._write_to_redis, device, scan_task, points
                     )
@@ -148,12 +148,11 @@ class TaskExecutor:
     def _write_to_redis(self, device, scan_task, points: List[DataPoint]) -> None:
         """将采集结果写入 Redis（latest / window / stream）。在线程池中调用，不阻塞事件循环。"""
         try:
-            # var_id → last value（多值时取最后一个）
-            var_values: Dict[str, Any] = {}
+            # var_id -> last point（多值时取最后一个）
+            var_points: Dict[str, DataPoint] = {}
             for p in points:
-                var_values[p.variable_id] = p.value
+                var_points[p.variable_id] = p
 
-            ts_ms = int(time.time() * 1000)
             scan_rate_ms = int(scan_task.scan_rate * 1000)
             device_code = device.device_id
             device_type = device.device_type.lower()
@@ -164,22 +163,28 @@ class TaskExecutor:
 
             # 按 group_code 分组
             by_group: Dict[str, Dict[str, tuple]] = {}
-            for var_id, value in var_values.items():
+            for var_id, point in var_points.items():
                 var = var_meta.get(var_id)
                 if var is None:
                     continue
                 gc = var.group_code
                 if gc not in by_group:
                     by_group[gc] = {}
-                by_group[gc][var_id] = (value, var.data_type, var.is_storage)
+                by_group[gc][var_id] = (point, var.data_type, var.is_storage)
 
             for group_code, var_data in by_group.items():
                 # latest Hash：所有点位
                 fields = {
-                    var_id: {"v": str(val), "t": ts_ms, "q": 1}
-                    for var_id, (val, _, _) in var_data.items()
+                    var_id: {
+                        "v": str(point.value),
+                        "t": self._timestamp_to_millis(point.timestamp),
+                        "q": int(getattr(point, "quality", 0)),
+                    }
+                    for var_id, (point, _, _) in var_data.items()
                 }
                 self._redis_writer.write_latest(device_code, group_code, fields)
+
+                ts_ms = max(field["t"] for field in fields.values())
 
                 # window List：所有点位
                 frame = {
@@ -187,14 +192,17 @@ class TaskExecutor:
                     "group_code": group_code,
                     "ts": ts_ms,
                     "scan_rate": scan_rate_ms,
-                    "values": {var_id: str(val) for var_id, (val, _, _) in var_data.items()},
+                    "values": {
+                        var_id: str(point.value)
+                        for var_id, (point, _, _) in var_data.items()
+                    },
                 }
                 self._redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
 
                 # stream：过滤 STRING 类型
                 stream_values = {
-                    var_id: str(val)
-                    for var_id, (val, dt, is_storage) in var_data.items()
+                    var_id: str(point.value)
+                    for var_id, (point, dt, is_storage) in var_data.items()
                     if is_storage and dt != "STRING"
                 }
                 if stream_values:
@@ -204,6 +212,15 @@ class TaskExecutor:
                     )
         except Exception as exc:
             logger.error("Redis write failed for device %s: %s", device.device_id, exc)
+
+    @staticmethod
+    def _timestamp_to_millis(timestamp: Any) -> int:
+        if isinstance(timestamp, datetime):
+            return int(timestamp.timestamp() * 1000)
+        if isinstance(timestamp, (int, float)):
+            ts = float(timestamp)
+            return int(ts if ts > 1_000_000_000_000 else ts * 1000)
+        return int(time.time() * 1000)
 
     def _parse_result(
         self,

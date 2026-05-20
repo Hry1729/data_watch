@@ -14,6 +14,7 @@ from data_queue.buffer import DataBuffer, DataPoint
 
 if TYPE_CHECKING:
     from core.opcda_mapper import OpcDaTagMapper
+    from storage.redis_writer import RedisWriter
 
 logger = get_logger("ingest_server")
 
@@ -51,6 +52,15 @@ def _parse_timestamp(raw_value: Any) -> datetime:
         return dt
 
     raise ValueError("timestamp must be ISO8601 string or unix timestamp")
+
+
+def _timestamp_to_millis(timestamp: Any) -> int:
+    if isinstance(timestamp, datetime):
+        return int(timestamp.timestamp() * 1000)
+    if isinstance(timestamp, (int, float)):
+        ts = float(timestamp)
+        return int(ts if ts > 1_000_000_000_000 else ts * 1000)
+    return int(time.time() * 1000)
 
 
 def _normalize_payload(payload: Any, max_batch_size: int) -> List[Dict[str, Any]]:
@@ -150,6 +160,8 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         opcda_mapper: Optional["OpcDaTagMapper"] = None,
         opcda_ingest_path: str = "/ingest/opcda-tags",
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+        redis_writer: Optional["RedisWriter"] = None,
+        realtime_config: Optional[Any] = None,
     ):
         super().__init__(server_address, request_handler)
         self.data_buffer = data_buffer
@@ -160,6 +172,89 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         self.opcda_mapper = opcda_mapper
         self.opcda_ingest_path = opcda_ingest_path
         self.max_body_bytes = max_body_bytes
+        self.redis_writer = redis_writer
+        self._device_meta = {
+            getattr(device, "device_id", ""): device
+            for device in getattr(realtime_config, "devices", [])
+        }
+        self._variable_meta = {
+            str(getattr(variable, "variable_id", "")): variable
+            for variable in getattr(realtime_config, "variables", [])
+        }
+        self._log_counter = 0
+        self._log_last_time = time.time()
+        self._log_lock = threading.Lock()
+
+    def write_points_to_redis(self, points: List[DataPoint]) -> Tuple[int, List[str]]:
+        """写入 Redis latest/window/stream，返回 accepted 和错误列表。"""
+        if self.redis_writer is None:
+            return 0, ["redis writer not configured"]
+
+        by_latest: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+        by_frame: Dict[Tuple[str, str, str, int, int], Dict[str, Any]] = {}
+        accepted = 0
+        errors: List[str] = []
+
+        for idx, point in enumerate(points):
+            var = self._variable_meta.get(str(point.variable_id))
+            if var is None:
+                errors.append(f"points[{idx}]: variable_id not configured: {point.variable_id}")
+                continue
+
+            device_id = getattr(var, "device_id", "") or point.device_id
+            device = self._device_meta.get(device_id)
+            if device is None:
+                errors.append(f"points[{idx}]: device not configured: {device_id}")
+                continue
+
+            group_code = getattr(var, "group_code", "g001")
+            scan_rate_ms = max(1, int(float(getattr(var, "scan_rate", 1.0)) * 1000))
+            ts_ms = _timestamp_to_millis(point.timestamp)
+            device_code = getattr(device, "device_id", device_id)
+            device_type = str(getattr(device, "device_type", "")).lower()
+            config_version = int(getattr(device, "config_version", 1))
+            value_text = str(point.value)
+            quality = int(getattr(point, "quality", 0))
+
+            by_latest.setdefault((device_code, group_code), {})[str(point.variable_id)] = {
+                "v": value_text,
+                "t": ts_ms,
+                "q": quality,
+            }
+
+            frame_key = (device_code, device_type, group_code, scan_rate_ms, config_version)
+            frame = by_frame.setdefault(frame_key, {"ts": ts_ms, "values": {}, "stream_values": {}})
+            frame["ts"] = max(frame["ts"], ts_ms)
+            frame["values"][str(point.variable_id)] = value_text
+            if getattr(var, "is_storage", True) and str(getattr(var, "data_type", "")).upper() != "STRING":
+                frame["stream_values"][str(point.variable_id)] = value_text
+
+            accepted += 1
+
+        for (device_code, group_code), fields in by_latest.items():
+            self.redis_writer.write_latest(device_code, group_code, fields)
+
+        for (device_code, device_type, group_code, scan_rate_ms, config_version), frame_data in by_frame.items():
+            frame = {
+                "device_code": device_code,
+                "group_code": group_code,
+                "ts": frame_data["ts"],
+                "scan_rate": scan_rate_ms,
+                "values": frame_data["values"],
+            }
+            self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
+            if frame_data["stream_values"]:
+                self.redis_writer.write_stream(
+                    device_code,
+                    device_type,
+                    group_code,
+                    scan_rate_ms,
+                    frame_data["ts"],
+                    config_version,
+                    frame_data["stream_values"],
+                )
+
+        return accepted, errors
 
 
 class _IngestRequestHandler(BaseHTTPRequestHandler):
@@ -250,12 +345,17 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"accepted": 0, "rejected": len(normalized), "errors": errors})
                 return
 
-            future = asyncio.run_coroutine_threadsafe(
-                self.server.data_buffer.put_batch(points),
-                self.server.event_loop,
-            )
-            accepted = future.result(timeout=5)
-            dropped = len(points) - accepted
+            if self.server.redis_writer is not None:
+                accepted, write_errors = self.server.write_points_to_redis(points)
+                errors.extend(write_errors)
+                dropped = 0
+            else:
+                future = asyncio.run_coroutine_threadsafe(
+                    self.server.data_buffer.put_batch(points),
+                    self.server.event_loop,
+                )
+                accepted = future.result(timeout=5)
+                dropped = len(points) - accepted
 
             if errors:
                 logger.warning(
@@ -395,13 +495,18 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            # 写入 DataBuffer
-            future = asyncio.run_coroutine_threadsafe(
-                self.server.data_buffer.put_batch(points),
-                self.server.event_loop,
-            )
-            accepted = future.result(timeout=5)
-            dropped = len(points) - accepted
+            if self.server.redis_writer is not None:
+                accepted, write_errors = self.server.write_points_to_redis(points)
+                errors.extend(write_errors)
+                dropped = 0
+            else:
+                # 兼容未配置 Redis writer 的测试/旧调用方。
+                future = asyncio.run_coroutine_threadsafe(
+                    self.server.data_buffer.put_batch(points),
+                    self.server.event_loop,
+                )
+                accepted = future.result(timeout=5)
+                dropped = len(points) - accepted
 
             if unmapped or errors:
                 logger.warning(
@@ -433,26 +538,21 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # noqa: A003 - BaseHTTPRequestHandler API
         """采样日志：避免高频请求刷屏"""
-        # 使用服务器级别的计数器实现采样
-        if not hasattr(self.server, '_log_counter'):
-            self.server._log_counter = 0
-            self.server._log_last_time = time.time()
-            self.server._log_last_fmt = ""
+        with self.server._log_lock:
+            self.server._log_counter += 1
+            current_time = time.time()
 
-        self.server._log_counter += 1
-        current_time = time.time()
-
-        # 每隔 LOG_SAMPLE_INTERVAL_SECONDS 秒输出一次汇总
-        if current_time - self.server._log_last_time >= LOG_SAMPLE_INTERVAL_SECONDS:
-            count = self.server._log_counter
-            self.server._log_counter = 0
-            self.server._log_last_time = current_time
-            logger.info(
-                "IngestAPI %s - %d requests in last %ds",
-                self.address_string(),
-                count,
-                LOG_SAMPLE_INTERVAL_SECONDS,
-            )
+            # 每隔 LOG_SAMPLE_INTERVAL_SECONDS 秒输出一次汇总
+            if current_time - self.server._log_last_time >= LOG_SAMPLE_INTERVAL_SECONDS:
+                count = self.server._log_counter
+                self.server._log_counter = 0
+                self.server._log_last_time = current_time
+                logger.info(
+                    "IngestAPI %s - %d requests in last %ds",
+                    self.address_string(),
+                    count,
+                    LOG_SAMPLE_INTERVAL_SECONDS,
+                )
 
 
 class InterfaceIngestServer:
@@ -475,6 +575,8 @@ class InterfaceIngestServer:
         self.max_batch_size = max_batch_size
         self.opcda_ingest_path = opcda_ingest_path
         self.max_body_bytes = max_body_bytes
+        self.redis_writer: Optional["RedisWriter"] = None
+        self.realtime_config: Optional[Any] = None
         self._server: Optional[_IngestHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -483,10 +585,15 @@ class InterfaceIngestServer:
         data_buffer: DataBuffer,
         event_loop: asyncio.AbstractEventLoop,
         opcda_mapper: Optional["OpcDaTagMapper"] = None,
+        redis_writer: Optional["RedisWriter"] = None,
+        realtime_config: Optional[Any] = None,
     ) -> None:
         """启动接口服务（后台线程）"""
         if self._server is not None:
             return
+
+        self.redis_writer = redis_writer
+        self.realtime_config = realtime_config
 
         self._server = _IngestHTTPServer(
             (self.host, self.port),
@@ -499,6 +606,8 @@ class InterfaceIngestServer:
             opcda_mapper=opcda_mapper,
             opcda_ingest_path=self.opcda_ingest_path,
             max_body_bytes=self.max_body_bytes,
+            redis_writer=redis_writer,
+            realtime_config=realtime_config,
         )
 
         self._thread = threading.Thread(

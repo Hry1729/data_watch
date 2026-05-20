@@ -23,10 +23,11 @@ logger = logging.getLogger("writer.mysql_mapper")
 _SQL = """
 SELECT dv.id AS var_id, dv.td_column_name, dv.var_type,
        dpg.config_version, dpg.group_code,
-       d.device_code, d.device_type_code
+       d.device_code, dt.type_code AS device_type_code
 FROM device_variable dv
 JOIN device_point_group dpg ON dv.point_group_id = dpg.id
 JOIN device d ON dpg.device_id = d.id
+JOIN device_type dt ON dt.id = d.type_id
 WHERE d.device_code = %s AND dpg.group_code = %s
   AND dv.deleted = 0 AND dv.enable = 1
 """

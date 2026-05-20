@@ -310,7 +310,7 @@ await scheduler.start(executor.execute)
 | 执行时间 < scan_rate | 等待剩余时间后发送下一次请求 |
 | 执行时间 >= scan_rate | 立即发送下一次请求（不额外等待） |
 
-> 当前从 MySQL 加载的 `device_variable.scan_rate` 会在 `core/config_db.py` 中归一到秒级，`500ms` 当前实际会按 `1s` 调度；如需严格毫秒级采集，需要先调整 `_normalize_scan_rate()`。
+> 从 MySQL 加载的 `device_variable.scan_rate`（单位毫秒）会在 `core/config_db.py` 的 `_normalize_scan_rate()` 中转换为秒（float）：≥100 的值视为毫秒，`100ms → 0.1s`，`500ms → 0.5s`，支持亚秒采集。
 
 设计示例（scan_rate = 500ms）：
 
@@ -457,8 +457,8 @@ AGV 的 ZPMC 自研 OPC 数据源属于 32 位 OPC DA，collector 主进程保�
 ZPMC.OPCServer (32 位 OPC DA)
   -> C#/.NET Framework x86 sidecar
   -> HTTP POST /ingest
-  -> DataBuffer / DataAggregator / BatchWriter
-  -> TDengine agv 数据库
+  -> Redis latest / window / stream
+  -> 独立 writer 模块批量写入 TDengine 宽表
 ```
 
 当前 `sidecars/opcda_sidecar/` 已提供只读探针，用于验证 OPC Server 与 ItemID：

@@ -394,7 +394,6 @@ class TDengineConnection:
                 return [{"row": row} for row in result]
 
             return []
-            return []
         except Exception as e:
             logger.warning("_fetch_all 查询失败: %s, SQL: %s", e, sql)
             return []

@@ -11,7 +11,7 @@
  Target Server Version : 80038 (8.0.38)
  File Encoding         : 65001
 
- Date: 20/05/2026 12:21:06
+ Date: 21/05/2026 05:32:24
 */
 
 SET NAMES utf8mb4;
@@ -235,6 +235,7 @@ CREATE TABLE `device`  (
   `create_time` datetime NULL DEFAULT NULL COMMENT '创建时间',
   `update_user` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '更新者',
   `update_time` datetime NULL DEFAULT NULL COMMENT '更新时间',
+  `variable_config_version` int UNSIGNED NOT NULL DEFAULT 1 COMMENT '设备点位配置版本号',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `uq_device_device_code`(`device_code` ASC) USING BTREE,
   INDEX `type_id`(`type_id` ASC) USING BTREE,
@@ -263,6 +264,33 @@ CREATE TABLE `device_group`  (
 ) ENGINE = InnoDB AUTO_INCREMENT = 9912 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '设备分组' ROW_FORMAT = Dynamic;
 
 -- ----------------------------
+-- Table structure for device_point_group
+-- ----------------------------
+DROP TABLE IF EXISTS `device_point_group`;
+CREATE TABLE `device_point_group`  (
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `device_id` bigint UNSIGNED NOT NULL COMMENT '设备 ID，关联 device.id',
+  `group_no` int UNSIGNED NOT NULL COMMENT '分组序号，从 1 开始',
+  `group_code` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL COMMENT '分组编码，如 g001',
+  `group_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL COMMENT '分组名称，可为空',
+  `max_point_count` int UNSIGNED NOT NULL DEFAULT 3072 COMMENT '该分组最大点位列数',
+  `active_point_count` int UNSIGNED NOT NULL DEFAULT 0 COMMENT '当前启用点位数',
+  `disabled_point_count` int UNSIGNED NOT NULL DEFAULT 0 COMMENT '当前停用点位数',
+  `deleted_point_count` int UNSIGNED NOT NULL DEFAULT 0 COMMENT '软删除点位数',
+  `used_column_count` int UNSIGNED NOT NULL DEFAULT 0 COMMENT '已分配列位总数（含软删除，列位不回收）',
+  `next_column_index` int UNSIGNED NOT NULL DEFAULT 1 COMMENT '下一个可用列位序号',
+  `status` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'active' COMMENT 'active / full / disabled',
+  `config_version` int UNSIGNED NOT NULL DEFAULT 1 COMMENT '配置版本号，点位变更时递增',
+  `create_user` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `create_time` datetime NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_user` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `update_time` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uq_device_group`(`device_id` ASC, `group_code` ASC) USING BTREE,
+  INDEX `idx_device_id`(`device_id` ASC) USING BTREE
+) ENGINE = InnoDB AUTO_INCREMENT = 306 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '设备点位分组' ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for device_type
 -- ----------------------------
 DROP TABLE IF EXISTS `device_type`;
@@ -284,6 +312,11 @@ DROP TABLE IF EXISTS `device_variable`;
 CREATE TABLE `device_variable`  (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '变量ID',
   `device_id` bigint NOT NULL COMMENT 'device id references device.id',
+  `point_group_id` bigint UNSIGNED NULL DEFAULT NULL COMMENT '所属分组 ID',
+  `group_index` int UNSIGNED NULL DEFAULT NULL COMMENT '组内列位序号',
+  `td_column_name` varchar(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT 'TDengine 列名',
+  `enable` tinyint(1) NOT NULL DEFAULT 1 COMMENT '点位是否启用',
+  `deleted` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否软删除',
   `var_seq` int NOT NULL COMMENT '?????????TDengine ???? device_code + \'_\' + var_seq ??',
   `var_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '变量名称',
   `io_type` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT 'memory area type such as I M Q DB R',
@@ -307,6 +340,8 @@ CREATE TABLE `device_variable`  (
   INDEX `idx_device_variable_scan_rate`(`scan_rate` ASC) USING BTREE,
   INDEX `idx_device_variable_is_alarm`(`is_alarm` ASC) USING BTREE,
   INDEX `idx_device_variable_unit_id`(`unit_id` ASC) USING BTREE,
+  INDEX `idx_point_group_id`(`point_group_id` ASC) USING BTREE,
+  INDEX `idx_group_deleted`(`point_group_id` ASC, `deleted` ASC, `enable` ASC) USING BTREE,
   CONSTRAINT `fk_device_variable_device` FOREIGN KEY (`device_id`) REFERENCES `device` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT `fk_device_variable_unit` FOREIGN KEY (`unit_id`) REFERENCES `unit_dict` (`id`) ON DELETE SET NULL ON UPDATE RESTRICT
 ) ENGINE = InnoDB AUTO_INCREMENT = 992025 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '设备变量表' ROW_FORMAT = Dynamic;

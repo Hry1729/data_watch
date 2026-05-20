@@ -187,7 +187,14 @@ class DataAggregator:
             # 恢复 pending 状态
             for point in batch:
                 self._pending_values[point.variable_id] = (point.value, point.quality)
-                self._pending_time[point.variable_id] = point.timestamp / 1000.0 if isinstance(point.timestamp, (int, float)) else time.time()
+                if isinstance(point.timestamp, datetime):
+                    pending_time = point.timestamp.timestamp()
+                elif isinstance(point.timestamp, (int, float)):
+                    ts = float(point.timestamp)
+                    pending_time = ts / 1000.0 if ts > 1_000_000_000_000 else ts
+                else:
+                    pending_time = time.time()
+                self._pending_time[point.variable_id] = pending_time
             logger.warning("写入失败的 batch 已放回缓存，等待重试 batch_size=%d", len(batch))
 
     async def flush_to_output(self) -> int:

@@ -7,6 +7,8 @@ from typing import Any
 
 from app.core.config import get_settings
 
+_query_semaphore = asyncio.Semaphore(5)
+
 
 @dataclass
 class TDengineClient:
@@ -69,7 +71,8 @@ class TDengineClient:
         return f"{self.quote_identifier(database_name)}.{self.quote_identifier(resolved_table_name)}"
 
     async def fetch_all(self, sql: str, database: str | None = None) -> list[tuple[Any, ...]]:
-        return await asyncio.to_thread(self._fetch_all_sync, sql, database)
+        async with _query_semaphore:
+            return await asyncio.to_thread(self._fetch_all_sync, sql, database)
 
     def _fetch_all_sync(self, sql: str, database: str | None = None) -> list[tuple[Any, ...]]:
         conn = self.connect(database=database)
