@@ -32,6 +32,7 @@ from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
 from device.manager import DeviceManager
+from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
@@ -39,6 +40,8 @@ from data_queue.buffer import DataBuffer, DataPoint
 from data_queue.aggregator import DataAggregator
 from storage.tdengine import TDengineConnection
 from storage.batch_writer import BatchWriter
+from storage.redis_client import get_redis
+from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
 from monitor.metrics import MetricsCollector
@@ -55,6 +58,7 @@ class CollectorApp:
         self._shutdown = asyncio.Event()
         self._aggregator_task = None
         self._health_task = None
+        self._reload_task = None
         self._closed = False
 
         # 初始化组件
@@ -78,10 +82,13 @@ class CollectorApp:
             system_logger=self.system_logger,
         )
         self.scheduler = TaskScheduler()
+        redis_client = get_redis(config)
+        redis_writer = RedisWriter(redis_client, config)
         self.executor = TaskExecutor(
             self.data_buffer,
             device_manager=self.device_manager,
             system_logger=self.system_logger,
+            redis_writer=redis_writer,
         )
         self.health_checker = HealthChecker(
             self.device_manager, self.tdengine, interval=30
@@ -177,6 +184,10 @@ class CollectorApp:
         # 8. 启动健康检查
         self._health_task = asyncio.create_task(self.health_checker.run())
 
+        # 9. 启动配置热更新轮询（仅在 DB 模式下）
+        if self.config_db_manager is not None:
+            self._reload_task = asyncio.create_task(self._config_reload_loop())
+
         # 打印启动信息
         logger.info("Collector started successfully")
         self._log_status()
@@ -218,6 +229,14 @@ class CollectorApp:
                     "aggregator_cache": self.aggregator.cache_size,
                 },
             )
+        if self._reload_task is not None:
+            self._reload_task.cancel()
+            try:
+                await self._reload_task
+            except asyncio.CancelledError:
+                pass
+            self._reload_task = None
+
         if self._health_task is not None:
             self._health_task.cancel()
 
@@ -293,6 +312,61 @@ class CollectorApp:
         """触发停止"""
         logger.info("Stop requested")
         self._shutdown.set()
+
+    async def _config_reload_loop(self) -> None:
+        """每 10 秒轮询 MySQL，检测设备 variable_config_version 变化并热重载。"""
+        tracked: dict[str, int] = {d.device_id: d.config_version for d in self.config.devices}
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.sleep(10)
+                current = await self.config_db_manager.get_device_config_versions()
+                for device_id, new_ver in current.items():
+                    old_ver = tracked.get(device_id)
+                    if old_ver is not None and new_ver != old_ver:
+                        logger.info(
+                            "Device %s config version changed %d -> %d, reloading",
+                            device_id, old_ver, new_ver,
+                        )
+                        await self._reload_device(device_id, new_ver)
+                        tracked[device_id] = new_ver
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("Config reload loop error: %s", exc)
+
+    async def _reload_device(self, device_id: str, new_version: int) -> None:
+        """重建单台设备的变量和采集任务，不影响其他设备。"""
+        device = self.device_manager.get_device(device_id)
+        if device is None or device.device_pk is None:
+            logger.warning("Cannot reload device %s: not found or missing device_pk", device_id)
+            return
+        device_cfg = next((d for d in self.config.devices if d.device_id == device_id), None)
+        if device_cfg is None:
+            return
+        try:
+            new_var_cfgs = await self.config_db_manager.load_variables_for_device(
+                device.device_pk, device_cfg
+            )
+            device.variables = []
+            for var_cfg in new_var_cfgs:
+                device.add_variable(Variable(
+                    variable_id=var_cfg.variable_id,
+                    address=var_cfg.address,
+                    data_type=var_cfg.data_type,
+                    scan_rate=var_cfg.scan_rate,
+                    is_storage=var_cfg.is_storage,
+                    group_code=var_cfg.group_code,
+                ))
+            device.build_scan_tasks()
+            device.config_version = new_version
+            new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
+            await self.scheduler.reload_device_tasks(device_id, new_tasks)
+            logger.info(
+                "Device %s reloaded: version=%d, variables=%d, tasks=%d",
+                device_id, new_version, len(device.variables), len(new_tasks),
+            )
+        except Exception as exc:
+            logger.error("Failed to reload device %s: %s", device_id, exc)
 
     async def _write_fake_bootstrap_points(self) -> None:
         """在假数据模式下，写入一批可识别的联调数据。"""

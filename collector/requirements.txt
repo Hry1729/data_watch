@@ -10,6 +10,7 @@ aiomysql>=0.2.0
 PyMySQL>=1.1.0
 cryptography>=46.0.0
 prometheus-client>=0.14.0
+redis>=5.0.0
 
 # Optional protocol driver
 # asyncua>=1.1.5

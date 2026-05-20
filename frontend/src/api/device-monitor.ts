@@ -441,16 +441,52 @@ export function getRealtimeWebSocketUrl() {
   }
 
   if (!VITE_API_URL || VITE_API_URL === '/') {
-    return appendToken(`${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime`)
+    return appendToken(`${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime-push`)
   }
 
   if (/^https?:\/\//.test(VITE_API_URL)) {
     const normalizedBase = VITE_API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-    return appendToken(`${normalizedBase}${BASE_URL}/ws/realtime`)
+    return appendToken(`${normalizedBase}${BASE_URL}/ws/realtime-push`)
   }
 
   const normalizedPath = VITE_API_URL.startsWith('/') ? VITE_API_URL.slice(1) : VITE_API_URL
-  return appendToken(`${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime`)
+  return appendToken(`${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime-push`)
+}
+
+// ==================== 点位分组与实时窗口（新接口）====================
+
+/** 获取设备点位分组列表 */
+export function getDevicePointGroups(deviceCode: string) {
+  return request.get<Api.DeviceMonitor.PointGroup[]>({
+    url: `${BASE_URL}/device/${deviceCode}/point-groups`
+  })
+}
+
+/** 按分组获取设备变量列表 */
+export function getDeviceVariablesByGroup(deviceCode: string, groupCode: string = 'g001') {
+  return request.get<Api.DeviceMonitor.DeviceVariable[]>({
+    url: `${BASE_URL}/device/${deviceCode}/variables`,
+    params: { group_code: groupCode }
+  })
+}
+
+/** 获取实时窗口数据（短历史帧列表） */
+export function getRealtimeWindow(params: {
+  device_code: string
+  group_code?: string
+  scan_rate_ms?: number
+  limit?: number
+}) {
+  return request.get<{
+    deviceId: number
+    deviceCode: string
+    groupCode: string
+    scanRateMs: number
+    frames: Api.DeviceMonitor.RealtimeWindowFrame[]
+  }>({
+    url: `${BASE_URL}/realtime-window`,
+    params
+  })
 }
 
 // ==================== 历史数据 ====================

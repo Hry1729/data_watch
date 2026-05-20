@@ -10,6 +10,7 @@ from core.config import (
     CollectorConfig,
     InterfaceIngestConfig,
     MySQLConfig,
+    RedisConfig,
     TDengineConfig,
 )
 from core.exceptions import ConfigError
@@ -41,6 +42,7 @@ def load_collector_config(path: str) -> CollectorConfig:
     td_raw = raw.get("tdengine", {})
     mysql_raw = raw.get("mysql", {})
     ingest_raw = raw.get("interface_ingest", {})
+    redis_raw = raw.get("redis", {})
     devices_raw = raw.get("devices", [])
     variables_raw = raw.get("variables", [])
 
@@ -55,6 +57,7 @@ def load_collector_config(path: str) -> CollectorConfig:
             tdengine=TDengineConfig(**td_raw),
             mysql=MySQLConfig(**mysql_raw),
             interface_ingest=InterfaceIngestConfig(**ingest_raw),
+            redis=RedisConfig(**redis_raw),
             devices=[],
             variables=[],
             batch_size=int(runtime.get("batch_size", 1000)),

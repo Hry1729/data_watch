@@ -1,0 +1,31 @@
+[redis]
+host = "127.0.0.1"
+port = 6379
+db = 0
+password = ""
+stream_shard_count = 4
+group_name = "writer_cg"
+consumer_name = "writer-1"
+
+[tdengine]
+host = "127.0.0.1"
+port = 6041
+user = "root"
+password = "taosdata"
+database = "device_data"
+
+[mysql]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+database = "device_watch"
+
+[writer]
+flush_interval_ms = 500
+batch_count = 200
+max_buffer_rows = 2000
+pending_min_idle_ms = 30000
+pending_max_retry = 5
+device_types = ["qc", "asc", "agv"]
+group_codes = ["g001"]

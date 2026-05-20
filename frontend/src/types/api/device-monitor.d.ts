@@ -215,11 +215,13 @@ declare namespace Api {
 
     /** 实时数据项 */
     interface RealtimeData {
+      pointId?: number
       varSeq: number
       pointName: string
       ioAddress: string
       value: string | number | boolean
       updateTime: string
+      quality?: number | null
       dataType?: string
     }
 
@@ -237,6 +239,7 @@ declare namespace Api {
     /** 实时初始化参数 */
     interface RealtimeInitParams {
       deviceId?: number
+      groupCode?: string
     }
 
     /** WS 客户端消息：订阅 */
@@ -273,6 +276,9 @@ declare namespace Api {
       timestamp?: string
       data?: DeviceRealtimeStatus | RealtimeData[]
       devices?: DeviceRealtimeStatus[]
+      device_code?: string
+      group_code?: string
+      values?: Record<string, { v: string; t: number; q: number }>
     }
 
     // ==================== 历史数据相关 ====================
@@ -719,6 +725,38 @@ declare namespace Api {
         countDiff: number
         ratioDiff: number
       }
+    }
+
+    // ==================== 点位分组与实时窗口（新接口）====================
+
+    /** 点位分组信息 */
+    interface PointGroup {
+      group_code: string
+      group_name: string | null
+      active_point_count: number
+      max_point_count: number
+      status: string
+    }
+
+    /** 设备变量（新接口） */
+    interface DeviceVariable {
+      id: number
+      var_name: string
+      var_type: string
+      scan_rate: number
+      is_alarm: number
+      is_storage: number
+      group_index: number
+      td_column_name: string
+    }
+
+    /** 实时窗口帧 */
+    interface RealtimeWindowFrame {
+      device_code: string
+      group_code: string
+      ts: number
+      scan_rate: number
+      values: Record<string, string>
     }
 
     // ==================== 兼容旧页面的视图模型 ====================

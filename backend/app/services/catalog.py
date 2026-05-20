@@ -728,6 +728,7 @@ class CatalogService:
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
                     WHERE dv.id = :point_id
+                      AND COALESCE(dv.deleted, 0) = 0
                     LIMIT 1
                     """
                 ),
@@ -1124,6 +1125,7 @@ class CatalogService:
 
         params = {
             "device_id": device_id,
+            "group_code": self._normalize_point_group_code(payload.get("groupCode") or payload.get("group_code")),
             "var_seq": var_seq,
             "var_name": point_name,
             "io_type": "INPUT" if is_readonly else "RW",
@@ -1139,11 +1141,21 @@ class CatalogService:
         }
 
         try:
+            point_slot = await self._allocate_point_slot_for_update(
+                device_id=device_id,
+                group_code=params["group_code"],
+                actor=actor,
+            )
             result = await self.session.execute(
                 text(
                     """
                     INSERT INTO device_variable (
                         device_id,
+                        point_group_id,
+                        group_index,
+                        td_column_name,
+                        enable,
+                        deleted,
                         var_seq,
                         var_name,
                         io_type,
@@ -1161,6 +1173,11 @@ class CatalogService:
                         update_time
                     ) VALUES (
                         :device_id,
+                        :point_group_id,
+                        :group_index,
+                        :td_column_name,
+                        1,
+                        0,
                         :var_seq,
                         :var_name,
                         :io_type,
@@ -1179,7 +1196,17 @@ class CatalogService:
                     )
                     """
                 ),
-                params,
+                {
+                    **params,
+                    "point_group_id": point_slot["point_group_id"],
+                    "group_index": point_slot["group_index"],
+                    "td_column_name": point_slot["td_column_name"],
+                },
+            )
+            await self._mark_point_created(
+                point_group_id=point_slot["point_group_id"],
+                device_id=device_id,
+                actor=actor,
             )
             await self.session.commit()
         except IntegrityError as exc:
@@ -1239,6 +1266,25 @@ class CatalogService:
             raise ApiError(400, "deviceCode does not match selected device")
         if self._normalize_protocol_key(device_row["driver_name"]) != self._normalize_protocol_key(driver_name):
             raise ApiError(400, "driverName does not match selected device")
+
+        existing_point = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT device_id, point_group_id
+                    FROM device_variable
+                    WHERE id = :point_id
+                      AND COALESCE(deleted, 0) = 0
+                    LIMIT 1
+                    """
+                ),
+                {"point_id": point_id},
+            )
+        ).mappings().first()
+        if existing_point is None:
+            raise ApiError(404, "Point not found")
+        if int(existing_point["device_id"]) != device_id:
+            raise ApiError(400, "point device cannot be changed after creation")
 
         existing_address = (
             await self.session.execute(
@@ -1316,6 +1362,13 @@ class CatalogService:
                 ),
                 params,
             )
+            point_group_id = existing_point["point_group_id"]
+            if point_group_id is not None:
+                await self._mark_point_config_changed(
+                    point_group_id=int(point_group_id),
+                    device_id=device_id,
+                    actor=actor,
+                )
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
@@ -1331,8 +1384,6 @@ class CatalogService:
         locator_device_id: Any = None,
         locator_var_seq: Any = None,
     ) -> dict[str, int]:
-        del actor
-
         locator = await self._resolve_point_locator(
             point_id=point_id,
             device_id=locator_device_id,
@@ -1340,31 +1391,44 @@ class CatalogService:
         )
         point_id = locator["point_id"]
 
-        await self.session.execute(
-            text("DELETE FROM device_variable WHERE id = :point_id"),
-            {"point_id": point_id},
-        )
-        await self.session.commit()
+        row = await self._fetch_point_for_delete(point_id)
+        if row is None:
+            raise ApiError(404, "Point not found")
+
+        try:
+            await self._soft_delete_points([row], actor=actor)
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ApiError(409, "删除点位失败") from exc
         return {"id": point_id}
 
     async def batch_delete_points(self, ids: list[Any], *, actor: str) -> dict[str, int]:
-        del actor
-
         normalized_ids = self._normalize_id_list(ids, field_name="ids")
-        select_stmt = text("SELECT id FROM device_variable WHERE id IN :ids").bindparams(
+        select_stmt = text(
+            """
+            SELECT id, device_id, point_group_id, enable, deleted
+            FROM device_variable
+            WHERE id IN :ids
+              AND COALESCE(deleted, 0) = 0
+            """
+        ).bindparams(
             bindparam("ids", expanding=True)
         )
-        existing_ids = [
-            int(row[0])
-            for row in (await self.session.execute(select_stmt, {"ids": normalized_ids})).all()
+        rows = [
+            dict(row)
+            for row in (await self.session.execute(select_stmt, {"ids": normalized_ids})).mappings().all()
         ]
-        if not existing_ids:
+        if not rows:
             raise ApiError(404, "No points found")
 
-        delete_stmt = text("DELETE FROM device_variable WHERE id IN :ids").bindparams(bindparam("ids", expanding=True))
-        await self.session.execute(delete_stmt, {"ids": existing_ids})
-        await self.session.commit()
-        return {"count": len(existing_ids)}
+        try:
+            await self._soft_delete_points(rows, actor=actor)
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise ApiError(409, "批量删除点位失败") from exc
+        return {"count": len(rows)}
 
     async def _resolve_point_locator(
         self,
@@ -1393,6 +1457,7 @@ class CatalogService:
                         FROM device_variable
                         WHERE device_id = :device_id
                           AND var_seq = :var_seq
+                          AND COALESCE(deleted, 0) = 0
                         LIMIT 1
                         """
                     ),
@@ -1419,9 +1484,10 @@ class CatalogService:
                         id AS point_id,
                         device_id,
                         var_seq
-                    FROM device_variable
-                    WHERE id = :point_id
-                    LIMIT 1
+                        FROM device_variable
+                        WHERE id = :point_id
+                          AND COALESCE(deleted, 0) = 0
+                        LIMIT 1
                     """
                 ),
                 {"point_id": normalized_point_id},
@@ -1434,6 +1500,257 @@ class CatalogService:
             "device_id": int(row["device_id"]),
             "var_seq": int(row["var_seq"]) if row["var_seq"] is not None else 0,
         }
+
+    def _normalize_point_group_code(self, value: Any) -> str:
+        group_code = str(value or "g001").strip().lower()
+        return group_code or "g001"
+
+    def _point_group_no(self, group_code: str) -> int:
+        match = re.search(r"(\d+)$", group_code)
+        return int(match.group(1)) if match else 1
+
+    async def _allocate_point_slot_for_update(
+        self,
+        *,
+        device_id: int,
+        group_code: str,
+        actor: str,
+    ) -> dict[str, Any]:
+        target_code = self._normalize_point_group_code(group_code)
+        actor_value = self._truncate_text(actor, 20)
+
+        while True:
+            row = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                            id,
+                            max_point_count,
+                            used_column_count,
+                            next_column_index
+                        FROM device_point_group
+                        WHERE device_id = :device_id
+                          AND group_code = :group_code
+                        LIMIT 1
+                        FOR UPDATE
+                        """
+                    ),
+                    {"device_id": device_id, "group_code": target_code},
+                )
+            ).mappings().first()
+
+            if row is None:
+                group_no = self._point_group_no(target_code)
+                result = await self.session.execute(
+                    text(
+                        """
+                        INSERT INTO device_point_group (
+                            device_id,
+                            group_no,
+                            group_code,
+                            group_name,
+                            max_point_count,
+                            active_point_count,
+                            disabled_point_count,
+                            deleted_point_count,
+                            used_column_count,
+                            next_column_index,
+                            status,
+                            config_version,
+                            create_user,
+                            update_user
+                        ) VALUES (
+                            :device_id,
+                            :group_no,
+                            :group_code,
+                            :group_name,
+                            3072,
+                            0,
+                            0,
+                            0,
+                            0,
+                            1,
+                            'active',
+                            1,
+                            :actor,
+                            :actor
+                        )
+                        """
+                    ),
+                    {
+                        "device_id": device_id,
+                        "group_no": group_no,
+                        "group_code": target_code,
+                        "group_name": f"第{group_no}组",
+                        "actor": actor_value,
+                    },
+                )
+                row = {
+                    "id": int(result.lastrowid or 0),
+                    "max_point_count": 3072,
+                    "used_column_count": 0,
+                    "next_column_index": 1,
+                }
+
+            max_point_count = int(row["max_point_count"] or 3072)
+            next_column_index = int(row["next_column_index"] or 1)
+            used_column_count = int(row["used_column_count"] or 0)
+            if used_column_count < max_point_count and next_column_index <= max_point_count:
+                return {
+                    "point_group_id": int(row["id"]),
+                    "group_code": target_code,
+                    "group_index": next_column_index,
+                    "td_column_name": f"v{next_column_index:04d}",
+                }
+
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE device_point_group
+                    SET status = 'full',
+                        update_user = :actor,
+                        update_time = NOW()
+                    WHERE id = :group_id
+                    """
+                ),
+                {"group_id": int(row["id"]), "actor": actor_value},
+            )
+            target_code = f"g{self._point_group_no(target_code) + 1:03d}"
+
+    async def _mark_point_created(self, *, point_group_id: int, device_id: int, actor: str) -> None:
+        actor_value = self._truncate_text(actor, 20)
+        await self.session.execute(
+            text(
+                """
+                UPDATE device_point_group
+                SET active_point_count = active_point_count + 1,
+                    used_column_count = used_column_count + 1,
+                    next_column_index = next_column_index + 1,
+                    status = CASE
+                        WHEN used_column_count + 1 >= max_point_count THEN 'full'
+                        ELSE 'active'
+                    END,
+                    config_version = config_version + 1,
+                    update_user = :actor,
+                    update_time = NOW()
+                WHERE id = :point_group_id
+                """
+            ),
+            {"point_group_id": point_group_id, "actor": actor_value},
+        )
+        await self._bump_device_variable_config(device_id)
+
+    async def _mark_point_config_changed(self, *, point_group_id: int, device_id: int, actor: str) -> None:
+        actor_value = self._truncate_text(actor, 20)
+        await self.session.execute(
+            text(
+                """
+                UPDATE device_point_group
+                SET config_version = config_version + 1,
+                    update_user = :actor,
+                    update_time = NOW()
+                WHERE id = :point_group_id
+                """
+            ),
+            {"point_group_id": point_group_id, "actor": actor_value},
+        )
+        await self._bump_device_variable_config(device_id)
+
+    async def _bump_device_variable_config(self, device_id: int) -> None:
+        await self.session.execute(
+            text(
+                """
+                UPDATE device
+                SET variable_config_version = COALESCE(variable_config_version, 1) + 1,
+                    update_time = NOW()
+                WHERE id = :device_id
+                """
+            ),
+            {"device_id": device_id},
+        )
+
+    async def _fetch_point_for_delete(self, point_id: int) -> dict[str, Any] | None:
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT id, device_id, point_group_id, enable, deleted
+                    FROM device_variable
+                    WHERE id = :point_id
+                      AND COALESCE(deleted, 0) = 0
+                    LIMIT 1
+                    """
+                ),
+                {"point_id": point_id},
+            )
+        ).mappings().first()
+        return dict(row) if row is not None else None
+
+    async def _soft_delete_points(self, rows: list[dict[str, Any]], *, actor: str) -> None:
+        actor_value = self._truncate_text(actor, 20)
+        ids = [int(row["id"]) for row in rows]
+        update_stmt = text(
+            """
+            UPDATE device_variable
+            SET deleted = 1,
+                enable = 0,
+                update_user = :actor,
+                update_time = NOW()
+            WHERE id IN :ids
+              AND COALESCE(deleted, 0) = 0
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        await self.session.execute(update_stmt, {"ids": ids, "actor": actor_value})
+
+        by_group: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            point_group_id = row.get("point_group_id")
+            if point_group_id is None:
+                continue
+            group = by_group.setdefault(
+                int(point_group_id),
+                {"device_id": int(row["device_id"]), "active": 0, "disabled": 0},
+            )
+            if int(row.get("enable") or 0) == 1:
+                group["active"] += 1
+            else:
+                group["disabled"] += 1
+
+        for point_group_id, counts in by_group.items():
+            await self.session.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM device_point_group
+                    WHERE id = :point_group_id
+                    FOR UPDATE
+                    """
+                ),
+                {"point_group_id": point_group_id},
+            )
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE device_point_group
+                    SET active_point_count = GREATEST(active_point_count - :active_count, 0),
+                        disabled_point_count = GREATEST(disabled_point_count - :disabled_count, 0),
+                        deleted_point_count = deleted_point_count + :deleted_count,
+                        config_version = config_version + 1,
+                        update_user = :actor,
+                        update_time = NOW()
+                    WHERE id = :point_group_id
+                    """
+                ),
+                {
+                    "point_group_id": point_group_id,
+                    "active_count": counts["active"],
+                    "disabled_count": counts["disabled"],
+                    "deleted_count": counts["active"] + counts["disabled"],
+                    "actor": actor_value,
+                },
+            )
+            await self._bump_device_variable_config(int(counts["device_id"]))
 
     async def _fetch_device_group_rows(self) -> list[dict[str, Any]]:
         rows = (
@@ -1528,6 +1845,7 @@ class CatalogService:
                     FROM device_variable AS dv
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+                    WHERE COALESCE(dv.deleted, 0) = 0
                     ORDER BY dv.id ASC
                     """
                 )
@@ -2453,3 +2771,77 @@ class CatalogService:
         if isinstance(value, float) and value.is_integer():
             return int(value)
         return value
+
+    async def get_device_point_groups(self, device_code: str) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                        dpg.group_code,
+                        dpg.group_name,
+                        dpg.active_point_count,
+                        dpg.max_point_count,
+                        dpg.status
+                    FROM device_point_group AS dpg
+                    JOIN device AS d ON d.id = dpg.device_id
+                    WHERE d.device_code = :device_code
+                    ORDER BY dpg.group_no
+                    """
+                ),
+                {"device_code": device_code},
+            )
+        ).mappings().all()
+
+        return [
+            {
+                "group_code": row["group_code"],
+                "group_name": row["group_name"],
+                "active_point_count": row["active_point_count"],
+                "max_point_count": row["max_point_count"],
+                "status": row["status"],
+            }
+            for row in rows
+        ]
+
+    async def get_device_variables_by_group(self, device_code: str, group_code: str) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                        dv.id AS var_id,
+                        COALESCE(dv.var_name, CAST(dv.var_seq AS CHAR), '') AS var_name,
+                        dv.var_type,
+                        dv.scan_rate,
+                        dv.is_alarm,
+                        dv.is_storage,
+                        dv.group_index,
+                        dv.td_column_name
+                    FROM device_variable AS dv
+                    JOIN device AS d ON d.id = dv.device_id
+                    JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
+                    WHERE d.device_code = :device_code
+                      AND dpg.group_code = :group_code
+                      AND dv.deleted = 0
+                      AND dv.enable = 1
+                    ORDER BY dv.group_index ASC
+                    """
+                ),
+                {"device_code": device_code, "group_code": group_code},
+            )
+        ).mappings().all()
+
+        return [
+            {
+                "id": int(row["var_id"]),
+                "var_name": row["var_name"] or "",
+                "var_type": row["var_type"] or "",
+                "scan_rate": row["scan_rate"],
+                "is_alarm": row["is_alarm"],
+                "is_storage": row["is_storage"],
+                "group_index": row["group_index"],
+                "td_column_name": row["td_column_name"] or "",
+            }
+            for row in rows
+        ]

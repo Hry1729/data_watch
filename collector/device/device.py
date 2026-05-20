@@ -26,6 +26,7 @@ class Variable:
     data_type: str = "INT"
     scan_rate: float = 1.0  # 采集周期（秒）
     is_storage: bool = True  # 是否存储到TDengine
+    group_code: str = "g001"  # 所属点位分组编码
     last_value: Optional[Any] = None
     last_storage_time: Optional[float] = None  # 上次入库时间戳
 
@@ -71,12 +72,14 @@ class Device:
         protocol: str,
         connection_config: Dict[str, Any],
         device_pk: Optional[int] = None,
+        config_version: int = 1,
     ):
         self.device_id = device_id
         self.device_type = device_type
         self.protocol = protocol
         self.connection_config = connection_config
         self.device_pk = device_pk  # MySQL device.id
+        self.config_version = config_version
         self.status = DeviceStatus.OFFLINE
         self.variables: List[Variable] = []
         self.scan_tasks: List[ScanTask] = []

@@ -16,7 +16,7 @@
 
 import asyncio
 import time
-from typing import Callable, Coroutine, Dict, List
+from typing import Callable, Coroutine, Dict, List, Optional
 
 from core.logger import get_logger
 from collector.task import CollectTask
@@ -34,6 +34,8 @@ class TaskScheduler:
         self.tasks: Dict[str, CollectTask] = {}
         self._running = False
         self._loop_tasks: List[asyncio.Task] = []
+        self._device_loop_tasks: Dict[str, List[asyncio.Task]] = {}
+        self._execute_func: Optional[Callable] = None
 
     def add_task(self, task: CollectTask) -> None:
         """添加采集任务"""
@@ -52,12 +54,16 @@ class TaskScheduler:
             execute_func: 协程函数，接收CollectTask参数，执行采集
         """
         self._running = True
+        self._execute_func = execute_func
         logger.info("Scheduler starting with %s tasks", len(self.tasks))
 
         # 为每个任务创建独立的循环
         for task in self.tasks.values():
             coro = self._run_loop(task, execute_func)
-            self._loop_tasks.append(asyncio.create_task(coro))
+            loop_task = asyncio.create_task(coro)
+            self._loop_tasks.append(loop_task)
+            device_id = task.device.device_id
+            self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
 
     async def _run_loop(
         self, task: CollectTask, execute_func: Callable
@@ -100,6 +106,37 @@ class TaskScheduler:
             # else: 执行超时，立即进入下一轮
 
         logger.info("Task %s loop stopped", task.task_name)
+
+    async def reload_device_tasks(
+        self, device_id: str, new_tasks: List[CollectTask]
+    ) -> None:
+        """取消指定设备的旧采集循环，用新任务重启。不影响其他设备。"""
+        # 取消旧循环
+        for loop_task in self._device_loop_tasks.pop(device_id, []):
+            loop_task.cancel()
+            try:
+                await loop_task
+            except asyncio.CancelledError:
+                pass
+
+        # 移除旧 CollectTask 记录
+        old_names = [n for n, ct in self.tasks.items() if ct.device.device_id == device_id]
+        for name in old_names:
+            del self.tasks[name]
+
+        # 注册并启动新任务
+        if self._execute_func is None:
+            return
+        for task in new_tasks:
+            self.tasks[task.task_name] = task
+            coro = self._run_loop(task, self._execute_func)
+            loop_task = asyncio.create_task(coro)
+            self._loop_tasks.append(loop_task)
+            self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
+
+        logger.info(
+            "Device %s reloaded: %d new collect tasks", device_id, len(new_tasks)
+        )
 
     async def stop(self) -> None:
         """停止调度器"""
