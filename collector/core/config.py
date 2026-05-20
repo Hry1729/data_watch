@@ -84,6 +84,7 @@ class DeviceConfig:
     scan_rate: float = 1.0  # seconds
     device_pk: Optional[int] = None  # MySQL device.id
     opc_server: Optional[str] = None  # OPC DA ProgID，从 comm_protocol.server 获取
+    config_version: int = 1  # device.variable_config_version，用于 Redis Stream entry
 
 
 @dataclass
@@ -96,6 +97,18 @@ class VariableConfig:
     scan_rate: float = 1.0  # seconds
     is_storage: bool = True  # whether to store in TDengine
     var_seq: int = 0  # canonical TDengine point sequence
+    group_code: str = "g001"  # 所属点位分组编码，来自 device_point_group.group_code
+
+
+@dataclass
+class RedisConfig:
+    """Redis 连接与 Stream 配置"""
+    host: str = "127.0.0.1"
+    port: int = 6379
+    db: int = 0
+    password: str = ""
+    stream_shard_count: int = 4
+    stream_maxlen: int = 500000
 
 
 @dataclass
@@ -105,6 +118,7 @@ class CollectorConfig:
     tdengine: TDengineConfig = field(default_factory=TDengineConfig)
     mysql: MySQLConfig = field(default_factory=MySQLConfig)
     interface_ingest: InterfaceIngestConfig = field(default_factory=InterfaceIngestConfig)
+    redis: RedisConfig = field(default_factory=RedisConfig)
 
     # Devices
     devices: List[DeviceConfig] = field(default_factory=list)

@@ -214,9 +214,10 @@ class DeviceManager:
                     "port": dev_cfg.port,
                     "rack": dev_cfg.rack,
                     "slot": dev_cfg.slot,
-                    "opc_server": dev_cfg.opc_server,  # OPC DA ProgID
+                    "opc_server": dev_cfg.opc_server,
                 },
                 device_pk=dev_cfg.device_pk,
+                config_version=dev_cfg.config_version,
             )
             device_map[dev_cfg.device_id] = device
 
@@ -235,6 +236,7 @@ class DeviceManager:
                 data_type=var_cfg.data_type,
                 scan_rate=var_cfg.scan_rate,
                 is_storage=var_cfg.is_storage,
+                group_code=var_cfg.group_code,
             )
             device.add_variable(variable)
 

@@ -39,3 +39,11 @@ path = "/ingest"
 api_key = ""
 max_batch_size = 1000
 
+[redis]
+host = "127.0.0.1"
+port = 6379
+db = 0
+password = ""
+stream_shard_count = 4
+stream_maxlen = 500000  # 约 3 分钟停机容量（305 台 × 10 帧/s × 180s ≈ 549000）
+

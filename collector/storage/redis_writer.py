@@ -1,0 +1,71 @@
+"""Redis 写入封装（COL-2）：latest Hash / window List / stream Stream。"""
+
+from __future__ import annotations
+
+import json
+
+import redis
+
+
+class RedisWriter:
+    def __init__(self, r: redis.Redis, config) -> None:
+        self.r = r
+        self.shard_count: int = config.redis.stream_shard_count
+        self._maxlen: int = config.redis.stream_maxlen
+
+    def write_latest(
+        self,
+        device_code: str,
+        group_code: str,
+        fields: dict[str, dict],
+    ) -> None:
+        """写 latest Hash。fields: {var_id: {"v": str, "t": int, "q": int}}"""
+        key = f"rt:latest:{device_code}:{group_code}"
+        mapping = {
+            str(k): json.dumps(v, separators=(",", ":"))
+            for k, v in fields.items()
+        }
+        self.r.hset(key, mapping=mapping)
+        # 不设 TTL，由设备管理操作显式清理
+
+    def write_window(
+        self,
+        device_code: str,
+        group_code: str,
+        scan_rate_ms: int,
+        frame: dict,
+    ) -> None:
+        """写 window List，保留最近 10 帧。frame: 完整帧 JSON 对象"""
+        key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
+        pipe = self.r.pipeline(transaction=False)
+        pipe.lpush(key, json.dumps(frame, separators=(",", ":")))
+        pipe.ltrim(key, 0, 9)
+        pipe.execute()
+
+    def write_stream(
+        self,
+        device_code: str,
+        device_type: str,
+        group_code: str,
+        scan_rate_ms: int,
+        ts: int,
+        config_version: int,
+        values: dict[str, str],
+    ) -> None:
+        """写 stream Stream。values: {var_id: value_str}，已过滤 STRING 和 is_storage=0"""
+        shard_no = hash(device_code) % self.shard_count
+        stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
+        self.r.xadd(
+            stream_key,
+            {
+                "device_code": device_code,
+                "device_type": device_type,
+                "group_code": group_code,
+                "scan_rate": str(scan_rate_ms),
+                "ts": str(ts),
+                "config_version": str(config_version),
+                "values": json.dumps(values, separators=(",", ":")),
+            },
+            maxlen=self._maxlen,
+            approximate=True,
+        )

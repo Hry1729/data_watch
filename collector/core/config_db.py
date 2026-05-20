@@ -48,6 +48,7 @@ class DBDevice(Base):
     slot: Mapped[int] = mapped_column()
     scan_cycle: Mapped[int] = mapped_column(default=1000)
     update_time: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    variable_config_version: Mapped[Optional[int]] = mapped_column(nullable=True)
 
 
 class DBDeviceVariable(Base):
@@ -55,6 +56,7 @@ class DBDeviceVariable(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column()
+    point_group_id: Mapped[Optional[int]] = mapped_column(nullable=True)
     var_seq: Mapped[int] = mapped_column()
     var_name: Mapped[Optional[str]] = mapped_column(nullable=True)
     io_type: Mapped[Optional[str]] = mapped_column(nullable=True)
@@ -63,6 +65,16 @@ class DBDeviceVariable(Base):
     scan_rate: Mapped[Optional[int]] = mapped_column(nullable=True)
     is_alarm: Mapped[Optional[int]] = mapped_column(nullable=True)
     is_storage: Mapped[int] = mapped_column()
+    enable: Mapped[Optional[int]] = mapped_column(nullable=True)
+    deleted: Mapped[Optional[int]] = mapped_column(nullable=True)
+
+
+class DBDevicePointGroup(Base):
+    __tablename__ = "device_point_group"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    device_id: Mapped[int] = mapped_column()
+    group_code: Mapped[str] = mapped_column()
 
 
 class DBDeviceType(Base):
@@ -254,6 +266,7 @@ class ConfigDBManager:
                         DBDevice.scan_cycle,
                         DBDevice.protocol_id,
                         DBDevice.type_id,
+                        DBDevice.variable_config_version,
                         DBCommProtocol.protocol,
                         DBCommProtocol.port,
                         DBCommProtocol.server,
@@ -293,7 +306,8 @@ class ConfigDBManager:
                     slot=int(row.slot or 1),
                     scan_rate=scan_rate,
                     device_pk=int(row.id),
-                    opc_server=row.server,  # 从 comm_protocol.server 获取
+                    opc_server=row.server,
+                    config_version=int(row.variable_config_version or 1),
                 )
                 devices.append(device_cfg)
                 by_device_pk[int(row.id)] = device_cfg
@@ -308,8 +322,13 @@ class ConfigDBManager:
                         DBDeviceVariable.var_address,
                         DBDeviceVariable.scan_rate,
                         DBDeviceVariable.is_storage,
+                        DBDevicePointGroup.group_code,
                     )
-                    .where(DBDeviceVariable.is_storage == 1)
+                    .outerjoin(
+                        DBDevicePointGroup,
+                        DBDeviceVariable.point_group_id == DBDevicePointGroup.id,
+                    )
+                    .where(DBDeviceVariable.enable == 1, DBDeviceVariable.deleted == 0)
                     .order_by(DBDeviceVariable.device_id, DBDeviceVariable.id)
                 )
             ).all()
@@ -336,14 +355,15 @@ class ConfigDBManager:
                         address=row.var_address,
                         data_type=(row.var_type or "INT").upper(),
                         scan_rate=scan_rate,
-                        is_storage=True,
+                        is_storage=bool(row.is_storage),
                         var_seq=var_seq,
+                        group_code=str(row.group_code or "g001"),
                     )
                 )
 
             if not variables:
                 logger.warning(
-                    "No storage variables found in MySQL table `device_variable` (is_storage=1); collector will start without collection tasks."
+                    "No enabled variables found in MySQL table `device_variable`; collector will start without collection tasks."
                 )
                 return devices, []
 
@@ -526,6 +546,53 @@ class ConfigDBManager:
 
         if system_log_payload is not None:
             await self.write_system_log(**system_log_payload)
+
+    async def get_device_config_versions(self) -> Dict[str, int]:
+        """返回所有启用设备的 {device_code: variable_config_version}。"""
+        async with self.get_session() as session:
+            rows = (await session.execute(
+                select(DBDevice.device_code, DBDevice.variable_config_version)
+                .where(DBDevice.enable == 1)
+            )).all()
+            return {row.device_code: int(row.variable_config_version or 1) for row in rows}
+
+    async def load_variables_for_device(
+        self, device_pk: int, device_cfg: "DeviceConfig"
+    ) -> List[VariableConfig]:
+        """重新加载单台设备的变量配置。"""
+        async with self.get_session() as session:
+            rows = (await session.execute(
+                select(
+                    DBDeviceVariable.id,
+                    DBDeviceVariable.var_seq,
+                    DBDeviceVariable.var_type,
+                    DBDeviceVariable.var_address,
+                    DBDeviceVariable.scan_rate,
+                    DBDeviceVariable.is_storage,
+                    DBDevicePointGroup.group_code,
+                )
+                .outerjoin(DBDevicePointGroup, DBDeviceVariable.point_group_id == DBDevicePointGroup.id)
+                .where(
+                    DBDeviceVariable.device_id == device_pk,
+                    DBDeviceVariable.enable == 1,
+                    DBDeviceVariable.deleted == 0,
+                )
+                .order_by(DBDeviceVariable.id)
+            )).all()
+            variables = []
+            for row in rows:
+                scan_rate = self._normalize_scan_rate(row.scan_rate, device_cfg.scan_rate)
+                variables.append(VariableConfig(
+                    variable_id=str(row.id),
+                    device_id=device_cfg.device_id,
+                    address=row.var_address,
+                    data_type=(row.var_type or "INT").upper(),
+                    scan_rate=scan_rate,
+                    is_storage=bool(row.is_storage),
+                    var_seq=int(row.var_seq or 0),
+                    group_code=str(row.group_code or "g001"),
+                ))
+            return variables
 
 
 _config_manager: Optional[ConfigDBManager] = None

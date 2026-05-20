@@ -46,6 +46,29 @@
       </div>
     </ElCard>
 
+    <!-- 设备离线横幅 -->
+    <div v-if="(!wsConnected || deviceOffline) && isMonitoring" class="offline-banner">
+      <span>{{ !wsConnected ? 'WebSocket 连接已断开，正在重连...' : '设备数据离线，等待采集恢复...' }}</span>
+    </div>
+
+    <!-- 点位分组选择器 -->
+    <ElCard v-if="currentDevice && pointGroups.length > 0" class="group-tab-card">
+      <div class="group-tab-bar">
+        <span class="group-tab-label">点位分组：</span>
+        <div class="group-tabs">
+          <button
+            v-for="g in pointGroups"
+            :key="g.group_code"
+            :class="['group-tab-btn', { active: activeGroupCode === g.group_code }]"
+            @click="switchPointGroup(g.group_code)"
+          >
+            {{ g.group_code }}
+            <span class="group-tab-count">{{ g.active_point_count }}/{{ g.max_point_count }}</span>
+          </button>
+        </div>
+      </div>
+    </ElCard>
+
     <!-- 主内容区 -->
     <div class="main-content">
       <!-- 中央趋势图区域 -->
@@ -123,7 +146,10 @@
           <div v-for="point in selectedPoints" :key="point.varSeq" class="point-card">
             <div class="point-card-name">{{ point.pointName }}</div>
             <div class="point-card-address">{{ point.ioAddress }}</div>
-            <div class="point-card-value" :style="{ color: getPointColor(point.varSeq) }">
+            <div
+              class="point-card-value"
+              :style="{ color: realtimeQuality.get(point.varSeq) === 0 ? '#d44f63' : getPointColor(point.varSeq) }"
+            >
               {{ formatPointValue(point) }}
             </div>
           </div>
@@ -279,7 +305,7 @@ import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
-import { fetchMonitorDeviceTree, fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl } from '@/api/device-monitor'
+import { fetchMonitorDeviceTree, fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl, getDevicePointGroups } from '@/api/device-monitor'
 import {
   ensurePerspectiveViewerRuntime,
   type PerspectiveTableClient,
@@ -292,6 +318,7 @@ defineOptions({ name: 'RealtimeMonitor' })
 type DeviceType = Api.DeviceMonitor.DeviceTypeItem
 
 interface PointInfo {
+  pointId?: number
   varSeq: number
   pointName: string
   ioAddress: string
@@ -336,6 +363,7 @@ const realtimeValues = ref<Map<number, number | string>>(new Map())
 const realtimeRecords = ref<RealtimeDataRecord[]>([])
 const isMonitoring = ref(false)
 const wsConnected = ref(false)
+const deviceOffline = ref(false)
 const refreshRate = ref(1000)
 const chartType = ref<'line' | 'area' | 'status'>('line')
 const chartSettingsVisible = ref(false)
@@ -343,6 +371,13 @@ const separateBoolChart = ref(true) // 默认分离 Bool 图表
 const lastSyncTime = ref('')
 const tdengineConnected = ref(true)
 const perspectiveReady = ref(false)
+
+// 点位质量（q=0 表示数据无效，显示为红色）
+const realtimeQuality = ref<Map<number, number>>(new Map())
+
+// 点位分组
+const pointGroups = ref<Api.DeviceMonitor.PointGroup[]>([])
+const activeGroupCode = ref<string>('g001')
 
 // 状态持久化
 const STORAGE_KEY = 'realtime-monitor-state'
@@ -355,6 +390,7 @@ const saveStateToStorage = () => {
     deviceCode: currentDevice.value?.deviceCode,
     deviceName: currentDevice.value?.deviceName,
     selectedPoints: selectedPoints.value.map((p) => ({
+      pointId: p.pointId,
       varSeq: p.varSeq,
       pointName: p.pointName,
       ioAddress: p.ioAddress,
@@ -419,6 +455,7 @@ const loadStateFromStorage = (): boolean => {
         deviceName: state.deviceName
       }
       selectedPoints.value = state.selectedPoints.map((p: any) => ({
+        pointId: p.pointId,
         varSeq: p.varSeq,
         pointName: p.pointName,
         ioAddress: p.ioAddress,
@@ -652,6 +689,7 @@ const loadDeviceTree = async () => {
     if (devices.length > 0) {
       currentDevice.value = devices[0]
       await loadPointList(devices[0].deviceId)
+      void loadPointGroups(devices[0].deviceCode)
     }
   } catch (error) {
     console.error('加载设备列表失败:', error)
@@ -663,8 +701,9 @@ const loadPointList = async (deviceId?: number) => {
   if (!deviceId) return
 
   try {
-    const snapshot = await fetchRealtimeInit({ deviceId })
+    const snapshot = await fetchRealtimeInit({ deviceId, groupCode: activeGroupCode.value })
     pointList.value = (snapshot.data || []).map((item) => ({
+      pointId: item.pointId,
       varSeq: item.varSeq,
       pointName: item.pointName,
       ioAddress: item.ioAddress,
@@ -672,6 +711,48 @@ const loadPointList = async (deviceId?: number) => {
     }))
   } catch (error) {
     console.error('加载点位列表失败:', error)
+  }
+}
+
+// 加载点位分组
+const loadPointGroups = async (deviceCode?: string) => {
+  pointGroups.value = []
+  if (!deviceCode) return
+  try {
+    const groups = await getDevicePointGroups(deviceCode)
+    pointGroups.value = groups || []
+  } catch {
+    // 新接口不可用时静默失败，不影响现有功能
+    pointGroups.value = []
+  }
+}
+
+// 切换点位分组
+const switchPointGroup = async (groupCode: string) => {
+  if (activeGroupCode.value === groupCode) return
+  const previousGroupCode = activeGroupCode.value
+  activeGroupCode.value = groupCode
+  selectedPoints.value = []
+  tempSelectedVarSeqs.value = []
+  realtimeValues.value.clear()
+  realtimeQuality.value.clear()
+  realtimeRecords.value = []
+  await clearPerspectiveTable()
+
+  if (currentDevice.value) {
+    await loadPointList(currentDevice.value.deviceId)
+    if (websocket.value?.readyState === WebSocket.OPEN) {
+      sendWsMessage({
+        action: 'unsubscribe',
+        device_code: currentDevice.value.deviceCode,
+        group_code: previousGroupCode
+      })
+      sendWsMessage({
+        action: 'subscribe',
+        device_code: currentDevice.value.deviceCode,
+        group_code: activeGroupCode.value
+      })
+    }
   }
 }
 
@@ -692,10 +773,14 @@ const selectDevice = async (device: DeviceInfo) => {
   selectedPoints.value = []
   pointList.value = []
   realtimeValues.value.clear()
+  realtimeQuality.value.clear()
   realtimeRecords.value = []
+  activeGroupCode.value = 'g001'
+  deviceOffline.value = false
   clearPerspectiveTable()
   deviceSelectorVisible.value = false
   await loadPointList(device.deviceId)
+  void loadPointGroups(device.deviceCode)
 }
 
 // 清理 Perspective Table（先删除 viewer，再删除 table）
@@ -836,6 +921,7 @@ watch(refreshRate, (val) => {
 const stopMonitor = () => {
   // 停止接收新数据，但不清空历史数据
   isMonitoring.value = false
+  deviceOffline.value = false
   closeWebSocket()
 }
 
@@ -867,12 +953,13 @@ const connectWebSocket = () => {
       reconnectAttempts.value = 0
       startHeartbeat()
 
-      // 同步当前刷新率配置
-      sendWsMessage({ action: 'config', refreshRate: refreshRate.value })
-
       // 订阅当前设备
       if (currentDevice.value) {
-        sendWsMessage({ action: 'subscribe', channel: 'realtime', deviceIds: [currentDevice.value.deviceId] })
+        sendWsMessage({
+          action: 'subscribe',
+          device_code: currentDevice.value.deviceCode,
+          group_code: activeGroupCode.value
+        })
       }
     }
 
@@ -1017,6 +1104,19 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
   }
 }
 
+const normalizeWsPointValue = (dataType: string | undefined, value: unknown) => {
+  const type = (dataType || '').toUpperCase()
+  if (type === 'BOOL') {
+    if (typeof value === 'boolean') return value
+    return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
+  }
+  if (['INT', 'DINT', 'WORD', 'DWORD', 'REAL', 'FLOAT'].includes(type)) {
+    const num = Number(value)
+    return Number.isFinite(num) ? num : String(value ?? '')
+  }
+  return value as string | number | boolean
+}
+
 // WebSocket 消息处理
 const handleWsMessage = (payload: Record<string, unknown>) => {
   if (payload.action === 'pong' || payload.type === 'pong') return
@@ -1024,7 +1124,46 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
   // 提取点位数据：snapshot 使用 devices 字段，update 使用 data 或 data.data
   let pointsList: Array<Record<string, unknown>> | undefined
 
-  if (payload.type === 'snapshot') {
+  if (payload.type === 'offline') {
+    if (payload.device_code && currentDevice.value?.deviceCode !== payload.device_code) return
+    deviceOffline.value = true
+    realtimeValues.value.clear()
+    realtimeQuality.value.clear()
+    return
+  }
+
+  if (
+    (payload.type === 'snapshot' || payload.type === 'diff') &&
+    payload.values &&
+    typeof payload.values === 'object'
+  ) {
+    if (payload.device_code && currentDevice.value?.deviceCode !== payload.device_code) return
+    if (payload.group_code && activeGroupCode.value !== payload.group_code) return
+    deviceOffline.value = false
+
+    const pointById = new Map(
+      pointList.value
+        .filter((point) => point.pointId !== undefined)
+        .map((point) => [String(point.pointId), point])
+    )
+    const convertedPoints: Array<Record<string, unknown>> = []
+    for (const [pointId, entry] of Object.entries(
+      payload.values as Record<string, { v: string; t: number; q: number }>
+    )) {
+      const point = pointById.get(pointId)
+      if (!point) continue
+      convertedPoints.push({
+        pointId: Number(pointId),
+        varSeq: point.varSeq,
+        pointName: point.pointName,
+        ioAddress: point.ioAddress,
+        dataType: point.dataType,
+        value: normalizeWsPointValue(point.dataType, entry?.v),
+        quality: entry?.q
+      })
+    }
+    pointsList = convertedPoints
+  } else if (payload.type === 'snapshot') {
     // 订阅响应：{ type: "snapshot", devices: [{ data: [...] }] }
     const devices = payload.devices as Array<Record<string, unknown>> | undefined
     if (Array.isArray(devices) && devices.length > 0) {
@@ -1049,9 +1188,13 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     const varSeq = item.varSeq as number
     const value = item.value
     const pointName = item.pointName as string
+    const quality = item.quality as number | undefined
 
     if (varSeq !== undefined) {
       realtimeValues.value.set(varSeq, value as number | string)
+      if (typeof quality === 'number') {
+        realtimeQuality.value.set(varSeq, quality)
+      }
 
       // 添加到趋势记录
       if (selectedPoints.value.some((p) => p.varSeq === varSeq)) {
@@ -1368,6 +1511,10 @@ onMounted(async () => {
 
   // 恢复之前的状态
   const wasMonitoring = loadStateFromStorage()
+  if (currentDevice.value) {
+    await loadPointList(currentDevice.value.deviceId)
+    void loadPointGroups(currentDevice.value.deviceCode)
+  }
 
   // 无论是否正在监控，都先初始化 Perspective 并恢复快照
   if (currentDevice.value && selectedPoints.value.length > 0) {
@@ -1382,8 +1529,8 @@ onMounted(async () => {
 
     // 如果之前正在监控，再连接 WebSocket 继续接收新数据
     if (wasMonitoring) {
-      connectWebSocket()
       isMonitoring.value = true
+      connectWebSocket()
     }
   }
 })
@@ -1395,6 +1542,7 @@ onUnmounted(() => {
     deviceCode: currentDevice.value?.deviceCode,
     deviceName: currentDevice.value?.deviceName,
     selectedPoints: selectedPoints.value.map((p) => ({
+      pointId: p.pointId,
       varSeq: p.varSeq,
       pointName: p.pointName,
       ioAddress: p.ioAddress,
@@ -2031,6 +2179,86 @@ watch(separateBoolChart, async () => {
   gap: 16px;
   justify-content: flex-end;
   padding: 8px 0;
+}
+
+// 设备离线横幅
+.offline-banner {
+  padding: 10px 22px;
+  background: rgba(212, 79, 99, 0.1);
+  border: 1px solid rgba(212, 79, 99, 0.3);
+  border-radius: 12px;
+  color: #d44f63;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+
+// 点位分组选择器
+.group-tab-card {
+  border: 1px solid var(--art-card-border);
+  border-radius: 14px;
+
+  :deep(.el-card__body) {
+    padding: 10px 18px;
+  }
+}
+
+.group-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.group-tab-label {
+  font-size: 13px;
+  color: var(--art-gray-600);
+  white-space: nowrap;
+}
+
+.group-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.group-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: 1px solid var(--art-gray-300);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  font-size: 13px;
+  color: var(--art-gray-700);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+
+  &:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+  }
+
+  &.active {
+    border-color: var(--el-color-primary);
+    background: rgba(74, 108, 247, 0.08);
+    color: var(--el-color-primary);
+    font-weight: 500;
+  }
+}
+
+.group-tab-count {
+  font-size: 11px;
+  color: var(--art-gray-500);
+  background: var(--art-gray-200);
+  border-radius: 6px;
+  padding: 1px 5px;
+
+  .active & {
+    background: rgba(74, 108, 247, 0.12);
+    color: var(--el-color-primary);
+  }
 }
 
 // 响应式

@@ -450,6 +450,33 @@ async def delete_point(
         return success_response(data=data)
 
 
+@router.get("/api/device-monitor/device/{device_code}/point-groups")
+async def device_point_groups(
+    device_code: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_device_point_groups(device_code)
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/device/{device_code}/variables")
+async def device_variables_by_group(
+    device_code: str,
+    group_code: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_device_variables_by_group(device_code, group_code or "g001")
+        return success_response(data=data)
+
+
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in params.items() if value is not None}
 

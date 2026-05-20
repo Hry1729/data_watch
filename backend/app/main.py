@@ -18,9 +18,10 @@ from turboapi.websockets import WebSocket as TurboWebSocket
 from turboapi.websockets import WebSocketDisconnect
 
 from app.api.router import api_router
-from app.api.routes.monitor import register_realtime_websocket
+from app.api.routes.monitor import register_ws_push_websocket
 from app.api.routes.perspective import register_perspective_websocket
 from app.core.config import get_settings
+from app.db.redis import close_redis
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.log_writer import write_system_log, write_system_log_sync
@@ -612,6 +613,10 @@ async def lifespan(_: TurboAPI):
         if not startup_completed:
             return
 
+        # 关闭 Redis 连接
+        await close_redis()
+        logger.info("Redis connection closed")
+
         # 停止日志定时任务调度器
         await stop_log_scheduler()
         logger.info("Log scheduler stopped")
@@ -643,6 +648,6 @@ def create_app() -> TurboAPI:
     )
     register_exception_handlers(app)
     app.include_router(api_router)
-    register_realtime_websocket(app)
+    register_ws_push_websocket(app)
     register_perspective_websocket(app)
     return app

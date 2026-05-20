@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from collections import OrderedDict
 from datetime import datetime
-import re
+import json
 from typing import Any
 
 from sqlalchemy import text
@@ -11,13 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.core.time_utils import now_local
+from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
 
 
 ONLINE_MAX_AGE_SECONDS = 120
 UNSTABLE_MAX_AGE_SECONDS = 900
-DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
-IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 
 class MonitorService:
@@ -79,16 +77,32 @@ class MonitorService:
 
         return list(groups.values())
 
-    async def get_realtime_init(self, device_id: int | None) -> dict[str, Any]:
+    async def get_realtime_init(self, device_id: int | None, group_code: str = "g001") -> dict[str, Any]:
         device = await self._fetch_target_device(device_id)
         if device is None:
             raise ApiError(404, "Device not found")
 
         device_id_value = int(device["device_id"])
         device_code = str(device["device_code"])
-        device_type_code = str(device.get("device_type_code") or "")
-        points = await self._fetch_device_points(device_id_value)
-        latest_point_map = await self._fetch_latest_point_rows(device_code, points, device_type_code)
+        points = await self._fetch_device_points(device_id_value, group_code)
+
+        redis_map = await self._get_device_latest_from_redis(device_code, group_code)
+        latest_point_map: dict[str, dict[str, Any]] = {}
+        if redis_map:
+            # redis_map keyed by var_id (str of point_id) -> {"v": ..., "t": ms_epoch, "q": ...}
+            # Build latest_point_map keyed by str(var_seq) to match existing response logic
+            point_id_to_seq = {str(p["point_id"]): int(p["var_seq"]) for p in points}
+            for var_id, entry in redis_map.items():
+                var_seq = point_id_to_seq.get(str(var_id))
+                if var_seq is None:
+                    continue
+                ts_ms = entry.get("t")
+                ts_dt = datetime.fromtimestamp(ts_ms / 1000) if isinstance(ts_ms, (int, float)) else None
+                latest_point_map[str(var_seq)] = {
+                    "ts": ts_dt,
+                    "value": entry.get("v"),
+                    "quality": entry.get("q"),
+                }
 
         last_collect_time = self._resolve_last_collect_time(latest_point_map)
         connect_status = self._build_connect_status(int(device["device_status"] or 0), last_collect_time)
@@ -99,11 +113,13 @@ class MonitorService:
             latest_point = latest_point_map.get(str(var_seq))
             data.append(
                 {
+                    "pointId": int(point["point_id"]),
                     "varSeq": var_seq,
                     "pointName": point["point_name"],
                     "ioAddress": point["io_address"],
                     "value": self._normalize_point_value(point["var_type"], latest_point["value"] if latest_point else None),
                     "updateTime": self._format_datetime(latest_point["ts"]) if latest_point else "",
+                    "quality": latest_point.get("quality") if latest_point else None,
                     "dataType": point["var_type"],
                 }
             )
@@ -118,22 +134,100 @@ class MonitorService:
             "data": data,
         }
 
-    async def get_realtime_snapshots(self, device_ids: list[int]) -> list[dict[str, Any]]:
-        snapshots: list[dict[str, Any]] = []
-        seen: set[int] = set()
-        for device_id in device_ids:
-            if device_id in seen:
-                continue
-            seen.add(device_id)
-            try:
-                snapshots.append(await self.get_realtime_init(device_id))
-            except ApiError as exc:
-                if exc.code == 404:
-                    continue
-                raise
-        return snapshots
+    async def _get_device_latest_from_redis(self, device_code: str, group_code: str = "g001") -> dict[str, Any]:
+        """Read latest hash from Redis. Returns {} if key doesn't exist."""
+        try:
+            r = await get_redis_client()
+            key = f"rt:latest:{device_code}:{group_code}"
+            raw = await r.hgetall(key)
+            result: dict[str, Any] = {}
+            for var_id, json_str in raw.items():
+                try:
+                    result[var_id] = json.loads(json_str)
+                except Exception:
+                    pass
+            return result
+        except Exception:
+            return {}
 
-    async def _fetch_target_device(self, device_id: int | None) -> dict[str, Any] | None:
+    async def get_realtime_window(
+        self,
+        device_id: int | None = None,
+        device_code: str | None = None,
+        group_code: str = "g001",
+        scan_rate_ms: int | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        device = await self._fetch_target_device(device_id, device_code=device_code)
+        if device is None:
+            raise ApiError(404, "Device not found")
+
+        device_id_value = int(device["device_id"])
+        device_code = str(device["device_code"])
+
+        if scan_rate_ms is None:
+            scan_rate_ms = await self._fetch_min_scan_rate(device_id_value, group_code)
+
+        r = await get_redis_client()
+        key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
+        raw_frames = await r.lrange(key, 0, limit - 1)
+
+        frames: list[dict[str, Any]] = []
+        for raw in raw_frames:
+            try:
+                frames.append(json.loads(raw))
+            except Exception:
+                pass
+
+        return {
+            "deviceId": device_id_value,
+            "deviceCode": device_code,
+            "groupCode": group_code,
+            "scanRateMs": scan_rate_ms,
+            "frames": frames,
+        }
+
+    async def _fetch_min_scan_rate(self, device_id: int, group_code: str) -> int:
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT MIN(dv.scan_rate) AS min_scan_rate
+                    FROM device_variable AS dv
+                    JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
+                    WHERE dv.device_id = :device_id
+                      AND dpg.group_code = :group_code
+                      AND dv.deleted = 0
+                      AND dv.enable = 1
+                    """
+                ),
+                {"device_id": device_id, "group_code": group_code},
+            )
+        ).mappings().first()
+        if row is None or row["min_scan_rate"] is None:
+            return 1000
+        return int(row["min_scan_rate"])
+
+    async def _fetch_target_device(self, device_id: int | None, device_code: str | None = None) -> dict[str, Any] | None:
+        if device_code:
+            stmt = text(
+                """
+                SELECT
+                    d.id AS device_id,
+                    d.device_code AS device_code,
+                    COALESCE(d.device_name, d.device_code) AS device_name,
+                    COALESCE(cp.protocol, '') AS driver_name,
+                    d.status AS device_status,
+                    COALESCE(dt.type_code, '') AS device_type_code
+                FROM device AS d
+                LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+                LEFT JOIN device_type AS dt ON dt.id = d.type_id
+                WHERE d.device_code = :device_code
+                LIMIT 1
+                """
+            )
+            return (await self.session.execute(stmt, {"device_code": device_code})).mappings().first()
+
         if device_id is None:
             stmt = text(
                 """
@@ -171,7 +265,7 @@ class MonitorService:
         )
         return (await self.session.execute(stmt, {"device_id": device_id})).mappings().first()
 
-    async def _fetch_device_points(self, device_id: int) -> list[dict[str, Any]]:
+    async def _fetch_device_points(self, device_id: int, group_code: str) -> list[dict[str, Any]]:
         stmt = text(
             """
             SELECT
@@ -179,133 +273,25 @@ class MonitorService:
                 COALESCE(dv.var_name, CAST(dv.var_seq AS CHAR), '') AS point_name,
                 dv.var_address AS io_address,
                 dv.var_type AS var_type,
-                dv.var_seq AS var_seq
+                dv.var_seq AS var_seq,
+                dv.group_index AS group_index
             FROM device_variable AS dv
+            JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
             WHERE dv.device_id = :device_id
+              AND dpg.group_code = :group_code
+              AND dv.deleted = 0
+              AND dv.enable = 1
               AND dv.var_seq IS NOT NULL
               AND dv.var_seq > 0
-            ORDER BY dv.var_seq ASC
+            ORDER BY dv.group_index ASC, dv.var_seq ASC
             """
         )
-        return [dict(row) for row in (await self.session.execute(stmt, {"device_id": device_id})).mappings().all()]
-
-    async def _fetch_latest_collect_times(self, device_codes: list[str]) -> dict[str, datetime]:
-        tasks = [self._fetch_device_latest_collect_time(device_code) for device_code in device_codes]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return {
-            device_code: latest_time
-            for device_code, latest_time in zip(device_codes, results, strict=False)
-            if isinstance(latest_time, datetime)
-        }
-
-    async def _fetch_device_latest_collect_time(self, device_code: str) -> datetime | None:
-        try:
-            database_name = self._resolve_tdengine_database(device_code)
-            stable_name = self._normalize_identifier(device_code)
-            table_name = self.tdengine.qualify_table(database_name, stable_name)
-            rows = await self.tdengine.fetch_all(
-                f"SELECT LAST(ts) AS last_ts FROM {table_name}",
-                database=database_name,
-            )
-        except Exception:
-            return None
-
-        if not rows:
-            return None
-        return self._coerce_datetime(rows[0][0])
-
-    async def _fetch_latest_point_rows(
-        self,
-        device_code: str,
-        points: list[dict[str, Any]],
-        device_type_code: str | None = None,
-    ) -> dict[str, dict[str, Any]]:
-        if not points:
-            return {}
-
-        tasks = [self._fetch_single_point_latest_row(device_code, point, device_type_code) for point in points]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return {
-            str(point["var_seq"]): result
-            for point, result in zip(points, results, strict=False)
-            if isinstance(result, dict)
-        }
-
-    async def _fetch_single_point_latest_row(
-        self,
-        device_code: str,
-        point: dict[str, Any],
-        device_type_code: str | None = None,
-    ) -> dict[str, Any] | None:
-        database_name = self._resolve_tdengine_database(device_code, device_type_code)
-        stable_name = self._normalize_identifier(device_code)
-        table_name = self.tdengine.qualify_table(database_name, stable_name)
-        variable_id = int(point["point_id"])
-        var_seq = int(point["var_seq"]) if point.get("var_seq") is not None else None
-
-        rows = []
-        if var_seq is not None:
-            try:
-                rows = await self.tdengine.fetch_all(
-                    (
-                        f"SELECT ts, `value` FROM {table_name} "
-                        f"WHERE var_seq = {var_seq} ORDER BY ts DESC LIMIT 1"
-                    ),
-                    database=database_name,
-                )
-            except Exception:
-                rows = []
-
-        if not rows:
-            try:
-                subtable_name = self._resolve_point_subtable_name(
-                    device_code=device_code,
-                    var_seq=var_seq,
-                    point_id=variable_id,
-                )
-                subtable_name = self.tdengine.qualify_table(database_name, subtable_name)
-                rows = await self.tdengine.fetch_all(
-                    f"SELECT ts, `value` FROM {subtable_name} ORDER BY ts DESC LIMIT 1",
-                    database=database_name,
-                )
-            except Exception:
-                rows = []
-
-        if not rows:
-            try:
-                legacy_subtable_name = self._resolve_point_subtable_name(
-                    device_code=device_code,
-                    var_seq=None,
-                    point_id=variable_id,
-                )
-                legacy_subtable_name = self.tdengine.qualify_table(database_name, legacy_subtable_name)
-                rows = await self.tdengine.fetch_all(
-                    f"SELECT ts, `value` FROM {legacy_subtable_name} ORDER BY ts DESC LIMIT 1",
-                    database=database_name,
-                )
-            except Exception:
-                rows = []
-
-        if not rows:
-            try:
-                rows = await self.tdengine.fetch_all(
-                    (
-                        f"SELECT ts, `value` FROM {table_name} "
-                        f"WHERE variable_id = {variable_id} ORDER BY ts DESC LIMIT 1"
-                    ),
-                    database=database_name,
-                )
-            except Exception:
-                return None
-
-        if not rows:
-            return None
-
-        ts, value = rows[0]
-        return {
-            "ts": self._coerce_datetime(ts),
-            "value": value,
-        }
+        return [
+            dict(row)
+            for row in (
+                await self.session.execute(stmt, {"device_id": device_id, "group_code": group_code})
+            ).mappings().all()
+        ]
 
     def _build_connect_status(self, _device_status: int, last_collect_time: datetime | None) -> str:
         if last_collect_time is None:
@@ -370,26 +356,3 @@ class MonitorService:
             return int(value)
         return value
 
-    def _resolve_tdengine_database(self, device_code: str, device_type_code: str | None = None) -> str:
-        # 优先使用设备类型代码作为数据库名
-        if device_type_code:
-            normalized_type_code = self._normalize_identifier(device_type_code).lower()
-            if normalized_type_code:
-                return normalized_type_code
-        # 否则从设备代码前缀解析
-        normalized_device_code = self._normalize_identifier(device_code).lower()
-        match = DEVICE_PREFIX_RE.match(normalized_device_code)
-        if match is None:
-            raise ValueError(f"Unable to resolve TDengine database from device code: {device_code}")
-        return match.group(0)
-
-    def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: Any) -> str:
-        normalized_device_code = self._normalize_identifier(device_code).lower()
-        suffix = int(var_seq) if var_seq not in (None, 0) else int(point_id)
-        return f"{normalized_device_code}_{suffix}"
-
-    def _normalize_identifier(self, value: Any) -> str:
-        normalized = IDENTIFIER_SANITIZE_RE.sub("_", str(value or "").strip())
-        if not normalized:
-            raise ValueError("TDengine identifier cannot be empty")
-        return normalized

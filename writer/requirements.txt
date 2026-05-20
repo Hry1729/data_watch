@@ -1,0 +1,5 @@
+redis>=5.0.0
+taos-ws-py
+pymysql
+# tomllib is built-in for Python 3.11+; tomli is a backport for older versions
+tomli>=2.0.0; python_version < "3.11"

@@ -87,6 +87,10 @@ class Settings:
     auth_access_token_expire_seconds: int
     auth_refresh_token_expire_seconds: int
     auth_auto_bootstrap: bool
+    redis_host: str
+    redis_port: int
+    redis_db: int
+    redis_password: str
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -162,4 +166,8 @@ def get_settings() -> Settings:
         auth_access_token_expire_seconds=int(read_setting("AUTH_ACCESS_TOKEN_EXPIRE_SECONDS", 28800)),
         auth_refresh_token_expire_seconds=int(read_setting("AUTH_REFRESH_TOKEN_EXPIRE_SECONDS", 604800)),
         auth_auto_bootstrap=str(read_setting("AUTH_AUTO_BOOTSTRAP", True)).lower() in {"1", "true", "yes"},
+        redis_host=str(read_setting("REDIS_HOST", "127.0.0.1")),
+        redis_port=int(read_setting("REDIS_PORT", 6379)),
+        redis_db=int(read_setting("REDIS_DB", 0)),
+        redis_password=str(read_setting("REDIS_PASSWORD", "")),
     )

@@ -45,6 +45,8 @@ class HistoryPoint:
     var_type: str | None
     var_seq: int
     unit: str | None
+    td_column_name: str | None = None
+    group_code: str | None = None
 
 
 class HistoryService:
@@ -308,7 +310,7 @@ class HistoryService:
         
         database_name = self._resolve_tdengine_database(device)
         end_sql = self._format_sql_timestamp(end_dt)
-        
+
         # 构造时间过滤条件：如果有游标则使用游标，否则使用开始时间
         if cursor_ts and cursor_ts.strip():
             # Validate and format cursor_ts to prevent SQL injection
@@ -319,37 +321,57 @@ class HistoryService:
             start_sql = self._format_sql_timestamp(start_dt)
             time_filter = f"ts >= {start_sql}"
 
-        subtable_name = self._resolve_point_subtable_name(
-            device_code=device.device_code,
-            var_seq=point.var_seq,
-            point_id=point.point_id,
-        )
-        table_name = self.tdengine.qualify_table(database_name, subtable_name)
-
-        query = (
-            f"SELECT ts, `value` FROM {table_name} "
-            f"WHERE {time_filter} AND ts <= {end_sql} "
-            f"ORDER BY ts ASC LIMIT {page_size}"
-        )
-
         rows = []
-        try:
-            # 优先查询子表
-            rows = await self.tdengine.fetch_all(query, database=database_name)
-        except Exception:
+
+        # v0.6: try child table with td_column_name
+        if point.td_column_name and point.group_code:
+            child_table = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_child_table_name(device.device_code, point.group_code),
+            )
+            col = self.tdengine.quote_identifier(point.td_column_name)
+            try:
+                rows = await self.tdengine.fetch_all(
+                    f"SELECT ts, {col} FROM {child_table} "
+                    f"WHERE {time_filter} AND ts <= {end_sql} "
+                    f"ORDER BY ts ASC LIMIT {page_size}",
+                    database=database_name,
+                )
+            except Exception:
+                rows = []
+
+        if not rows:
+            subtable_name = self._resolve_point_subtable_name(
+                device_code=device.device_code,
+                var_seq=point.var_seq,
+                point_id=point.point_id,
+            )
+            table_name = self.tdengine.qualify_table(database_name, subtable_name)
+            try:
+                # 优先查询子表
+                rows = await self.tdengine.fetch_all(
+                    f"SELECT ts, `value` FROM {table_name} "
+                    f"WHERE {time_filter} AND ts <= {end_sql} "
+                    f"ORDER BY ts ASC LIMIT {page_size}",
+                    database=database_name,
+                )
+            except Exception:
+                rows = []
+
+        if not rows:
             # 失败则回退到超级表查询
             stable_name = self.tdengine.qualify_table(
                 database_name,
                 self._normalize_identifier(device.device_code).lower(),
             )
-            query = (
-                f"SELECT ts, `value` FROM {stable_name} "
-                f"WHERE var_seq = {point.var_seq} "
-                f"AND {time_filter} AND ts <= {end_sql} "
-                f"ORDER BY ts ASC LIMIT {page_size}"
-            )
             try:
-                rows = await self.tdengine.fetch_all(query, database=database_name)
+                rows = await self.tdengine.fetch_all(
+                    f"SELECT ts, `value` FROM {stable_name} "
+                    f"WHERE var_seq = {point.var_seq} "
+                    f"AND {time_filter} AND ts <= {end_sql} "
+                    f"ORDER BY ts ASC LIMIT {page_size}",
+                    database=database_name,
+                )
             except Exception:
                 rows = []
 
@@ -435,6 +457,28 @@ class HistoryService:
         agg = "AVG" if var_type == "REAL" else "LAST"
 
         database_name = self._resolve_tdengine_database(device)
+
+        # v0.6: try child table with td_column_name
+        if point.td_column_name and point.group_code:
+            child_table = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_child_table_name(device.device_code, point.group_code),
+            )
+            col = self.tdengine.quote_identifier(point.td_column_name)
+            query = (
+                f"SELECT _wstart AS ts, {agg}({col}) AS `value` "
+                f"FROM {child_table} "
+                f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                f"INTERVAL({td_interval}) "
+                f"ORDER BY ts ASC LIMIT {limit}"
+            )
+            try:
+                rows = await self.tdengine.fetch_all(query, database=database_name)
+                if rows:
+                    return self._filter_bucket_rows(rows)
+            except Exception:
+                pass
+
         primary_subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
             var_seq=point.var_seq,
@@ -637,6 +681,28 @@ class HistoryService:
         end_sql = self._format_sql_timestamp(end_dt)
         td_interval = self._to_tdengine_interval(interval)
 
+        # v0.6: try child table with td_column_name
+        if point.td_column_name and point.group_code:
+            child_table = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_child_table_name(device.device_code, point.group_code),
+            )
+            col = self.tdengine.quote_identifier(point.td_column_name)
+            query = (
+                f"SELECT _wstart AS ts, {agg_func}({col}) AS `value` "
+                f"FROM {child_table} "
+                f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                f"INTERVAL({td_interval}) "
+                f"ORDER BY ts ASC"
+            )
+            try:
+                rows = await self.tdengine.fetch_all(query, database=database_name)
+                if rows:
+                    return rows
+            except Exception:
+                pass
+
+        # Legacy fallback
         subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
             var_seq=point.var_seq,
@@ -868,9 +934,12 @@ class HistoryService:
                         COALESCE(dv.var_address, '') AS io_address,
                         dv.var_type AS var_type,
                         dv.var_seq AS var_seq,
-                        ud.unit_symbol AS unit
+                        ud.unit_symbol AS unit,
+                        dv.td_column_name AS td_column_name,
+                        dpg.group_code AS group_code
                     FROM device_variable AS dv
                     LEFT JOIN unit_dict AS ud ON ud.id = dv.unit_id
+                    LEFT JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
                     WHERE dv.device_id = :device_id
                       AND dv.var_seq IS NOT NULL
                       AND dv.var_seq > 0
@@ -889,6 +958,8 @@ class HistoryService:
                 var_type=row["var_type"],
                 var_seq=int(row["var_seq"]),
                 unit=row["unit"],
+                td_column_name=row["td_column_name"] or None,
+                group_code=row["group_code"] or None,
             )
             for row in rows
         ]
@@ -916,9 +987,12 @@ class HistoryService:
                         COALESCE(dv.var_address, '') AS io_address,
                         dv.var_type AS var_type,
                         dv.var_seq AS var_seq,
-                        ud.unit_symbol AS unit
+                        ud.unit_symbol AS unit,
+                        dv.td_column_name AS td_column_name,
+                        dpg.group_code AS group_code
                     FROM device_variable AS dv
                     LEFT JOIN unit_dict AS ud ON ud.id = dv.unit_id
+                    LEFT JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
                     WHERE dv.device_id = :device_id
                       AND dv.var_seq IN :var_seqs
                     ORDER BY dv.var_seq ASC
@@ -936,6 +1010,8 @@ class HistoryService:
                 var_type=row["var_type"],
                 var_seq=int(row["var_seq"]),
                 unit=row["unit"],
+                td_column_name=row["td_column_name"] or None,
+                group_code=row["group_code"] or None,
             )
             for row in rows
         ]
@@ -1006,6 +1082,29 @@ class HistoryService:
         database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
+
+        # v0.6: try child table t_{device_code}_{group_code} with td_column_name column
+        if point.td_column_name and point.group_code:
+            child_table = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_child_table_name(device.device_code, point.group_code),
+            )
+            col = self.tdengine.quote_identifier(point.td_column_name)
+            try:
+                rows = await self.tdengine.fetch_all(
+                    (
+                        f"SELECT ts, {col} FROM {child_table} "
+                        f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                        f"ORDER BY ts ASC"
+                    ),
+                    database=database_name,
+                )
+                if rows:
+                    return rows
+            except Exception:
+                pass
+
+        # Legacy fallback: per-point subtables with `value` column
         primary_subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
             var_seq=point.var_seq,
@@ -1095,7 +1194,14 @@ class HistoryService:
             raise ApiError(400, f"Unable to resolve TDengine database for {device.device_code}")
         return match.group(0)
 
+    def _resolve_child_table_name(self, device_code: str, group_code: str | None) -> str:
+        """v0.6 child table: t_{device_code}_{group_code}"""
+        normalized = self._normalize_identifier(device_code)
+        gc = group_code or "g001"
+        return f"t_{normalized}_{gc}"
+
     def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: int) -> str:
+        """Legacy subtable naming (pre-v0.6): {device_code_lower}_{var_seq_or_point_id}"""
         normalized_device_code = self._normalize_identifier(device_code).lower()
         suffix = int(var_seq) if var_seq not in (None, 0) else int(point_id)
         return f"{normalized_device_code}_{suffix}"

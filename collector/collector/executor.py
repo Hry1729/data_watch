@@ -11,17 +11,21 @@
     await executor.execute(task)
 """
 
+import asyncio
 import time
 import traceback
 from datetime import datetime
 import struct
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from core.exceptions import ReadError
 from core.logger import get_logger
 from collector.task import CollectTask
 from data_queue.buffer import DataBuffer, DataPoint
 from device.manager import DeviceManager
+
+if TYPE_CHECKING:
+    from storage.redis_writer import RedisWriter
 
 logger = get_logger("executor")
 
@@ -41,10 +45,12 @@ class TaskExecutor:
         device_manager: Optional[DeviceManager] = None,
         system_logger: Optional[Any] = None,
         summary_interval_seconds: float = 60.0,
+        redis_writer: Optional["RedisWriter"] = None,
     ):
         self.buffer = buffer
         self.device_manager = device_manager
         self._system_logger = system_logger
+        self._redis_writer = redis_writer
         self._summary_interval_seconds = summary_interval_seconds
         self._summary_started_at = time.time()
         self._summary_tasks = 0
@@ -93,17 +99,33 @@ class TaskExecutor:
 
             # 解析结果并入队
             points = self._parse_result(device.device_id, scan_task, result)
-            if points:
-                accepted = await self.buffer.put_batch(points)
-                dropped = len(points) - accepted
+            storage_variable_ids = {
+                variable.variable_id
+                for variable in scan_task.variables
+                if variable.is_storage
+            }
+            storage_points = [
+                point for point in points
+                if point.variable_id in storage_variable_ids
+            ]
+            if storage_points:
+                accepted = await self.buffer.put_batch(storage_points)
+                dropped = len(storage_points) - accepted
                 if dropped > 0:
                     logger.warning(
                         "Task %s: queue full, dropped %d/%d points",
                         task.task_name,
                         dropped,
-                        len(points),
+                        len(storage_points),
                     )
                     self._total_dropped += dropped
+
+            if points:
+                if self._redis_writer is not None:
+                    loop = asyncio.get_event_loop()
+                    loop.run_in_executor(
+                        None, self._write_to_redis, device, scan_task, points
+                    )
 
             logger.debug(
                 "Task %s: read %s points in %.1fms",
@@ -123,6 +145,66 @@ class TaskExecutor:
                 await self.device_manager.mark_device_error(device, f"read failed: {e}", "timeout")
             raise
 
+    def _write_to_redis(self, device, scan_task, points: List[DataPoint]) -> None:
+        """将采集结果写入 Redis（latest / window / stream）。在线程池中调用，不阻塞事件循环。"""
+        try:
+            # var_id → last value（多值时取最后一个）
+            var_values: Dict[str, Any] = {}
+            for p in points:
+                var_values[p.variable_id] = p.value
+
+            ts_ms = int(time.time() * 1000)
+            scan_rate_ms = int(scan_task.scan_rate * 1000)
+            device_code = device.device_id
+            device_type = device.device_type.lower()
+            config_version = device.config_version
+
+            # variable_id → Variable 元数据
+            var_meta: Dict[str, Any] = {v.variable_id: v for v in scan_task.variables}
+
+            # 按 group_code 分组
+            by_group: Dict[str, Dict[str, tuple]] = {}
+            for var_id, value in var_values.items():
+                var = var_meta.get(var_id)
+                if var is None:
+                    continue
+                gc = var.group_code
+                if gc not in by_group:
+                    by_group[gc] = {}
+                by_group[gc][var_id] = (value, var.data_type, var.is_storage)
+
+            for group_code, var_data in by_group.items():
+                # latest Hash：所有点位
+                fields = {
+                    var_id: {"v": str(val), "t": ts_ms, "q": 1}
+                    for var_id, (val, _, _) in var_data.items()
+                }
+                self._redis_writer.write_latest(device_code, group_code, fields)
+
+                # window List：所有点位
+                frame = {
+                    "device_code": device_code,
+                    "group_code": group_code,
+                    "ts": ts_ms,
+                    "scan_rate": scan_rate_ms,
+                    "values": {var_id: str(val) for var_id, (val, _, _) in var_data.items()},
+                }
+                self._redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
+
+                # stream：过滤 STRING 类型
+                stream_values = {
+                    var_id: str(val)
+                    for var_id, (val, dt, is_storage) in var_data.items()
+                    if is_storage and dt != "STRING"
+                }
+                if stream_values:
+                    self._redis_writer.write_stream(
+                        device_code, device_type, group_code, scan_rate_ms,
+                        ts_ms, config_version, stream_values,
+                    )
+        except Exception as exc:
+            logger.error("Redis write failed for device %s: %s", device.device_id, exc)
+
     def _parse_result(
         self,
         device_id: str,
@@ -134,10 +216,6 @@ class TaskExecutor:
         now = datetime.now()
 
         for variable in scan_task.variables:
-            # 仅将需要入库的变量送入队列，减轻聚合与存储压力
-            if not variable.is_storage:
-                continue
-
             result_map = getattr(scan_task, "result_map", {})
             mapped = result_map.get(variable.variable_id)
             if mapped:

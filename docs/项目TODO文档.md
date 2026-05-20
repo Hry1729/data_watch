@@ -140,7 +140,7 @@
 | CL-010 | 为关键链路补充模块级测试与冒烟脚本 | ✅ | `@collector` | P0 | 2026-05-14 使用 collector `.venv` 复跑 `pytest tests -q`：129 passed；`asyncio.iscoroutinefunction` 弃用 warning 已改为 `inspect.iscoroutinefunction` |
 | CL-011 | 测试前复审新增 P1/P2 收口 | 🔄 | `@collector` | P0 | scan_rate、aggregator pending 去重、cache TTL、TDengine mock、S7 地址类型校验、S7 I/Q/M 合并已有历史测试；需按 Redis 实时态 + TDengine 宽表历史态重跑 |
 | CL-012 | 数据质量规则引擎接入主采集链路 | 📋 | `@collector` | P1 | `core/data_quality.py` 规则能力存在并有单测；后续规则结果应进入实时态/告警态，不再作为 TDengine 历史列落库 |
-| CL-013 | 新增 TDengine 入库模块 | 📋 | `@collector` / `@database` | P0 | 从 Redis Stream Consumer Group 批量消费待入库帧，按设备宽表写 TDengine，成功后 ACK，失败保留 pending 重试 |
+| CL-013 | 新增 TDengine 入库模块 | 🔄 | `@collector` / `@database` | P0 | 2026-05-19 已完成测试脚本验证（`redis_mock_writer.py` + `redis_to_tdengine_writer.py`），端到端链路通，下一步将逻辑正式集成进 collector 主服务 |
 
 ---
 
@@ -390,7 +390,12 @@
 | STEP-054 | 2026-05-08 | 日志系统 UI 问题修复 | ✅ 已完成 | 已修复日志终端三个问题：1) 暂停计数器死代码（暂停后不再计数）；2) pending 列表重复累计（pending_count 改为实时计算）；3) 分页滚动跳回顶部（保持当前滚动位置）。已通过语法复验与功能点验 | 继续做日志列表真实数据联调 |
 | STEP-055 | 2026-05-08 | 实时监控页面重新设计 | 🔄 待 Perspective 联调 | 已按 `docs/前端/实时监控核心页面.md` 完成页面重新设计：删除旧设备树和实时数据面板，改用顶部控制栏（设备选择按钮+点位选择长框+操作按钮）、中央 Perspective 趋势图（折线图/状态图切换）、右侧点位卡片容器（实时监测点）、底部系统状态栏的四段式布局。当前待后端依赖安装完成后启动联调 | 下一步：修复后端虚拟环境，安装依赖，启动联调 |
 | STEP-056 | 2026-05-19 | TDengine 宽表模型压测与历史落库口径调整 | ✅ 已完成（待代码落地） | 已完成从“每点位子表”到“每设备子表、点位列”的压测验证：旧 30.5 万子表模型平均吞吐约 8 万点/秒，远低于目标；宽表模型在 305 台设备、每台 1000 点位、`1000ms x 10行` 下基本达到 305 万点/秒目标；目标机 152 台设备测试中 `1000ms x 10行` 稳定、`500ms x 5行` 可用、`100ms x 1行` 明显不达标。TDengine 历史表不再保存 `quality`，异常或 bad 状态由实时态/规则层识别 | 下一步：将 collector 初始化与写入逻辑改为基于 `device_variable.var_seq` 动态创建宽表列，并保留 500ms/1s 批量落库参数 |
-| STEP-057 | 2026-05-19 | Redis 实时短窗口与独立入库模块方案评审 | 📝 计划中 | 为满足前端 100ms 监控体验，计划重新引入 Redis 作为实时短窗口缓存和待入库队列：collector 采集后只写 Redis 最新快照、最近 N 行窗口和 Stream；TDengine 入库模块每 500ms/1s 从 Redis Stream 批量消费并 ACK；backend 实时初始化与 WebSocket 优先读 Redis，历史查询仍读 TDengine | 下一步：先完成文档口径冻结，再分阶段实现 Redis 写入、入库模块和 TDengine 批量落库 |
+| STEP-057 | 2026-05-19 | Redis 实时短窗口与独立入库模块方案评审 | ✅ 已完成 | 完成架构方案文档冻结（`docs/设计方案/Redis缓冲层与writer模块设计方案.md`）：collector 采集后只写 Redis（latest Hash / window List / Stream），TDengine 入库模块每 500ms/1s 从 Stream 批量消费并 ACK；backend 实时初始化与 WS 优先读 Redis，历史查询仍读 TDengine | 进入 STEP-058 端到端验证 |
+| STEP-058 | 2026-05-19 | 数据库基础建设完成（阶段 0：DB-1~7） | ✅ 已完成 | MySQL schema 变更（device_point_group 建表、device_variable 新增 point_group_id/group_index/td_column_name/enable/deleted）；数据迁移脚本初始化存量 305 台设备 g001 分组；device 表新增 variable_config_version 字段；TDengine 宽表建表（st_qc_g001/st_asc_g001/st_agv_g001，3073 列，子表数 = 设备数）；Redis Consumer Group writer_cg 在 12 个 Stream 分片初始化；前置就绪检查脚本 check_prerequisites.py；所有脚本幂等可重复执行 | 进入 STEP-059 |
+| STEP-059 | 2026-05-19 | 采集模块 Redis 集成完成（阶段 1：COL-1~4） | ✅ 已完成 | 新增 collector/storage/redis_client.py（连接池封装）、collector/storage/redis_writer.py（write_latest/write_window/write_stream 三类 key 写入）；采集任务层按 group_code 分组接入 RedisWriter，stream values 过滤 STRING 和 is_storage=0；COL-4 热重载：_config_reload_loop() 每 10s 轮询 variable_config_version，_reload_device() 按设备重建变量和采集任务，不影响其他设备；collector 全量测试 162 passed | 进入 STEP-060 |
+| STEP-060 | 2026-05-20 | writer 入库模块开发完成（阶段 2：TD-1~6） | ✅ 已完成 | 新建独立 writer/ 目录；consumer.py（StreamConsumer：XAUTOCLAIM/XPENDING+XCLAIM pending 恢复、批量缓冲按 flush_interval 或 max_buffer_rows 触发写入）；tdengine_writer.py（TDengineWriter：taosws WebSocket DSN 连接、稀疏列 INSERT 按 child_table 归并）；mysql_mapper.py（MysqlMapper：config_version 缓存失效重载）；dlq.py（push_dlq 写 rt:dlq 死信队列）；main.py（asyncio 启动入口）；config/settings.toml 和 requirements.txt | 进入 STEP-061 |
+| STEP-061 | 2026-05-20 | 后端 Redis/WebSocket 接口完成（阶段 3：API-1~7） | ✅ 已完成 | 新增 backend/app/db/redis.py（aioredis 异步连接封装）；新增 backend/app/services/ws_push.py（WsPushManager：server 端合并订阅，每 device+group 一个轮询 Task，100ms 广播 snapshot/diff/offline）；新增 /ws/realtime-push WebSocket 路由（不破坏原有 /ws/realtime）；新增 /monitor/realtime-window 接口（Redis window List）；新增 point-groups 和 variables 分组接口；历史查询接口适配 v0.6 宽表结构（API-7）；API-8 SELECT FOR UPDATE 暂未实现 | 进入 STEP-062 |
+| STEP-062 | 2026-05-20 | 前端 WebSocket 实时监控改造完成（阶段 4：FE-1~4）；设计文档合并 | ✅ 已完成 | 新增 frontend/src/composables/useRealtimeWs.ts（WS 连接/订阅/switchGroup/断线重连指数退避 3~30s/Page Visibility 支持）；实时监控页新增离线 Banner、q=0 红色标记、分组 Tab 栏（动态加载 point-groups）；device-monitor.ts 新增 getDevicePointGroups/getDeviceVariablesByGroup/getRealtimeWindow；device-monitor.d.ts 新增 PointGroup/DeviceVariable/RealtimeWindowFrame 类型；FE-5 历史查询适配暂未实现；Redis缓冲层与writer模块设计方案.md（旧 v1.0，key 命名已过期）已合并入 Redis实时缓冲层与点位分组设计方案_v0_6.md，v1.0 文件已删除 | 全链路端到端联调（collector+Redis+writer+TDengine+backend+frontend）待执行 |
 
 ---
 
@@ -398,7 +403,7 @@
 
 | 日期 | 变更内容 | 变更人 |
 |------|----------|--------|
-| 2026-05-19 | 完成 TDengine 宽表压测与 Redis 实时缓存方案评审：历史落库调整为 `device_data` 单库、`qc/asc/agv` 三个超级表、每设备一张子表、点位为列；TDengine 仅保存点位数值，不再保存 `quality`；前端 100ms 实时态由 Redis latest/window 承接，历史落库由独立入库模块从 Redis Stream 500ms/1s 批量写入 TDengine | `@collector` / `@database` |
+| 2026-05-19 | **Redis→TDengine 端到端压测验证通过**：`redis_mock_writer.py` + `redis_to_tdengine_writer.py` 联合压测，305 台真实设备、1000 点位/台，errors=0，Stream 消费率 100%，TDengine 峰值写入 ~1034 行/s（每行 1000 列）；生产目标 610 行/s 有 1.6 倍余量；设计方案文档已落地；下一步进入正式集成阶段 | `@collector` / `@database` |
 | 2026-05-14 | 完成采集模块 GE SRTP 批量采集复审：真实轨道吊 GE 点位表 4539 个可读变量合并为 476 个读取块，`result_map=4539`；修复 GE `INT` 负数还原、拒绝 GE 0 地址、明确 `low_high` word 序；同时将 DataAggregator 输出回调判断从 `asyncio.iscoroutinefunction` 改为 `inspect.iscoroutinefunction`，collector 全量测试 129 passed | `@collector` |
 | 2026-05-13 | 完成采集模块核心链路复审：确认协议适配、S7 I/Q/M 合并读取、DataBuffer、DataAggregator、BatchWriter、TDengine `quality` 模型和 HTTP/OPCDA ingest 已形成模块级闭环；collector 全量测试 91 passed，剩余重点为真实联调、性能压测和数据质量规则引擎接入 | `@collector` |
 | 2026-05-08 | 完成 STEP-055：实时监控页面按设计文档重新设计，删除旧布局，改用顶部控制栏+中央趋势图+右侧点位卡片+底部状态栏的四段式布局 | `@frontend` |

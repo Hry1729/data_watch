@@ -6,3 +6,4 @@ aiomysql>=0.2.0
 taospy>=2.8.9
 perspective-python>=3.0.0
 cryptography
+redis>=5.0.0
