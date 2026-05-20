@@ -14,7 +14,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default ({ mode }: { mode: string }) => {
   const root = process.cwd()
   const env = loadEnv(mode, root)
-  const { VITE_VERSION, VITE_PORT, VITE_BASE_URL, VITE_API_URL, VITE_API_PROXY_URL } = env
+  const { VITE_VERSION, VITE_PORT, VITE_BASE_URL, VITE_API_URL, VITE_API_PROXY_URL, VITE_DROP_CONSOLE } = env
   const enableVueDevTools = String(env.VITE_ENABLE_VUE_DEVTOOLS || '').toLowerCase() === 'true'
 
   console.log(`🚀 API_URL = ${VITE_API_URL}`)
@@ -55,8 +55,8 @@ export default ({ mode }: { mode: string }) => {
       minify: 'terser',
       terserOptions: {
         compress: {
-          // 生产环境去除 console
-          drop_console: true,
+          // 生产环境去除 console（由 VITE_DROP_CONSOLE 控制）
+          drop_console: VITE_DROP_CONSOLE === 'true',
           // 生产环境去除 debugger
           drop_debugger: true
         }

@@ -4,7 +4,7 @@
   "connectionTimeoutMs": 10000,
   "opcServers": [
     {
-      "vmHost": "127.0.0.1",
+      "vmHost": "127.27.18.221",
       "serverProgId": "ZPMC.OPCServer",
       "channel": "OPD_Server",
       "devices": []

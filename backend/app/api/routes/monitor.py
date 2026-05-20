@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from turboapi import APIRouter, TurboAPI, WebSocket, WebSocketDisconnect, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -89,6 +91,15 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
     async def ws_realtime_push(websocket: WebSocket):
         await websocket.accept()
         authorization = websocket.query_params.get("token") or websocket.headers.get("Authorization")
+        if not authorization:
+            try:
+                auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                if auth_msg.get("type") == "auth":
+                    authorization = auth_msg.get("token", "")
+            except (asyncio.TimeoutError, Exception):
+                await websocket.send_json({"type": "error", "message": "认证超时", "code": 401})
+                await websocket.close()
+                return
         try:
             await require_permissions_from_authorization(
                 authorization,

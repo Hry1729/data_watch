@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import os
 import signal
+import time
 
 from core.config import (
     CollectorConfig,
@@ -36,10 +37,7 @@ from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
-from data_queue.buffer import DataBuffer, DataPoint
-from data_queue.aggregator import DataAggregator
-from storage.tdengine import TDengineConnection
-from storage.batch_writer import BatchWriter
+from data_queue.buffer import DataBuffer
 from storage.redis_client import get_redis
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
@@ -56,7 +54,6 @@ class CollectorApp:
         self.config = config
         self.config_db_manager = config_db_manager
         self._shutdown = asyncio.Event()
-        self._aggregator_task = None
         self._health_task = None
         self._reload_task = None
         self._closed = False
@@ -74,25 +71,16 @@ class CollectorApp:
         )
         self.device_manager = DeviceManager(config, status_reporter=status_reporter)
         self.data_buffer = DataBuffer(max_size=config.queue_max_size)
-        self.aggregator = DataAggregator(config, self.data_buffer)
-        self.tdengine = TDengineConnection(config.tdengine)
-        self.batch_writer = BatchWriter(
-            self.tdengine,
-            fake_mode=config.fake_mode_active,
-            system_logger=self.system_logger,
-        )
         self.scheduler = TaskScheduler()
         redis_client = get_redis(config)
-        redis_writer = RedisWriter(redis_client, config)
+        self.redis_writer = RedisWriter(redis_client, config)
         self.executor = TaskExecutor(
             self.data_buffer,
             device_manager=self.device_manager,
             system_logger=self.system_logger,
-            redis_writer=redis_writer,
+            redis_writer=self.redis_writer,
         )
-        self.health_checker = HealthChecker(
-            self.device_manager, self.tdengine, interval=30
-        )
+        self.health_checker = HealthChecker(self.device_manager, interval=30)
         self.metrics = MetricsCollector()
 
         # OPC DA tag 映射器
@@ -109,10 +97,6 @@ class CollectorApp:
                 max_batch_size=ingest_cfg.max_batch_size,
                 max_body_bytes=ingest_cfg.max_body_bytes,
             )
-
-        # 设置聚合器输出回调，将flush的数据传递给写入器
-        self.aggregator.set_output_callback(self.batch_writer.write_sync)
-
     async def start(self) -> None:
         """启动采集服务"""
         logger.info("Collector starting...")
@@ -131,35 +115,25 @@ class CollectorApp:
                 },
             )
 
+        # 0. 检查 Redis 连通性
+        try:
+            self.redis_writer.r.ping()
+            logger.info(
+                "Redis connected: %s:%s db=%s",
+                self.config.redis.host, self.config.redis.port, self.config.redis.db,
+            )
+        except Exception as exc:
+            logger.warning("Redis ping failed: %s — realtime push will be unavailable", exc)
+
         # 1. 注册设备
         self.device_manager.register_devices()
-
-        # 2. 连接TDengine
-        await self.tdengine.connect()
-        if self.system_logger is not None:
-            self.system_logger.emit(
-                level="INFO",
-                log_type="storage",
-                source="collector.tdengine",
-                content="TDengine connection established",
-                detail_json={
-                    "host": self.config.tdengine.host,
-                    "port": self.config.tdengine.port,
-                    "database": self.config.tdengine.database,
-                },
-            )
-        # 初始化存储拓扑（设备类型数据库 -> 设备超级表 -> 变量子表）
-        await self.tdengine.init_storage_topology(
-            self.device_manager.get_all_devices(),
-            self.config.variables,
-        )
         if self.config.fake_mode_active:
-            await self._write_fake_bootstrap_points()
+            self._write_fake_bootstrap_points()
 
-        # 3. 连接所有设备
+        # 2. 连接所有设备
         await self.device_manager.connect_all()
 
-        # 4. 构建采集任务
+        # 3. 构建采集任务
         tasks = []
         for device in self.device_manager.get_all_devices():
             for scan_task in device.scan_tasks:
@@ -167,24 +141,23 @@ class CollectorApp:
                 tasks.append(collect_task)
         self.scheduler.add_tasks(tasks)
 
-        # 5. 启动调度器
+        # 4. 启动调度器
         await self.scheduler.start(self.executor.execute)
 
-        # 6. 启动外部接口采集协议（HTTP Push）
+        # 5. 启动外部接口采集协议（HTTP Push）
         if self.ingest_server is not None:
             await self.ingest_server.start(
                 data_buffer=self.data_buffer,
                 event_loop=asyncio.get_running_loop(),
                 opcda_mapper=self.opcda_mapper,
+                redis_writer=self.redis_writer,
+                realtime_config=self.config,
             )
 
-        # 7. 启动聚合器（内部通过回调将数据传递给写入器）
-        self._aggregator_task = asyncio.create_task(self.aggregator.run())
-
-        # 8. 启动健康检查
+        # 6. 启动健康检查
         self._health_task = asyncio.create_task(self.health_checker.run())
 
-        # 9. 启动配置热更新轮询（仅在 DB 模式下）
+        # 7. 启动配置热更新轮询（仅在 DB 模式下）
         if self.config_db_manager is not None:
             self._reload_task = asyncio.create_task(self._config_reload_loop())
 
@@ -203,6 +176,7 @@ class CollectorApp:
                     "variables": len(self.config.variables),
                     "queue_max_size": self.config.queue_max_size,
                     "fake_mode": self.config.fake_mode_active,
+                    "storage_path": "redis_only",
                 },
             )
 
@@ -226,7 +200,6 @@ class CollectorApp:
                 content="Collector shutdown started",
                 detail_json={
                     "queue_size": self.data_buffer.qsize(),
-                    "aggregator_cache": self.aggregator.cache_size,
                 },
             )
         if self._reload_task is not None:
@@ -242,29 +215,6 @@ class CollectorApp:
 
         await self.scheduler.stop()
 
-        # 停止聚合器轮询任务
-        self.aggregator.stop()
-        if self._aggregator_task is not None:
-            try:
-                await self._aggregator_task
-            except asyncio.CancelledError:
-                pass
-            finally:
-                self._aggregator_task = None
-
-        # Drain DataBuffer 队列剩余点到 aggregator
-        remaining = self.data_buffer.drain()
-        if remaining:
-            logger.info("Draining %d remaining points from buffer to aggregator", len(remaining))
-            for point in remaining:
-                self.aggregator.add(point)
-
-        # Flush aggregator cache
-        flushed = await self.aggregator.flush_to_output()
-        if flushed:
-            logger.info("Flushed aggregator cache during shutdown: points=%s", flushed)
-        await self.batch_writer.drain(timeout=10)
-
         for t in [self._health_task]:
             if t is None:
                 continue
@@ -277,7 +227,6 @@ class CollectorApp:
         if self.ingest_server is not None:
             await self.ingest_server.stop()
         await self.device_manager.disconnect_all()
-        await self.tdengine.close()
 
         self._log_status()
         logger.info("Collector stopped")
@@ -289,9 +238,8 @@ class CollectorApp:
                 content="Collector stopped",
                 detail_json={
                     "buffer": self.data_buffer.stats,
-                    "aggregator": self.aggregator.stats,
                     "executor": self.executor.stats,
-                    "batch_writer": self.batch_writer.stats,
+                    "storage_path": "redis_only",
                 },
             )
             await self.system_logger.stop()
@@ -304,8 +252,7 @@ class CollectorApp:
         logger.info(
             f"Status: devices={len(self.device_manager.devices)}, "
             f"tasks={len(self.scheduler.tasks)}, "
-            f"queue={self.data_buffer.qsize()}, "
-            f"aggregator_cache={self.aggregator.cache_size}"
+            f"queue={self.data_buffer.qsize()}"
         )
 
     def stop(self) -> None:
@@ -368,20 +315,41 @@ class CollectorApp:
         except Exception as exc:
             logger.error("Failed to reload device %s: %s", device_id, exc)
 
-    async def _write_fake_bootstrap_points(self) -> None:
-        """在假数据模式下，写入一批可识别的联调数据。"""
-        points = [
-            DataPoint("QC_FAKE100", "900001", 23.4),
-            DataPoint("QC_FAKE100", "900002", 67.8),
-            DataPoint("ASC_FAKE200", "900101", 10.5),
-            DataPoint("ASC_FAKE200", "900102", 11.6),
+    def _write_fake_bootstrap_points(self) -> None:
+        """在假数据模式下，写入一批可识别的 Redis 联调数据。"""
+        ts_ms = int(time.time() * 1000)
+        frames = [
+            ("QC_FAKE100", "qc", {"900001": "23.4", "900002": "67.8"}),
+            ("ASC_FAKE200", "asc", {"900101": "10.5", "900102": "11.6"}),
         ]
-        logger.info("[FAKE-DATA] bootstrap writing demo points=%s", len(points))
-        await self.batch_writer.write(points)
+        logger.info("[FAKE-DATA] bootstrap writing Redis demo frames=%s", len(frames))
+        for device_code, device_type, values in frames:
+            fields = {
+                var_id: {"v": value, "t": ts_ms, "q": 0}
+                for var_id, value in values.items()
+            }
+            frame = {
+                "device_code": device_code,
+                "group_code": "g001",
+                "ts": ts_ms,
+                "scan_rate": 1000,
+                "values": values,
+            }
+            self.redis_writer.write_latest(device_code, "g001", fields)
+            self.redis_writer.write_window(device_code, "g001", 1000, frame)
+            self.redis_writer.write_stream(
+                device_code,
+                device_type,
+                "g001",
+                1000,
+                ts_ms,
+                1,
+                values,
+            )
 
 
 def _build_fake_topology(config: CollectorConfig, reason: str) -> CollectorConfig:
-    """构造仅用于联调的假拓扑，避免 MySQL 未就绪时阻断 TDengine 验证。"""
+    """构造仅用于联调的假拓扑，避免 MySQL 未就绪时阻断 Redis 链路验证。"""
     logger.warning("[FAKE-DATA] fallback enabled, reason: %s", reason)
     config.devices = [
         DeviceConfig(
@@ -551,7 +519,7 @@ async def main():
     app = CollectorApp(config, config_db_manager=runtime_db_manager)
 
     # 注册信号处理
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, app.stop)

@@ -1,10 +1,20 @@
 """外部接口采集协议测试"""
 
+import asyncio
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 
-from monitor.ingest_server import _map_opcda_quality, _normalize_payload, _point_from_dict
+from core.config import CollectorConfig, DeviceConfig, VariableConfig
+from data_queue.buffer import DataBuffer, DataPoint
+from monitor.ingest_server import (
+    _IngestHTTPServer,
+    _IngestRequestHandler,
+    _map_opcda_quality,
+    _normalize_payload,
+    _point_from_dict,
+)
 
 
 def test_normalize_payload_single_point():
@@ -79,3 +89,67 @@ def test_opcda_quality_maps_raw_quality_to_internal_code():
 def test_point_from_dict_requires_fields():
     with pytest.raises(ValueError):
         _point_from_dict({"device_id": "EXT001", "value": 1})
+
+
+def test_ingest_server_writes_points_to_redis_with_current_schema():
+    loop = asyncio.new_event_loop()
+    redis_writer = MagicMock()
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+                config_version=7,
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="30041800",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag30041800",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            )
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        data_buffer=DataBuffer(max_size=10),
+        event_loop=loop,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+        loop.close()
+
+    assert accepted == 1
+    assert errors == []
+    redis_writer.write_latest.assert_called_once()
+    assert redis_writer.write_latest.call_args.args[0:2] == ("AGV801", "g001")
+    latest_fields = redis_writer.write_latest.call_args.args[2]
+    assert latest_fields["30041800"]["v"] == "12.5"
+    assert latest_fields["30041800"]["q"] == 4
+    redis_writer.write_window.assert_called_once()
+    redis_writer.write_stream.assert_called_once_with(
+        "AGV801",
+        "agv",
+        "g001",
+        100,
+        latest_fields["30041800"]["t"],
+        7,
+        {"30041800": "12.5"},
+    )

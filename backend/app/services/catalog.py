@@ -227,9 +227,8 @@ class CatalogService:
             result = self._paginate(filtered_items, params)
         else:
             page_devices, page_no, page_size = self._paginate_records(filtered_devices, params)
-            latest_map = await self._fetch_latest_collect_times(page_devices)
             page_items = [
-                self._serialize_device_item(device, latest_map.get(device.device_code))
+                self._serialize_device_item(device, all_latest_map.get(device.device_code))
                 for device in page_devices
             ]
             result = self._build_page_payload(page_items, len(filtered_devices), page_no, page_size)

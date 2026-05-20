@@ -429,28 +429,27 @@ export function fetchDeviceRealtime(deviceId: number) {
   return fetchRealtimeInit({ deviceId })
 }
 
-/** 获取实时监控 WebSocket URL */
+/** 获取实时监控 WebSocket URL（不含 token，连接后通过 auth 消息认证） */
 export function getRealtimeWebSocketUrl() {
   const { VITE_API_URL } = import.meta.env
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const { accessToken } = useUserStore()
-  const appendToken = (url: string) => {
-    if (!accessToken) return url
-    const separator = url.includes('?') ? '&' : '?'
-    return `${url}${separator}token=${encodeURIComponent(accessToken)}`
-  }
 
   if (!VITE_API_URL || VITE_API_URL === '/') {
-    return appendToken(`${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime-push`)
+    return `${wsProtocol}//${window.location.host}${BASE_URL}/ws/realtime-push`
   }
 
   if (/^https?:\/\//.test(VITE_API_URL)) {
     const normalizedBase = VITE_API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-    return appendToken(`${normalizedBase}${BASE_URL}/ws/realtime-push`)
+    return `${normalizedBase}${BASE_URL}/ws/realtime-push`
   }
 
   const normalizedPath = VITE_API_URL.startsWith('/') ? VITE_API_URL.slice(1) : VITE_API_URL
-  return appendToken(`${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime-push`)
+  return `${wsProtocol}//${window.location.host}/${normalizedPath.replace(/\/$/, '')}${BASE_URL}/ws/realtime-push`
+}
+
+/** 获取当前用户 token，用于 WebSocket auth 消息 */
+export function getAccessToken(): string {
+  return useUserStore().accessToken || ''
 }
 
 // ==================== 点位分组与实时窗口（新接口）====================
@@ -459,14 +458,6 @@ export function getRealtimeWebSocketUrl() {
 export function getDevicePointGroups(deviceCode: string) {
   return request.get<Api.DeviceMonitor.PointGroup[]>({
     url: `${BASE_URL}/device/${deviceCode}/point-groups`
-  })
-}
-
-/** 按分组获取设备变量列表 */
-export function getDeviceVariablesByGroup(deviceCode: string, groupCode: string = 'g001') {
-  return request.get<Api.DeviceMonitor.DeviceVariable[]>({
-    url: `${BASE_URL}/device/${deviceCode}/variables`,
-    params: { group_code: groupCode }
   })
 }
 

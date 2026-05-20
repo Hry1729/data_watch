@@ -1,0 +1,460 @@
+# 项目 Docker 镜像部署与迁移说明
+
+更新日期：2026-05-13
+
+## 一、总体结论
+
+本项目后续迁移和部署统一采用 Docker 镜像方式：
+
+```text
+frontend   使用 Docker 镜像运行，Nginx 提供静态资源和接口反向代理
+backend    使用 Docker 镜像运行，镜像内置 Python 3.14t free-threading
+collector  暂不容器化，继续在 Windows 主机运行
+MySQL      可使用宿主机已有服务，也可后续单独容器化
+TDengine   可使用宿主机已有服务，也可后续单独容器化
+Redis      实时缓冲层必要依赖，可使用宿主机已有服务，也可后续单独容器化
+```
+
+采集模块涉及 OPC DA、DCOM、PLC 网络、IOM 点位和现场驱动环境，暂时不建议放入 Docker。正式部署时，采集模块仍建议运行在 Windows 主机环境中。
+
+## 二、今天完成的 Docker 部署改造
+
+今天已补齐前后端镜像部署所需文件：
+
+```text
+<项目根目录>/.dockerignore
+<项目根目录>/backend/Dockerfile
+<项目根目录>/backend/.dockerignore
+<项目根目录>/frontend/Dockerfile
+<项目根目录>/frontend/.dockerignore
+<项目根目录>/frontend/.env.production
+<项目根目录>/deploy/python314t.Dockerfile
+<项目根目录>/deploy/nginx.conf
+<项目根目录>/deploy/backend.env.example
+<项目根目录>/deploy/docker-compose.yml
+```
+
+关键处理：
+
+```text
+1. 后端基础镜像使用 Python 3.14t free-threading。
+2. 前端接口路径本身使用 /api，生产环境 VITE_API_URL 保持空，由 Nginx 反向代理到后端容器。
+3. 前端权限模式改为 backend，使用后端数据库菜单和权限。
+4. docker-compose 同时编排 frontend 和 backend。
+5. 后端容器通过 host.docker.internal 访问宿主机 MySQL / TDengine。
+6. 后端 Docker 构建中暂时跳过 perspective-python，因为它在 Python 3.14t 下源码编译失败；后端代码会以可选能力降级运行。
+7. 前端 Docker 构建中关闭 Husky，并允许 pnpm 依赖构建脚本，避免容器构建失败。
+```
+
+## 三、目录和占位符说明
+
+文档中统一使用：
+
+```text
+<项目根目录>  D:\python\device_alarm\data_watch
+```
+
+实际 PowerShell 操作时：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+```
+
+## 四、首次部署流程
+
+### 1. 安装并启动 Docker Desktop
+
+确认 Docker Desktop 已启动，并使用 Linux containers。
+
+验证：
+
+```powershell
+docker version
+docker compose version
+```
+
+如果 `docker version` 只有 Client 没有 Server，说明 Docker Engine 没启动。
+
+### 2. 配置部署环境变量
+
+复制后端环境变量模板：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+Copy-Item .\deploy\backend.env.example .\deploy\backend.env
+notepad .\deploy\backend.env
+```
+
+重点修改：
+
+```env
+MYSQL_HOST=host.docker.internal
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=你的 MySQL 密码
+MYSQL_DATABASE=device_watch
+
+TDENGINE_HOST=host.docker.internal
+TDENGINE_PORT=6041
+TDENGINE_USER=root
+TDENGINE_PASSWORD=你的 TDengine 密码
+TDENGINE_DATABASE=device_data
+
+AUTH_SECRET_KEY=换成一串足够长的随机密钥
+```
+
+注意：
+
+```text
+这里填写的是 MySQL / TDengine 的账号密码，不是 Windows 登录密码。
+如果数据库运行在另一台服务器上，把 host.docker.internal 改成那台服务器的 IP。
+```
+
+### 3. 构建 Python 3.14t 基础镜像
+
+第一次部署需要先构建后端基础镜像：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
+```
+
+这个步骤会编译 Python 3.14t，耗时较长，第一次可能需要几十分钟。
+
+如果拉取 `debian:bookworm-slim` 超时，需要先配置 Docker 镜像加速器或代理。
+
+### 4. 构建并启动前后端
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker compose -f .\deploy\docker-compose.yml up -d --build
+```
+
+查看容器状态：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml ps
+```
+
+查看日志：
+
+```powershell
+docker logs -f data-watch-backend
+docker logs -f data-watch-frontend
+```
+
+访问前端：
+
+```text
+http://127.0.0.1:8080
+```
+
+后端接口由前端 Nginx 代理：
+
+```text
+http://127.0.0.1:8080/api/...
+```
+
+后端容器端口也映射到宿主机：
+
+```text
+http://127.0.0.1:8000
+```
+
+## 五、采集模块启动方式
+
+采集模块仍在 Windows 主机运行。
+
+```powershell
+cd D:\python\device_alarm\data_watch\collector
+```
+
+推荐使用：
+
+```cmd
+run.bat
+```
+
+如果需要直接启动：
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+直接运行 `main.py` 会跳过 `run.bat` 中的协议检测和辅助服务启动逻辑，正式采集建议优先使用 `run.bat`。
+
+## 六、以后更新代码后如何更新镜像
+
+### 情况一：只改了前端代码
+
+重新构建并启动前端：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker compose -f .\deploy\docker-compose.yml build frontend
+docker compose -f .\deploy\docker-compose.yml up -d frontend
+```
+
+### 情况二：只改了后端代码
+
+重新构建并启动后端：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker compose -f .\deploy\docker-compose.yml build backend
+docker compose -f .\deploy\docker-compose.yml up -d backend
+```
+
+### 情况三：前后端都改了
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker compose -f .\deploy\docker-compose.yml up -d --build
+```
+
+### 情况四：依赖变化或缓存异常
+
+例如修改了：
+
+```text
+backend/requirements.txt
+frontend/package.json
+frontend/pnpm-lock.yaml
+deploy/python314t.Dockerfile
+```
+
+建议强制无缓存构建：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker compose -f .\deploy\docker-compose.yml build --no-cache
+docker compose -f .\deploy\docker-compose.yml up -d
+```
+
+如果修改了 `deploy/python314t.Dockerfile`，还需要先重建基础镜像：
+
+```powershell
+docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
+docker compose -f .\deploy\docker-compose.yml up -d --build
+```
+
+## 七、如何导出镜像
+
+在已经构建成功的电脑上执行：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+New-Item -ItemType Directory -Force .\deploy\images
+
+docker save -o .\deploy\images\data-watch-python314t.tar data-watch-python314t:latest
+docker save -o .\deploy\images\data-watch-backend.tar data-watch-backend:latest
+docker save -o .\deploy\images\data-watch-frontend.tar data-watch-frontend:latest
+```
+
+也可以打成一个压缩包，便于拷贝：
+
+```powershell
+Compress-Archive -Path .\deploy\images\*.tar -DestinationPath .\deploy\data-watch-images.zip -Force
+```
+
+需要一起拷贝到目标电脑的内容：
+
+```text
+deploy/images/*.tar
+deploy/docker-compose.yml
+deploy/backend.env
+必要的数据库备份或数据库连接信息
+collector/ 采集模块目录和配置
+```
+
+如果目标电脑还需要重新构建镜像，则还要拷贝完整源码；如果只是导入镜像运行，则前后端源码不是必须项。
+
+## 八、其他电脑如何导入镜像并启动
+
+### 1. 安装 Docker Desktop
+
+目标电脑需要安装并启动 Docker Desktop，且使用 Linux containers。
+
+### 2. 放置部署文件
+
+建议保持目录结构：
+
+```text
+D:\data_watch_deploy\
+├─ deploy\
+│  ├─ docker-compose.yml
+│  ├─ backend.env
+│  └─ images\
+│     ├─ data-watch-python314t.tar
+│     ├─ data-watch-backend.tar
+│     └─ data-watch-frontend.tar
+└─ collector\
+```
+
+### 3. 导入镜像
+
+```powershell
+cd D:\data_watch_deploy
+
+docker load -i .\deploy\images\data-watch-python314t.tar
+docker load -i .\deploy\images\data-watch-backend.tar
+docker load -i .\deploy\images\data-watch-frontend.tar
+```
+
+确认镜像已存在：
+
+```powershell
+docker images
+```
+
+应能看到：
+
+```text
+data-watch-python314t   latest
+data-watch-backend      latest
+data-watch-frontend     latest
+```
+
+### 4. 修改目标电脑的 backend.env
+
+```powershell
+notepad .\deploy\backend.env
+```
+
+确认：
+
+```env
+MYSQL_HOST=目标环境 MySQL 地址
+MYSQL_PASSWORD=目标环境 MySQL 密码
+TDENGINE_HOST=目标环境 TDengine 地址
+TDENGINE_PASSWORD=目标环境 TDengine 密码
+AUTH_SECRET_KEY=目标环境密钥
+```
+
+如果 MySQL 和 TDengine 就运行在目标电脑宿主机上，可以继续使用：
+
+```env
+MYSQL_HOST=host.docker.internal
+TDENGINE_HOST=host.docker.internal
+```
+
+### 5. 启动容器
+
+```powershell
+cd D:\data_watch_deploy
+docker compose -f .\deploy\docker-compose.yml up -d
+```
+
+查看状态：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml ps
+docker logs -f data-watch-backend
+docker logs -f data-watch-frontend
+```
+
+访问：
+
+```text
+http://目标电脑IP:8080
+```
+
+如果只在本机访问：
+
+```text
+http://127.0.0.1:8080
+```
+
+### 6. 检查目标浏览器内核版本
+
+前端镜像运行时不需要目标电脑安装 Node、npm 或 pnpm，但目标电脑浏览器必须支持现代 CSS。本项目前端使用 Tailwind CSS v4，要求浏览器内核足够新：
+
+```text
+Chrome / Chromium / Edge Chromium 内核 >= 111
+Firefox >= 128
+Safari >= 16.4
+```
+
+不支持 IE 模式、兼容模式、旧版 360 / 搜狗 / QQ 浏览器内核。如果登录页本身已经排版混乱，但 Network 中 CSS/JS/API 请求全部是 200，优先检查浏览器内核版本。
+
+目标电脑可在浏览器地址栏打开：
+
+```text
+chrome://version
+edge://version
+```
+
+如果使用国产浏览器，需要切换到“极速模式”，并确认实际 Chromium 内核版本满足要求。Tailwind CSS v4 官方兼容说明见：[Tailwind CSS Compatibility](https://tailwindcss.com/docs/compatibility)。
+
+## 九、数据库数据如何迁移
+
+Docker 镜像只包含程序，不包含 MySQL 和 TDengine 的业务数据。
+
+迁移到其他电脑时，数据库需要单独处理：
+
+```text
+MySQL      导出 / 导入 device_watch 库
+TDengine   导出 / 导入 device_data 库，或迁移 TDengine 数据目录 / volume
+```
+
+如果目标电脑直接连接原来的数据库服务器，则不需要迁移数据库数据，只需要在 `deploy/backend.env` 中配置正确的数据库地址和账号密码。
+
+## 十、常用运维命令
+
+停止容器：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml down
+```
+
+重启容器：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml restart
+```
+
+查看容器：
+
+```powershell
+docker ps
+```
+
+查看后端日志：
+
+```powershell
+docker logs -f data-watch-backend
+```
+
+查看前端日志：
+
+```powershell
+docker logs -f data-watch-frontend
+```
+
+删除旧容器但保留镜像：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml down
+```
+
+删除镜像：
+
+```powershell
+docker rmi data-watch-backend:latest
+docker rmi data-watch-frontend:latest
+docker rmi data-watch-python314t:latest
+```
+
+## 十一、注意事项
+
+1. `backend.env` 里的数据库密码是 MySQL / TDengine / Redis 密码，不是 Windows 登录密码。
+2. `host.docker.internal` 表示容器访问 Windows 宿主机。
+3. 换到 Linux 服务器部署时，`host.docker.internal` 不一定可用，应改成数据库服务器 IP 或 Docker 网络服务名。
+4. 后端必须先有 `data-watch-python314t:latest` 基础镜像，否则后端镜像无法构建。
+5. 前端接口定义已自带 `/api`，生产环境 `VITE_API_URL` 应保持空，不要再使用 Apifox mock 地址，也不要设置成 `/api`。
+6. 代码更新后，必须重新 build 对应镜像，否则容器运行的仍是旧代码。
+7. 镜像导出导入只迁移程序环境，不迁移数据库数据。
+8. 采集模块仍需在目标 Windows 主机上单独配置 Python 环境、采集配置和现场网络权限。
+9. 前端页面显示异常但所有请求都是 200 时，优先确认目标浏览器内核版本是否满足 Tailwind CSS v4 要求。
+10. Redis 是 v0.6 实时缓冲层的必要依赖。后端容器通过 `backend.env` 中的 `REDIS_HOST` 访问 Redis，采集模块通过 `config/settings.toml` 中的 `[redis]` 配置访问 Redis。两者必须指向同一个 Redis 实例，否则实时数据无法传递。
+11. TDengine 宽表（`device_data` 库，超级表 `st_{type}_g001`）必须在采集启动前完成初始化，运行 `scripts/init_tdengine_v2.py` 创建。

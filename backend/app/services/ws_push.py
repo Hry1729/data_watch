@@ -2,7 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time as _time
 from typing import Any
+
+logger = logging.getLogger("backend.ws_push")
+
+_td_health: dict = {"ok": None, "ts": 0.0}
+_TD_HEALTH_TTL = 30.0
+
+
+async def _check_tdengine() -> bool | None:
+    now = _time.monotonic()
+    if now - _td_health["ts"] < _TD_HEALTH_TTL:
+        return _td_health["ok"]
+    try:
+        from app.db.tdengine import get_tdengine_client
+        client = get_tdengine_client()
+        conn = await asyncio.to_thread(client.connect)
+        conn.close()
+        _td_health.update(ok=True, ts=now)
+        return True
+    except Exception:
+        _td_health.update(ok=False, ts=now)
+        return False
 
 
 class WsPushManager:
@@ -18,14 +41,16 @@ class WsPushManager:
             self._tasks[key] = asyncio.create_task(
                 self._push_loop(device_code, group_code)
             )
-        snapshot = await self._read_latest(device_code, group_code)
+        snapshot = await self._read_latest(device_code, group_code) or {}
         self._snapshots[key] = snapshot
+        td_ok = await _check_tdengine()
         await ws.send_json(
             {
                 "type": "snapshot",
                 "device_code": device_code,
                 "group_code": group_code,
                 "values": snapshot,
+                "tdengineConnected": td_ok,
             }
         )
 
@@ -46,7 +71,12 @@ class WsPushManager:
             if ws in self._subscribers.get(key, set()):
                 await self.unsubscribe(ws, key[0], key[1])
 
-    async def _read_latest(self, device_code: str, group_code: str) -> dict[str, Any]:
+    async def _read_latest(self, device_code: str, group_code: str) -> dict[str, Any] | None:
+        """Read latest hash from Redis.
+
+        Returns None when Redis is unavailable (caller should skip the update cycle).
+        Returns {} when the key doesn't exist (device has no data / is offline).
+        """
         from app.db.redis import get_redis_client
         try:
             r = await get_redis_client()
@@ -58,8 +88,12 @@ class WsPushManager:
                 except Exception:
                     pass
             return result
-        except Exception:
-            return {}
+        except Exception as exc:
+            logger.warning(
+                "Redis unavailable for device=%s group=%s: %s",
+                device_code, group_code, exc,
+            )
+            return None
 
     async def _push_loop(self, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
@@ -67,6 +101,9 @@ class WsPushManager:
             await asyncio.sleep(0.1)
             try:
                 latest = await self._read_latest(device_code, group_code)
+                if latest is None:
+                    # Redis connection error — skip this cycle, warning already logged in _read_latest
+                    continue
                 prev = self._snapshots.get(key, {})
                 if not latest:
                     await self._broadcast(key, {"type": "offline", "device_code": device_code})
@@ -85,8 +122,11 @@ class WsPushManager:
                     )
             except asyncio.CancelledError:
                 break
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "Unexpected error in push loop for device=%s group=%s: %s",
+                    device_code, group_code, exc,
+                )
 
     async def _broadcast(self, key: tuple, msg: dict) -> None:
         dead: set = set()

@@ -12,6 +12,8 @@ import time
 
 logger = logging.getLogger("writer.dlq")
 
+MAX_DLQ_SIZE = 1000
+
 
 def push_dlq(
     r,
@@ -33,7 +35,10 @@ def push_dlq(
         "data": data,
     }
     try:
-        r.lpush(dlq_key, json.dumps(payload))
+        pipe = r.pipeline()
+        pipe.lpush(dlq_key, json.dumps(payload))
+        pipe.ltrim(dlq_key, 0, MAX_DLQ_SIZE - 1)
+        pipe.execute()
     except Exception as exc:
         logger.error("[DLQ] lpush failed for entry %s: %s", entry_id, exc)
         return False

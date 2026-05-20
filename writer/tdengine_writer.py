@@ -52,7 +52,7 @@ class TDengineWriter:
         port = td["port"]
         dsn = f"ws://{user}:{password}@{host}:{port}"
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             self._conn = await asyncio.wait_for(
                 loop.run_in_executor(None, lambda: connect(dsn)),
@@ -67,7 +67,7 @@ class TDengineWriter:
     async def close(self) -> None:
         if self._conn is not None:
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._conn.close)
             except Exception as exc:
                 logger.warning("[tdengine] close error: %s", exc)
@@ -83,7 +83,7 @@ class TDengineWriter:
         if self._conn is None:
             logger.error("[tdengine] not connected, cannot execute SQL")
             return False
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, lambda: self._conn.execute(sql))
             return True
@@ -95,7 +95,7 @@ class TDengineWriter:
         """Return True if child table exists in the configured database."""
         if self._conn is None:
             return False
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(
                 None,

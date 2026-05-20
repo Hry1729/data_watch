@@ -51,6 +51,13 @@ class ExportTaskManager:
                         self.tasks[task_id] = ExportTask(**task_data)
             except Exception as e:
                 print(f"Error loading tasks: {e}")
+        # 服务启动时将残留的 running 任务标记为 failed，避免状态永久卡住
+        interrupted = [t for t in self.tasks.values() if t.status == "running"]
+        if interrupted:
+            for t in interrupted:
+                t.status = "failed"
+                t.error = "服务重启中断"
+            self._save_tasks()
 
     def _save_tasks(self):
         try:
