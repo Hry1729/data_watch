@@ -51,14 +51,6 @@
         </div>
         <div class="chart-frame chart-frame--lg flex-1 min-h-0">
           <div ref="trendChartRef" class="chart-surface chart-surface--lg h-full" />
-          <MonitorLoadingPlaceholder
-            v-if="trendLoading"
-            class="chart-loading"
-            title="趋势图加载中"
-            description="正在异步加载图表依赖"
-            min-height="200px"
-            :rows="4"
-          />
         </div>
       </div>
 
@@ -70,21 +62,12 @@
         </div>
         <div class="health-card__body flex-1 min-h-0 pt-4">
           <ArtRingChart
-            v-if="!healthLoading"
             :data="healthChartData"
             :radius="['54%', '70%']"
             :colors="['#4A6CF7', '#D66B88', '#F4A542', '#3DBB9A']"
             :showLegend="true"
             legendPosition="bottom"
             :centerText="healthCenterText"
-          />
-          <MonitorLoadingPlaceholder
-            v-else
-            class="chart-loading"
-            title="通讯概览加载中"
-            description="正在准备通讯状态图"
-            min-height="180px"
-            :rows="3"
           />
         </div>
       </div>
@@ -99,16 +82,7 @@
           <ElButton text type="primary" @click="goToDevice">查看设备</ElButton>
         </div>
         <div class="distribution-body flex-1 min-h-0 pt-4">
-          <MonitorLoadingPlaceholder
-            v-if="deviceTypeLoading"
-            class="chart-loading"
-            title="设备类型加载中"
-            description="正在异步加载统计图"
-            min-height="260px"
-            :rows="4"
-          />
           <ArtHBarChart
-            v-else
             :data="deviceTypeChartData"
             :xAxisData="deviceTypeXAxisData"
             :showLegend="true"
@@ -127,15 +101,6 @@
           <ElButton text type="primary" @click="goToSystemLog">查看更多</ElButton>
         </div>
         <div class="table-like mt-2 flex-1 min-h-0 overflow-y-auto">
-          <MonitorLoadingPlaceholder
-            v-if="recentLoading"
-            class="list-loading"
-            title="系统报警加载中"
-            description="正在读取最新报警"
-            min-height="220px"
-            :rows="4"
-          />
-          <template v-else>
           <div class="table-like__head recent-head shrink-0">
             <span>时间</span>
             <span>级别</span>
@@ -157,7 +122,6 @@
             </div>
           </div>
           <ElEmpty v-else description="暂无系统报警" :image-size="96" />
-          </template>
         </div>
       </div>
     </section>
@@ -171,7 +135,6 @@
   import ArtTextScroll from '@/components/core/text-effect/art-text-scroll/index.vue'
   import ArtHBarChart from '@/components/core/charts/art-h-bar-chart/index.vue'
   import ArtRingChart from '@/components/core/charts/art-ring-chart/index.vue'
-  import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
   import {
     fetchDashboardDeviceConnectionHealth,
     fetchDashboardDeviceTypeDistribution,
@@ -229,10 +192,8 @@
   const connectionHealthList = ref<Api.DeviceMonitor.DashboardDeviceConnectionHealthItem[]>([])
   const recentLogList = ref<Api.DeviceMonitor.LogListItem[]>([])
   const overviewLoading = ref(false)
-  const trendLoading = ref(false)
   const deviceTypeLoading = ref(false)
   const healthLoading = ref(false)
-  const recentLoading = ref(false)
 
   const trendChartRef = ref<HTMLElement>()
 
@@ -414,9 +375,7 @@
   }
 
   const loadTrend = async () => {
-    trendLoading.value = true
-    try {
-      const trend = await fetchDashboardTrend({
+    const trend = await fetchDashboardTrend({
         rangeType: trendRangeType.value,
         metricKeys: ['collectCount', 'alarmCount', 'onlineRate']
       })
@@ -496,9 +455,6 @@
               : undefined
         }))
       })
-    } finally {
-      trendLoading.value = false
-    }
   }
 
   const loadDeviceTypeDistribution = async () => {
@@ -529,9 +485,7 @@
   }
 
   const loadRecentLogs = async () => {
-    recentLoading.value = true
-    try {
-      const now = new Date()
+    const now = new Date()
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
       const startTime = formatLocalDateTime(twentyFourHoursAgo)
       const endTime = formatLocalDateTime(now)
@@ -553,9 +507,6 @@
         .slice(0, 8)
 
       recentLogList.value = mergedList
-    } finally {
-      recentLoading.value = false
-    }
   }
 
   const loadDashboard = async (force = false) => {
@@ -619,10 +570,8 @@
     trendSummary.value = { collectCountTotal: 0, alarmCountTotal: 0, onlineRateAvg: 0 }
     connectionHealthOverview.value = { onlineDevices: 0, offlineDevices: 0, riskDevices: 0 }
     overviewLoading.value = true
-    trendLoading.value = true
     deviceTypeLoading.value = true
     healthLoading.value = true
-    recentLoading.value = true
   }
 
   onActivated(() => {

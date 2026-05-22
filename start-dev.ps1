@@ -130,7 +130,7 @@ if ($Force -or -not (Test-PortOccupied -Port 8000)) {
     $skipped += "backend skipped because port 8000 is already occupied"
 }
 
-if ($Force -or -not (Test-PortOccupied -Port 3006)) {
+if ($Force -or -not (Test-PortOccupied -Port 5173)) {
     Start-Process -FilePath $powershellExe -WorkingDirectory $frontendDir -ArgumentList @(
         "-NoExit",
         "-ExecutionPolicy",
@@ -138,9 +138,9 @@ if ($Force -or -not (Test-PortOccupied -Port 3006)) {
         "-EncodedCommand",
         (New-EncodedCommand -ScriptText $frontendScript)
     ) | Out-Null
-    $started += "frontend: http://127.0.0.1:3006"
+    $started += "frontend: http://127.0.0.1:5173"
 } else {
-    $skipped += "frontend skipped because port 3006 is already occupied"
+    $skipped += "frontend skipped because port 5173 is already occupied"
 }
 
 if ($started.Count -gt 0) {

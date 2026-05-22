@@ -8,7 +8,7 @@ AGV 的 ZPMC 自研 OPC 数据源属于 **32 位 OPC DA**。当前 collector 主
 
 正式推荐方案已经确认：
 
-1. collector 主进程继续保持 64 位 Python，负责 MySQL 配置、数据队列、聚合、TDengine 写入、健康检查和统一日志。
+1. collector 主进程继续保持 64 位 Python，负责 MySQL 配置、数据队列、聚合、Redis 写入、健康检查和统一日志。
 2. AGV OPC DA 读取由 **32 位 C#/.NET Framework sidecar** 独立完成。
 3. sidecar 只读 OPC DA Item，不执行任何写入或控制类操作。
 4. sidecar 通过 collector 的 HTTP ingest 接口把数据推送回主采集链路。
@@ -47,16 +47,16 @@ AGV 的 ZPMC 自研 OPC 数据源属于 **32 位 OPC DA**。当前 collector 主
 │                              │                                    │
 │                              ▼                                    │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │ DataBuffer → DataAggregator → BatchWriter                   ││
+│  │ DataBuffer → DataAggregator → Redis latest/window/stream    ││
 │  └─────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  TDengine                                                        │
-│  - 数据库: agv                                                   │
-│  - 超级表: agv801, agv802, ...                                   │
-│  - 子表: agv801_1, agv801_2, ... (device_code + var_seq)        │
+│  独立的 TDengine 入库模块 (writer)                              │
+│  - 数据库: device_data                                           │
+│  - 超级表: agv                                                   │
+│  - 子表: agv801, agv802, ... (每台设备一个子表)                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -202,7 +202,7 @@ MySQL 查询: var_address = "OPD_Server.AGV801.ViewMain.Tag30041800"
 1. ✅ Sidecar 能连接 `ZPMC.OPCServer` 并成功订阅
 2. ✅ Sidecar 推送数据到 `/ingest/opcda-tags`
 3. ✅ Collector 正确映射 item_id 到 variable_id
-4. ✅ 数据写入 TDengine 子表 `agv.agv801_xxx`
+4. ✅ 数据写入 Redis (latest/window/stream) 并由独立的 `writer` 模块消费写入 TDengine 子表 `device_data.agv801`
 5. ✅ Ctrl+C 能正常终止 Sidecar
 6. ✅ 日志可追踪完整链路
 

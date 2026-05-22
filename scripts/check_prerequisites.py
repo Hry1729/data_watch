@@ -11,8 +11,8 @@
   4. Redis 可达（PING）
   5. 所有 Stream 分片的 Consumer Group writer_cg 已创建
   6. TDengine 可达
-  7. 超级表 st_qc_g001 / st_asc_g001 / st_agv_g001 存在
-  8. TDengine 子表数量 = device 总数
+  7. 超级表 sdqc / sdasc / sdagv 存在
+  8. MySQL 已映射的 td_column_name 均存在于对应超级表
 
 用法：
   python scripts/check_prerequisites.py
@@ -88,8 +88,8 @@ class CheckResult:
         self.failed.append(msg)
 
 
-def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str]]:
-    """检查项 1~3。返回 (success, device_count, type_codes)。"""
+def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str], dict[str, set[str]]]:
+    """检查项 1~3。返回 (success, device_count, type_codes, type_columns)。"""
     try:
         conn = pymysql.connect(
             host=args.my_host, port=args.my_port,
@@ -100,7 +100,7 @@ def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str]]:
         )
     except Exception as e:
         result.fail(f"MySQL connection failed: {e}")
-        return False, 0, []
+        return False, 0, [], {}
 
     with conn.cursor() as cur:
         # 1. device_point_group 存在且有数据
@@ -114,7 +114,7 @@ def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str]]:
         except Exception as e:
             result.fail(f"device_point_group check failed: {e}")
             conn.close()
-            return False, 0, []
+            return False, 0, [], {}
 
         # 获取 device 总数和类型列表
         cur.execute("SELECT COUNT(*) cnt FROM device")
@@ -122,6 +122,22 @@ def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str]]:
 
         cur.execute("SELECT DISTINCT dt.type_code FROM device d JOIN device_type dt ON dt.id=d.type_id")
         type_codes = [r["type_code"].lower() for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT DISTINCT LOWER(dt.type_code) AS type_code, dv.td_column_name
+            FROM device_variable dv
+            JOIN device_point_group dpg ON dv.point_group_id = dpg.id
+            JOIN device d ON dpg.device_id = d.id
+            JOIN device_type dt ON dt.id = d.type_id
+            WHERE dv.deleted = 0
+              AND dv.enable = 1
+              AND dv.td_column_name IS NOT NULL
+              AND dv.td_column_name <> ''
+        """)
+        type_columns: dict[str, set[str]] = {}
+        for row in cur.fetchall():
+            type_code = str(row["type_code"]).lower()
+            type_columns.setdefault(type_code, set()).add(str(row["td_column_name"]).lower())
 
         # 2. device_point_group 行数 = device 总数（每台设备都有 g001 分组）
         if dpg_count >= device_count:
@@ -150,7 +166,7 @@ def check_mysql(args, result: CheckResult) -> tuple[bool, int, list[str]]:
                 )
 
     conn.close()
-    return True, device_count, type_codes
+    return True, device_count, type_codes, type_columns
 
 
 def check_redis(args, result: CheckResult, type_codes: list[str]) -> bool:
@@ -195,7 +211,12 @@ def check_redis(args, result: CheckResult, type_codes: list[str]) -> bool:
     return True
 
 
-def check_tdengine(args, result: CheckResult, device_count: int, type_codes: list[str]) -> bool:
+def check_tdengine(
+    args,
+    result: CheckResult,
+    type_codes: list[str],
+    type_columns: dict[str, set[str]],
+) -> bool:
     """检查项 6~8。"""
     if taosws is None:
         result.fail("taosws not installed — cannot check TDengine")
@@ -212,7 +233,7 @@ def check_tdengine(args, result: CheckResult, device_count: int, type_codes: lis
         return False
 
     # 7. 超级表存在
-    expected_stables = {f"st_{tc}_{gc}" for tc in type_codes for gc in GROUP_CODES}
+    expected_stables = {f"sd{tc}" for tc in type_codes}
     try:
         rows = list(conn.query(f"SHOW {TD_DATABASE}.STABLES"))
         existing = {str(r[0]) for r in rows}
@@ -220,25 +241,39 @@ def check_tdengine(args, result: CheckResult, device_count: int, type_codes: lis
         if not missing_st:
             result.ok(f"Supertables {sorted(expected_stables)} all exist")
         else:
-            result.fail(f"Supertables missing: {sorted(missing_st)} — run init_tdengine_v2.py")
+            result.fail(f"Supertables missing: {sorted(missing_st)} — writer can create them on first write")
     except Exception as e:
         result.fail(f"TDengine SHOW STABLES failed: {e}")
 
-    # 8. 子表数量
+    # 8. MySQL 映射列已存在于对应 stable（子表由 writer INSERT USING 按需创建）
     try:
-        rows = list(conn.query(f"SHOW {TD_DATABASE}.TABLES"))
-        # 只统计 v0.6 子表（以 t_ 开头）
-        v2_tables = [r for r in rows if str(r[0]).startswith("t_")]
-        child_count = len(v2_tables)
-        if child_count >= device_count:
-            result.ok(f"TDengine child tables ({child_count}) >= device count ({device_count})")
+        missing_columns: dict[str, list[str]] = {}
+        for type_code in type_codes:
+            stable = f"sd{type_code}"
+            if stable in missing_st:
+                continue
+            rows = list(conn.query(f"DESCRIBE {TD_DATABASE}.{stable}"))
+            existing_columns = {
+                str(row[0]).lower()
+                for row in rows
+                if str(row[0]).lower() not in {"ts", "device_code"}
+            }
+            expected_columns = type_columns.get(type_code, set())
+            missing = sorted(expected_columns - existing_columns)
+            if missing:
+                missing_columns[stable] = missing
+
+        if not missing_columns:
+            mapped_count = sum(len(cols) for cols in type_columns.values())
+            result.ok(f"TDengine mapped columns all exist ({mapped_count} columns)")
         else:
-            result.fail(
-                f"TDengine child tables ({child_count}) < device count ({device_count}) "
-                f"— run init_tdengine_v2.py"
-            )
+            preview = {
+                stable: cols[:5]
+                for stable, cols in missing_columns.items()
+            }
+            result.fail(f"TDengine mapped columns missing: {preview} — writer will add missing DOUBLE columns on first write")
     except Exception as e:
-        result.fail(f"TDengine SHOW TABLES failed: {e}")
+        result.fail(f"TDengine DESCRIBE stable failed: {e}")
 
     conn.close()
     return True
@@ -249,7 +284,7 @@ def main() -> int:
     result = CheckResult()
 
     print("=== Checking MySQL ===")
-    mysql_ok, device_count, type_codes = check_mysql(args, result)
+    mysql_ok, device_count, type_codes, type_columns = check_mysql(args, result)
 
     print("\n=== Checking Redis ===")
     check_redis(args, result, type_codes if mysql_ok else ["qc", "asc", "agv"])
@@ -258,7 +293,12 @@ def main() -> int:
         print("\n=== Skipping TDengine (--skip-tdengine) ===")
     else:
         print("\n=== Checking TDengine ===")
-        check_tdengine(args, result, device_count, type_codes if mysql_ok else ["qc", "asc", "agv"])
+        check_tdengine(
+            args,
+            result,
+            type_codes if mysql_ok else ["qc", "asc", "agv"],
+            type_columns if mysql_ok else {},
+        )
 
     print(f"\n{'='*40}")
     total = len(result.passed) + len(result.failed)

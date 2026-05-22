@@ -375,6 +375,13 @@ const perspectiveReady = ref(false)
 // 点位质量（q=0 表示数据无效，显示为红色）
 const realtimeQuality = ref<Map<number, number>>(new Map())
 
+// pending 缓冲：diff/update 消息先攒到这里，由 setInterval 按 refreshRate 批量写 UI
+const pendingValues = new Map<number, number | string>()
+const pendingQuality = new Map<number, number>()
+const pendingChartRecords: RealtimeDataRecord[] = []
+let pendingLastSyncTime = ''
+let chartFlushTimer: ReturnType<typeof setInterval> | null = null
+
 // 点位分组
 const pointGroups = ref<Api.DeviceMonitor.PointGroup[]>([])
 const activeGroupCode = ref<string>('g001')
@@ -763,6 +770,7 @@ const switchPointGroup = async (groupCode: string) => {
   realtimeValues.value.clear()
   realtimeQuality.value.clear()
   realtimeRecords.value = []
+  clearPending()
   await clearPerspectiveTable()
 
   if (currentDevice.value) {
@@ -801,6 +809,7 @@ const selectDevice = async (device: DeviceInfo) => {
   realtimeValues.value.clear()
   realtimeQuality.value.clear()
   realtimeRecords.value = []
+  clearPending()
   activeGroupCode.value = 'g001'
   deviceOffline.value = false
   clearPerspectiveTable()
@@ -906,6 +915,7 @@ const confirmPointSelection = () => {
   }
   selectedPoints.value = pointList.value.filter((p) => tempSelectedVarSeqs.value.includes(p.varSeq))
   realtimeRecords.value = []
+  clearPending()
   clearPerspectiveTable()
   pointSelectorVisible.value = false
 }
@@ -914,6 +924,7 @@ const clearSelection = async () => {
   selectedPoints.value = []
   realtimeValues.value.clear()
   realtimeRecords.value = []
+  clearPending()
   await clearPerspectiveTable()
   // 清除快照
   localStorage.removeItem(CHART_STATE_KEY)
@@ -935,6 +946,54 @@ const startMonitor = async () => {
   }
 
   connectWebSocket()
+  startFlushTimer()
+}
+
+// pending 缓冲辅助函数
+const clearPending = () => {
+  pendingValues.clear()
+  pendingQuality.clear()
+  pendingChartRecords.length = 0
+  pendingLastSyncTime = ''
+}
+
+const flushPendingRealtimeUpdates = () => {
+  if (pendingValues.size === 0 && pendingChartRecords.length === 0) return
+
+  pendingValues.forEach((v, k) => realtimeValues.value.set(k, v))
+  pendingValues.clear()
+
+  pendingQuality.forEach((v, k) => realtimeQuality.value.set(k, v))
+  pendingQuality.clear()
+
+  if (pendingLastSyncTime) {
+    lastSyncTime.value = pendingLastSyncTime
+    pendingLastSyncTime = ''
+  }
+
+  if (pendingChartRecords.length > 0) {
+    const records = pendingChartRecords.splice(0)
+    realtimeRecords.value.push(...records)
+    if (realtimeRecords.value.length > MAX_RECORDS) {
+      realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
+    }
+    if (!rebuildingChart.value) {
+      void updatePerspectiveTable(records)
+    }
+  }
+}
+
+const startFlushTimer = () => {
+  if (chartFlushTimer !== null) clearInterval(chartFlushTimer)
+  chartFlushTimer = setInterval(flushPendingRealtimeUpdates, refreshRate.value)
+}
+
+const stopFlushTimer = () => {
+  if (chartFlushTimer !== null) {
+    clearInterval(chartFlushTimer)
+    chartFlushTimer = null
+  }
+  flushPendingRealtimeUpdates()
 }
 
 // 监听刷新率变化
@@ -942,12 +1001,15 @@ watch(refreshRate, (val) => {
   if (wsConnected.value) {
     sendWsMessage({ action: 'config', refreshRate: val })
   }
+  if (isMonitoring.value) startFlushTimer()
 })
 
 const stopMonitor = () => {
   // 停止接收新数据，但不清空历史数据
   isMonitoring.value = false
   deviceOffline.value = false
+  stopFlushTimer()
+  clearPending()
   closeWebSocket()
 }
 
@@ -962,6 +1024,8 @@ const clearMonitorData = async () => {
 const disconnectForUnmount = () => {
   // 页面卸载时的轻量清理：只断开连接，不清空数据
   isMonitoring.value = false
+  stopFlushTimer()
+  clearPending()
   closeWebSocket()
 }
 
@@ -1157,6 +1221,7 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     deviceOffline.value = true
     realtimeValues.value.clear()
     realtimeQuality.value.clear()
+    clearPending()
     return
   }
 
@@ -1212,6 +1277,9 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
 
   if (!Array.isArray(pointsList) || pointsList.length === 0) return
 
+  // snapshot 绕过节流直接写 UI；diff/update 进 pending 由 setInterval 批量刷新
+  const writeImmediate = payload.type === 'snapshot'
+  if (writeImmediate) clearPending()
   const now = new Date()
   const newRecords: RealtimeDataRecord[] = []
 
@@ -1222,9 +1290,12 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     const quality = item.quality as number | undefined
 
     if (varSeq !== undefined) {
-      realtimeValues.value.set(varSeq, value as number | string)
-      if (typeof quality === 'number') {
-        realtimeQuality.value.set(varSeq, quality)
+      if (writeImmediate) {
+        realtimeValues.value.set(varSeq, value as number | string)
+        if (typeof quality === 'number') realtimeQuality.value.set(varSeq, quality)
+      } else {
+        pendingValues.set(varSeq, value as number | string)
+        if (typeof quality === 'number') pendingQuality.set(varSeq, quality)
       }
 
       // 添加到趋势记录
@@ -1235,21 +1306,25 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
           pointName,
           value: typeof value === 'number' ? value : Number(value) || 0
         }
-        realtimeRecords.value.push(record)
         newRecords.push(record)
       }
     }
   })
 
-  // 限制记录数量
-  if (realtimeRecords.value.length > MAX_RECORDS) {
-    realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
-  }
-
-  lastSyncTime.value = formatTimestamp()
-  // 如果正在重建图表，只追加数据，等重建完成后统一刷新
-  if (newRecords.length > 0 && !rebuildingChart.value) {
-    void updatePerspectiveTable(newRecords)
+  if (writeImmediate) {
+    // snapshot：立即写 realtimeRecords、lastSyncTime、图表
+    realtimeRecords.value.push(...newRecords)
+    if (realtimeRecords.value.length > MAX_RECORDS) {
+      realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
+    }
+    lastSyncTime.value = formatTimestamp()
+    if (newRecords.length > 0 && !rebuildingChart.value) {
+      void updatePerspectiveTable(newRecords)
+    }
+  } else {
+    // diff/update：攒入 pending，等 flush timer 触发
+    pendingChartRecords.push(...newRecords)
+    pendingLastSyncTime = formatTimestamp()
   }
 }
 
@@ -1562,6 +1637,7 @@ onMounted(async () => {
     if (wasMonitoring) {
       isMonitoring.value = true
       connectWebSocket()
+      startFlushTimer()
     }
   }
 })
@@ -1587,6 +1663,7 @@ onUnmounted(() => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 
   // 保存数据快照（保留已有的 configs，避免覆盖 saveChartSnapshot 写入的图表配置）
+  flushPendingRealtimeUpdates()
   const dataSnapshot = realtimeRecords.value.slice(-MAX_SNAPSHOT_RECORDS).map((r) => ({
     timestamp: r.timestamp.toISOString(),
     varSeq: r.varSeq,
