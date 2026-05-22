@@ -42,6 +42,7 @@ logger = logging.getLogger("writer.consumer")
 class _BufferedRow:
     entry_id: str
     stream_key: str
+    device_code: str
     device_type: str
     group_code: str
     child_table: str
@@ -345,6 +346,7 @@ class StreamConsumer:
             _BufferedRow(
                 entry_id=entry_id,
                 stream_key=stream_key,
+                device_code=device_code,
                 device_type=device_type,
                 group_code=group_code,
                 child_table=mapping.child_table,
@@ -374,6 +376,7 @@ class StreamConsumer:
                 {
                     "child_table": row.child_table,
                     "stable": row.stable,
+                    "device_code": row.device_code,
                     "ts": row.ts,
                     "columns": row.columns,
                 }

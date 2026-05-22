@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workbook_bytes
-from app.core.time_utils import now_local
+from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.tdengine import TDengineClient
 
 
@@ -89,6 +89,7 @@ class PointCatalogItem:
     is_storage: bool
     is_readonly: bool
     group_id: int | None
+    td_column_name: str | None
 
 
 class CatalogService:
@@ -1071,9 +1072,11 @@ class CatalogService:
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
-                        COALESCE(cp.protocol, '') AS driver_name
+                        COALESCE(cp.protocol, '') AS driver_name,
+                        COALESCE(dt.type_code, '') AS type_code
                     FROM device AS d
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+                    LEFT JOIN device_type AS dt ON dt.id = d.type_id
                     WHERE d.id = :device_id
                     LIMIT 1
                     """
@@ -1144,6 +1147,7 @@ class CatalogService:
                 device_id=device_id,
                 group_code=params["group_code"],
                 actor=actor,
+                type_code=str(device_row["type_code"] or "").lower(),
             )
             result = await self.session.execute(
                 text(
@@ -1514,6 +1518,7 @@ class CatalogService:
         device_id: int,
         group_code: str,
         actor: str,
+        type_code: str = "",
     ) -> dict[str, Any]:
         target_code = self._normalize_point_group_code(group_code)
         actor_value = self._truncate_text(actor, 20)
@@ -1600,7 +1605,7 @@ class CatalogService:
                     "point_group_id": int(row["id"]),
                     "group_code": target_code,
                     "group_index": next_column_index,
-                    "td_column_name": f"v{next_column_index:04d}",
+                    "td_column_name": f"{type_code}{next_column_index}" if type_code else f"v{next_column_index:04d}",
                 }
 
             await self.session.execute(
@@ -1840,7 +1845,8 @@ class CatalogService:
                                 THEN 0
                             ELSE 1
                         END AS is_readonly,
-                        d.group_id AS group_id
+                        d.group_id AS group_id,
+                        dv.td_column_name AS td_column_name
                     FROM device_variable AS dv
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
@@ -1889,6 +1895,7 @@ class CatalogService:
             is_storage=bool(int(row["is_storage"] or 0)),
             is_readonly=bool(int(row["is_readonly"] or 0)),
             group_id=int(row["group_id"]) if row["group_id"] is not None else None,
+            td_column_name=row.get("td_column_name") or None,
         )
 
     def _serialize_device_item(
@@ -2294,12 +2301,11 @@ class CatalogService:
         device: DeviceCatalogItem,
     ) -> datetime | None:
         try:
-            database_name = self._resolve_tdengine_database(
-                device.device_code,
-                device.device_type_code,
+            database_name = self._resolve_current_tdengine_database()
+            table_name = self.tdengine.qualify_table(
+                database_name,
+                self._resolve_current_child_table_name(device.device_code),
             )
-            stable_name = self._normalize_identifier(device.device_code).lower()
-            table_name = self.tdengine.qualify_table(database_name, stable_name)
             rows = await self.tdengine.fetch_all(
                 f"SELECT LAST(ts) AS last_ts FROM {table_name}",
                 database=database_name,
@@ -2331,24 +2337,42 @@ class CatalogService:
         point: PointCatalogItem,
     ) -> dict[str, Any] | None:
         try:
-            database_name = self._resolve_tdengine_database(point.device_code)
+            current_database_name = self._resolve_current_tdengine_database()
+            legacy_database_name = self._resolve_tdengine_database(point.device_code)
+            rows = []
+
+            if point.td_column_name:
+                try:
+                    current_table_name = self.tdengine.qualify_table(
+                        current_database_name,
+                        self._resolve_current_child_table_name(point.device_code),
+                    )
+                    col = self.tdengine.quote_identifier(point.td_column_name)
+                    rows = await self.tdengine.fetch_all(
+                        f"SELECT ts, {col} FROM {current_table_name} ORDER BY ts DESC LIMIT 1",
+                        database=current_database_name,
+                    )
+                except Exception:
+                    rows = []
+
             subtable_name = self.tdengine.qualify_table(
-                database_name,
+                legacy_database_name,
                 self._resolve_point_subtable_name(point.device_code, point.var_seq, point.point_id),
             )
 
-            try:
-                rows = await self.tdengine.fetch_all(
-                    f"SELECT ts, `value` FROM {subtable_name} ORDER BY ts DESC LIMIT 1",
-                    database=database_name,
-                )
-            except Exception:
-                rows = []
+            if not rows:
+                try:
+                    rows = await self.tdengine.fetch_all(
+                        f"SELECT ts, `value` FROM {subtable_name} ORDER BY ts DESC LIMIT 1",
+                        database=legacy_database_name,
+                    )
+                except Exception:
+                    rows = []
 
             if not rows:
                 try:
                     stable_name = self.tdengine.qualify_table(
-                        database_name,
+                        legacy_database_name,
                         self._normalize_identifier(point.device_code).lower(),
                     )
                     if point.var_seq is not None:
@@ -2357,7 +2381,7 @@ class CatalogService:
                                 f"SELECT ts, `value` FROM {stable_name} "
                                 f"WHERE var_seq = {int(point.var_seq)} ORDER BY ts DESC LIMIT 1"
                             ),
-                            database=database_name,
+                            database=legacy_database_name,
                         )
                 except Exception:
                     rows = []
@@ -2365,12 +2389,12 @@ class CatalogService:
             if not rows:
                 try:
                     legacy_subtable_name = self.tdengine.qualify_table(
-                        database_name,
+                        legacy_database_name,
                         self._resolve_point_subtable_name(point.device_code, None, point.point_id),
                     )
                     rows = await self.tdengine.fetch_all(
                         f"SELECT ts, `value` FROM {legacy_subtable_name} ORDER BY ts DESC LIMIT 1",
-                        database=database_name,
+                        database=legacy_database_name,
                     )
                 except Exception:
                     rows = []
@@ -2378,7 +2402,7 @@ class CatalogService:
             if not rows:
                 try:
                     stable_name = self.tdengine.qualify_table(
-                        database_name,
+                        legacy_database_name,
                         self._normalize_identifier(point.device_code).lower(),
                     )
                     rows = await self.tdengine.fetch_all(
@@ -2386,7 +2410,7 @@ class CatalogService:
                             f"SELECT ts, `value` FROM {stable_name} "
                             f"WHERE variable_id = {point.point_id} ORDER BY ts DESC LIMIT 1"
                         ),
-                        database=database_name,
+                        database=legacy_database_name,
                     )
                 except Exception:
                     return None
@@ -2450,6 +2474,12 @@ class CatalogService:
         if match is None:
             raise ValueError(f"Unable to resolve TDengine database from device code: {device_code}")
         return match.group(0)
+
+    def _resolve_current_tdengine_database(self) -> str:
+        return self._normalize_identifier(self.tdengine.database)
+
+    def _resolve_current_child_table_name(self, device_code: str) -> str:
+        return self._normalize_identifier(device_code).lower()
 
     def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: int) -> str:
         normalized_device_code = self._normalize_identifier(device_code).lower()
@@ -2734,18 +2764,14 @@ class CatalogService:
         if value is None:
             return None
         if isinstance(value, datetime):
-            if value.tzinfo is not None:
-                return value.astimezone().replace(tzinfo=None)
-            return value
+            return to_local_naive(value) if value.tzinfo is not None else value
         if isinstance(value, str):
             normalized = value.replace("Z", "+00:00")
             try:
                 parsed = datetime.fromisoformat(normalized)
             except ValueError:
                 return None
-            if parsed.tzinfo is not None:
-                return parsed.astimezone().replace(tzinfo=None)
-            return parsed
+            return to_local_naive(parsed) if parsed.tzinfo is not None else parsed
         return None
 
     def _format_datetime(self, value: datetime | None) -> str:

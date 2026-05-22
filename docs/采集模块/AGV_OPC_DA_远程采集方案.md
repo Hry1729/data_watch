@@ -29,7 +29,7 @@
 │  │  InterfaceIngestServer (:8090)                          │   │
 │  │  - 接收 opcda_tag_batch_v1                              │   │
 │  │  - OpcDaTagMapper: item_id → variable_id                │   │
-│  │  - DataBuffer → Aggregator → TDengine                   │   │
+│  │  - DataBuffer → Redis latest/window/stream              │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -246,9 +246,9 @@ CREATE TABLE opc_vm_config (
    - 确认收到 opcda_tag_batch_v1 请求
    - 确认 item_id 映射成功
 
-3. **检查 TDengine 写入**
+3. **检查 TDengine 写入（在 writer 模块端验证）**
    ```sql
-   SELECT COUNT(*) FROM agv.agv801_1;
+   SELECT COUNT(*) FROM device_data.agv801;
    ```
 
 ## 七、置信度评估
@@ -258,7 +258,7 @@ CREATE TABLE opc_vm_config (
 | Sidecar 本地采集 | 0.95 | 已在本地测试环境验证 |
 | HTTP 推送到中心 | 0.92 | 代码已实现，待网络验证 |
 | item_id 映射 | 0.90 | 需确保 MySQL var_address 正确配置 |
-| TDengine 写入 | 0.88 | 需确保 var_seq 与子表对应 |
+| TDengine 写入 (writer 模块) | 0.88 | 需确保数据库和宽表映射配置正确 |
 | 端到端数据流 | 0.85 | 完整链路待生产验证 |
 
 ## 八、风险与缓解
@@ -268,7 +268,7 @@ CREATE TABLE opc_vm_config (
 | 网络中断 | 采集数据丢失 | sidecar 增加本地缓存队列 |
 | item_id 不匹配 | 点位无法入库 | 提前验证 CSV tag 与 MySQL 配置 |
 | OPC Server 重启 | 临时中断 | sidecar 自动重连机制 |
-| TDengine 写入失败 | 数据积压 | collector 增加重试和告警 |
+| TDengine 写入失败 | 数据积压 | writer 模块自动重试和告警 |
 
 ## 九、下一步行动
 

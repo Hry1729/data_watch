@@ -2,8 +2,8 @@
 
 Maps (device_code, group_code) → GroupMapping which contains:
   - config_version: int
-  - child_table: str   e.g. t_QC100_g001
-  - stable: str        e.g. st_qc_g001
+  - child_table: str   e.g. qc100
+  - stable: str        e.g. sdqc
   - var_map: dict[var_id → td_column_name]
   - var_type: dict[var_id → var_type_str]
 
@@ -92,8 +92,8 @@ class MysqlMapper:
             first = rows[0]
             config_version = int(first["config_version"] or 0)
             device_type = str(first["device_type_code"] or "").lower()
-            child_table = f"t_{device_code}_{group_code}"
-            stable = f"st_{device_type}_{group_code}"
+            child_table = device_code
+            stable = f"sd{device_type.lower()}"
 
             var_map: dict[str, str] = {}
             var_type: dict[str, str] = {}

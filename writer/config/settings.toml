@@ -29,3 +29,4 @@ pending_min_idle_ms = 30000
 pending_max_retry = 5
 device_types = ["qc", "asc", "agv"]
 group_codes = ["g001"]
+stable_names = ["sdqc", "sdasc", "sdagv"]

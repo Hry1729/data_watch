@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
-from app.core.time_utils import LOCAL_TZ
+from app.core.time_utils import LOCAL_TZ, parse_local_datetime, to_local_naive
 from app.db.tdengine import TDengineClient
 from app.services.perspective import get_perspective_session_manager
 from app.services.task_manager import get_export_task_manager
@@ -311,7 +311,8 @@ class HistoryService:
         
         start_dt, end_dt = self._validate_query_range(start_time, end_time)
         
-        database_name = self._resolve_tdengine_database(device)
+        database_name = self._resolve_current_tdengine_database()
+        legacy_database_name = self._resolve_tdengine_database(device)
         end_sql = self._format_sql_timestamp(end_dt)
 
         # 构造时间过滤条件：如果有游标则使用游标，否则使用开始时间
@@ -326,12 +327,12 @@ class HistoryService:
 
         rows = []
 
-        # v0.6: try child table with td_column_name
-        if point.td_column_name and point.group_code:
+        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
                     database_name,
-                    self._resolve_child_table_name(device.device_code, point.group_code),
+                    self._resolve_current_child_table_name(device.device_code),
                 )
                 col = self.tdengine.quote_identifier(point.td_column_name)
                 rows = await self.tdengine.fetch_all(
@@ -359,14 +360,14 @@ class HistoryService:
                 var_seq=point.var_seq,
                 point_id=point.point_id,
             )
-            table_name = self.tdengine.qualify_table(database_name, subtable_name)
+            table_name = self.tdengine.qualify_table(legacy_database_name, subtable_name)
             try:
                 # 优先查询子表
                 rows = await self.tdengine.fetch_all(
                     f"SELECT ts, `value` FROM {table_name} "
                     f"WHERE {time_filter} AND ts <= {end_sql} "
                     f"ORDER BY ts ASC LIMIT {page_size}",
-                    database=database_name,
+                    database=legacy_database_name,
                 )
             except Exception as exc:
                 logger.warning("[history] raw subtable query failed table=%s: %s", subtable_name, exc)
@@ -375,7 +376,7 @@ class HistoryService:
         if not rows:
             # 失败则回退到超级表查询
             stable_name = self.tdengine.qualify_table(
-                database_name,
+                legacy_database_name,
                 self._normalize_identifier(device.device_code).lower(),
             )
             try:
@@ -384,7 +385,7 @@ class HistoryService:
                     f"WHERE var_seq = {point.var_seq} "
                     f"AND {time_filter} AND ts <= {end_sql} "
                     f"ORDER BY ts ASC LIMIT {page_size}",
-                    database=database_name,
+                    database=legacy_database_name,
                 )
             except Exception as exc:
                 logger.warning(
@@ -474,14 +475,15 @@ class HistoryService:
         var_type = (point.var_type or "").upper()
         agg = "AVG" if var_type == "REAL" else "LAST"
 
-        database_name = self._resolve_tdengine_database(device)
+        database_name = self._resolve_current_tdengine_database()
+        legacy_database_name = self._resolve_tdengine_database(device)
 
-        # v0.6: try child table with td_column_name
-        if point.td_column_name and point.group_code:
+        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
                     database_name,
-                    self._resolve_child_table_name(device.device_code, point.group_code),
+                    self._resolve_current_child_table_name(device.device_code),
                 )
                 col = self.tdengine.quote_identifier(point.td_column_name)
                 query = (
@@ -519,7 +521,7 @@ class HistoryService:
             candidate_table_names.append(fallback_subtable_name)
 
         for candidate_table_name in candidate_table_names:
-            table_name = self.tdengine.qualify_table(database_name, candidate_table_name)
+            table_name = self.tdengine.qualify_table(legacy_database_name, candidate_table_name)
             query = (
                 f"SELECT _wstart AS ts, {agg}(`value`) AS `value` "
                 f"FROM {table_name} "
@@ -528,7 +530,7 @@ class HistoryService:
                 f"ORDER BY ts ASC LIMIT {limit}"
             )
             try:
-                rows = await self.tdengine.fetch_all(query, database=database_name)
+                rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
             except Exception as exc:
                 logger.warning("[history] bucket query failed table=%s: %s", candidate_table_name, exc)
                 continue
@@ -536,7 +538,7 @@ class HistoryService:
                 return self._filter_bucket_rows(rows)
 
         stable_name = self.tdengine.qualify_table(
-            database_name,
+            legacy_database_name,
             self._normalize_identifier(device.device_code).lower(),
         )
 
@@ -561,7 +563,7 @@ class HistoryService:
 
         for statement in stable_statements:
             try:
-                rows = await self.tdengine.fetch_all(statement, database=database_name)
+                rows = await self.tdengine.fetch_all(statement, database=legacy_database_name)
             except Exception as exc:
                 logger.warning("[history] stable bucket query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
@@ -703,17 +705,18 @@ class HistoryService:
         interval: str,
         agg_func: str,
     ) -> list[tuple[Any, Any]]:
-        database_name = self._resolve_tdengine_database(device)
+        database_name = self._resolve_current_tdengine_database()
+        legacy_database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
         td_interval = self._to_tdengine_interval(interval)
 
-        # v0.6: try child table with td_column_name
-        if point.td_column_name and point.group_code:
+        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
                     database_name,
-                    self._resolve_child_table_name(device.device_code, point.group_code),
+                    self._resolve_current_child_table_name(device.device_code),
                 )
                 col = self.tdengine.quote_identifier(point.td_column_name)
                 query = (
@@ -743,7 +746,7 @@ class HistoryService:
             var_seq=point.var_seq,
             point_id=point.point_id,
         )
-        table_name = self.tdengine.qualify_table(database_name, subtable_name)
+        table_name = self.tdengine.qualify_table(legacy_database_name, subtable_name)
 
         query = (
             f"SELECT _wstart AS ts, {agg_func}(`value`) AS `value` "
@@ -754,14 +757,14 @@ class HistoryService:
         )
 
         try:
-            rows = await self.tdengine.fetch_all(query, database=database_name)
+            rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
             if rows:
                 return rows
         except Exception as exc:
             logger.warning("[history] downsample subtable query failed table=%s: %s", subtable_name, exc)
 
         stable_name = self.tdengine.qualify_table(
-            database_name,
+            legacy_database_name,
             self._normalize_identifier(device.device_code).lower(),
         )
         query = (
@@ -774,7 +777,7 @@ class HistoryService:
         )
 
         try:
-            rows = await self.tdengine.fetch_all(query, database=database_name)
+            rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
             return rows
         except Exception as exc:
             logger.warning(
@@ -1109,7 +1112,7 @@ class HistoryService:
             except ValueError:
                 continue
             if parsed.tzinfo is not None:
-                return parsed.astimezone().replace(tzinfo=None)
+                return to_local_naive(parsed)
             return parsed
 
         raise ApiError(400, f"{field_name} must be a valid datetime string")
@@ -1121,16 +1124,17 @@ class HistoryService:
         start_dt: datetime,
         end_dt: datetime,
     ) -> list[tuple[Any, Any]]:
-        database_name = self._resolve_tdengine_database(device)
+        database_name = self._resolve_current_tdengine_database()
+        legacy_database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
 
-        # v0.6: try child table t_{device_code}_{group_code} with td_column_name column
-        if point.td_column_name and point.group_code:
+        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
                     database_name,
-                    self._resolve_child_table_name(device.device_code, point.group_code),
+                    self._resolve_current_child_table_name(device.device_code),
                 )
                 col = self.tdengine.quote_identifier(point.td_column_name)
                 rows = await self.tdengine.fetch_all(
@@ -1169,7 +1173,7 @@ class HistoryService:
             candidate_table_names.append(fallback_subtable_name)
 
         for candidate_table_name in candidate_table_names:
-            table_name = self.tdengine.qualify_table(database_name, candidate_table_name)
+            table_name = self.tdengine.qualify_table(legacy_database_name, candidate_table_name)
             try:
                 rows = await self.tdengine.fetch_all(
                     (
@@ -1177,7 +1181,7 @@ class HistoryService:
                         f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
                         f"ORDER BY ts ASC"
                     ),
-                    database=database_name,
+                    database=legacy_database_name,
                 )
             except Exception as exc:
                 logger.warning("[history] subtable query failed table=%s: %s", candidate_table_name, exc)
@@ -1187,7 +1191,7 @@ class HistoryService:
                 return rows
 
         stable_name = self.tdengine.qualify_table(
-            database_name,
+            legacy_database_name,
             self._normalize_identifier(device.device_code).lower(),
         )
         stable_statements: list[str] = []
@@ -1210,7 +1214,7 @@ class HistoryService:
         )
         for statement in stable_statements:
             try:
-                rows = await self.tdengine.fetch_all(statement, database=database_name)
+                rows = await self.tdengine.fetch_all(statement, database=legacy_database_name)
             except Exception as exc:
                 logger.warning("[history] stable fallback query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
@@ -1246,11 +1250,11 @@ class HistoryService:
             raise ApiError(400, f"Unable to resolve TDengine database for {device.device_code}")
         return match.group(0)
 
-    def _resolve_child_table_name(self, device_code: str, group_code: str | None) -> str:
-        """v0.6 child table: t_{device_code}_{group_code}"""
-        normalized = self._normalize_identifier(device_code)
-        gc = group_code or "g001"
-        return f"t_{normalized}_{gc}"
+    def _resolve_current_tdengine_database(self) -> str:
+        return self._normalize_identifier(self.tdengine.database)
+
+    def _resolve_current_child_table_name(self, device_code: str) -> str:
+        return self._normalize_identifier(device_code).lower()
 
     def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: int) -> str:
         """Legacy subtable naming (pre-v0.6): {device_code_lower}_{var_seq_or_point_id}"""
@@ -1268,18 +1272,14 @@ class HistoryService:
         if value is None:
             return None
         if isinstance(value, datetime):
-            if value.tzinfo is not None:
-                return value.astimezone().replace(tzinfo=None)
-            return value
+            return to_local_naive(value) if value.tzinfo is not None else value
         if isinstance(value, str):
             normalized = value.replace("Z", "+00:00")
             try:
                 parsed = datetime.fromisoformat(normalized)
             except ValueError:
                 return None
-            if parsed.tzinfo is not None:
-                return parsed.astimezone().replace(tzinfo=None)
-            return parsed
+            return to_local_naive(parsed) if parsed.tzinfo is not None else parsed
         return None
 
     def _format_timestamp(self, value: datetime) -> str:

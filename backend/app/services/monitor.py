@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.core.time_utils import now_local
+from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
 
@@ -97,7 +97,7 @@ class MonitorService:
                 if var_seq is None:
                     continue
                 ts_ms = entry.get("t")
-                ts_dt = datetime.fromtimestamp(ts_ms / 1000) if isinstance(ts_ms, (int, float)) else None
+                ts_dt = to_local_naive(datetime.fromtimestamp(ts_ms / 1000, tz=LOCAL_TZ)) if isinstance(ts_ms, (int, float)) else None
                 latest_point_map[str(var_seq)] = {
                     "ts": ts_dt,
                     "value": entry.get("v"),
@@ -319,18 +319,14 @@ class MonitorService:
         if value is None:
             return None
         if isinstance(value, datetime):
-            if value.tzinfo is not None:
-                return value.astimezone().replace(tzinfo=None)
-            return value
+            return to_local_naive(value) if value.tzinfo is not None else value
         if isinstance(value, str):
             normalized = value.replace("Z", "+00:00")
             try:
                 parsed = datetime.fromisoformat(normalized)
             except ValueError:
                 return None
-            if parsed.tzinfo is not None:
-                return parsed.astimezone().replace(tzinfo=None)
-            return parsed
+            return to_local_naive(parsed) if parsed.tzinfo is not None else parsed
         return None
 
     def _format_datetime(self, value: datetime | None) -> str:

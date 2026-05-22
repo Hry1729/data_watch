@@ -15,7 +15,6 @@ from app.core.time_utils import format_local_datetime, now_local, parse_local_da
 from app.db.tdengine import TDengineClient
 
 
-DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 ONLINE_MAX_AGE_SECONDS = 120
@@ -45,12 +44,9 @@ class DashboardDeviceItem:
 
 
 @dataclass(frozen=True)
-class DashboardTrendPoint:
-    legacy_point_id: int
+class DashboardTrendDevice:
     device_id: int
     device_code: str
-    device_type_code: str | None
-    var_seq: int
 
 
 @dataclass(frozen=True)
@@ -209,29 +205,29 @@ class DashboardService:
         bucket_starts = self._build_bucket_starts(start_dt, end_dt, bucket_delta)
         metric_keys = self._normalize_metric_keys(params.get("metricKeys"))
 
-        points = await self._fetch_trend_points()
+        trend_devices = await self._fetch_trend_devices()
         collect_count_by_bucket: dict[datetime, int] = defaultdict(int)
         active_devices_by_bucket: dict[datetime, set[int]] = defaultdict(set)
 
-        if points and bucket_starts:
+        if trend_devices and bucket_starts:
             query_results = await asyncio.gather(
                 *(
-                    self._fetch_point_bucket_counts(
-                        point=point,
+                    self._fetch_device_bucket_counts(
+                        device=device,
                         start_dt=start_dt,
                         end_dt=end_dt,
                         granularity=granularity,
                     )
-                    for point in points
+                    for device in trend_devices
                 )
             )
-            for point, point_counts in zip(points, query_results, strict=False):
-                for bucket_start, count in point_counts.items():
+            for device, device_counts in zip(trend_devices, query_results, strict=False):
+                for bucket_start, count in device_counts.items():
                     collect_count_by_bucket[bucket_start] += count
                     if count > 0:
-                        active_devices_by_bucket[bucket_start].add(point.device_id)
+                        active_devices_by_bucket[bucket_start].add(device.device_id)
 
-        trend_device_total = len({point.device_id for point in points})
+        trend_device_total = len(trend_devices)
         collect_series = [int(collect_count_by_bucket.get(bucket_start, 0)) for bucket_start in bucket_starts]
         online_rate_series = [
             round((len(active_devices_by_bucket.get(bucket_start, set())) / trend_device_total) * 100, 2)
@@ -939,100 +935,63 @@ class DashboardService:
             for row in rows
         ]
 
-    async def _fetch_trend_points(self) -> list[DashboardTrendPoint]:
+    async def _fetch_trend_devices(self) -> list[DashboardTrendDevice]:
         rows = (
             await self.session.execute(
                 text(
                     """
-                    SELECT
-                        dv.id AS point_id,
-                        dv.device_id AS device_id,
-                        d.device_code AS device_code,
-                        dt.type_code AS device_type_code,
-                        dv.var_seq AS var_seq
-                    FROM device_variable AS dv
-                    JOIN device AS d ON d.id = dv.device_id
-                    LEFT JOIN device_type AS dt ON dt.id = d.type_id
+                    SELECT DISTINCT
+                        d.id AS device_id,
+                        d.device_code AS device_code
+                    FROM device AS d
+                    JOIN device_variable AS dv ON dv.device_id = d.id
                     WHERE dv.var_seq IS NOT NULL
                       AND dv.var_seq > 0
-                    ORDER BY dv.var_seq ASC
+                      AND COALESCE(dv.enable, 1) = 1
+                      AND COALESCE(dv.deleted, 0) = 0
+                    ORDER BY d.id ASC
                     """
                 )
             )
         ).mappings().all()
 
         return [
-            DashboardTrendPoint(
-                legacy_point_id=int(row["point_id"]),
+            DashboardTrendDevice(
                 device_id=int(row["device_id"]),
                 device_code=str(row["device_code"] or ""),
-                device_type_code=str(row["device_type_code"]) if row["device_type_code"] else None,
-                var_seq=int(row["var_seq"]),
             )
             for row in rows
         ]
 
-    async def _fetch_point_bucket_counts(
+    async def _fetch_device_bucket_counts(
         self,
         *,
-        point: DashboardTrendPoint,
+        device: DashboardTrendDevice,
         start_dt: datetime,
         end_dt: datetime,
         granularity: str,
     ) -> dict[datetime, int]:
-        database_name = self._resolve_tdengine_database(point.device_code, point.device_type_code)
+        database_name = self._resolve_current_tdengine_database()
         table_name = self.tdengine.qualify_table(
             database_name,
-            self._resolve_point_subtable_name(point.device_code, point.var_seq, point.legacy_point_id),
-        )
-        stable_name = self.tdengine.qualify_table(
-            database_name,
-            self._normalize_identifier(point.device_code).lower(),
+            self._resolve_current_child_table_name(device.device_code),
         )
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
         interval_sql = self._granularity_to_td_interval(granularity)
 
-        statements = [
-            (
-                f"SELECT _wstart AS window_start, COUNT(*) AS collect_count FROM {table_name} "
-                f"WHERE ts >= '{start_sql}' AND ts < '{end_sql}' "
-                f"INTERVAL({interval_sql})"
-            ),
-        ]
-        statements.append(
-            (
-                f"SELECT _wstart AS window_start, COUNT(*) AS collect_count FROM {stable_name} "
-                f"WHERE var_seq = {int(point.var_seq)} "
-                f"AND ts >= '{start_sql}' AND ts < '{end_sql}' "
-                f"INTERVAL({interval_sql})"
-            )
-        )
-        statements.extend(
-            [
-                (
-                    f"SELECT _wstart AS window_start, COUNT(*) AS collect_count FROM {self.tdengine.qualify_table(database_name, self._resolve_point_subtable_name(point.device_code, None, point.legacy_point_id))} "
-                    f"WHERE ts >= '{start_sql}' AND ts < '{end_sql}' "
-                    f"INTERVAL({interval_sql})"
-                ),
-                (
-                    f"SELECT _wstart AS window_start, COUNT(*) AS collect_count FROM {stable_name} "
-                    f"WHERE variable_id = {point.legacy_point_id} "
-                    f"AND ts >= '{start_sql}' AND ts < '{end_sql}' "
-                    f"INTERVAL({interval_sql})"
-                ),
-            ]
+        statement = (
+            f"SELECT _wstart AS window_start, COUNT(*) AS collect_count FROM {table_name} "
+            f"WHERE ts >= '{start_sql}' AND ts < '{end_sql}' "
+            f"INTERVAL({interval_sql})"
         )
 
-        for statement in statements:
-            try:
-                rows = await self.tdengine.fetch_all(statement, database=database_name)
-            except Exception:
-                continue
-            if rows is not None:
-                return self._normalize_bucket_rows(rows, granularity)
+        try:
+            rows = await self.tdengine.fetch_all(statement, database=database_name)
+        except Exception:
+            return {}
 
-        return {}
+        return self._normalize_bucket_rows(rows, granularity)
 
     def _normalize_bucket_rows(self, rows: list[tuple[Any, ...]], granularity: str) -> dict[datetime, int]:
         result: dict[datetime, int] = {}
@@ -1071,10 +1030,10 @@ class DashboardService:
         device: DashboardDeviceItem,
     ) -> datetime | None:
         try:
-            database_name = self._resolve_tdengine_database(device.device_code, device.device_type_code)
+            database_name = self._resolve_current_tdengine_database()
             table_name = self.tdengine.qualify_table(
                 database_name,
-                self._normalize_identifier(device.device_code).lower(),
+                self._resolve_current_child_table_name(device.device_code),
             )
             rows = await self.tdengine.fetch_all(
                 f"SELECT LAST(ts) AS last_ts FROM {table_name}",
@@ -1341,22 +1300,11 @@ class DashboardService:
             return "unstable"
         return "offline"
 
-    def _resolve_tdengine_database(self, device_code: str, device_type_code: str | None) -> str:
-        if device_type_code:
-            normalized_type_code = self._normalize_identifier(device_type_code).lower()
-            if normalized_type_code:
-                return normalized_type_code
+    def _resolve_current_tdengine_database(self) -> str:
+        return self._normalize_identifier(self.tdengine.database)
 
-        normalized_device_code = self._normalize_identifier(device_code).lower()
-        match = DEVICE_PREFIX_RE.match(normalized_device_code)
-        if match is None:
-            raise ApiError(400, f"Unable to resolve TDengine database for {device_code}")
-        return match.group(0)
-
-    def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: int) -> str:
-        normalized_device_code = self._normalize_identifier(device_code).lower()
-        suffix = int(var_seq) if var_seq not in (None, 0) else int(point_id)
-        return f"{normalized_device_code}_{suffix}"
+    def _resolve_current_child_table_name(self, device_code: str) -> str:
+        return self._normalize_identifier(device_code).lower()
 
     def _normalize_identifier(self, value: Any) -> str:
         normalized = IDENTIFIER_SANITIZE_RE.sub("_", str(value or "").strip())
