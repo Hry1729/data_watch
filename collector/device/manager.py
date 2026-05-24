@@ -10,8 +10,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, TYPE_CHECKING
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from core.exceptions import DeviceConnectionError
 from core.logger import get_logger
-from core.retry import with_retry, CircuitBreaker, ConnectionPool, classify_error
-from core.plugin_system import get_plugin_manager
+from core.retry import with_retry, CircuitBreaker
 from device.device import Device, DeviceStatus, Variable
 
 if TYPE_CHECKING:
@@ -471,29 +470,21 @@ class DeviceManager:
         logger.info("All devices disconnected")
 
     def _create_driver(self, protocol: str) -> "BaseDriver":
-        """根据协议类型创建驱动"""
-        # 使用插件系统创建驱动
-        plugin_manager = get_plugin_manager()
-        driver_class = plugin_manager.protocol_registry.get_driver_class(protocol.lower())
-
-        if driver_class:
-            return driver_class()
-        else:
-            # 回退到内置驱动
-            if protocol.lower() == "s7":
-                from drivers.s7_driver import S7Driver
-                return S7Driver()
-            elif protocol.lower() == "ge_srtp":
-                from drivers.ge_srtp_driver import GESRTPDriver
-                return GESRTPDriver()
-            elif protocol.lower() in ("opc", "opcua", "opc_ua"):
-                from drivers.opcua_driver import OPCUADriver
-                return OPCUADriver()
-            elif protocol.lower() == "opcda_center":
-                from drivers.opcda_center_driver import OpcDaCenterDriver
-                return OpcDaCenterDriver()
-            else:
-                raise DeviceConnectionError(f"Unsupported protocol: {protocol}")
+        """根据协议类型创建内置驱动"""
+        name = protocol.lower()
+        if name == "s7":
+            from drivers.s7_driver import S7Driver
+            return S7Driver()
+        if name == "ge_srtp":
+            from drivers.ge_srtp_driver import GESRTPDriver
+            return GESRTPDriver()
+        if name in ("opc", "opcua", "opc_ua"):
+            from drivers.opcua_driver import OPCUADriver
+            return OPCUADriver()
+        if name == "opcda_center":
+            from drivers.opcda_center_driver import OpcDaCenterDriver
+            return OpcDaCenterDriver()
+        raise DeviceConnectionError(f"Unsupported protocol: {protocol}")
 
     async def check_device_health(self, device: Device) -> bool:
         """检查设备健康状态"""

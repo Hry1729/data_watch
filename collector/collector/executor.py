@@ -4,10 +4,10 @@
 本模块提供采集任务的执行功能：
 - TaskExecutor: 执行具体的采集操作
 - 调用驱动读取 PLC 数据
-- 解析结果并生成 DataPoint 入队
+- 解析结果并写入 Redis
 
 典型用法:
-    executor = TaskExecutor(buffer, device_manager)
+    executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
     await executor.execute(task)
 """
 
@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from core.exceptions import ReadError
 from core.logger import get_logger
 from collector.task import CollectTask
-from data_queue.buffer import DataBuffer, DataPoint
+from data_queue.types import DataPoint
 from device.manager import DeviceManager
 
 if TYPE_CHECKING:
@@ -36,18 +36,19 @@ LOG_SUPPRESS_INTERVAL = 30
 class TaskExecutor:
     """
     任务执行器
-    执行具体的采集操作：调用驱动读取，将结果放入队列
+    执行具体的采集操作：调用驱动读取，解析后写入 Redis
     """
 
     def __init__(
         self,
-        buffer: DataBuffer,
         device_manager: Optional[DeviceManager] = None,
         system_logger: Optional[Any] = None,
         summary_interval_seconds: float = 60.0,
         redis_writer: Optional["RedisWriter"] = None,
     ):
-        self.buffer = buffer
+        # collector 主链路只写 Redis；缺少 redis_writer 会静默丢数据，故快速失败。
+        if redis_writer is None:
+            raise ValueError("TaskExecutor requires redis_writer")
         self.device_manager = device_manager
         self._system_logger = system_logger
         self._redis_writer = redis_writer
@@ -59,7 +60,6 @@ class TaskExecutor:
         self._summary_elapsed_ms = 0.0
         self._total_reads = 0
         self._total_errors = 0
-        self._total_dropped = 0  # 队列满时丢弃的点数
         # 日志抑制：记录每个设备上次 "not connected" 警告的时间
         self._device_warn_last_time: Dict[str, float] = {}
 
@@ -68,7 +68,7 @@ class TaskExecutor:
         执行单个采集任务
         1. 调用驱动批量读取
         2. 解析结果
-        3. 生成DataPoint入队
+        3. 写入 Redis
         """
         device = task.device
         scan_task = task.scan_task
@@ -97,35 +97,14 @@ class TaskExecutor:
             elapsed = time.time() - start
             self._total_reads += 1
 
-            # 解析结果并入队
+            # 解析结果并写入 Redis
             points = self._parse_result(device.device_id, scan_task, result)
-            storage_variable_ids = {
-                variable.variable_id
-                for variable in scan_task.variables
-                if variable.is_storage
-            }
-            storage_points = [
-                point for point in points
-                if point.variable_id in storage_variable_ids
-            ]
-            if storage_points and self._redis_writer is None:
-                accepted = await self.buffer.put_batch(storage_points)
-                dropped = len(storage_points) - accepted
-                if dropped > 0:
-                    logger.warning(
-                        "Task %s: queue full, dropped %d/%d points",
-                        task.task_name,
-                        dropped,
-                        len(storage_points),
-                    )
-                    self._total_dropped += dropped
 
             if points:
-                if self._redis_writer is not None:
-                    loop = asyncio.get_running_loop()
-                    loop.run_in_executor(
-                        None, self._write_to_redis, device, scan_task, points
-                    )
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(
+                    None, self._write_to_redis, device, scan_task, points
+                )
 
             logger.debug(
                 "Task %s: read %s points in %.1fms",
@@ -470,5 +449,4 @@ class TaskExecutor:
         return {
             "total_reads": self._total_reads,
             "total_errors": self._total_errors,
-            "total_dropped": self._total_dropped,
         }

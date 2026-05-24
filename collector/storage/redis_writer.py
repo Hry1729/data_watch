@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 
 import redis
 
@@ -53,7 +54,9 @@ class RedisWriter:
         values: dict[str, str],
     ) -> None:
         """写 stream Stream。values: {var_id: value_str}，已过滤 STRING 和 is_storage=0"""
-        shard_no = hash(device_code) % self.shard_count
+        # 稳定哈希：内置 hash(str) 受 PYTHONHASHSEED 影响每进程不同，
+        # 会导致 collector 重启后同设备落到不同 shard。crc32 进程间稳定。
+        shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
         stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
         self.r.xadd(
             stream_key,

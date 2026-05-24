@@ -20,8 +20,6 @@ import time
 from core.config import (
     CollectorConfig,
     DeviceConfig,
-    InterfaceIngestConfig,
-    TDengineConfig,
     VariableConfig,
 )
 from core.config_loader import load_collector_config_from_env
@@ -37,12 +35,10 @@ from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
-from data_queue.buffer import DataBuffer
 from storage.redis_client import get_redis
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
-from monitor.metrics import MetricsCollector
 
 logger = get_logger("main")
 
@@ -70,18 +66,15 @@ class CollectorApp:
             else None
         )
         self.device_manager = DeviceManager(config, status_reporter=status_reporter)
-        self.data_buffer = DataBuffer(max_size=config.queue_max_size)
         self.scheduler = TaskScheduler()
         redis_client = get_redis(config)
         self.redis_writer = RedisWriter(redis_client, config)
         self.executor = TaskExecutor(
-            self.data_buffer,
             device_manager=self.device_manager,
             system_logger=self.system_logger,
             redis_writer=self.redis_writer,
         )
         self.health_checker = HealthChecker(self.device_manager, interval=30)
-        self.metrics = MetricsCollector()
 
         # OPC DA tag 映射器
         self.opcda_mapper = OpcDaTagMapper(config.variables)
@@ -147,8 +140,6 @@ class CollectorApp:
         # 5. 启动外部接口采集协议（HTTP Push）
         if self.ingest_server is not None:
             await self.ingest_server.start(
-                data_buffer=self.data_buffer,
-                event_loop=asyncio.get_running_loop(),
                 opcda_mapper=self.opcda_mapper,
                 redis_writer=self.redis_writer,
                 realtime_config=self.config,
@@ -174,7 +165,6 @@ class CollectorApp:
                     "devices": len(self.device_manager.devices),
                     "tasks": len(self.scheduler.tasks),
                     "variables": len(self.config.variables),
-                    "queue_max_size": self.config.queue_max_size,
                     "fake_mode": self.config.fake_mode_active,
                     "storage_path": "redis_only",
                 },
@@ -190,7 +180,7 @@ class CollectorApp:
             return
         self._closed = True
 
-        # 清理：先停采集，再 flush 聚合缓存和等待写入，最后断开外部资源。
+        # 清理：先停采集与配置热更新，再停接口服务，最后断开设备连接。
         logger.info("Shutting down...")
         if self.system_logger is not None:
             self.system_logger.emit(
@@ -198,9 +188,6 @@ class CollectorApp:
                 log_type="system",
                 source="collector.main",
                 content="Collector shutdown started",
-                detail_json={
-                    "queue_size": self.data_buffer.qsize(),
-                },
             )
         if self._reload_task is not None:
             self._reload_task.cancel()
@@ -237,7 +224,6 @@ class CollectorApp:
                 source="collector.main",
                 content="Collector stopped",
                 detail_json={
-                    "buffer": self.data_buffer.stats,
                     "executor": self.executor.stats,
                     "storage_path": "redis_only",
                 },
@@ -251,8 +237,7 @@ class CollectorApp:
         """打印当前状态"""
         logger.info(
             f"Status: devices={len(self.device_manager.devices)}, "
-            f"tasks={len(self.scheduler.tasks)}, "
-            f"queue={self.data_buffer.qsize()}"
+            f"tasks={len(self.scheduler.tasks)}"
         )
 
     def stop(self) -> None:
@@ -385,33 +370,6 @@ def _build_fake_topology(config: CollectorConfig, reason: str) -> CollectorConfi
     ]
     config.fake_mode_active = True
     return config
-
-
-def create_sample_config() -> CollectorConfig:
-    """创建示例运行配置（设备/点位实际由 MySQL 动态加载）"""
-    return CollectorConfig(
-        tdengine=TDengineConfig(
-            host="localhost",
-            port=6041,
-            user="root",
-            password="taosdata",
-            database="device_data",
-        ),
-        devices=[],
-        variables=[],
-        batch_size=1000,
-        flush_interval=1,
-        max_window_seconds=600,
-        log_level="INFO",
-        interface_ingest=InterfaceIngestConfig(
-            enabled=True,
-            host="0.0.0.0",
-            port=8090,
-            path="/ingest",
-            api_key=None,
-            max_batch_size=1000,
-        ),
-    )
 
 
 async def main():

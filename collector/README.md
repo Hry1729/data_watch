@@ -2,38 +2,39 @@
 
 ## 项目简介
 
-这是一个专为工业自动化设备设计的高性能数据采集系统，支持多种工业协议（如S7、GE SRTP、OPC UA；Modbus规划中），并支持通过 32 位 C# sidecar 接入 AGV OPC DA 数据源。系统能够实时采集、处理和存储工业设备的数据，并提供完整的监控和告警功能。
+这是一个专为工业自动化设备设计的高性能数据采集系统，支持多种工业协议（如S7、GE SRTP、OPC UA；Modbus规划中），并支持通过 32 位 C# sidecar 接入 AGV OPC DA 数据源。collector 负责实时采集并写入 Redis（latest / window / stream），由独立 writer 进程批量写入 TDengine。
 
 ## 主要特性
 
 - 🔌 **多协议支持** - 支持S7、GE SRTP、OPC UA（Modbus规划中），AGV 32 位 OPC DA 通过 C# x86 sidecar + HTTP ingest 接入
 - 🚀 **高性能** - 基于asyncio的高并发架构，支持大规模设备连接
-- 💾 **实时存储** - 集成TDengine时序数据库，支持高频数据写入
-- 🔍 **数据质量** - 内置数据质量验证和异常检测
-- 📊 **监控告警** - 完整的性能监控和告警系统
+- 💾 **Redis输出** - 写入 latest / window / stream，支撑实时监控与异步入库
+- 🌐 **接口采集** - 支持 HTTP Push 接入外部数据源
 - 🔧 **灵活配置** - 支持数据库配置和热重载
-- 🧩 **插件架构** - 可扩展的插件系统，支持自定义协议驱动
 - 🛡️ **高可靠** - 熔断器、重试机制、自动重连等容错设计
 
 ## 系统架构
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   设备管理器    │    │    采集调度器   │    │   数据聚合器    │
-│  DeviceManager  │◄──►│ TaskScheduler   │◄──►│ DataAggregator  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│    数据缓冲区   │    │   任务执行器   │    │   TD存储层     │
-│   DataBuffer   │    │ TaskExecutor   │    │ TDengineStore  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│             错误处理与性能监控                              │
-│  ErrorHandler & PerformanceMonitor                        │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  MySQL拓扑   │────▶│ DeviceManager│────▶│ TaskScheduler│
+└──────────────┘     └──────────────┘     └──────┬───────┘
+                                                  │
+                                                  ▼
+                                           ┌──────────────┐
+                                           │ TaskExecutor │
+                                           └──────┬───────┘
+                                                  │
+┌──────────────┐     ┌─────────────────────┐      │
+│ HTTP / OPCDA │────▶│ InterfaceIngestServer│─────┤
+└──────────────┘     └─────────────────────┘      ▼
+                                           ┌──────────────┐
+                                           │ Redis Writer │
+                                           │latest/window/│
+                                           │    stream    │
+                                           └──────┬───────┘
+                                                  ▼
+                                           独立 writer 入库 TDengine
 ```
 
 ## 快速开始
@@ -42,7 +43,7 @@
 
 - Python 3.8+
 - MySQL 8.0+（用于设备配置管理）
-- TDengine 2.6+（用于数据存储）
+- Redis 5.0+（实时缓冲与待入库 Stream）
 - .NET Framework / MSBuild（仅 AGV OPC DA sidecar 需要，且必须 x86 编译）
 
 ### 安装依赖
@@ -82,12 +83,7 @@ mysql -u username -p device_watch < device_watch.sql
 ```toml
 [runtime]
 log_level = "INFO"
-batch_size = 1000
-flush_interval = 1
-max_window_seconds = 600
 enable_fake_bootstrap = false
-queue_max_size = 10000
-writer_workers = 2
 
 [mysql]
 host = "127.0.0.1"
@@ -95,13 +91,6 @@ port = 3306
 user = "root"
 password = "password"
 database = "device_watch"
-
-[tdengine]
-host = "127.0.0.1"
-port = 6041
-user = "root"
-password = "taosdata"
-database = "device_data"
 
 [interface_ingest]
 enabled = true
@@ -128,13 +117,6 @@ max_batch_size = 1000
 > - AGV 32 位 OPC DA 设备请使用 `protocol=opcda_sidecar` 或 `protocol=http_push`
 > - 直接 `protocol=opcda` 会被启动校验拒绝，因为 64 位 Python collector 不能直接加载 32 位 OPC DA COM
 >
-> TDengine 建模：
-> - 每种设备类型一个数据库（如 `qc`、`asc`、`agv`）
-> - 每个设备一个超级表（如 `qc100`、`asc7011`）
-> - 每个变量一个子表（如 `qc100_30`）
-> - 子表行结构：`ts, value, quality`；子表 TAG 使用 `var_seq`
-> - `tdengine.database` 仅保留为兼容配置项，实际落库目标由设备类型动态派生
->
 > 若 MySQL 暂未就绪，可临时将 `runtime.enable_fake_bootstrap=true`：
 > - 会注入 `QC_FAKE100` / `ASC_FAKE200` 假拓扑并写入示例点位
 > - 所有相关日志包含 `[FAKE-DATA]` 标识
@@ -148,7 +130,7 @@ set COLLECTOR_CONFIG=D:\python\device_alarm\data_watch\collector\config\settings
 ```
 
 项目也提供了联调模板配置 `config/settings.fake_bootstrap.toml`（已启用 `enable_fake_bootstrap=true`），
-可在 MySQL 未就绪阶段临时用于打通 TDengine 建表与写入链路验证。
+可在 MySQL 未就绪阶段临时用于打通 collector 采集与 Redis 写入链路验证。
 
 > 如果项目目录从中文路径迁移到 `D:\python\device_alarm\data_watch`，建议重建 `collector\.venv`。Windows venv 启动器可能仍保存旧路径，`run.bat` 会尝试回退到系统 Python，但回退解释器必须已经安装采集模块依赖。
 
@@ -282,17 +264,17 @@ manager.register_devices()
 await manager.connect_all()
 ```
 
-### 2. 数据采集调度器 (TaskScheduler)
+### 2. 数据采集调度器与执行器
 
 管理采集任务的调度和执行：
 
 ```python
-from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
+from collector.scheduler import TaskScheduler
 
 # 创建调度器和执行器
 scheduler = TaskScheduler()
-executor = TaskExecutor(data_buffer)
+executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
 
 # 添加任务
 scheduler.add_tasks(tasks)
@@ -330,103 +312,21 @@ await scheduler.start(executor.execute)
 - **慢请求**：不会造成请求堆积，也不会额外增加等待时间
 - **自适应**：网络延迟时自动调整，恢复后自动回到正常周期
 
-### 3. 数据聚合器 (DataAggregator)
+### 3. Redis 输出
 
-处理数据去重、批量写入：
+collector 不直接连接 TDengine。采集结果统一写入 Redis：
 
-```python
-from data_queue.aggregator import DataAggregator
+- `latest`：设备/点位最新值，供实时监控读取
+- `window`：短窗口数据，供实时页面和轻量分析使用
+- `stream`：待入库数据，由独立 writer 消费并写入 TDengine 宽表
 
-# 创建聚合器
-aggregator = DataAggregator(config, buffer)
+### 4. HTTP Push 接入
 
-# 设置输出回调
-aggregator.set_output_callback(write_to_tdengine)
-
-# 启动聚合器
-await aggregator.run()
-```
-
-### 4. 数据质量管理 (DataQualityManager)
-
-验证数据质量和异常检测：
-
-```python
-from core.data_quality import DataQualityManager, QualityRule, QualityCheck
-
-# 创建质量管理器
-quality_manager = DataQualityManager()
-
-# 添加验证规则
-quality_manager.add_rule("temperature", QualityCheck(
-    rule_type=QualityRule.VALUE_RANGE,
-    parameter={"min": -10, "max": 50},
-    enabled=True
-))
-```
-
-## 插件开发
-
-### 创建自定义协议驱动
-
-1. 继承BaseDriver类：
-
-```python
-from drivers.base import BaseDriver, ReadBlock, WritePoint
-from core.exceptions import ReadError
-
-class CustomDriver(BaseDriver):
-    async def connect(self, config: dict):
-        # 实现连接逻辑
-        pass
-    
-    async def disconnect(self):
-        # 实现断开逻辑
-        pass
-    
-    async def read(self, blocks: List[ReadBlock]):
-        # 实现读取逻辑
-        pass
-    
-    async def write(self, points: List[WritePoint]):
-        # 生产采集默认只读；如无明确安全评审，请保持拒绝写入
-        raise ReadError("driver is read-only in collector")
-```
-
-2. 注册驱动：
-
-```python
-from core.plugin_system import get_plugin_manager
-
-pm = get_plugin_manager()
-pm.register_protocol("custom_protocol", CustomDriverPlugin())
-```
-
-## 监控和告警
-
-### Prometheus指标
-
-系统内置Prometheus指标支持，可通过HTTP端口访问：
-
-```bash
-http://localhost:9090/metrics
-```
-
-主要指标包括：
-- `devices_connected` - 在线设备数
-- `data_points_processed` - 数据点处理数
-- `queue_size` - 队列大小
-- `error_count` - 错误计数
-
-### 健康检查
-
-```bash
-curl http://localhost:8080/health
-```
+外部数据源通过 `/ingest` 推送后，同样进入 Redis latest / window / stream。
 
 ## 外部模块接口采集（HTTP Push）
 
-系统支持通过 HTTP 接口直接推送数据点到采集链路（DataBuffer -> DataAggregator -> TDengine）。
+系统支持通过 HTTP 接口直接推送数据点到采集链路，服务端会将数据写入 Redis latest / window / stream。
 
 - 默认端口：`8090`
 - 推送路径：`/ingest`
@@ -509,8 +409,8 @@ pytest
 # 运行特定测试
 pytest tests/test_device_manager.py
 
-# 运行性能测试
-pytest tests/test_performance.py -v
+# 运行接口采集测试
+pytest tests/test_interface_ingest.py -q
 ```
 
 ## 性能优化
@@ -532,19 +432,6 @@ blocks = [
 ]
 ```
 
-### 连接池
-
-使用连接池管理数据库连接，提高性能：
-
-```python
-from core.connection_pool import ConnectionPool
-
-pool = ConnectionPool(config)
-conn = await pool.get_connection()
-# 使用连接...
-await pool.release_connection(conn)
-```
-
 ## 故障排查
 
 ### 常见问题
@@ -555,12 +442,12 @@ await pool.release_connection(conn)
    - 查看详细错误日志
 
 2. **数据写入失败**
-   - 检查TDengine连接状态
+   - 检查 Redis 连接状态
    - 验证数据格式
-   - 查看队列是否满
+   - 确认独立 writer 正常消费 Redis Stream
 
 3. **性能问题**
-   - 检查批量大小设置
+   - 检查采集周期和点位数量
    - 优化扫描周期
    - 监控系统资源使用
 

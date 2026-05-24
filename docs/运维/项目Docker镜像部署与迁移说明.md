@@ -9,7 +9,8 @@
 ```text
 frontend   使用 Docker 镜像运行，Nginx 提供静态资源和接口反向代理
 backend    使用 Docker 镜像运行，镜像内置 Python 3.14t free-threading
-collector  暂不容器化，继续在 Windows 主机运行
+collector  暂不容器化，以 PyInstaller 打包为 exe 方式在 Windows 主机运行
+writer     暂不容器化，以 PyInstaller 打包为 exe 方式在 Windows 主机运行，与 collector 独立进程分开打包
 MySQL      可使用宿主机已有服务，也可后续单独容器化
 TDengine   可使用宿主机已有服务，也可后续单独容器化
 Redis      实时缓冲层必要依赖，可使用宿主机已有服务，也可后续单独容器化
@@ -161,9 +162,13 @@ http://127.0.0.1:8080/api/...
 http://127.0.0.1:8000
 ```
 
-## 五、采集模块启动方式
+## 五、采集模块与 writer 启动方式
 
-采集模块仍在 Windows 主机运行。
+collector 和 writer 均在 Windows 主机运行，两者是独立进程，需要同时启动数据才能完整落库。
+
+### 五.一 collector 采集模块
+
+#### 开发阶段直接运行（源码模式）
 
 ```powershell
 cd D:\python\device_alarm\data_watch\collector
@@ -175,13 +180,192 @@ cd D:\python\device_alarm\data_watch\collector
 run.bat
 ```
 
-如果需要直接启动：
+`run.bat` 会自动检测 OPC DA 协议，并在必要时启动辅助 proxy 服务，然后再拉起 collector 主进程。
+
+如果需要跳过协议检测直接启动（调试用）：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py
 ```
 
-直接运行 `main.py` 会跳过 `run.bat` 中的协议检测和辅助服务启动逻辑，正式采集建议优先使用 `run.bat`。
+#### 打包为 exe
+
+##### 1. 准备打包虚拟环境（首次）
+
+在 collector 目录下独立创建打包用虚拟环境，与开发用 `.venv` 分开：
+
+```powershell
+cd D:\python\device_alarm\data_watch\collector
+
+py -3.14 -m venv .venv-pack
+.\.venv-pack\Scripts\python.exe -m pip install pyinstaller
+.\.venv-pack\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+##### 2. 打包命令
+
+```powershell
+cd D:\python\device_alarm\data_watch\collector
+
+.\.venv-pack\Scripts\pyinstaller.exe data-watch-collector.spec
+```
+
+打包完成后产物目录为：
+
+```text
+collector\dist\data-watch-collector\
+├─ data-watch-collector.exe   ← 主程序
+└─ （依赖 DLL / .pyd 文件）
+```
+
+##### 3. 部署目录结构
+
+collector 以**当前工作目录**为基准读取 `config/settings.toml`，启动前必须先 `cd` 到部署目录。推荐结构：
+
+```text
+data-watch-collector\
+├─ data-watch-collector.exe
+├─ （其他 dist 文件）
+└─ config\
+   └─ settings.toml       ← 从 collector\config\settings.toml 复制并修改
+```
+
+将 `collector\dist\data-watch-collector\` 整个目录与 `collector\config\settings.toml` 一起拷贝到目标位置。
+
+##### 4. 修改配置
+
+编辑目标目录下的 `config\settings.toml`，重点修改连接地址和密码：
+
+```toml
+[mysql]
+host = "目标 MySQL 地址"
+password = "你的 MySQL 密码"
+database = "device_watch"
+
+[redis]
+host = "127.0.0.1"
+port = 6379
+password = ""           # 无密码留空
+
+[interface_ingest]
+enabled = true
+host = "127.0.0.1"
+port = 8090
+```
+
+##### 5. 在目标电脑启动
+
+**必须先 cd 到部署目录**（collector 以当前工作目录为基准读取 `config/settings.toml`）：
+
+```powershell
+cd <collector 部署目录>
+.\data-watch-collector.exe
+```
+
+启动成功后会看到：
+
+```text
+Redis connected: 127.0.0.1:6379
+MySQL connected: 127.0.0.1:3306 db=device_watch
+[ingest] Listening on 127.0.0.1:8090
+```
+
+**注意**：打包的 exe 不包含 `run.bat` 的协议检测逻辑。如果现场使用 OPC DA 中心采集模式，需要手动先启动对应 proxy 服务，再运行 exe。
+
+### 五.二 writer 模块打包与启动
+
+writer 负责从 Redis Stream 消费数据并批量写入 TDengine 宽表。它与 collector 分开打包为独立 exe，配置文件也是独立的。
+
+#### 1. 准备虚拟环境（首次）
+
+writer 依赖与 collector 基本相同但更精简，建议在 writer 目录下独立创建打包用虚拟环境：
+
+```powershell
+cd D:\python\device_alarm\data_watch\writer
+
+py -3.14 -m venv .venv-pack
+.\.venv-pack\Scripts\python.exe -m pip install pyinstaller
+.\.venv-pack\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+#### 2. 打包为 exe
+
+```powershell
+cd D:\python\device_alarm\data_watch\writer
+
+.\.venv-pack\Scripts\pyinstaller.exe data-watch-writer.spec
+```
+
+打包完成后输出目录为：
+
+```text
+writer\dist\data-watch-writer\
+├─ data-watch-writer.exe   ← 主程序
+└─ （依赖 DLL / .pyd 文件）
+```
+
+#### 3. 部署目录结构
+
+writer 在启动时通过 `open("config/settings.toml", "rb")` 以**当前工作目录**为基准读取配置，而不是 exe 所在目录。因此启动前必须先 `cd` 到 writer 部署目录，否则会报找不到配置文件。如果通过桌面管理器或服务管理工具启动，必须将 `workingDirectory` 设为 writer 部署目录。推荐的部署目录结构：
+
+```text
+data-watch-writer\
+├─ data-watch-writer.exe
+├─ （其他 dist 文件）
+└─ config\
+   └─ settings.toml       ← 从 writer\config\settings.toml 复制并修改密码
+```
+
+将 `writer\dist\data-watch-writer\` 整个目录与 `writer\config\settings.toml` 一起拷贝到目标位置。
+
+#### 4. 修改配置
+
+编辑目标目录下的 `config\settings.toml`，重点修改密码和连接地址：
+
+```toml
+[redis]
+host = "127.0.0.1"
+port = 6379
+password = ""           # 无密码留空
+
+[mysql]
+host = "目标 MySQL 地址"
+password = "你的 MySQL 密码"
+database = "device_watch"
+
+[tdengine]
+host = "目标 TDengine 地址"
+password = "你的 TDengine 密码"
+database = "device_data"
+
+[writer]
+flush_interval_ms = 500
+batch_count = 200
+max_buffer_rows = 2000
+pending_min_idle_ms = 30000
+pending_max_retry = 5
+```
+
+#### 5. 启动 writer
+
+**必须先 cd 到部署目录**（writer 以当前工作目录为基准读取 `config/settings.toml`）：
+
+```powershell
+cd <writer 部署目录>
+.\data-watch-writer.exe
+```
+
+启动成功后会看到：
+
+```text
+Redis connected: 127.0.0.1:6379 db=0
+MySQL connected: 127.0.0.1:3306 db=device_watch
+[tdengine] connected to 127.0.0.1:6041 db=device_data
+Discovered N stream scope(s): [...]
+Consuming N stream key(s): [...]
+```
+
+**注意**：writer 和 collector 必须连接同一个 Redis 实例，writer 才能消费 collector 写入的 Stream 数据。
 
 ## 六、以后更新代码后如何更新镜像
 
@@ -249,6 +433,8 @@ New-Item -ItemType Directory -Force .\deploy\images
 docker save -o .\deploy\images\data-watch-python314t.tar data-watch-python314t:latest
 docker save -o .\deploy\images\data-watch-backend.tar data-watch-backend:latest
 docker save -o .\deploy\images\data-watch-frontend.tar data-watch-frontend:latest
+docker save -o .\deploy\images\redis.tar redis:latest
+docker save -o .\deploy\images\tdengine.tar tdengine/tsdb-amd64:3.4.0.9
 ```
 
 也可以打成一个压缩包，便于拷贝：
@@ -260,11 +446,14 @@ Compress-Archive -Path .\deploy\images\*.tar -DestinationPath .\deploy\data-watc
 需要一起拷贝到目标电脑的内容：
 
 ```text
-deploy/images/*.tar
+deploy/images/*.tar                     ← 所有镜像（含 redis 和 tdengine）
 deploy/docker-compose.yml
 deploy/backend.env
-必要的数据库备份或数据库连接信息
-collector/ 采集模块目录和配置
+必要的 MySQL 数据库备份或连接信息（TDengine/Redis 由 compose 管理，无需单独迁移）
+collector/dist/data-watch-collector/    ← collector 打包产物（整个目录）
+collector/config/settings.toml         ← collector 配置
+writer/dist/data-watch-writer/         ← writer 打包产物（整个目录）
+writer/config/settings.toml            ← writer 独立配置
 ```
 
 如果目标电脑还需要重新构建镜像，则还要拷贝完整源码；如果只是导入镜像运行，则前后端源码不是必须项。
@@ -287,8 +476,17 @@ D:\data_watch_deploy\
 │  └─ images\
 │     ├─ data-watch-python314t.tar
 │     ├─ data-watch-backend.tar
-│     └─ data-watch-frontend.tar
-└─ collector\
+│     ├─ data-watch-frontend.tar
+│     ├─ redis.tar
+│     └─ tdengine.tar
+├─ data-watch-collector\          ← collector 打包产物（整个目录）
+│  ├─ data-watch-collector.exe
+│  └─ config\
+│     └─ settings.toml
+└─ data-watch-writer\             ← writer 打包产物（整个目录）
+   ├─ data-watch-writer.exe
+   └─ config\
+      └─ settings.toml
 ```
 
 ### 3. 导入镜像
@@ -299,6 +497,8 @@ cd D:\data_watch_deploy
 docker load -i .\deploy\images\data-watch-python314t.tar
 docker load -i .\deploy\images\data-watch-backend.tar
 docker load -i .\deploy\images\data-watch-frontend.tar
+docker load -i .\deploy\images\redis.tar
+docker load -i .\deploy\images\tdengine.tar
 ```
 
 确认镜像已存在：
@@ -313,6 +513,8 @@ docker images
 data-watch-python314t   latest
 data-watch-backend      latest
 data-watch-frontend     latest
+redis                   latest
+tdengine/tsdb-amd64     3.4.0.9
 ```
 
 ### 4. 修改目标电脑的 backend.env
@@ -321,21 +523,20 @@ data-watch-frontend     latest
 notepad .\deploy\backend.env
 ```
 
-确认：
+重点修改：
 
 ```env
-MYSQL_HOST=目标环境 MySQL 地址
+MYSQL_HOST=目标环境 MySQL 地址        ← MySQL 仍在宿主机时用 host.docker.internal
 MYSQL_PASSWORD=目标环境 MySQL 密码
-TDENGINE_HOST=目标环境 TDengine 地址
 TDENGINE_PASSWORD=目标环境 TDengine 密码
 AUTH_SECRET_KEY=目标环境密钥
 ```
 
-如果 MySQL 和 TDengine 就运行在目标电脑宿主机上，可以继续使用：
+Redis 和 TDengine 已纳入 docker-compose 管理，backend.env 中对应的 HOST 保持默认的服务名即可，**不需要修改**：
 
 ```env
-MYSQL_HOST=host.docker.internal
-TDENGINE_HOST=host.docker.internal
+REDIS_HOST=redis
+TDENGINE_HOST=tdengine
 ```
 
 ### 5. 启动容器
@@ -448,13 +649,23 @@ docker rmi data-watch-python314t:latest
 ## 十一、注意事项
 
 1. `backend.env` 里的数据库密码是 MySQL / TDengine / Redis 密码，不是 Windows 登录密码。
-2. `host.docker.internal` 表示容器访问 Windows 宿主机。
+2. `host.docker.internal` 表示容器访问 Windows 宿主机。MySQL 仍在宿主机运行，所以 `MYSQL_HOST` 保持 `host.docker.internal`；Redis 和 TDengine 已纳入 compose，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine` 使用 compose 服务名，不需要 `host.docker.internal`。
 3. 换到 Linux 服务器部署时，`host.docker.internal` 不一定可用，应改成数据库服务器 IP 或 Docker 网络服务名。
+4. **本机首次切换到 compose 管理 Redis/TDengine 时**，须先停止并删除原来的独立容器，否则端口冲突导致 compose 启动失败：
+
+   ```powershell
+   docker stop Redis tdengine
+   docker rm Redis tdengine
+   docker compose -f .\deploy\docker-compose.yml up -d
+   ```
 4. 后端必须先有 `data-watch-python314t:latest` 基础镜像，否则后端镜像无法构建。
 5. 前端接口定义已自带 `/api`，生产环境 `VITE_API_URL` 应保持空，不要再使用 Apifox mock 地址，也不要设置成 `/api`。
 6. 代码更新后，必须重新 build 对应镜像，否则容器运行的仍是旧代码。
 7. 镜像导出导入只迁移程序环境，不迁移数据库数据。
-8. 采集模块仍需在目标 Windows 主机上单独配置 Python 环境、采集配置和现场网络权限。
-9. 前端页面显示异常但所有请求都是 200 时，优先确认目标浏览器内核版本是否满足 Tailwind CSS v4 要求。
-10. Redis 是 v0.6 实时缓冲层的必要依赖。后端容器通过 `backend.env` 中的 `REDIS_HOST` 访问 Redis，采集模块通过 `config/settings.toml` 中的 `[redis]` 配置访问 Redis。两者必须指向同一个 Redis 实例，否则实时数据无法传递。
-11. TDengine 宽表（`device_data` 库，超级表 `st_{type}_g001`）必须在采集启动前完成初始化，运行 `scripts/init_tdengine_v2.py` 创建。
+8. collector 和 writer 均需在目标 Windows 主机上以 exe 方式运行，两者须连接同一个 Redis 实例；collector 负责写入 Stream，writer 负责消费 Stream 写入 TDengine。两者必须同时运行，数据才能落库。
+9. writer 以**当前工作目录**为基准读取 `config/settings.toml`，启动前必须先 `cd` 到 writer 部署目录；通过桌面管理器或服务工具启动时须将 `workingDirectory` 设为 writer 部署目录。
+10. writer 使用独立配置文件 `config/settings.toml`（位于 writer 部署目录的 config 子目录），不与 collector 共享配置文件。
+11. 前端页面显示异常但所有请求都是 200 时，优先确认目标浏览器内核版本是否满足 Tailwind CSS v4 要求。
+12. Redis 是实时缓冲层的必要依赖。后端容器通过 `backend.env` 中的 `REDIS_HOST` 访问 Redis，collector 和 writer 通过各自 `config/settings.toml` 中的 `[redis]` 配置访问 Redis。三者必须指向同一个 Redis 实例。
+13. TDengine 宽表由 writer 在首次写入时自动创建（超级表命名为 `sd{device_type}`，如 `sdqc`、`sdasc`），无需手动运行初始化脚本。子表以 `device_code` 命名，首次写入时通过 `INSERT INTO ... USING ... TAGS` 自动建立。
+14. 打包 writer 时须先在 `writer/` 目录下独立创建 `.venv-pack` 虚拟环境并安装 PyInstaller，使用 `writer/data-watch-writer.spec` 执行打包，产物在 `writer/dist/data-watch-writer/`。

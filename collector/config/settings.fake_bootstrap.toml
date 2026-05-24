@@ -1,20 +1,6 @@
 [runtime]
 log_level = "INFO"
-batch_size = 1000
-flush_interval = 1
-max_window_seconds = 600
 enable_fake_bootstrap = true
-queue_max_size = 10000
-writer_workers = 2
-
-[tdengine]
-host = "127.0.0.1"
-port = 6041
-user = "root"
-password = "Hry19990910"
-database = "device_data"
-use_ssl = false
-connect_timeout_seconds = 10
 
 [mysql]
 host = "127.0.0.1"

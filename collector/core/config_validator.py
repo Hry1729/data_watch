@@ -6,7 +6,7 @@ import socket
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
-from core.config import CollectorConfig, TDengineConfig, DeviceConfig, VariableConfig, MySQLConfig
+from core.config import CollectorConfig, DeviceConfig, VariableConfig, MySQLConfig
 from core.exceptions import ConfigError
 from core.logger import get_logger
 
@@ -31,7 +31,6 @@ class ConfigValidator:
 
     def __init__(self):
         self._rules = {
-            "tdengine": self._validate_tdengine_config,
             "mysql": self._validate_mysql_config,
             "device": self._validate_device_config,
             "variable": self._validate_variable_config,
@@ -43,10 +42,6 @@ class ConfigValidator:
         result = ValidationResult(valid=True)
 
         # 验证各个部分
-        if "tdengine" in self._rules:
-            tdengine_result = self._rules["tdengine"](config.tdengine)
-            result._merge(tdengine_result)
-
         if "mysql" in self._rules:
             mysql_result = self._rules["mysql"](config.mysql)
             result._merge(mysql_result)
@@ -71,28 +66,6 @@ class ConfigValidator:
         result._merge(global_result)
 
         result.valid = len(result.errors) == 0
-        return result
-
-    def _validate_tdengine_config(self, config: TDengineConfig) -> ValidationResult:
-        """验证TDengine配置"""
-        result = ValidationResult(valid=True)
-
-        # 验证主机地址
-        if config.host:
-            try:
-                ipaddress.ip_address(config.host)
-            except ValueError:
-                if not self._is_valid_hostname(config.host):
-                    result.errors.append(f"Invalid TDengine host address: {config.host}")
-
-        # 验证端口
-        if not (1 <= config.port <= 65535):
-            result.errors.append(f"Invalid TDengine port: {config.port}")
-
-        # 验证用户名和密码
-        if not config.user or not config.user.strip():
-            result.errors.append("TDengine username is required")
-
         return result
 
     def _validate_device_config(self, config: DeviceConfig) -> ValidationResult:
@@ -216,34 +189,6 @@ class ConfigValidator:
     def _validate_global_config(self, config: CollectorConfig) -> ValidationResult:
         """验证全局配置"""
         result = ValidationResult(valid=True)
-
-        # 验证批量大小
-        if config.batch_size <= 0:
-            result.errors.append(f"Invalid batch size: {config.batch_size}")
-        elif config.batch_size > 10000:
-            result.warnings.append(f"Batch size is very large: {config.batch_size}")
-
-        # 验证刷新间隔
-        if config.flush_interval <= 0:
-            result.errors.append(f"Invalid flush interval: {config.flush_interval}")
-        elif config.flush_interval > 300:  # 最大5分钟
-            result.warnings.append(f"Flush interval is very large: {config.flush_interval}s")
-
-        # 验证时间窗口
-        if config.max_window_seconds <= 0:
-            result.errors.append(f"Invalid max window seconds: {config.max_window_seconds}")
-        elif config.max_window_seconds > 86400:  # 最大24小时
-            result.warnings.append(f"Max window is very large: {config.max_window_seconds}s")
-
-        # 验证队列大小
-        if config.queue_max_size <= 0:
-            result.errors.append(f"Invalid queue max size: {config.queue_max_size}")
-        elif config.queue_max_size > 100000:
-            result.warnings.append(f"Queue max size is very large: {config.queue_max_size}")
-
-        # 验证写线程数
-        if config.writer_workers <= 0:
-            result.errors.append(f"Invalid writer workers: {config.writer_workers}")
 
         # 验证外部接口采集配置
         ingest = config.interface_ingest
@@ -429,20 +374,10 @@ class ConfigValidator:
         if unused_vars:
             suggestions.append(f"Consider removing {len(unused_vars)} unused variables")
 
-        # 检查批量大小是否合适
-        if config.batch_size < 100:
-            suggestions.append("Consider increasing batch size for better performance")
-        elif config.batch_size > 5000:
-            suggestions.append("Consider decreasing batch size to reduce memory usage")
-
         # 检查扫描周期
         fast_scanning = [dev for dev in config.devices if dev.scan_rate == 1]
         if len(fast_scanning) > 10:
             suggestions.append(f"Many devices ({len(fast_scanning)}) are scanning at 1s interval, consider grouping")
-
-        # 检查队列大小
-        if config.queue_max_size > 50000:
-            suggestions.append("Large queue size may consume too much memory")
 
         return suggestions
 

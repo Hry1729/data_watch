@@ -6,8 +6,6 @@ binaries = []
 hiddenimports = ['drivers.s7_driver', 'drivers.ge_srtp_driver', 'drivers.opcda_center_driver', 'drivers.opcua_driver']
 tmp_ret = collect_all('snap7')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('taosws')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('cryptography')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pymysql')

@@ -1,13 +1,12 @@
 """外部接口采集协议测试"""
 
-import asyncio
 from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
-from data_queue.buffer import DataBuffer, DataPoint
+from data_queue.types import DataPoint
 from monitor.ingest_server import (
     _IngestHTTPServer,
     _IngestRequestHandler,
@@ -92,7 +91,6 @@ def test_point_from_dict_requires_fields():
 
 
 def test_ingest_server_writes_points_to_redis_with_current_schema():
-    loop = asyncio.new_event_loop()
     redis_writer = MagicMock()
     config = CollectorConfig(
         devices=[
@@ -120,8 +118,6 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
     server = _IngestHTTPServer(
         ("127.0.0.1", 0),
         _IngestRequestHandler,
-        data_buffer=DataBuffer(max_size=10),
-        event_loop=loop,
         ingest_path="/ingest",
         api_key=None,
         max_batch_size=100,
@@ -134,7 +130,6 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
         ])
     finally:
         server.server_close()
-        loop.close()
 
     assert accepted == 1
     assert errors == []

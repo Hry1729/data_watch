@@ -10,6 +10,7 @@
 docs/
 ├── 设计/              # 全局/跨模块设计文档（长期有效）
 ├── 采集模块/          # 采集模块设计与接入方案（当前有效）
+├── 入库模块/          # 入库模块设计与落库机制（当前有效）
 ├── 后端/              # 后端开发文档
 ├── 前端/              # 前端开发文档
 ├── 数据库/            # 数据库设计与参考文档
@@ -57,12 +58,31 @@ docs/
 
 ---
 
+## 入库模块/
+
+当前有效的入库模块设计。
+
+| 文档 | 说明 |
+|------|------|
+| `入库模块代码设计逻辑.md` | **核心逻辑**。Redis Stream 消费、TDengine 动态写入与扩展列、可靠性与死信队列机制 |
+
+---
+
 ## 后端/
 
 | 文档 | 说明 |
 |------|------|
-| `API接口文档.md` | **核心契约**。v1.1 联调冻结基线，唯一接口事实源 |
-| `Perspective会话隔离与保护策略.md` | Perspective WebSocket 会话隔离与资源保护策略 |
+| [API接口文档.md](file:///D:/python/device_alarm/data_watch/docs/后端/API接口文档.md) | **核心契约**。v1.1 联调冻结基线，唯一接口事实源 |
+| [Perspective会话隔离与保护策略.md](file:///D:/python/device_alarm/data_watch/docs/后端/Perspective会话隔离与保护策略.md) | Perspective WebSocket 会话隔离与资源保护策略 |
+| [config-reference.md](file:///D:/python/device_alarm/data_watch/docs/后端/config-reference.md) | **配置参考**。涵盖所有环境变量默认值及多源配置优先级（env > .env > settings.toml） |
+| [auth.md](file:///D:/python/device_alarm/data_watch/docs/后端/auth.md) | **认证与权限**。描述登录/登出流、所有 40 个权限码以及默认角色用户种子数据 |
+| [api-reference.md](file:///D:/python/device_alarm/data_watch/docs/后端/api-reference.md) | **API 参考**。列出所有 80 个 HTTP 路由的详细请求/返回结构与权限要求 |
+| [websocket-protocol.md](file:///D:/python/device_alarm/data_watch/docs/后端/websocket-protocol.md) | **WS 协议**。实时监控推送与 Perspective 历史分析通道协议规范 |
+| [database-schema.md](file:///D:/python/device_alarm/data_watch/docs/后端/database-schema.md) | **数据库 Schema**。MySQL 配置库、TDengine 时序库及 Redis 实时缓冲物理模型 |
+| [history-query-guide.md](file:///D:/python/device_alarm/data_watch/docs/后端/history-query-guide.md) | **历史数据查询**。规范基于 TDengine 和 Redis 的历史指标 4 种查询和降采样机制 |
+| [architecture.md](file:///D:/python/device_alarm/data_watch/docs/后端/architecture.md) | **技术架构**。包含 EnhancedASGITurboAPI 设计、高并发数据流闭环与日志清理机制 |
+| [walkthrough.md](file:///D:/python/device_alarm/data_watch/docs/后端/walkthrough.md) | **后端文档质检收口说明**。记录本轮文档开发时的并发质检流程、修复的十余处不一致缺陷以及测试结论 |
+
 
 ---
 
@@ -158,4 +178,5 @@ TDengine（时序数据）与 MySQL（配置数据）设计文档。
    - 前端开发：`前端/开发必读文档.md` → `前端/ArtDesignPro项目结构.md`
    - 后端开发：`设计/标准后端架构.md` → `后端/API接口文档.md`
    - 采集开发：`采集模块/采集模块整体结构设计.md` → `采集模块/采集模块代码设计逻辑.md`
+   - 入库开发：`入库模块/入库模块代码设计逻辑.md`
    - 运维部署：`运维/项目环境与启动说明.md` → `运维/项目Docker镜像部署与迁移说明.md`

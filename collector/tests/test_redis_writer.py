@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -92,7 +93,7 @@ class TestWriteWindow:
 class TestWriteStream:
     def test_xadd_called_with_shard_key(self, mock_redis):
         writer = RedisWriter(mock_redis, _make_config(shard_count=4))
-        shard_no = hash("qc100") % 4
+        shard_no = zlib.crc32(b"qc100") % 4
         writer.write_stream("qc100", "qc", "g001", 100, 1700000000000, 1, {"1": "3.14"})
         mock_redis.xadd.assert_called_once()
         key = mock_redis.xadd.call_args[0][0]
