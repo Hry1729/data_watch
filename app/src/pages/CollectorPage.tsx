@@ -16,16 +16,17 @@ import { useModuleStatus } from "@/hooks/useModuleStatus";
 import { useWebSocketLog } from "@/hooks/useWebSocketLog";
 import { useModuleDbLogs } from "@/hooks/useModuleDbLogs";
 import { useModuleMetrics } from "@/hooks/useModuleMetrics";
+import { useModuleRates, rateTrendState, rateCardValue } from "@/hooks/useModuleRates";
 import type { CollectorTaskRow } from "@/types";
 
 // ─── 指标卡片 ─────────────────────────────────────────────────────────────────
 
-function MetricCard({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card style={{ background: "#FFFFFF", border: "1px solid #DDE3ED", borderRadius: 12 }}>
-      <CardContent className="px-4 py-4">
-        <p className="text-xs text-[#6B7280] mb-1">{label}</p>
-        <p className={`text-xl font-bold ${muted ? "text-[#9CA3AF]" : "text-[#111827]"}`}>{value}</p>
+    <Card className="bg-card border border-border" style={{ borderRadius: 12 }}>
+      <CardContent className="px-4 py-3">
+        <p className="text-xs text-muted-foreground mb-1">{label}</p>
+        <p className="text-xl font-bold text-foreground">{value}</p>
       </CardContent>
     </Card>
   );
@@ -35,9 +36,9 @@ function MetricCard({ label, value, muted = false }: { label: string; value: str
 
 function ConnectStatusChip({ status }: { status: CollectorTaskRow["connectStatus"] }) {
   const map = {
-    online: { label: "在线", color: "#16A05D" },
-    unstable: { label: "不稳定", color: "#D97706" },
-    offline: { label: "离线", color: "#9CA3AF" },
+    online: { label: "在线", color: "var(--success)" },
+    unstable: { label: "不稳定", color: "var(--warning)" },
+    offline: { label: "离线", color: "var(--muted-foreground)" },
   } as const;
   const { label, color } = map[status];
   return <span style={{ color }}>{label}</span>;
@@ -57,6 +58,10 @@ export function CollectorPage() {
   const { data: metrics, loading: metricsLoading, error: metricsError } = useModuleMetrics("collector");
   const tasks = metrics?.tasks ?? [];
 
+  // 二期速率/趋势轮询（5s，与速率卡同源）
+  const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
+  const cRate = rates?.collector;
+
   // 实时日志 WS（T016）
   const { lines, wsStatus, clear } = useWebSocketLog("collector");
 
@@ -71,7 +76,7 @@ export function CollectorPage() {
   return (
     <div className="px-6 py-6 space-y-4" style={{ maxWidth: 1400 }}>
       {showError && (
-        <p className="text-xs text-[#E5483F] mt-1 px-1" role="alert">
+        <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}
         </p>
       )}
@@ -81,19 +86,19 @@ export function CollectorPage() {
         <MetricCard label="最短周期" value={metrics?.scanRateMs != null ? `${metrics.scanRateMs} ms` : "—"} />
         <MetricCard label="设备连接" value={metrics ? `${metrics.onlineDevices} / ${metrics.totalDevices}` : "—"} />
         <MetricCard label="采集点位" value={metrics ? metrics.pointTotal.toLocaleString() : "—"} />
-        <MetricCard label="Redis 写入" value="待接入 · 二期" muted />
+        <MetricCard label="Redis 写入" value={rateCardValue(cRate)} />
       </div>
 
       {/* ⑤ 主体：左侧任务表 + 趋势图 / 右侧日志 */}
       <div className="grid grid-cols-5 gap-4 items-stretch" style={{ height: 595 }}>
         {/* 左侧（3/5） */}
         <div className="col-span-3 min-h-0 space-y-4">
-          <Card style={{ background: "#FFFFFF", border: "1px solid #DDE3ED", borderRadius: 12 }}>
-            <CardHeader className="pb-2 pt-4 px-5">
-              <CardTitle className="text-sm font-semibold text-[#111827]">采集任务</CardTitle>
+          <Card className="bg-card border border-border" style={{ height: 260, borderRadius: 12 }}>
+            <CardHeader className="pb-0 pt-2 px-5">
+              <CardTitle className="text-sm font-semibold text-foreground">采集任务</CardTitle>
             </CardHeader>
-            <CardContent className="px-5 pb-4">
-              <div className="max-h-48 overflow-y-auto">
+            <CardContent className="px-5 pb-4 pt-0">
+              <div className="max-h-[176px] overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -109,19 +114,19 @@ export function CollectorPage() {
                   <TableBody>
                     {metricsError && !metrics ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-[#E5483F] py-6">
+                        <TableCell colSpan={7} className="text-center text-xs text-destructive py-6">
                           {metricsError}
                         </TableCell>
                       </TableRow>
                     ) : metricsLoading && !metrics ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-[#9CA3AF] py-6">
+                        <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
                           加载中…
                         </TableCell>
                       </TableRow>
                     ) : tasks.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-[#9CA3AF] py-6">
+                        <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
                           暂无数据
                         </TableCell>
                       </TableRow>
@@ -129,7 +134,7 @@ export function CollectorPage() {
                       tasks.map((t) => (
                         <TableRow key={t.deviceCode}>
                           <TableCell className="text-xs font-mono">{t.deviceCode}</TableCell>
-                          <TableCell className="text-xs text-[#6B7280]">{t.groupName || "—"}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{t.groupName || "—"}</TableCell>
                           <TableCell className="text-xs">{t.protocol || "—"}</TableCell>
                           <TableCell className="text-xs font-mono">{t.scanRateMs != null ? `${t.scanRateMs}ms` : "—"}</TableCell>
                           <TableCell className="text-xs text-right font-mono">{t.pointCount.toLocaleString()}</TableCell>
@@ -146,11 +151,17 @@ export function CollectorPage() {
             </CardContent>
           </Card>
 
-          <TrendChart title="采集点趋势" unit="pts/min" state="empty" />
+          <TrendChart
+            title="采集写入趋势"
+            unit={cRate?.unit ?? "批次/min"}
+            state={rateTrendState(cRate, ratesLoading, ratesError)}
+            data={cRate?.series ?? []}
+            current={cRate?.current ?? null}
+          />
         </div>
 
         {/* 右侧日志面板（2/5）：实时 WS / 历史 DB 切换，默认实时 */}
-        <div className="col-span-2 flex min-h-0 overflow-hidden">
+        <div className="col-span-2 flex min-h-0 overflow-hidden self-start" style={{ height: 560 }}>
           <Tabs defaultValue="realtime" className="flex h-full w-full flex-col gap-2">
             <TabsList className="w-full">
               <TabsTrigger value="realtime">实时</TabsTrigger>
