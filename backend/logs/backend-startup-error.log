@@ -14,3 +14,1753 @@ Traceback (most recent call last):
   File "D:\python\device_alarm\data_watch\backend\app\db\redis.py", line 3, in <module>
     import redis.asyncio as aioredis
 ModuleNotFoundError: No module named 'redis'
+
+============================================================
+[2026-05-23 16:04:24] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:25] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:25] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:27] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:28] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:31] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:35] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:42] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:04:55] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:05:22] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:06:14] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:07:14] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:08:15] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:43] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:44] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:45] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:46] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:48] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:50] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:32:54] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:33:01] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:33:15] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:33:41] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:34:33] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+
+
+============================================================
+[2026-05-23 16:35:34] [lifespan.startup]
+Error: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+Stack:
+Traceback (most recent call last):
+  File "/app/app/main.py", line 570, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 521, in bootstrap_auth_schema
+    await _seed_roles(session)
+  File "/app/app/services/auth_bootstrap.py", line 540, in _seed_roles
+    role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/session.py", line 505, in scalar
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
+    result = context.switch(value)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2399, in scalar
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        **kw,
+        ^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/orm/session.py", line 1187, in _connection_for_bind
+    conn = bind.connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3293, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 143, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3317, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1371, in _checkout
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1309, in _checkout
+    result = pool._dialect._do_ping_w_event(
+        fairy.dbapi_connection
+    )
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 729, in _do_ping_w_event
+    return self.do_ping(dbapi_connection)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/pymysql.py", line 123, in do_ping
+    dbapi_connection.ping()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
+

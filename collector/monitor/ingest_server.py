@@ -1,6 +1,5 @@
 """外部接口采集协议服务（HTTP Push）"""
 
-import asyncio
 import json
 import threading
 import time
@@ -10,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from core.logger import get_logger
-from data_queue.buffer import DataBuffer, DataPoint
+from data_queue.types import DataPoint
 
 if TYPE_CHECKING:
     from core.opcda_mapper import OpcDaTagMapper
@@ -152,8 +151,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         self,
         server_address: Tuple[str, int],
         request_handler,
-        data_buffer: DataBuffer,
-        event_loop: asyncio.AbstractEventLoop,
         ingest_path: str,
         api_key: Optional[str],
         max_batch_size: int,
@@ -164,8 +161,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         realtime_config: Optional[Any] = None,
     ):
         super().__init__(server_address, request_handler)
-        self.data_buffer = data_buffer
-        self.event_loop = event_loop
         self.ingest_path = ingest_path
         self.api_key = api_key
         self.max_batch_size = max_batch_size
@@ -299,7 +294,6 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/ingest/health":
             response = {
                 "status": "ok",
-                "queue": self.server.data_buffer.stats,
                 "ingest_path": self.server.ingest_path,
             }
             if self.server.opcda_mapper:
@@ -345,17 +339,9 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"accepted": 0, "rejected": len(normalized), "errors": errors})
                 return
 
-            if self.server.redis_writer is not None:
-                accepted, write_errors = self.server.write_points_to_redis(points)
-                errors.extend(write_errors)
-                dropped = 0
-            else:
-                future = asyncio.run_coroutine_threadsafe(
-                    self.server.data_buffer.put_batch(points),
-                    self.server.event_loop,
-                )
-                accepted = future.result(timeout=5)
-                dropped = len(points) - accepted
+            accepted, write_errors = self.server.write_points_to_redis(points)
+            errors.extend(write_errors)
+            dropped = 0
 
             if errors:
                 logger.warning(
@@ -495,18 +481,9 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 })
                 return
 
-            if self.server.redis_writer is not None:
-                accepted, write_errors = self.server.write_points_to_redis(points)
-                errors.extend(write_errors)
-                dropped = 0
-            else:
-                # 兼容未配置 Redis writer 的测试/旧调用方。
-                future = asyncio.run_coroutine_threadsafe(
-                    self.server.data_buffer.put_batch(points),
-                    self.server.event_loop,
-                )
-                accepted = future.result(timeout=5)
-                dropped = len(points) - accepted
+            accepted, write_errors = self.server.write_points_to_redis(points)
+            errors.extend(write_errors)
+            dropped = 0
 
             if unmapped or errors:
                 logger.warning(
@@ -582,8 +559,6 @@ class InterfaceIngestServer:
 
     async def start(
         self,
-        data_buffer: DataBuffer,
-        event_loop: asyncio.AbstractEventLoop,
         opcda_mapper: Optional["OpcDaTagMapper"] = None,
         redis_writer: Optional["RedisWriter"] = None,
         realtime_config: Optional[Any] = None,
@@ -598,8 +573,6 @@ class InterfaceIngestServer:
         self._server = _IngestHTTPServer(
             (self.host, self.port),
             _IngestRequestHandler,
-            data_buffer=data_buffer,
-            event_loop=event_loop,
             ingest_path=self.ingest_path,
             api_key=self.api_key,
             max_batch_size=self.max_batch_size,

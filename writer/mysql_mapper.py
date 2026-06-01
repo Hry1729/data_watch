@@ -71,6 +71,16 @@ class MysqlMapper:
                 stream_config_version,
                 mapping.config_version,
             )
+            # M2: 降级使用已缓存的旧映射（如果存在），避免条目永久卡 PEL → DLQ。
+            # TDengine schema 只增不减，旧映射的 td_column_name 必然仍存在，写入安全；
+            # 新增变量在 _handle_entry 中找不到 col_name 会静默跳过，可接受短期数据延迟。
+            if cached is not None:
+                logger.warning(
+                    "[mapper] falling back to cached mapping (version %s) for stream version %s",
+                    cached.config_version,
+                    stream_config_version,
+                )
+                return cached
             return None
         self._cache[key] = mapping
         return mapping

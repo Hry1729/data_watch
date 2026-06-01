@@ -12,6 +12,7 @@
 """
 
 import argparse
+from pathlib import Path
 import asyncio
 import os
 import signal
@@ -20,8 +21,6 @@ import time
 from core.config import (
     CollectorConfig,
     DeviceConfig,
-    InterfaceIngestConfig,
-    TDengineConfig,
     VariableConfig,
 )
 from core.config_loader import load_collector_config_from_env
@@ -37,14 +36,33 @@ from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
-from data_queue.buffer import DataBuffer
 from storage.redis_client import get_redis
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
-from monitor.metrics import MetricsCollector
 
 logger = get_logger("main")
+
+
+def _resolve_runtime_dir(arg_value: str | None) -> Path:
+    if arg_value:
+        return Path(arg_value)
+    home = os.environ.get("DATAWATCH_HOME")
+    if home:
+        return Path(home) / "runtime"
+    return Path(r"C:\ProgramData\DataWatch\runtime")
+
+
+async def _watch_shutdown_flag(app: "CollectorApp", flag_path: Path, interval: float = 1.0) -> None:
+    while not app._shutdown.is_set():
+        try:
+            if flag_path.exists():
+                logger.info("shutdown_flag detected at %s, requesting stop", flag_path)
+                app.stop()
+                return
+        except OSError:
+            pass  # 文件系统瞬时异常不阻断 watchdog
+        await asyncio.sleep(interval)
 
 
 class CollectorApp:
@@ -70,18 +88,15 @@ class CollectorApp:
             else None
         )
         self.device_manager = DeviceManager(config, status_reporter=status_reporter)
-        self.data_buffer = DataBuffer(max_size=config.queue_max_size)
         self.scheduler = TaskScheduler()
         redis_client = get_redis(config)
         self.redis_writer = RedisWriter(redis_client, config)
         self.executor = TaskExecutor(
-            self.data_buffer,
             device_manager=self.device_manager,
             system_logger=self.system_logger,
             redis_writer=self.redis_writer,
         )
         self.health_checker = HealthChecker(self.device_manager, interval=30)
-        self.metrics = MetricsCollector()
 
         # OPC DA tag 映射器
         self.opcda_mapper = OpcDaTagMapper(config.variables)
@@ -147,8 +162,6 @@ class CollectorApp:
         # 5. 启动外部接口采集协议（HTTP Push）
         if self.ingest_server is not None:
             await self.ingest_server.start(
-                data_buffer=self.data_buffer,
-                event_loop=asyncio.get_running_loop(),
                 opcda_mapper=self.opcda_mapper,
                 redis_writer=self.redis_writer,
                 realtime_config=self.config,
@@ -174,7 +187,6 @@ class CollectorApp:
                     "devices": len(self.device_manager.devices),
                     "tasks": len(self.scheduler.tasks),
                     "variables": len(self.config.variables),
-                    "queue_max_size": self.config.queue_max_size,
                     "fake_mode": self.config.fake_mode_active,
                     "storage_path": "redis_only",
                 },
@@ -190,7 +202,7 @@ class CollectorApp:
             return
         self._closed = True
 
-        # 清理：先停采集，再 flush 聚合缓存和等待写入，最后断开外部资源。
+        # 清理：先停采集与配置热更新，再停接口服务，最后断开设备连接。
         logger.info("Shutting down...")
         if self.system_logger is not None:
             self.system_logger.emit(
@@ -198,9 +210,6 @@ class CollectorApp:
                 log_type="system",
                 source="collector.main",
                 content="Collector shutdown started",
-                detail_json={
-                    "queue_size": self.data_buffer.qsize(),
-                },
             )
         if self._reload_task is not None:
             self._reload_task.cancel()
@@ -237,7 +246,6 @@ class CollectorApp:
                 source="collector.main",
                 content="Collector stopped",
                 detail_json={
-                    "buffer": self.data_buffer.stats,
                     "executor": self.executor.stats,
                     "storage_path": "redis_only",
                 },
@@ -251,8 +259,7 @@ class CollectorApp:
         """打印当前状态"""
         logger.info(
             f"Status: devices={len(self.device_manager.devices)}, "
-            f"tasks={len(self.scheduler.tasks)}, "
-            f"queue={self.data_buffer.qsize()}"
+            f"tasks={len(self.scheduler.tasks)}"
         )
 
     def stop(self) -> None:
@@ -387,33 +394,6 @@ def _build_fake_topology(config: CollectorConfig, reason: str) -> CollectorConfi
     return config
 
 
-def create_sample_config() -> CollectorConfig:
-    """创建示例运行配置（设备/点位实际由 MySQL 动态加载）"""
-    return CollectorConfig(
-        tdengine=TDengineConfig(
-            host="localhost",
-            port=6041,
-            user="root",
-            password="taosdata",
-            database="device_data",
-        ),
-        devices=[],
-        variables=[],
-        batch_size=1000,
-        flush_interval=1,
-        max_window_seconds=600,
-        log_level="INFO",
-        interface_ingest=InterfaceIngestConfig(
-            enabled=True,
-            host="0.0.0.0",
-            port=8090,
-            path="/ingest",
-            api_key=None,
-            max_batch_size=1000,
-        ),
-    )
-
-
 async def main():
     """程序入口"""
     # 解析命令行参数
@@ -432,6 +412,7 @@ async def main():
         default=None,
         help="配置文件路径 (默认: config/settings.toml 或环境变量 COLLECTOR_CONFIG)",
     )
+    parser.add_argument("--runtime-dir", type=str, default=None)
     args = parser.parse_args()
 
     # 先用默认级别初始化日志，读取配置后再调整
@@ -517,6 +498,9 @@ async def main():
 
     # 创建并启动应用
     app = CollectorApp(config, config_db_manager=runtime_db_manager)
+    runtime_dir = _resolve_runtime_dir(args.runtime_dir)
+    flag_path = runtime_dir / "collector.shutdown_flag"
+    watchdog_task = asyncio.create_task(_watch_shutdown_flag(app, flag_path))
 
     # 注册信号处理
     loop = asyncio.get_running_loop()
@@ -535,6 +519,11 @@ async def main():
         logger.error(f"Fatal error: {e}")
         raise
     finally:
+        watchdog_task.cancel()
+        try:
+            await watchdog_task
+        except asyncio.CancelledError:
+            pass
         await app.shutdown()
 
     return 0

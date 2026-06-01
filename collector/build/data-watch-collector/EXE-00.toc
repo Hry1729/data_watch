@@ -73,7 +73,7 @@
  [],
  False,
  False,
- 1778968765,
+ 1780208380,
  [('run.exe',
    'D:\\python\\device_alarm\\data_watch\\collector\\.venv-pack\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\run.exe',
    'EXECUTABLE')],

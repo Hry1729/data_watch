@@ -29,6 +29,30 @@ def test_device_build_scan_tasks_preserves_standard_db_addresses():
     ]
 
 
+def test_device_build_scan_tasks_preserves_percent_prefixed_db_addresses():
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1", "rack": 0, "slot": 1},
+    )
+    device.add_variable(Variable(variable_id="1", address="%DB1702.DBW0", data_type="INT"))
+    device.add_variable(Variable(variable_id="2", address="%DB1702.DBB2", data_type="BYTE"))
+    device.add_variable(Variable(variable_id="3", address="%DB1702.DBB3", data_type="BYTE"))
+    device.add_variable(Variable(variable_id="4", address="%DB1702.DBD4", data_type="REAL"))
+    device.add_variable(Variable(variable_id="5", address="%DB1702.DBX440.6", data_type="BOOL"))
+
+    device.build_scan_tasks()
+
+    assert [block.address for block in device.scan_tasks[0].read_blocks] == [
+        "%DB1702.DBW0",
+        "%DB1702.DBB2",
+        "%DB1702.DBB3",
+        "%DB1702.DBD4",
+        "%DB1702.DBX440.6",
+    ]
+
+
 def test_device_build_scan_tasks_merges_contiguous_s7_area_bytes():
     device = Device(
         device_id="qc100",
@@ -137,6 +161,37 @@ def test_s7_driver_reads_standard_db_formats():
         (100, 10, 1),
         (50, 20, 2),
         (30, 100, 4),
+    ]
+
+
+def test_s7_driver_reads_percent_prefixed_db_formats():
+    calls = []
+
+    class FakeClient:
+        def db_read(self, db_number, start, size):
+            calls.append((db_number, start, size))
+            mapping = {
+                (1702, 0, 2): bytearray([0x00, 0x7B]),
+                (1702, 2, 1): bytearray([0x12]),
+                (1702, 4, 4): bytearray([0x41, 0x20, 0x00, 0x00]),
+                (1702, 440, 1): bytearray([0b01000000]),
+            }
+            return mapping[(db_number, start, size)]
+
+    driver = S7Driver()
+    driver._client = FakeClient()
+    driver._connected = True
+
+    assert driver._read_single_block(ReadBlock("%DB1702.DBW0", data_type="INT")) == [123]
+    assert driver._read_single_block(ReadBlock("%DB1702.DBB2", data_type="BYTE")) == [0x12]
+    result = driver._read_single_block(ReadBlock("%DB1702.DBD4", data_type="REAL"))
+    assert result[0] == pytest.approx(10.0)
+    assert driver._read_single_block(ReadBlock("%DB1702.DBX440.6", data_type="BOOL")) == [True]
+    assert calls == [
+        (1702, 0, 2),
+        (1702, 2, 1),
+        (1702, 4, 4),
+        (1702, 440, 1),
     ]
 
 

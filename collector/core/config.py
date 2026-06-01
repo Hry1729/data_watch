@@ -6,34 +6,6 @@ from urllib.parse import quote_plus
 
 
 @dataclass
-class TDengineConfig:
-    """TDengine 连接配置（仅 WebSocket，经 taosAdapter，与官方推荐一致）"""
-    host: str = "localhost"
-    port: int = 6041
-    user: str = "root"
-    password: str = "taosdata"
-    database: str = "device_data"
-    # 可选时区；同一内网且无需跨时区处理时可留空
-    timezone: Optional[str] = None
-    # True 时使用 wss://（TLS），仍为 WebSocket，非原生客户端连接
-    use_ssl: bool = False
-    # 连接超时（秒），防止启动阶段无限等待
-    connect_timeout_seconds: int = 10
-    # 数据库创建参数
-    db_keep: int = 365  # 数据保留天数
-    db_duration: int = 30  # 数据文件存储时间单位
-    db_buffer: int = 16  # 缓冲区大小 (MB)
-    db_pages: int = 128  # 内存页数
-
-    def to_rest_url(self) -> str:
-        """构造 TDengine REST API URL（密码安全转义）。"""
-        protocol = "https" if self.use_ssl else "http"
-        user_enc = quote_plus(self.user)
-        password_enc = quote_plus(self.password)
-        return f"{protocol}://{user_enc}:{password_enc}@{self.host}:{self.port}/rest/sql"
-
-
-@dataclass
 class MySQLConfig:
     """后台配置数据库连接信息"""
     host: str = "127.0.0.1"
@@ -114,8 +86,6 @@ class RedisConfig:
 @dataclass
 class CollectorConfig:
     """采集模块总配置"""
-    # TDengine
-    tdengine: TDengineConfig = field(default_factory=TDengineConfig)
     mysql: MySQLConfig = field(default_factory=MySQLConfig)
     interface_ingest: InterfaceIngestConfig = field(default_factory=InterfaceIngestConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
@@ -124,10 +94,6 @@ class CollectorConfig:
     devices: List[DeviceConfig] = field(default_factory=list)
     variables: List[VariableConfig] = field(default_factory=list)
 
-    # Aggregator
-    batch_size: int = 1000  # max records per batch write
-    flush_interval: int = 1  # seconds, force flush interval
-    max_window_seconds: int = 600  # 10 min, force write even if unchanged
     # 当 MySQL 不可用时，是否允许回退到临时假数据拓扑（仅联调验证）
     enable_fake_bootstrap: bool = False
     # 运行态标记：当前是否正在使用假数据模式
@@ -138,9 +104,3 @@ class CollectorConfig:
     log_file: Optional[str] = None  # 日志文件路径，如 "logs/collector.log"，为空则只输出控制台
     log_max_bytes: int = 10 * 1024 * 1024  # 单个日志文件最大 10MB
     log_backup_count: int = 5  # 保留 5 个历史日志文件
-
-    # Queue
-    queue_max_size: int = 10000
-
-    # Writer thread pool
-    writer_workers: int = 2

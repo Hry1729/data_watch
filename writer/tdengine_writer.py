@@ -3,8 +3,8 @@
 Connects via WebSocket (taos-ws-py / taosws) matching the approach used in
 collector/storage/tdengine.py.
 
-write_batch() accepts a list of row dicts and groups them by child_table before
-executing a single INSERT per child_table to minimise round trips.
+write_batch() executes a single INSERT for one child_table. The caller is
+responsible for grouping rows by child_table before invoking (see consumer._flush).
 
 Row dict schema:
     {
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -30,12 +31,32 @@ def _quote(name: str) -> str:
     return f"`{name.replace('`', '``')}`"
 
 
+_CONNECTION_ERROR_KEYWORDS = (
+    "closed", "connection", "timeout", "timed out",
+    "broken pipe", "eof", "reset", "refused", "unavailable",
+)
+
+_KNOWN_TAG_COLUMNS = {"device_code"}
+
+
+def _is_connection_error(exc: Exception) -> bool:
+    """Heuristic: does this exception indicate a dropped/unhealthy connection?"""
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _CONNECTION_ERROR_KEYWORDS)
+
+
 class TDengineWriter:
-    def __init__(self) -> None:
+    def __init__(self, syslog=None) -> None:
         self._conn: Any = None
         self._database: str = "device_data"
         self._lock = asyncio.Lock()
         self._col_cache: dict[str, set[str]] = {}
+        self._config: dict | None = None
+        self._reconnecting: bool = False
+        self._syslog = syslog
+        # 节流：重连成功/失败在持续抖动下都可能每批触发，各自 ≥60s 限流
+        self._last_reconnect_ok_log: float | None = None
+        self._last_reconnect_fail_log: float | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -45,6 +66,7 @@ class TDengineWriter:
         """Open a WebSocket connection to TDengine (runs taosws.connect in executor)."""
         from taosws import connect  # type: ignore[import]
 
+        self._config = config
         td = config["tdengine"]
         self._database = td["database"]
 
@@ -91,6 +113,8 @@ class TDengineWriter:
     async def _execute(self, sql: str) -> bool:
         if self._conn is None:
             logger.error("[tdengine] not connected, cannot execute SQL")
+            if self._config is not None and not self._reconnecting:
+                await self._try_reconnect()
             return False
         loop = asyncio.get_running_loop()
         try:
@@ -98,6 +122,12 @@ class TDengineWriter:
             return True
         except Exception as exc:
             logger.error("[tdengine] execute failed: %s | SQL: %.200s", exc, sql)
+            if (
+                self._config is not None
+                and not self._reconnecting
+                and _is_connection_error(exc)
+            ):
+                await self._try_reconnect()
             return False
 
     async def _query(self, sql: str) -> list[Any]:
@@ -111,6 +141,48 @@ class TDengineWriter:
         except Exception as exc:
             logger.error("[tdengine] query failed: %s | SQL: %.200s", exc, sql)
             return []
+
+    async def _try_reconnect(self) -> None:
+        """Re-establish the TDengine connection after a drop.
+
+        Guarded by _reconnecting so the _execute calls inside connect()
+        (via _ensure_database / _preload_stables) cannot recurse back here.
+        """
+        self._reconnecting = True
+        logger.info("[tdengine] attempting reconnect...")
+        try:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+            await self.connect(self._config)
+            logger.info("[tdengine] reconnect succeeded")
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_reconnect_ok_log is None or now - self._last_reconnect_ok_log >= 60.0:
+                    self._last_reconnect_ok_log = now
+                    self._syslog.emit(
+                        level="WARN",
+                        log_type="storage",
+                        source="writer.tdengine",
+                        content="tdengine reconnect succeeded",
+                    )
+        except Exception as exc:
+            logger.error("[tdengine] reconnect failed: %s", exc)
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_reconnect_fail_log is None or now - self._last_reconnect_fail_log >= 60.0:
+                    self._last_reconnect_fail_log = now
+                    self._syslog.emit(
+                        level="ERROR",
+                        log_type="storage",
+                        source="writer.tdengine",
+                        content="tdengine reconnect failed",
+                    )
+        finally:
+            self._reconnecting = False
 
     # ------------------------------------------------------------------
     # Schema management
@@ -149,8 +221,8 @@ class TDengineWriter:
         if stable in self._col_cache:
             return
 
-        first_col = next((col for col in initial_columns or [] if col), "")
-        if not first_col:
+        valid_cols = [col for col in initial_columns or [] if col]
+        if not valid_cols:
             logger.info(
                 "[tdengine] stable %s.%s has no cached columns and no initial column to create with",
                 self._database,
@@ -160,9 +232,11 @@ class TDengineWriter:
 
         db = _quote(self._database)
         stbl = _quote(stable)
+        # M1：一次性包含全部初始列，避免后续对同一 stable 发起 N 条 ALTER STABLE
+        cols_sql = ", ".join(f"{_quote(col)} DOUBLE" for col in valid_cols)
         sql = (
             f"CREATE STABLE IF NOT EXISTS {db}.{stbl} "
-            f"(`ts` TIMESTAMP, {_quote(first_col)} DOUBLE) "
+            f"(`ts` TIMESTAMP, {cols_sql}) "
             f"TAGS (`device_code` VARCHAR(32))"
         )
         if not await self._execute(sql):
@@ -191,7 +265,7 @@ class TDengineWriter:
             # The live schema has device_code as the only tag, so keep it out of
             # the data-column cache even when no explicit TAG marker is present.
             note = " ".join(str(item or "") for item in row[3:]).upper()
-            if col_name.lower() == "device_code" or "TAG" in note:
+            if col_name.lower() in _KNOWN_TAG_COLUMNS or "TAG" in note:
                 continue
             columns.add(col_name.lower())
         return columns
@@ -254,29 +328,15 @@ class TDengineWriter:
     # ------------------------------------------------------------------
 
     async def write_batch(self, rows: list[dict]) -> bool:
-        """Write a list of row dicts to TDengine.
+        """Write a list of rows that all belong to a single child_table.
 
-        Groups rows by child_table so each child_table gets a single
-        multi-row INSERT statement.
-
-        Returns True if all groups were written without error, False if any failed.
+        Caller MUST group rows by child_table before calling (see consumer._flush).
+        Returns True on success, False if the INSERT failed.
         """
         if not rows:
             return True
-
-        # Group by child_table
-        by_table: dict[str, list[dict]] = {}
-        for row in rows:
-            tbl = row["child_table"]
-            by_table.setdefault(tbl, []).append(row)
-
-        all_ok = True
         async with self._lock:
-            for child_table, table_rows in by_table.items():
-                ok = await self._write_table_rows(child_table, table_rows)
-                if not ok:
-                    all_ok = False
-        return all_ok
+            return await self._write_table_rows(rows[0]["child_table"], rows)
 
     async def _write_table_rows(self, child_table: str, rows: list[dict]) -> bool:
         """Build and execute one INSERT for all rows of a single child_table.

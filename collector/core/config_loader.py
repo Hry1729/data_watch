@@ -11,7 +11,6 @@ from core.config import (
     InterfaceIngestConfig,
     MySQLConfig,
     RedisConfig,
-    TDengineConfig,
 )
 from core.exceptions import ConfigError
 from core.logger import get_logger
@@ -39,7 +38,6 @@ def load_collector_config(path: str) -> CollectorConfig:
         raise ConfigError(f"Failed to read config file: {exc}") from exc
 
     runtime = raw.get("runtime", {})
-    td_raw = raw.get("tdengine", {})
     mysql_raw = raw.get("mysql", {})
     ingest_raw = raw.get("interface_ingest", {})
     redis_raw = raw.get("redis", {})
@@ -54,22 +52,16 @@ def load_collector_config(path: str) -> CollectorConfig:
 
     try:
         config = CollectorConfig(
-            tdengine=TDengineConfig(**td_raw),
             mysql=MySQLConfig(**mysql_raw),
             interface_ingest=InterfaceIngestConfig(**ingest_raw),
             redis=RedisConfig(**redis_raw),
             devices=[],
             variables=[],
-            batch_size=int(runtime.get("batch_size", 1000)),
-            flush_interval=int(runtime.get("flush_interval", 1)),
-            max_window_seconds=int(runtime.get("max_window_seconds", 600)),
             enable_fake_bootstrap=bool(runtime.get("enable_fake_bootstrap", False)),
             log_level=str(runtime.get("log_level", "INFO")),
             log_file=runtime.get("log_file"),  # 可选，为 None 则只输出控制台
             log_max_bytes=int(runtime.get("log_max_bytes", 10 * 1024 * 1024)),
             log_backup_count=int(runtime.get("log_backup_count", 5)),
-            queue_max_size=int(runtime.get("queue_max_size", 10000)),
-            writer_workers=int(runtime.get("writer_workers", 2)),
         )
     except KeyError as exc:
         raise ConfigError(f"Missing required config field: {exc}") from exc

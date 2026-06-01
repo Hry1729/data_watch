@@ -663,14 +663,31 @@ onUnmounted(() => {
   }
 
   .detail-content {
+    max-height: 200px;
     padding: 12px;
     margin: 0;
     overflow: auto;
     font-size: 12px;
     line-height: 1.6;
-    background: #f5f7fa;
+    color: var(--el-text-color-primary);
+    background: var(--el-fill-color-light);
+    border: 1px solid var(--el-border-color-light);
     border-radius: 4px;
-    max-height: 200px;
+  }
+}
+
+:deep(.el-dialog .log-detail-dialog) {
+  color: var(--el-text-color-primary);
+
+  .el-descriptions__body,
+  .el-descriptions__cell {
+    color: var(--el-text-color-primary);
+    background-color: var(--el-bg-color);
+  }
+
+  .el-descriptions__label {
+    color: var(--el-text-color-regular);
+    background-color: var(--el-fill-color-light);
   }
 }
 </style>

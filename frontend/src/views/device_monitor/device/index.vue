@@ -900,7 +900,7 @@
       margin: 6px 0 0;
       font-size: 22px;
       font-weight: 600;
-      color: #1d2433;
+      color: var(--el-text-color-primary);
     }
   }
 
@@ -920,6 +920,12 @@
     display: flex;
     gap: 10px;
     align-items: center;
+
+    :deep(.el-tag) {
+      background: var(--el-fill-color-light);
+      border-color: var(--el-border-color-light);
+      color: var(--el-text-color-regular);
+    }
   }
 
   .collapse-btn {
@@ -929,10 +935,10 @@
     width: 32px;
     height: 32px;
     padding: 0;
-    border: 1px solid #e7ebf3;
+    border: 1px solid var(--el-border-color-light);
     border-radius: 10px;
-    background: #fff;
-    color: #66758f;
+    background: var(--default-box-color);
+    color: var(--el-text-color-regular);
     cursor: pointer;
     transition:
       color 0.2s ease,
@@ -940,9 +946,9 @@
       background-color 0.2s ease;
 
     &:hover {
-      border-color: #d5ddeb;
-      background: #f7f9fc;
-      color: #1d2433;
+      border-color: var(--el-color-primary-light-5);
+      background: var(--el-fill-color-light);
+      color: var(--el-text-color-primary);
     }
   }
 
@@ -1007,7 +1013,7 @@
     overflow: hidden;
     font-size: 14px;
     font-weight: 500;
-    color: #243041;
+    color: var(--el-text-color-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -1015,7 +1021,7 @@
   .tree-node__badge {
     :deep(.el-badge__content) {
       border: 0;
-      background: #edf2ff;
+      background: var(--el-color-primary-light-9);
       color: #4a6cf7;
     }
   }
@@ -1184,7 +1190,7 @@
     transition: all 0.2s ease;
 
     &:hover {
-      background: #f0f3f8;
+      background: var(--el-fill-color-light);
       color: #4a6cf7;
     }
 
@@ -1192,6 +1198,21 @@
       background: linear-gradient(135deg, rgba(74, 108, 247, 0.1) 0%, rgba(74, 108, 247, 0.04) 100%);
       color: #4a6cf7;
     }
+  }
+
+  :global(html.dark .device-page .tree-node__badge .el-badge__content) {
+    background: rgba(74, 108, 247, 0.18);
+    color: #8ea2ff;
+  }
+
+  :global(html.dark .device-page .collapsed-group-item) {
+    color: var(--el-text-color-regular);
+  }
+
+  :global(html.dark .device-page .collapsed-group-item:hover),
+  :global(html.dark .device-page .collapsed-group-item.active) {
+    background: rgba(74, 108, 247, 0.16);
+    color: #8ea2ff;
   }
 
   @media (max-width: 1360px) {

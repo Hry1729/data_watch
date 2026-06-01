@@ -5,7 +5,7 @@ import pytest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock
 
-from core.config import CollectorConfig, TDengineConfig, DeviceConfig, VariableConfig
+from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from core.logger import setup_logger
 from device.manager import DeviceManager
 from drivers.base import BaseDriver
@@ -36,13 +36,6 @@ def mock_driver():
 def collector_config():
     """采集配置"""
     return CollectorConfig(
-        tdengine=TDengineConfig(
-            host="localhost",
-            port=6041,
-            user="root",
-            password="taosdata",
-            database="test_db",
-        ),
         devices=[
             DeviceConfig(
                 device_id="TEST001",
@@ -65,8 +58,6 @@ def collector_config():
                 var_seq=1,
             ),
         ],
-        batch_size=100,
-        flush_interval=1,
     )
 
 

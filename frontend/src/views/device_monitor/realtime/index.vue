@@ -301,10 +301,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
+import { storeToRefs } from 'pinia'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
+import { useSettingStore } from '@/store/modules/setting'
 import { fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl, getAccessToken, getDevicePointGroups } from '@/api/device-monitor'
 import {
   ensurePerspectiveViewerRuntime,
@@ -314,6 +316,9 @@ import {
 } from '../history/perspective-runtime'
 
 defineOptions({ name: 'RealtimeMonitor' })
+
+const settingStore = useSettingStore()
+const { isDark } = storeToRefs(settingStore)
 
 type DeviceType = Api.DeviceMonitor.DeviceTypeItem
 
@@ -371,6 +376,7 @@ const separateBoolChart = ref(true) // 默认分离 Bool 图表
 const lastSyncTime = ref('')
 const tdengineConnected = ref<boolean | null>(null)
 const perspectiveReady = ref(false)
+const perspectiveTheme = computed(() => (isDark.value ? 'Pro Dark' : 'Pro Light'))
 
 // 点位质量（q=0 表示数据无效，显示为红色）
 const realtimeQuality = ref<Map<number, number>>(new Map())
@@ -532,6 +538,7 @@ const loadChartSnapshot = async (): Promise<boolean> => {
         }
       }
     }
+    applyPerspectiveTheme()
 
     return true
   } catch (error) {
@@ -569,6 +576,21 @@ const perspectiveNumericTable = shallowRef<PerspectiveTableClient | null>(null) 
 const perspectiveNumericViewer = shallowRef<PerspectiveViewerClient | null>(null) // 分离模式：数值型
 const perspectiveBoolTable = shallowRef<PerspectiveTableClient | null>(null)
 const perspectiveBoolViewer = shallowRef<PerspectiveViewerClient | null>(null)
+
+const applyPerspectiveTheme = () => {
+  const theme = perspectiveTheme.value
+  const viewers = [
+    perspectiveViewer.value,
+    perspectiveNumericViewer.value,
+    perspectiveBoolViewer.value
+  ]
+
+  viewers.forEach((viewer) => {
+    if (!viewer) return
+    viewer.setAttribute('theme', theme)
+    void viewer.resize(true).catch(() => undefined)
+  })
+}
 
 // WebSocket
 const websocket = ref<WebSocket | null>(null)
@@ -1344,7 +1366,7 @@ const initPerspectiveViewer = async () => {
     if (perspectiveRef.value && !perspectiveViewer.value) {
       perspectiveRef.value.innerHTML = ''
       const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
-      viewer.setAttribute('theme', 'Pro Light')
+      viewer.setAttribute('theme', perspectiveTheme.value)
       viewer.style.display = 'block'
       viewer.style.width = '100%'
       viewer.style.height = '100%'
@@ -1356,7 +1378,7 @@ const initPerspectiveViewer = async () => {
     if (perspectiveNumericRef.value && !perspectiveNumericViewer.value) {
       perspectiveNumericRef.value.innerHTML = ''
       const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
-      viewer.setAttribute('theme', 'Pro Light')
+      viewer.setAttribute('theme', perspectiveTheme.value)
       viewer.style.display = 'block'
       viewer.style.width = '100%'
       viewer.style.height = '100%'
@@ -1368,7 +1390,7 @@ const initPerspectiveViewer = async () => {
     if (perspectiveBoolRef.value && !perspectiveBoolViewer.value) {
       perspectiveBoolRef.value.innerHTML = ''
       const viewer = document.createElement('perspective-viewer') as PerspectiveViewerClient
-      viewer.setAttribute('theme', 'Pro Light')
+      viewer.setAttribute('theme', perspectiveTheme.value)
       viewer.style.display = 'block'
       viewer.style.width = '100%'
       viewer.style.height = '100%'
@@ -1734,6 +1756,10 @@ watch(chartType, async () => {
   if (perspectiveBoolViewer.value && perspectiveBoolTable.value) {
     await perspectiveBoolViewer.value.restore(buildViewerConfig(true))
   }
+})
+
+watch(perspectiveTheme, () => {
+  applyPerspectiveTheme()
 })
 
 // 监听分离 Bool 图表设置变化

@@ -1,4 +1,4 @@
-﻿# 工业设备自动采集与诊断系统 - 项目TODO文档
+# 工业设备自动采集与诊断系统 - 项目TODO文档
 
 > 版本：2026-04-21 五页优先收口推进版
 > 说明：本文档已按当前仓库现状重新整理，重点解决“任务状态失真、依赖顺序不清、测试后置、事实源不唯一”等问题。
@@ -106,6 +106,7 @@
 | DB-006 | 输出 Demo / Seed 数据方案 | 🔄 | `@database` | P1 | 已完成 STEP-003 最小集设计，并在 STEP-004 细化为落库清单与校验模板 |
 | DB-007 | 固定 auth / permission 8 张表结构与索引 | 🔄 | `@database` | P0 | 已在后端 ORM 与文档落地，待补正式 DDL / migration |
 | DB-008 | 输出 auth 种子数据与本地联调账号基线 | 🔄 | `@database` | P0 | 已内置 `Super / Admin / User` 与角色菜单权限矩阵，待数据库脚本化 |
+| DB-009 | 修复采集器 ORM 实体（`DBDevice`、`DBDeviceVariable`、`DBDevicePointGroup`）与物理 MySQL 字段不一致缺陷 | 📋 | `@database` | P1 | 质检子 Agent 发现采集器实体中缺失了 `group_id`、`group_index`、`td_column_name` 等宽表映射核心字段，需后续修补对齐 |
 
 ---
 
@@ -388,7 +389,7 @@
 | STEP-052 | 2026-05-06 | collector 系统日志接入 | ✅ 已完成 | 已新增 collector 异步系统日志写入器，复用 MySQL `system_log` 与 `log_retention_policy`；已接入采集服务启动/关闭、TDengine 连接、设备上线/离线/异常状态、采集读取失败、每分钟采集摘要、TDengine 写入失败、每分钟存储摘要和异常堆栈；DEBUG 日志默认不落库，受策略表开关控制。已通过 `compileall` 与轻量 smoke 检查；相关 pytest 可启动但暴露既有 TDengine mock 与聚合器旧期望问题，不属于本次日志接入新增故障。 | 后续对接后端日志列表、统计、策略、清理和 DEBUG 管理接口后，在前端系统日志页做端到端点验 |
 | STEP-053 | 2026-05-07 | collector 测试前全面复审 | ✅ 已完成 P1 修复 | 已新增 `docs/采集模块/collector测试前代码审查报告_2026-05-07.md`，复审主链路、S7/GE/OPC、sidecar、聚合、TDengine、日志与测试。语法编译通过；pytest 临时跑法 69 passed / 7 failed。已完成 P1-1（OPC DA center 端口映射）、P1-2（聚合器失败批次保留）、P1-3（数据类型口径统一）、P1-4（opc_server 必填校验）、P1-5（venv 路径修复后重新安装依赖）。P2 问题已记录：modbus 放行、DSN 特殊字符、毫秒周期上取整 | 进入长时间系统测试；S7/GE 需做小范围真机/模拟 smoke |
 | STEP-054 | 2026-05-08 | 日志系统 UI 问题修复 | ✅ 已完成 | 已修复日志终端三个问题：1) 暂停计数器死代码（暂停后不再计数）；2) pending 列表重复累计（pending_count 改为实时计算）；3) 分页滚动跳回顶部（保持当前滚动位置）。已通过语法复验与功能点验 | 继续做日志列表真实数据联调 |
-| STEP-055 | 2026-05-08 | 实时监控页面重新设计 | 🔄 待 Perspective 联调 | 已按 `docs/前端/实时监控核心页面.md` 完成页面重新设计：删除旧设备树和实时数据面板，改用顶部控制栏（设备选择按钮+点位选择长框+操作按钮）、中央 Perspective 趋势图（折线图/状态图切换）、右侧点位卡片容器（实时监测点）、底部系统状态栏的四段式布局。当前待后端依赖安装完成后启动联调 | 下一步：修复后端虚拟环境，安装依赖，启动联调 |
+| STEP-055 | 2026-05-08 | 实时监控页面重新设计 | ✅ 已完成 | 已按 `docs/前端/实时监控核心页面.md` 完成页面重新设计：删除旧设备树和实时数据面板，改用顶部控制栏（设备选择按钮+点位选择长框+操作按钮）、中央 Perspective 趋势图（折线图/状态图切换）、右侧点位卡片容器（实时监测点）、底部系统状态栏的四段式布局。已打通 WebSocket 联调与 Perspective 增量更新。 | 无 |
 | STEP-056 | 2026-05-19 | TDengine 宽表模型压测与历史落库口径调整 | ✅ 已完成（待代码落地） | 已完成从“每点位子表”到“每设备子表、点位列”的压测验证：旧 30.5 万子表模型平均吞吐约 8 万点/秒，远低于目标；宽表模型在 305 台设备、每台 1000 点位、`1000ms x 10行` 下基本达到 305 万点/秒目标；目标机 152 台设备测试中 `1000ms x 10行` 稳定、`500ms x 5行` 可用、`100ms x 1行` 明显不达标。TDengine 历史表不再保存 `quality`，异常或 bad 状态由实时态/规则层识别 | 下一步：将 collector 初始化与写入逻辑改为基于 `device_variable.var_seq` 动态创建宽表列，并保留 500ms/1s 批量落库参数 |
 | STEP-057 | 2026-05-19 | Redis 实时短窗口与独立入库模块方案评审 | ✅ 已完成 | 完成架构方案文档冻结（`docs/设计方案/Redis缓冲层与writer模块设计方案.md`）：collector 采集后只写 Redis（latest Hash / window List / Stream），TDengine 入库模块每 500ms/1s 从 Stream 批量消费并 ACK；backend 实时初始化与 WS 优先读 Redis，历史查询仍读 TDengine | 进入 STEP-058 端到端验证 |
 | STEP-058 | 2026-05-19 | 数据库基础建设完成（阶段 0：DB-1~7） | ✅ 已完成 | MySQL schema 变更（device_point_group 建表、device_variable 新增 point_group_id/group_index/td_column_name/enable/deleted）；数据迁移脚本初始化存量 305 台设备 g001 分组；device 表新增 variable_config_version 字段；TDengine 宽表建表（st_qc_g001/st_asc_g001/st_agv_g001，3073 列，子表数 = 设备数）；Redis Consumer Group writer_cg 在 12 个 Stream 分片初始化；前置就绪检查脚本 check_prerequisites.py；所有脚本幂等可重复执行 | 进入 STEP-059 |
