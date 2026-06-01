@@ -41,6 +41,7 @@
     --color-background: var(--background);
     --color-brand: var(--brand);
     --color-brand-foreground: var(--brand-foreground);
+    --color-brand-soft: var(--brand-soft);
     --color-success: var(--success);
     --color-success-foreground: var(--success-foreground);
     --color-success-soft: var(--success-soft);
@@ -79,6 +80,7 @@
     /* 新增业务 token(亮色取现硬编码值) */
     --brand: #1677FF;
     --brand-foreground: #FFFFFF;
+    --brand-soft: #E8F1FF;
     --success: #16A05D;
     --success-foreground: #FFFFFF;
     --success-soft: #EAF8EF;
@@ -136,6 +138,7 @@
     --sidebar-ring: oklch(0.556 0 0);
     --brand: #4793FF;
     --brand-foreground: #0B1220;
+    --brand-soft: #14263C;
     --success: #34D399;
     --success-foreground: #052E1A;
     --success-soft: #10271C;
