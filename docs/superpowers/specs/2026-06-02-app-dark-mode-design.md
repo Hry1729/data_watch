@@ -43,7 +43,7 @@
 | Theme 实现 | **自写轻量 ThemeProvider,不用 `next-themes`**(Vite/Tauri 环境,几十行即可,依赖更少、可控) |
 
 ### 已知取舍
-- `/settings` 页时顶栏整体隐藏(`AppLayout.tsx:20`,FR-014),因此**在设置页内够不到切换钮**。短期可接受(用户返回后切换);后续如需要,可在设置页「基础」补主题选项。
+- `/settings` 页时顶栏整体隐藏(`AppLayout.tsx:20`,FR-014),因此**在设置页内够不到顶栏切换钮**。但设置页「基础」本身已有一个「外观主题」segmented 控件(`SettingsPage.tsx:397,408`,选项 `浅色/深色/跟随系统`,当前是 `useState` 的本地假状态),所以设置页内仍可切主题——前提是阶段 7 必须把它接入同一 `ThemeContext`(见 §8 阶段 7),否则会出现「顶栏能切、设置页只是假状态」的割裂。
 
 ---
 
@@ -121,6 +121,14 @@ const { theme, resolvedTheme, setTheme } = useTheme()
 
 自写方案需手动补 FOUC 防护:在 `index.html` 的 `<head>` 加一小段内联 `<script>`,在 React 挂载前读 `localStorage` + `matchMedia`,提前给 `<html>` 挂 `.dark`。否则深色用户每次启动会闪一下白屏。
 
+### 4.4 localStorage 安全例外(明文约束)
+
+本项目历来把「无 `localStorage`/`sessionStorage`」作为安全验收项(token 禁止持久化)。本次为主题持久化开**唯一例外**:
+
+- **仅允许** `data-watch-theme` 这一个非敏感 key 写入 `localStorage`。
+- token 及任何敏感数据**仍然禁止**持久化,该红线不变。
+- 后续安全 grep 验收时,`data-watch-theme` 属白名单,不应据此判定回归;也**不得**为「过验收」而删掉主题持久化。
+
 ---
 
 ## 5. 切换控件(`app/src/components/ThemeToggle.tsx`)
@@ -147,7 +155,7 @@ const { theme, resolvedTheme, setTheme } = useTheme()
 - 内联 `style={{ background:"#FFFFFF" }}` → 优先换成 `className="bg-card"`;必须保留内联(动态计算)处用 `var(--card)`。
 
 ### TrendChart 特殊处理
-recharts 的颜色是 JS 常量 / 内联 SVG 属性喂入,**CSS `var()` 在 SVG 呈现属性中不解析**(Chromium/WebView2)。方案:新建 `useChartColors()`,读 `resolvedTheme` 返回 `{ line, grid, axis, tooltipBg, tooltipBorder, text, muted }` 的亮/暗两套色对象,喂给图表组件。这是 23 处颜色中唯一不能纯靠 CSS 的部分。
+recharts 的颜色是 JS 常量 / 内联 SVG 属性 / tooltip / gradient stop 喂入。虽然现代 Chromium 下 `stroke="var(--x)"` 多数可用,但为**避免 Recharts 内联属性、tooltip 卡片、gradient 在 var() 上的兼容与调试成本**,这里集中用一个 hook 管理颜色:新建 `useChartColors()`,读 `resolvedTheme` 返回 `{ line, grid, axis, tooltipBg, tooltipBorder, text, muted }` 的亮/暗两套色对象,喂给图表组件。这样图表配色可控、可调试,也不依赖 SVG 属性对 var() 的解析行为。
 
 ---
 
@@ -161,9 +169,9 @@ recharts 的颜色是 JS 常量 / 内联 SVG 属性喂入,**CSS `var()` 在 SVG 
 4. **主页面**:OverviewPage / CollectorPage / WriterPage。
 5. **日志卡**:LogPanel / ModuleDbLogPanel / ModuleSummaryCard。
 6. **入口页**:LoginPage / BootstrapPage。
-7. **设置页**:SettingsPage(最大,64 处)。
+7. **设置页**:SettingsPage(最大,64 处)。**同时**:`BasicTab` 的「外观主题」控件(`SettingsPage.tsx:397,408`)必须接入同一 `ThemeContext`——删除 `useState("跟随系统")`,改为 `value` 取自 `useTheme().theme`、`onChange` 调 `setTheme`,并在中文标签(`浅色/深色/跟随系统`)与 `light/dark/system` 之间做映射。**不得**保留本地假状态。(`density` 页面密度 state 与主题无关,保持不动。)
 8. **图表**:TrendChart + `useChartColors`。
-9. **依赖清理 + 终验**:`pnpm remove next-themes`;`pnpm build` 通过;`pnpm dev` 三态手测;切 OS 主题验证跟随;grep 确认无残留硬编码色(图表 hook 常量、阴影 rgba 除外)。
+9. **依赖清理 + 终验**:`pnpm remove next-themes`;`pnpm build` 通过;`pnpm dev` 三态手测;切 OS 主题验证跟随;grep 确认无残留硬编码色——**扫描范围限定** `app/src/**/*.{ts,tsx,css}` 与 `app/index.html`,允许例外:`useChartColors` 内的图表常量、阴影 `rgba(...)`、第三方生成样式。(不扫 `docs/`、截图说明、资源文件,避免噪音。)
 
 ---
 
@@ -176,7 +184,9 @@ recharts 的颜色是 JS 常量 / 内联 SVG 属性喂入,**CSS `var()` 在 SVG 
 - [ ] 全部页面(Overview / Collector / Writer / Settings / Login / Bootstrap)、日志卡、图表、toast 在暗色下均清晰可读、无白底黑字残留。
 - [ ] `pnpm build`(`tsc && vite build`)通过。
 - [ ] `next-themes` 已从 `package.json` 移除。
-- [ ] grep 全仓 `#[0-9A-Fa-f]{6}`,仅余图表 hook 内的有意常量与阴影 rgba。
+- [ ] 设置页「外观主题」与顶栏切换钮联动一致(同一 `ThemeContext`,无本地假状态)。
+- [ ] 持久化仅写入 `data-watch-theme` 一个 key;token 等敏感数据无任何 `localStorage`/`sessionStorage` 写入。
+- [ ] grep `app/src/**/*.{ts,tsx,css}` + `app/index.html` 的 `#[0-9A-Fa-f]{6}`,仅余 `useChartColors` 常量、阴影 rgba、第三方生成样式。
 
 ---
 
