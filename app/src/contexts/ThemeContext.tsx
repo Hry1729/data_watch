@@ -17,6 +17,10 @@ function systemResolved(): ResolvedTheme {
   return window.matchMedia(MEDIA).matches ? "dark" : "light";
 }
 
+function resolveTheme(t: Theme): ResolvedTheme {
+  return t === "system" ? systemResolved() : t;
+}
+
 function readTheme(storageKey: string, fallback: Theme): Theme {
   const value = localStorage.getItem(storageKey);
   return value === "light" || value === "dark" || value === "system" ? value : fallback;
@@ -58,6 +62,8 @@ export function ThemeProvider({
 
   const setTheme = (t: Theme) => {
     localStorage.setItem(storageKey, t);
+    // 同步应用 .dark,使 View Transition 能截到切换后的新主题帧(effect 仍会幂等地再对账一次)
+    document.documentElement.classList.toggle("dark", resolveTheme(t) === "dark");
     setThemeState(t);
   };
 

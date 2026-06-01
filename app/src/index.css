@@ -164,3 +164,27 @@
     min-height: 100vh;
   }
 }
+
+/* 主题切换:以切换按钮为圆心的圆形扩散揭示(View Transitions API;不支持/减少动态时无此动画) */
+@keyframes vt-reveal {
+  from {
+    clip-path: circle(0 at var(--vt-x, 50%) var(--vt-y, 0));
+  }
+  to {
+    clip-path: circle(var(--vt-r, 150%) at var(--vt-x, 50%) var(--vt-y, 0));
+  }
+}
+
+::view-transition-group(root) {
+  animation: none;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  animation: none;
+}
+::view-transition-new(root) {
+  animation: vt-reveal 0.4s ease-out;
+}
