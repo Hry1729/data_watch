@@ -7,6 +7,7 @@ from app.api.permissions import require_permissions
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.services.module_monitor import ModuleMonitorService
+from app.services.rate_sampler import get_rate_sampler
 
 
 router = APIRouter(tags=["module-monitor"])
@@ -35,3 +36,12 @@ async def module_monitor_writer(
         service = ModuleMonitorService(session=session)
         data = await service.get_writer_metrics()
         return success_response(data=data)
+
+
+@router.get("/api/device-monitor/module-monitor/rates")
+async def module_monitor_rates(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, {"device_monitor:monitor:view", "device_monitor:realtime:view"})
+    # 速率/趋势取自内存滚动缓冲（后台采样器维护），无需 DB/会话
+    return success_response(data=get_rate_sampler().snapshot())

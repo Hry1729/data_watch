@@ -1,6 +1,6 @@
 # 项目 Docker 镜像部署与迁移说明
 
-更新日期：2026-05-13
+更新日期：2026-06-01
 
 ## 一、总体结论
 
@@ -11,9 +11,9 @@ frontend   使用 Docker 镜像运行，Nginx 提供静态资源和接口反向�
 backend    使用 Docker 镜像运行，镜像内置 Python 3.14t free-threading
 collector  暂不容器化，以 PyInstaller 打包为 exe 方式在 Windows 主机运行
 writer     暂不容器化，以 PyInstaller 打包为 exe 方式在 Windows 主机运行，与 collector 独立进程分开打包
-MySQL      可使用宿主机已有服务，也可后续单独容器化
-TDengine   可使用宿主机已有服务，也可后续单独容器化
-Redis      实时缓冲层必要依赖，可使用宿主机已有服务，也可后续单独容器化
+MySQL      默认使用宿主机已有服务或外部数据库
+TDengine   默认使用宿主机已有服务或外部数据库；compose 中仅作为可选 infra profile
+Redis      默认使用宿主机已有服务或外部 Redis；compose 中仅作为可选 infra profile
 ```
 
 采集模块涉及 OPC DA、DCOM、PLC 网络、IOM 点位和现场驱动环境，暂时不建议放入 Docker。正式部署时，采集模块仍建议运行在 Windows 主机环境中。
@@ -41,10 +41,11 @@ Redis      实时缓冲层必要依赖，可使用宿主机已有服务，也可
 1. 后端基础镜像使用 Python 3.14t free-threading。
 2. 前端接口路径本身使用 /api，生产环境 VITE_API_URL 保持空，由 Nginx 反向代理到后端容器。
 3. 前端权限模式改为 backend，使用后端数据库菜单和权限。
-4. docker-compose 同时编排 frontend 和 backend。
-5. 后端容器通过 host.docker.internal 访问宿主机 MySQL / TDengine。
-6. 后端 Docker 构建中暂时跳过 perspective-python，因为它在 Python 3.14t 下源码编译失败；后端代码会以可选能力降级运行。
-7. 前端 Docker 构建中关闭 Husky，并允许 pnpm 依赖构建脚本，避免容器构建失败。
+4. docker-compose 默认只编排 frontend 和 backend。
+5. Redis / TDengine 放入 `infra` profile，只有显式启用时才启动，避免更新前后端代码时影响数据库容器和数据卷。
+6. 后端容器默认通过 host.docker.internal 访问宿主机 MySQL / Redis / TDengine。
+7. 后端 Docker 构建中暂时跳过 perspective-python，因为它在 Python 3.14t 下源码编译失败；后端代码会以可选能力降级运行。
+8. 前端 Docker 构建中关闭 Husky，并允许 pnpm 依赖构建脚本，避免容器构建失败。
 ```
 
 ## 三、目录和占位符说明
@@ -95,6 +96,8 @@ MYSQL_USER=root
 MYSQL_PASSWORD=你的 MySQL 密码
 MYSQL_DATABASE=device_watch
 
+BACKEND_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420
+
 TDENGINE_HOST=host.docker.internal
 TDENGINE_PORT=6041
 TDENGINE_USER=root
@@ -109,6 +112,7 @@ AUTH_SECRET_KEY=换成一串足够长的随机密钥
 ```text
 这里填写的是 MySQL / TDengine 的账号密码，不是 Windows 登录密码。
 如果数据库运行在另一台服务器上，把 host.docker.internal 改成那台服务器的 IP。
+BACKEND_CORS_ORIGINS 是浏览器/WebView 的跨域白名单：8080 对应 Web 前端，1420 对应 Tauri 桌面 app 开发 WebView。后端精确匹配 Origin，必须包含协议、主机和端口，末尾不要加 /。
 ```
 
 ### 3. 构建 Python 3.14t 基础镜像
@@ -126,10 +130,20 @@ docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
 
 ### 4. 构建并启动前后端
 
+默认命令只构建并启动 `frontend`、`backend`。Redis 和 TDengine 不会随代码更新一起重建或重启。
+
 ```powershell
 cd D:\python\device_alarm\data_watch
 docker compose -f .\deploy\docker-compose.yml up -d --build
 ```
+
+如果你确实需要让 compose 临时托管 Redis / TDengine，才执行：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml --profile infra up -d redis tdengine
+```
+
+日常改前后端代码时不要执行 `--profile infra`，也不要使用 `docker compose down -v`，否则可能删除数据库数据卷。
 
 查看容器状态：
 
@@ -396,6 +410,8 @@ cd D:\python\device_alarm\data_watch
 docker compose -f .\deploy\docker-compose.yml up -d --build
 ```
 
+该命令不会启动或重建 Redis / TDengine，因为它们已经被放入 `infra` profile。
+
 ### 情况四：依赖变化或缓存异常
 
 例如修改了：
@@ -411,7 +427,7 @@ deploy/python314t.Dockerfile
 
 ```powershell
 cd D:\python\device_alarm\data_watch
-docker compose -f .\deploy\docker-compose.yml build --no-cache
+docker compose -f .\deploy\docker-compose.yml build --no-cache backend frontend
 docker compose -f .\deploy\docker-compose.yml up -d
 ```
 
@@ -433,6 +449,11 @@ New-Item -ItemType Directory -Force .\deploy\images
 docker save -o .\deploy\images\data-watch-python314t.tar data-watch-python314t:latest
 docker save -o .\deploy\images\data-watch-backend.tar data-watch-backend:latest
 docker save -o .\deploy\images\data-watch-frontend.tar data-watch-frontend:latest
+```
+
+默认只导出前后端程序镜像。只有目标电脑没有 Redis / TDengine，且你明确要用 compose 的 `infra` profile 托管它们时，再额外导出：
+
+```powershell
 docker save -o .\deploy\images\redis.tar redis:latest
 docker save -o .\deploy\images\tdengine.tar tdengine/tsdb-amd64:3.4.0.9
 ```
@@ -446,15 +467,17 @@ Compress-Archive -Path .\deploy\images\*.tar -DestinationPath .\deploy\data-watc
 需要一起拷贝到目标电脑的内容：
 
 ```text
-deploy/images/*.tar                     ← 所有镜像（含 redis 和 tdengine）
+deploy/images/*.tar                     ← 默认只含前后端程序镜像
 deploy/docker-compose.yml
 deploy/backend.env
-必要的 MySQL 数据库备份或连接信息（TDengine/Redis 由 compose 管理，无需单独迁移）
+必要的 MySQL / Redis / TDengine 连接信息或数据库备份
 collector/dist/data-watch-collector/    ← collector 打包产物（整个目录）
 collector/config/settings.toml         ← collector 配置
 writer/dist/data-watch-writer/         ← writer 打包产物（整个目录）
 writer/config/settings.toml            ← writer 独立配置
 ```
+
+如果 Redis / TDengine 使用宿主机已有服务或外部服务器，不要把它们的镜像和数据卷混在前后端更新包里。
 
 如果目标电脑还需要重新构建镜像，则还要拷贝完整源码；如果只是导入镜像运行，则前后端源码不是必须项。
 
@@ -476,9 +499,7 @@ D:\data_watch_deploy\
 │  └─ images\
 │     ├─ data-watch-python314t.tar
 │     ├─ data-watch-backend.tar
-│     ├─ data-watch-frontend.tar
-│     ├─ redis.tar
-│     └─ tdengine.tar
+│     └─ data-watch-frontend.tar
 ├─ data-watch-collector\          ← collector 打包产物（整个目录）
 │  ├─ data-watch-collector.exe
 │  └─ config\
@@ -497,6 +518,11 @@ cd D:\data_watch_deploy
 docker load -i .\deploy\images\data-watch-python314t.tar
 docker load -i .\deploy\images\data-watch-backend.tar
 docker load -i .\deploy\images\data-watch-frontend.tar
+```
+
+如需使用 compose 的 `infra` profile 托管 Redis / TDengine，再额外导入：
+
+```powershell
 docker load -i .\deploy\images\redis.tar
 docker load -i .\deploy\images\tdengine.tar
 ```
@@ -513,8 +539,6 @@ docker images
 data-watch-python314t   latest
 data-watch-backend      latest
 data-watch-frontend     latest
-redis                   latest
-tdengine/tsdb-amd64     3.4.0.9
 ```
 
 ### 4. 修改目标电脑的 backend.env
@@ -528,11 +552,23 @@ notepad .\deploy\backend.env
 ```env
 MYSQL_HOST=目标环境 MySQL 地址        ← MySQL 仍在宿主机时用 host.docker.internal
 MYSQL_PASSWORD=目标环境 MySQL 密码
+BACKEND_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420
+REDIS_HOST=目标环境 Redis 地址        ← Redis 在宿主机时用 host.docker.internal
+TDENGINE_HOST=目标环境 TDengine 地址  ← TDengine 在宿主机时用 host.docker.internal
 TDENGINE_PASSWORD=目标环境 TDengine 密码
 AUTH_SECRET_KEY=目标环境密钥
 ```
 
-Redis 和 TDengine 已纳入 docker-compose 管理，backend.env 中对应的 HOST 保持默认的服务名即可，**不需要修改**：
+如果桌面 app 打包后使用了不同 Origin，应以开发者工具 Network 中请求头的 `Origin` 为准追加到 `BACKEND_CORS_ORIGINS`。
+
+默认部署不启动 compose 内的 Redis / TDengine，`backend.env` 中对应的 HOST 应指向宿主机或外部服务器：
+
+```env
+REDIS_HOST=host.docker.internal
+TDENGINE_HOST=host.docker.internal
+```
+
+只有显式使用 compose 的 `infra` profile 托管 Redis / TDengine 时，才改成服务名：
 
 ```env
 REDIS_HOST=redis
@@ -541,9 +577,17 @@ TDENGINE_HOST=tdengine
 
 ### 5. 启动容器
 
+默认只启动前后端：
+
 ```powershell
 cd D:\data_watch_deploy
 docker compose -f .\deploy\docker-compose.yml up -d
+```
+
+如果目标电脑没有 Redis / TDengine，并且确认要让 compose 托管基础设施，再额外执行：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml --profile infra up -d redis tdengine
 ```
 
 查看状态：
@@ -589,13 +633,14 @@ edge://version
 
 ## 九、数据库数据如何迁移
 
-Docker 镜像只包含程序，不包含 MySQL 和 TDengine 的业务数据。
+Docker 镜像只包含程序，不包含 MySQL、Redis 和 TDengine 的业务数据。
 
 迁移到其他电脑时，数据库需要单独处理：
 
 ```text
 MySQL      导出 / 导入 device_watch 库
 TDengine   导出 / 导入 device_data 库，或迁移 TDengine 数据目录 / volume
+Redis      实时缓存通常不迁移；如使用 Redis Stream 做未落库队列，停机迁移前应先确认 writer 已消费完成
 ```
 
 如果目标电脑直接连接原来的数据库服务器，则不需要迁移数据库数据，只需要在 `deploy/backend.env` 中配置正确的数据库地址和账号密码。
@@ -611,7 +656,7 @@ docker compose -f .\deploy\docker-compose.yml down
 重启容器：
 
 ```powershell
-docker compose -f .\deploy\docker-compose.yml restart
+docker compose -f .\deploy\docker-compose.yml restart backend frontend
 ```
 
 查看容器：
@@ -638,6 +683,14 @@ docker logs -f data-watch-frontend
 docker compose -f .\deploy\docker-compose.yml down
 ```
 
+不要使用：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml down -v
+```
+
+`-v` 会删除 compose 管理的数据卷。如果曾经用 `--profile infra` 启动过 Redis / TDengine，这会带来数据丢失风险。
+
 删除镜像：
 
 ```powershell
@@ -649,23 +702,25 @@ docker rmi data-watch-python314t:latest
 ## 十一、注意事项
 
 1. `backend.env` 里的数据库密码是 MySQL / TDengine / Redis 密码，不是 Windows 登录密码。
-2. `host.docker.internal` 表示容器访问 Windows 宿主机。MySQL 仍在宿主机运行，所以 `MYSQL_HOST` 保持 `host.docker.internal`；Redis 和 TDengine 已纳入 compose，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine` 使用 compose 服务名，不需要 `host.docker.internal`。
+2. `host.docker.internal` 表示容器访问 Windows 宿主机。默认前后端 compose 不启动 Redis / TDengine，所以 `MYSQL_HOST`、`REDIS_HOST`、`TDENGINE_HOST` 通常保持 `host.docker.internal` 或改成外部服务器 IP。
 3. 换到 Linux 服务器部署时，`host.docker.internal` 不一定可用，应改成数据库服务器 IP 或 Docker 网络服务名。
-4. **本机首次切换到 compose 管理 Redis/TDengine 时**，须先停止并删除原来的独立容器，否则端口冲突导致 compose 启动失败：
+4. **只有本机首次切换到 compose 的 `infra` profile 管理 Redis/TDengine 时**，才需要先停止原来的独立容器，否则端口冲突导致 compose 启动失败：
 
    ```powershell
    docker stop Redis tdengine
    docker rm Redis tdengine
-   docker compose -f .\deploy\docker-compose.yml up -d
+   docker compose -f .\deploy\docker-compose.yml --profile infra up -d redis tdengine
    ```
-4. 后端必须先有 `data-watch-python314t:latest` 基础镜像，否则后端镜像无法构建。
-5. 前端接口定义已自带 `/api`，生产环境 `VITE_API_URL` 应保持空，不要再使用 Apifox mock 地址，也不要设置成 `/api`。
-6. 代码更新后，必须重新 build 对应镜像，否则容器运行的仍是旧代码。
-7. 镜像导出导入只迁移程序环境，不迁移数据库数据。
-8. collector 和 writer 均需在目标 Windows 主机上以 exe 方式运行，两者须连接同一个 Redis 实例；collector 负责写入 Stream，writer 负责消费 Stream 写入 TDengine。两者必须同时运行，数据才能落库。
-9. writer 以**当前工作目录**为基准读取 `config/settings.toml`，启动前必须先 `cd` 到 writer 部署目录；通过桌面管理器或服务工具启动时须将 `workingDirectory` 设为 writer 部署目录。
-10. writer 使用独立配置文件 `config/settings.toml`（位于 writer 部署目录的 config 子目录），不与 collector 共享配置文件。
-11. 前端页面显示异常但所有请求都是 200 时，优先确认目标浏览器内核版本是否满足 Tailwind CSS v4 要求。
-12. Redis 是实时缓冲层的必要依赖。后端容器通过 `backend.env` 中的 `REDIS_HOST` 访问 Redis，collector 和 writer 通过各自 `config/settings.toml` 中的 `[redis]` 配置访问 Redis。三者必须指向同一个 Redis 实例。
-13. TDengine 宽表由 writer 在首次写入时自动创建（超级表命名为 `sd{device_type}`，如 `sdqc`、`sdasc`），无需手动运行初始化脚本。子表以 `device_code` 命名，首次写入时通过 `INSERT INTO ... USING ... TAGS` 自动建立。
-14. 打包 writer 时须先在 `writer/` 目录下独立创建 `.venv-pack` 虚拟环境并安装 PyInstaller，使用 `writer/data-watch-writer.spec` 执行打包，产物在 `writer/dist/data-watch-writer/`。
+5. 后端必须先有 `data-watch-python314t:latest` 基础镜像，否则后端镜像无法构建。
+6. 前端接口定义已自带 `/api`，生产环境 `VITE_API_URL` 应保持空，不要再使用 Apifox mock 地址，也不要设置成 `/api`。
+7. 代码更新后，必须重新 build 对应镜像，否则容器运行的仍是旧代码。
+8. 镜像导出导入只迁移程序环境，不迁移数据库数据。
+9. 桌面 app 连接容器后端时，`BACKEND_CORS_ORIGINS` 必须包含 `http://localhost:1420` 和 `http://127.0.0.1:1420`。否则后端日志可能是 200，但 WebView 会因 CORS 拦截而显示“后端服务不可达”。
+10. 修改 `deploy/backend.env` 后，不一定需要重新 build 镜像，但必须重建后端容器让环境变量生效：`docker compose -f .\deploy\docker-compose.yml up -d --force-recreate backend`。
+11. collector 和 writer 均需在目标 Windows 主机上以 exe 方式运行，两者须连接同一个 Redis 实例；collector 负责写入 Stream，writer 负责消费 Stream 写入 TDengine。两者必须同时运行，数据才能落库。
+12. writer 以**当前工作目录**为基准读取 `config/settings.toml`，启动前必须先 `cd` 到 writer 部署目录；通过桌面管理器或服务工具启动时须将 `workingDirectory` 设为 writer 部署目录。
+13. writer 使用独立配置文件 `config/settings.toml`（位于 writer 部署目录的 config 子目录），不与 collector 共享配置文件。
+14. 前端页面显示异常但所有请求都是 200 时，优先确认目标浏览器内核版本是否满足 Tailwind CSS v4 要求。
+15. Redis 是实时缓冲层的必要依赖。后端容器通过 `backend.env` 中的 `REDIS_HOST` 访问 Redis，collector 和 writer 通过各自 `config/settings.toml` 中的 `[redis]` 配置访问 Redis。三者必须指向同一个 Redis 实例。
+16. TDengine 宽表由 writer 在首次写入时自动创建（超级表命名为 `sd{device_type}`，如 `sdqc`、`sdasc`），无需手动运行初始化脚本。子表以 `device_code` 命名，首次写入时通过 `INSERT INTO ... USING ... TAGS` 自动建立。
+17. 打包 writer 时须先在 `writer/` 目录下独立创建 `.venv-pack` 虚拟环境并安装 PyInstaller，使用 `writer/data-watch-writer.spec` 执行打包，产物在 `writer/dist/data-watch-writer/`。

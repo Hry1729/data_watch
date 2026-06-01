@@ -9,6 +9,7 @@ __pycache__/
 # 虚拟环境
 collector/.venv/
 collector/.venv-pack/
+agent/.venv/
 # backend/.py314t-site/ 是项目基础设施（含运行依赖），不忽略
 
 # 构建输出
@@ -27,6 +28,7 @@ frontend/node_modules/
 backend/logs/
 collector/logs/
 writer/logs/
+agent/logs/
 *.log
 
 # 临时文件（Claude Code 调试产物）
@@ -34,6 +36,7 @@ writer/logs/
 backend/.tmp_*
 
 # 本地配置（含密码，不进版本库）
+agent/config.toml      # 含 jwt_secret + DPAPI 加密密码，有 config.toml.example 作为模板
 # backend/.env          # 有 .env.example 作为模板
 # deploy/backend.env    # 有 .env.example 作为模板
 

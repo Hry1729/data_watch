@@ -1,0 +1,36 @@
+[agent]
+host = "127.0.0.1"
+port = 7070
+jwt_secret = "0c97d9c8559fa874e97d4c6de2f1f164a45a40d600e60111544105219f92e10d"
+jwt_expire_hours = 8
+bootstrap_done = true
+log_level = "INFO"
+
+[redis]
+host = "127.0.0.1"
+port = 6379
+password_enc = ""
+user = ""
+database = "0"
+
+[mysql]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+database = "device_watch"
+password_enc = "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAtOJB3a4pAEis8otb24jd2AAAAAACAAAAAAAQZgAAAAEAACAAAAA1bbpVBqlk85+Y+5bzZxBAABiPg0Q+vUhw9uprsRgnRQAAAAAOgAAAAAIAACAAAAC/fFkz0+ohzZ74Pd3ZvNdTL+EoDfKD1V+sUgnCXi7cmBAAAAAXRXOAe5t1bLnESL8GCiNtQAAAAEih2Z34bRHDSlVMZZ14AHGXr1hQKvkKJcHWlsF/xpPCGlBoEwgyKZGd7GtjO4jMOaIhkgDTJBXfoi7XCezVr2M="
+
+[tdengine]
+host = "127.0.0.1"
+port = 6041
+user = "root"
+database = "device_data"
+password_enc = "AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAtOJB3a4pAEis8otb24jd2AAAAAACAAAAAAAQZgAAAAEAACAAAAATw4/0H9avotzg73iC4aj+Jt4WRemOiav6aMnZeGinhAAAAAAOgAAAAAIAACAAAAAgnbIQu+9o7NXsFihhSHy9y0aIn4cWe4wJylpb/eVfShAAAAAJ2orq0EWDyfdvFnOIF1kTQAAAAD2c8EPNMrCE7b5S2CyLuo6f0xahUGPYUGgSWRk0tpTpDof6t9bZYgD7+mGv6ZrJTV12MrVzNg97sZQocH0AwiA="
+
+[collector]
+executable = "D:\\python\\device_alarm\\data_watch\\collector\\dist\\data-watch-collector\\data-watch-collector.exe"
+working_dir = "D:\\python\\device_alarm\\data_watch\\collector\\dist\\data-watch-collector"
+
+[writer]
+executable = "D:\\python\\device_alarm\\data_watch\\writer\\dist\\data-watch-writer\\data-watch-writer.exe"
+working_dir = "D:\\python\\device_alarm\\data_watch\\writer\\dist\\data-watch-writer"

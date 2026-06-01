@@ -27,6 +27,7 @@ from app.core.logging import configure_logging, get_logger
 from app.core.log_writer import write_system_log, write_system_log_sync
 from app.core.log_scheduler import start_log_scheduler, stop_log_scheduler
 from app.services.auth_bootstrap import bootstrap_auth_schema
+from app.services.rate_sampler import start_rate_sampler, stop_rate_sampler
 from app.services.perspective import get_perspective_session_manager
 
 
@@ -56,6 +57,49 @@ class CaseInsensitiveHeaders(dict[str, str]):
 
     def get(self, key: str, default: str | None = None) -> str | None:
         return super().get(key.lower(), default)
+
+
+def _cors_response_headers(headers: CaseInsensitiveHeaders) -> dict[str, str]:
+    origin = headers.get("origin")
+    if not origin:
+        return {}
+
+    settings = get_settings()
+    if origin not in settings.cors_origins:
+        return {}
+
+    return {
+        "access-control-allow-origin": origin,
+        "access-control-allow-credentials": "true",
+        "vary": "Origin",
+    }
+
+
+async def _send_cors_preflight_response(send: Callable, headers: CaseInsensitiveHeaders) -> bool:
+    request_method = headers.get("access-control-request-method")
+    cors_headers = _cors_response_headers(headers)
+    if not request_method or not cors_headers:
+        return False
+
+    allow_headers = headers.get("access-control-request-headers") or "*"
+    cors_headers.update(
+        {
+            "access-control-allow-methods": "*",
+            "access-control-allow-headers": allow_headers,
+        }
+    )
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 204,
+            "headers": [
+                (str(key).encode("latin-1"), str(value).encode("latin-1"))
+                for key, value in cors_headers.items()
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": b""})
+    return True
 
 
 class CompatQueryParams:
@@ -277,9 +321,16 @@ class EnhancedASGITurboAPI(TurboAPI):
             }
         )
 
+        if method == "OPTIONS" and await _send_cors_preflight_response(send, headers):
+            return
+
         match_result = self.registry.match_route(method, path)
         if not match_result:
-            await self._send_asgi_response(send, JSONResponse(status_code=404, content={"detail": "Not Found"}))
+            await self._send_asgi_response(
+                send,
+                JSONResponse(status_code=404, content={"detail": "Not Found"}),
+                headers,
+            )
             return
 
         route, path_params = match_result
@@ -306,7 +357,7 @@ class EnhancedASGITurboAPI(TurboAPI):
         except Exception as exc:  # pragma: no cover - exercised through HTTP smoke test
             result = await self._dispatch_exception(request, exc)
 
-        await self._send_asgi_response(send, result)
+        await self._send_asgi_response(send, result, headers)
 
     async def _dispatch_websocket(self, scope: dict, receive: Callable, send: Callable) -> None:
         path = scope["path"]
@@ -487,7 +538,12 @@ class EnhancedASGITurboAPI(TurboAPI):
             return JSONResponse(status_code=int(exc.status_code), content={"detail": str(exc.detail)})
         return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-    async def _send_asgi_response(self, send: Callable, result: Any) -> None:
+    async def _send_asgi_response(
+        self,
+        send: Callable,
+        result: Any,
+        request_headers: CaseInsensitiveHeaders | None = None,
+    ) -> None:
         response_headers: dict[str, str] = {"server": "TurboAPI"}
 
         if isinstance(result, TurboResponse):
@@ -505,6 +561,9 @@ class EnhancedASGITurboAPI(TurboAPI):
                 content_type = None
             response_headers["content-type"] = content_type or self._guess_content_type(content)
             body = self._encode_content(content)
+
+        if request_headers is not None:
+            response_headers.update(_cors_response_headers(request_headers))
 
         await send(
             {
@@ -573,6 +632,10 @@ async def lifespan(_: TurboAPI):
         # 启动日志定时任务调度器
         await start_log_scheduler()
         logger.info("Log scheduler started")
+
+        # 启动速率采样器（二期：采集/入库速率与趋势，内存滚动缓冲）
+        await start_rate_sampler()
+        logger.info("Rate sampler started")
         await write_system_log(
             level="INFO",
             log_type="system",
@@ -616,6 +679,10 @@ async def lifespan(_: TurboAPI):
         # 关闭 Redis 连接
         await close_redis()
         logger.info("Redis connection closed")
+
+        # 停止速率采样器
+        await stop_rate_sampler()
+        logger.info("Rate sampler stopped")
 
         # 停止日志定时任务调度器
         await stop_log_scheduler()

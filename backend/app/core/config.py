@@ -125,7 +125,7 @@ def get_settings() -> Settings:
     def read_setting(name: str, default: Any) -> Any:
         return _env_or_default(name, backend_env_defaults.get(name, default))
 
-    cors_default = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"
+    cors_default = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:1420,http://127.0.0.1:1420"
     raw_origins = read_setting("BACKEND_CORS_ORIGINS", cors_default)
     cors_origins = [item.strip() for item in str(raw_origins).split(",") if item.strip()]
 

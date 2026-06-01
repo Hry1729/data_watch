@@ -68,6 +68,35 @@ export interface WriterModuleMetrics {
   streams: WriterStreamRow[];
 }
 
+// module-monitor 速率/趋势（二期：读端采样，内存滚动缓冲，~10min 窗口）
+export interface RatePoint {
+  t: string; // 'HH:MM:SS'
+  v: number;
+}
+export interface ModuleRate {
+  unit: string; // collector: '批次/min'；writer: 'rows/min'
+  current: number | null; // 最新点；缓冲为空时 null
+  series: RatePoint[];
+}
+export interface ModuleRates {
+  collector: ModuleRate;
+  writer: ModuleRate;
+}
+
+// 顶部连接状态（Agent /viewer/health 聚合快照）
+export type ConnectionHealthStatus = 'connected' | 'checking' | 'disconnected' | 'unknown';
+export interface ServiceHealth {
+  status: ConnectionHealthStatus;
+  latencyMs?: number | null;
+  message?: string | null;
+  checkedAt?: string | null;
+}
+export interface ConnectionHealth {
+  redis: ServiceHealth;
+  mysql: ServiceHealth;
+  tdengine: ServiceHealth;
+}
+
 // 连接配置（partial update 语义：未修改时不发送 password 字段）
 export interface DbConfig {
   host: string;

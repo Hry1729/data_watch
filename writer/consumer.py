@@ -63,11 +63,13 @@ class StreamConsumer:
         mapper: MysqlMapper,
         writer: TDengineWriter,
         r: redis.Redis,
+        syslog=None,
     ) -> None:
         self._config = config
         self._mapper = mapper
         self._writer = writer
         self._r = r
+        self._syslog = syslog
 
         w = config["writer"]
         rc = config["redis"]
@@ -85,6 +87,9 @@ class StreamConsumer:
         self._pending_drain_interval_s: float = 60.0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
         self._consecutive_flush_fail: int = 0  # M6：连续 flush 失败次数，用于退避与日志降噪
+        # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
+        self._last_dlq_moved_log: float | None = None
+        self._last_dlq_failed_log: float | None = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -181,6 +186,13 @@ class StreamConsumer:
                             "[consumer] flush failed %d times consecutively, backing off %.1fs",
                             self._consecutive_flush_fail, backoff,
                         )
+                    if self._consecutive_flush_fail == 1 and self._syslog is not None:
+                        self._syslog.emit(
+                            level="WARN",
+                            log_type="storage",
+                            source="writer.consumer",
+                            content="flush degraded: TDengine write failing, backing off",
+                        )
                     await asyncio.sleep(backoff)
                 else:
                     if self._consecutive_flush_fail > 0:
@@ -188,6 +200,13 @@ class StreamConsumer:
                             "[consumer] flush recovered after %d failures",
                             self._consecutive_flush_fail,
                         )
+                        if self._syslog is not None:
+                            self._syslog.emit(
+                                level="INFO",
+                                log_type="storage",
+                                source="writer.consumer",
+                                content="flush recovered",
+                            )
                     self._consecutive_flush_fail = 0
 
     # ------------------------------------------------------------------
@@ -359,8 +378,35 @@ class StreamConsumer:
             )
             if moved:
                 self._ack_single(stream_key, entry_id)
+                if self._syslog is not None:
+                    now = time.monotonic()
+                    if self._last_dlq_moved_log is None or now - self._last_dlq_moved_log >= 60.0:
+                        self._last_dlq_moved_log = now
+                        self._syslog.emit(
+                            level="ERROR",
+                            log_type="storage",
+                            source="writer.dlq",
+                            content=(
+                                f"entry {entry_id} moved to DLQ: "
+                                f"{device_type or 'unknown'}/{group_code or 'unknown'} "
+                                f"after {delivery_count} retries"
+                            ),
+                        )
             else:
                 logger.error("[consumer] DLQ failed for entry %s, not acking", entry_id)
+                if self._syslog is not None:
+                    now = time.monotonic()
+                    if self._last_dlq_failed_log is None or now - self._last_dlq_failed_log >= 60.0:
+                        self._last_dlq_failed_log = now
+                        self._syslog.emit(
+                            level="ERROR",
+                            log_type="storage",
+                            source="writer.dlq",
+                            content=(
+                                f"DLQ push failed for entry {entry_id}: "
+                                f"{device_type or 'unknown'}/{group_code or 'unknown'}"
+                            ),
+                        )
             return
 
         # --- Parse required fields ---

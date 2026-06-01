@@ -1,6 +1,7 @@
 import type {
   AppError,
   CollectorModuleMetrics,
+  ModuleRates,
   WriterLogRow,
   WriterModuleMetrics,
 } from "@/types";
@@ -31,6 +32,8 @@ export interface BackendClient {
   collectorMetrics(token: string): Promise<CollectorModuleMetrics>;
   /** 入库页一期即时指标 */
   writerMetrics(token: string): Promise<WriterModuleMetrics>;
+  /** 二期：采集/入库速率与趋势（同源，一个接口出两侧） */
+  moduleRates(token: string): Promise<ModuleRates>;
 }
 
 // ─── fetch 封装（realBackend 专用）───────────────────────────────────────────
@@ -114,6 +117,15 @@ const realBackend: BackendClient = {
       token
     );
   },
+
+  moduleRates(token) {
+    return backendFetch<ModuleRates>(
+      "GET",
+      "/api/device-monitor/module-monitor/rates",
+      undefined,
+      token
+    );
+  },
 };
 
 // ─── mock / real 选择（动态 import 确保 mock-agent 不进入生产包）─────────────
@@ -145,5 +157,9 @@ export const backendClient: BackendClient = {
   async writerMetrics(token) {
     const c = await _implPromise;
     return c.writerMetrics(token);
+  },
+  async moduleRates(token) {
+    const c = await _implPromise;
+    return c.moduleRates(token);
   },
 };

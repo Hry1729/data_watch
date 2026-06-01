@@ -46,7 +46,7 @@ class Device:
     """设备实例，维护一个PLC连接和变量列表"""
 
     _DB_ADDRESS_RE = re.compile(
-        r"^DB(?P<db>\d+)\.(?P<access>DBX|DBB|DBW|DBD)(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
+        r"^%?DB(?P<db>\d+)\.(?P<access>DBX|DBB|DBW|DBD)(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
         re.IGNORECASE,
     )
     _S7_AREA_RE = re.compile(
@@ -529,7 +529,7 @@ class Device:
 
         # Unknown protocol: validate the common formats without forcing a
         # protocol-specific interpretation.
-        if addr.startswith("DB") or self._S7_AREA_RE.match(addr):
+        if addr.startswith("DB") or addr.startswith("%DB") or self._S7_AREA_RE.match(addr):
             return self._parse_s7_address(address)
         if self._GE_ADDRESS_RE.match(addr):
             return self._parse_ge_address(address)
@@ -553,7 +553,7 @@ class Device:
                 "bit": None,
             }
 
-        if addr.startswith("DB"):
+        if addr.startswith("DB") or addr.startswith("%DB"):
             match = self._DB_ADDRESS_RE.match(addr)
             if not match:
                 raise DeviceConnectionError(

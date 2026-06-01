@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -45,13 +46,17 @@ def _is_connection_error(exc: Exception) -> bool:
 
 
 class TDengineWriter:
-    def __init__(self) -> None:
+    def __init__(self, syslog=None) -> None:
         self._conn: Any = None
         self._database: str = "device_data"
         self._lock = asyncio.Lock()
         self._col_cache: dict[str, set[str]] = {}
         self._config: dict | None = None
         self._reconnecting: bool = False
+        self._syslog = syslog
+        # 节流：重连成功/失败在持续抖动下都可能每批触发，各自 ≥60s 限流
+        self._last_reconnect_ok_log: float | None = None
+        self._last_reconnect_fail_log: float | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -154,8 +159,28 @@ class TDengineWriter:
                 self._conn = None
             await self.connect(self._config)
             logger.info("[tdengine] reconnect succeeded")
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_reconnect_ok_log is None or now - self._last_reconnect_ok_log >= 60.0:
+                    self._last_reconnect_ok_log = now
+                    self._syslog.emit(
+                        level="WARN",
+                        log_type="storage",
+                        source="writer.tdengine",
+                        content="tdengine reconnect succeeded",
+                    )
         except Exception as exc:
             logger.error("[tdengine] reconnect failed: %s", exc)
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_reconnect_fail_log is None or now - self._last_reconnect_fail_log >= 60.0:
+                    self._last_reconnect_fail_log = now
+                    self._syslog.emit(
+                        level="ERROR",
+                        log_type="storage",
+                        source="writer.tdengine",
+                        content="tdengine reconnect failed",
+                    )
         finally:
             self._reconnecting = False
 

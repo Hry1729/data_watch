@@ -8,6 +8,7 @@ import type { AgentClient } from "./agent-client";
 import type { BackendClient } from "./backend-client";
 import type {
   ConnectionConfig,
+  ConnectionHealth,
   DbConfig,
   LogLine,
   LogLevel,
@@ -79,6 +80,16 @@ export const mockAgent: AgentClient = {
   async getViewerStatus() {
     await delay();
     return { agent: "running" };
+  },
+
+  async getConnectionHealth() {
+    await delay(300);
+    const checkedAt = new Date().toISOString();
+    return {
+      redis:    { status: "connected", latencyMs: 3, checkedAt },
+      mysql:    { status: "connected", latencyMs: 6, checkedAt },
+      tdengine: { status: "connected", latencyMs: 9, checkedAt },
+    } satisfies ConnectionHealth;
   },
 
   async getProcessMetrics(name) {
@@ -169,6 +180,13 @@ export const mockBackend: BackendClient = {
   async writerMetrics(_token) {
     await delay();
     return { streamLagTotal: 0, pelPendingTotal: 0, dlqTotal: 0, streams: [] };
+  },
+  async moduleRates(_token) {
+    await delay();
+    return {
+      collector: { unit: "批次/min", current: null, series: [] },
+      writer: { unit: "rows/min", current: null, series: [] },
+    };
   },
 };
 

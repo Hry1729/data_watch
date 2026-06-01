@@ -241,7 +241,7 @@ class ConfigValidator:
         if tc_match:
             return True
 
-        db_match = re.match(r'^DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
+        db_match = re.match(r'^%?DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
         if db_match:
             access = db_match.group(1)
             byte_offset = int(db_match.group(2))
@@ -269,7 +269,7 @@ class ConfigValidator:
         upper = address.upper()
         dt = (data_type or "").upper()
 
-        db_match = re.match(r'^DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
+        db_match = re.match(r'^%?DB\d+\.(DBX|DBB|DBW|DBD)(\d+)(?:\.([0-7]))?$', upper)
         if db_match:
             access = db_match.group(1)
             allowed = {

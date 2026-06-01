@@ -12,6 +12,7 @@
 """
 
 import argparse
+from pathlib import Path
 import asyncio
 import os
 import signal
@@ -41,6 +42,27 @@ from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
 
 logger = get_logger("main")
+
+
+def _resolve_runtime_dir(arg_value: str | None) -> Path:
+    if arg_value:
+        return Path(arg_value)
+    home = os.environ.get("DATAWATCH_HOME")
+    if home:
+        return Path(home) / "runtime"
+    return Path(r"C:\ProgramData\DataWatch\runtime")
+
+
+async def _watch_shutdown_flag(app: "CollectorApp", flag_path: Path, interval: float = 1.0) -> None:
+    while not app._shutdown.is_set():
+        try:
+            if flag_path.exists():
+                logger.info("shutdown_flag detected at %s, requesting stop", flag_path)
+                app.stop()
+                return
+        except OSError:
+            pass  # 文件系统瞬时异常不阻断 watchdog
+        await asyncio.sleep(interval)
 
 
 class CollectorApp:
@@ -390,6 +412,7 @@ async def main():
         default=None,
         help="配置文件路径 (默认: config/settings.toml 或环境变量 COLLECTOR_CONFIG)",
     )
+    parser.add_argument("--runtime-dir", type=str, default=None)
     args = parser.parse_args()
 
     # 先用默认级别初始化日志，读取配置后再调整
@@ -475,6 +498,9 @@ async def main():
 
     # 创建并启动应用
     app = CollectorApp(config, config_db_manager=runtime_db_manager)
+    runtime_dir = _resolve_runtime_dir(args.runtime_dir)
+    flag_path = runtime_dir / "collector.shutdown_flag"
+    watchdog_task = asyncio.create_task(_watch_shutdown_flag(app, flag_path))
 
     # 注册信号处理
     loop = asyncio.get_running_loop()
@@ -493,6 +519,11 @@ async def main():
         logger.error(f"Fatal error: {e}")
         raise
     finally:
+        watchdog_task.cancel()
+        try:
+            await watchdog_task
+        except asyncio.CancelledError:
+            pass
         await app.shutdown()
 
     return 0

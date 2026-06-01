@@ -22,7 +22,7 @@ class S7Driver(BaseDriver):
         "C": 0x1C,  # counters (S7-300/400)
     }
     _DB_ADDRESS_RE = re.compile(
-        r"^DB(?P<db>\d+)\.(?P<access>DBX|DBB|DBW|DBD)(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
+        r"^%?DB(?P<db>\d+)\.(?P<access>DBX|DBB|DBW|DBD)(?P<byte>\d+)(?:\.(?P<bit>\d+))?$",
         re.IGNORECASE,
     )
     _AREA_ADDRESS_RE = re.compile(
@@ -118,7 +118,8 @@ class S7Driver(BaseDriver):
         count = block.count
         data_type = block.data_type
 
-        if addr.upper().startswith("DB"):
+        upper_addr = addr.upper()
+        if upper_addr.startswith("DB") or upper_addr.startswith("%DB"):
             return self._read_db_block(addr, data_type, count)
 
         # 检查是否为 Timer/Counter

@@ -1,18 +1,26 @@
 # Data Watch Console 页面设计说明
 
-> 依据 `总览.png`、`collector.png`、`设置.png` 整理。
+> 依据 `总览.png`、`collector.png`、`设置.png` 整理，并同步当前 React/Tauri 实现状态。
 > 目标：为 AI 辅助开发提供清晰的桌面端页面结构、组件层级和样式约束。
 
 ## 1. 设计定位
 
 Data Watch Console 是一个本机桌面控制台，用于管理 `collector` 和 `writer` 两个本地模块。
 
+桌面端采用 `Tauri + React + shadcn/ui` 开发：
+
+- DataWatch Agent（Windows 服务）负责进程启动、停止、配置读写、健康检查和日志采集。
+- Tauri 负责窗口、系统托盘和 HTTP 代理，用于解决 WebView CORS 与本机 Agent 通信问题。
+- React 负责页面状态、路由和模块化 UI 组织。
+- shadcn/ui 负责基础组件风格，页面样式在其基础上做轻量定制。
+- React 通过 Agent HTTP API 驱动所有运维操作。
+
 核心能力：
 
-- 启动、停止、重启 collector / writer。
-- 查看模块运行状态、资源占用、运行时长。
+- 在总览页启动、停止、重启 collector / writer。
+- 在总览页查看模块运行状态、资源占用、运行时长。
 - 查看采集点 / 入库点趋势。
-- 查看 collector / writer 日志。
+- 在 collector / writer 详情页查看任务、趋势和实时日志。
 - 管理 Redis、MySQL、TDengine、collector、writer 等配置。
 
 整体风格参考 CC Switch：
@@ -112,10 +120,11 @@ page padding            24
 card radius             12
 button radius           8
 card border width       1
-module card height      210 - 230
+overview module card    230 - 260
 overview chart height   270 - 290
-collector top card      160 - 170
+detail main area        595
 metric card height      105 - 120
+log panel height        match detail main area
 settings row height     96 - 112
 ```
 
@@ -182,36 +191,33 @@ Status pill:
 |                         +-----------+-----------+-----------+    o TDengine     |
 +--------------------------------------------------------------------------------+
 |                                                                                |
+| +--------------------------------------+  +------------------------------------+ |
+| | Collector 采集模块        [运行中]    |  | Writer 入库模块        [运行中]    | |
+| | 实时设备数据采集与流式入队            |  | Redis Stream 消费与 TDengine 写入  | |
+| |                                      |  |                                    | |
+| | +----------+ +----------+ +----------+ |  | +----------+ +----------+ +--------+ |
+| | |运行时长   | |内存使用   | |CPU 使用率 | |  | |运行时长   | |内存使用   | |CPU 使用率|
+| | |03:42:18 | |186 MB    | |2.4%      | |  | |03:41:55 | |142 MB    | |1.1%    |
+| | +----------+ +----------+ +----------+ |  | +----------+ +----------+ +--------+ |
+| |                                      |  |                                    | |
+| | [启动] [停止] [重启] [日志]           |  | [启动] [停止] [重启] [日志]         | |
+| +--------------------------------------+  +------------------------------------+ |
+|                                                                                |
 | +------------------------------------------------------------------------------+|
-| |  [large icon]  Collector 采集模块   [运行中]                         [...]   ||
-| |                                                                              ||
-| |  命令       collector/data-watch-collector.exe                               ||
-| |  内存使用   186 MB                         运行时长     03:42:18             ||
-| |  CPU 使用率 2.4%                           Redis Stream rt:stream:agv:main:* ||
-| |                                                                              ||
-| |                                      [启动] [停止] [重启] [日志]              ||
+| | 采集点趋势                                        最近 10 分钟                ||
+| | -- pts/min                                                                    ||
+| | +--------------------------------------------------------------------------+ ||
+| | |                                数据接入中                                | ||
+| | +--------------------------------------------------------------------------+ ||
 | +------------------------------------------------------------------------------+|
 |                                                                                |
 | +------------------------------------------------------------------------------+|
-| |  [large icon]  Writer 入库模块      [运行中]                         [...]   ||
-| |                                                                              ||
-| |  命令       writer/data-watch-writer.exe                                     ||
-| |  内存使用   142 MB                         运行时长     03:41:55             ||
-| |  CPU 使用率 1.1%                           TDengine    device_data / sd{type}||
-| |                                                                              ||
-| |                                      [启动] [停止] [重启] [日志]              ||
+| | 入库点趋势                                        最近 10 分钟                ||
+| | -- rows/min                                                                   ||
+| | +--------------------------------------------------------------------------+ ||
+| | |                                数据接入中                                | ||
+| | +--------------------------------------------------------------------------+ ||
 | +------------------------------------------------------------------------------+|
-|                                                                                |
-| +-------------------------------------+  +-------------------------------------+ |
-| |  采集点趋势    最近 10 分钟          |  |  入库点趋势    最近 10 分钟          | |
-| |                             12,480 pts/min                         12,430 rows/min |
-| |                                                                         ^    | |
-| |   16k | - - - - - - - - - - -       |  |   16k | - - - - - - - - - - -       | |
-| |   12k | ~~~ blue line ~~~~~~~       |  |   12k | ~~~ blue line ~~~~~~~       | |
-| |    8k | - - - - - - - - - - -       |  |    8k | - - - - - - - - - - -       | |
-| |    0  +----------------------       |  |    0  +----------------------       | |
-| |       10:37 10:39 ... 10:47         |  |       10:37 10:39 ... 10:47         | |
-| +-------------------------------------+  +-------------------------------------+ |
 |                                                                                |
 +--------------------------------------------------------------------------------+
 ```
@@ -222,33 +228,38 @@ Status pill:
 
 ```text
 ModuleSummaryCard
-  icon
   title
+  subtitle
   status_pill
-  more_button
-  fields:
-    command
+  metrics:
+    uptime
     memory
     cpu
-    uptime
-    redis_stream or tdengine_target
   actions:
     start
     stop
     restart
-    open_log
+    log
 ```
+
+约束：
+
+- 模块概要卡片不显示大图标。
+- 三个运行指标小卡片不显示 icon。
+- 启动按钮为蓝色 outline 风格：蓝色边框、蓝色文字、蓝色图标。
+- 停止按钮为红色 outline 风格。
+- 四个操作按钮高度统一，略高于默认按钮。
 
 趋势图卡片：
 
 ```text
-TrendChartCard
+TrendChart
   title
-  range_selector: 最近 10 分钟
+  range_label: 最近 10 分钟
   current_value
   unit
-  expand_button
-  line_chart
+  state: empty | loading | error | ready
+  chart_area
 ```
 
 ### 4.4 数据字段
@@ -257,31 +268,31 @@ Collector 卡片：
 
 ```text
 title         Collector 采集模块
+subtitle      实时设备数据采集与流式入队
 status        running
-command       collector/data-watch-collector.exe
 memory        186 MB
 cpu           2.4%
 uptime        03:42:18
-stream        rt:stream:agv:main:*
 ```
 
 Writer 卡片：
 
 ```text
 title         Writer 入库模块
+subtitle      Redis Stream 消费与 TDengine 批量写入
 status        running
-command       writer/data-watch-writer.exe
 memory        142 MB
 cpu           1.1%
 uptime        03:41:55
-tdengine      device_data / sd{type}
 ```
 
 ## 5. Collector 页面
 
 ### 5.1 页面目标
 
-展示 collector 模块详情，包括进程信息、运行指标、采集任务、趋势图和实时日志。
+展示 collector 模块详情，包括采集指标、采集任务、采集趋势和实时日志。
+
+详情页不再显示进程标题卡片，也不显示启动 / 停止 / 重启 / 打开日志操作按钮；模块控制集中在总览页完成。
 
 ### 5.2 ASCII 结构
 
@@ -294,37 +305,25 @@ tdengine      device_data / sd{type}
 |                         +-----------+-----------+-----------+    o TDengine     |
 +--------------------------------------------------------------------------------+
 |                                                                                |
-| +------------------------------------------------------------------------------+|
-| | [large icon] Collector 采集模块 [运行中]                                      ||
-| |                                                                              ||
-| | 命令       collector/data-watch-collector.exe   PID       4820                ||
-| | 工作目录   D:/data_watch_deploy/data-watch-collector                         ||
-| | 运行时长   03:42:18                         内存使用  186 MB                 ||
-| |                                             CPU 使用率 2.4%                   ||
-| |                                                       [启动] [停止] [重启] [打开日志] |
-| +------------------------------------------------------------------------------+|
-|                                                                                |
 | +------------------+ +------------------+ +------------------+ +------------------+ |
 | | 采集周期          | | 设备连接          | | 采集点位          | | Redis 写入        | |
 | | 100 ms           | | 18 / 18          | | 3,264            | | 12,480 pts/min   | |
 | +------------------+ +------------------+ +------------------+ +------------------+ |
 |                                                                                |
 | +---------------------------------------------+ +------------------------------+ |
-| | 采集任务                              [R]... | | 实时日志              auto on | |
+| | 采集任务                                     | | 实时日志              auto on | |
 | | +--------+--------+----------+------+-------+ | |                              | |
 | | | 设备   | 分组   | 协议     | 周期 | 点位  | | | 14:26:10 INFO Collector started |
 | | +--------+--------+----------+------+-------+ | | 14:26:10 INFO Subscribe Redis    |
 | | | AGV-01 | main   | OPC DA   |100ms | 384   | | | 14:26:11 INFO Device connected   |
 | | | PLC-02 | line1  | S7       |500ms | 620   | | | 14:26:12 WARN Retry tag read     |
 | | | QC-100 | main   | OPC UA   |1000ms| 220   | | | 14:26:12 ERROR read failed       |
-| | | METER1 | power  | Modbus   |200ms | 512   | | | 14:26:13 INFO Heartbeat ok       |
 | | +--------+--------+----------+------+-------+ | |                              | |
 | |                                             | |                              | |
-| | 采集点趋势 - 最近10分钟                      | |                              | |
-| |  16k | - - - - - - - - - -                  | |                              | |
-| |  12k | ~~~ blue line ~~~~~                  | |                              | |
-| |   8k | - - - - - - - - - -                  | |                              | |
-| |   0  +---------------------                  | |                              | |
+| | 采集点趋势 - 最近10分钟                      | |   log rows scroll inside card  | |
+| | +-----------------------------------------+ | |                              | |
+| | |              数据接入中                  | | |                              | |
+| | +-----------------------------------------+ | |                              | |
 | +---------------------------------------------+ +------------------------------+ |
 |                                                                                |
 +--------------------------------------------------------------------------------+
@@ -332,34 +331,12 @@ tdengine      device_data / sd{type}
 
 ### 5.3 组件说明
 
-Collector 详情卡片：
-
-```text
-CollectorHeaderCard
-  icon
-  title
-  status_pill
-  command
-  working_directory
-  pid
-  uptime
-  memory
-  cpu
-  actions:
-    start
-    stop
-    restart
-    open_log
-```
-
 指标卡片：
 
 ```text
 MetricCard
-  icon
   label
   value
-  unit
 ```
 
 采集任务表格：
@@ -384,12 +361,22 @@ LogPanel
     title
     auto_scroll_toggle
     clear_button
-    delete_button
+  body:
+    internal_scroll_area
+    max_lines: 5000
   rows:
     timestamp
     level_chip
     message
 ```
+
+布局约束：
+
+- 页面主体采用左 3/5、右 2/5 两列布局。
+- 主体区域固定高度，当前实现为 `595px`。
+- 右侧日志卡片与左侧「任务表 + 趋势图」底部对齐。
+- 日志持续追加时只能在日志卡片内部滚动，不得撑高页面。
+- 日志卡片边框与趋势图一致：白底、`1px solid #DDE3ED`、`border-radius: 12px`。
 
 ### 5.4 示例表格数据
 
@@ -409,7 +396,9 @@ LogPanel
 
 ### 6.1 页面目标
 
-Writer 页面应与 Collector 页面结构一致，但内容聚焦 Redis Stream 消费、MySQL 映射、TDengine 写入和 DLQ。
+Writer 页面与 Collector 页面结构一致，但内容聚焦 Redis Stream 消费、TDengine 写入和 DLQ。
+
+详情页不再显示进程标题卡片，也不显示启动 / 停止 / 重启 / 打开日志操作按钮；模块控制集中在总览页完成。
 
 ### 6.2 建议 ASCII 结构
 
@@ -421,16 +410,6 @@ Writer 页面应与 Collector 页面结构一致，但内容聚焦 Redis Stream 
 |                         |   总览    | Collector |  Writer   |    o MySQL  [G]  |
 |                         +-----------+-----------+-----------+    o TDengine     |
 +--------------------------------------------------------------------------------+
-|                                                                                |
-| +------------------------------------------------------------------------------+|
-| | [large icon] Writer 入库模块 [运行中]                                         ||
-| |                                                                              ||
-| | 命令       writer/data-watch-writer.exe      PID       4932                  ||
-| | 工作目录   D:/data_watch_deploy/data-watch-writer                            ||
-| | 运行时长   03:41:55                         内存使用  142 MB                 ||
-| |                                             CPU 使用率 1.1%                   ||
-| |                                                       [启动] [停止] [重启] [打开日志] |
-| +------------------------------------------------------------------------------+|
 |                                                                                |
 | +------------------+ +------------------+ +------------------+ +------------------+ |
 | | Stream Lag       | | PEL Pending      | | 批量写入          | | DLQ              | |
@@ -448,14 +427,59 @@ Writer 页面应与 Collector 页面结构一致，但内容聚焦 Redis Stream 
 | | +-----------------------+------+-------+----+ | |                              | |
 | |                                             | |                              | |
 | | 入库点趋势 - 最近10分钟                      | |                              | |
-| |  16k | - - - - - - - - - -                  | |                              | |
-| |  12k | ~~~ blue line ~~~~~                  | |                              | |
-| |   8k | - - - - - - - - - -                  | |                              | |
-| |   0  +---------------------                  | |                              | |
+| | +-----------------------------------------+ | |   log rows scroll inside card  | |
+| | |              数据接入中                  | | |                              | |
+| | +-----------------------------------------+ | |                              | |
 | +---------------------------------------------+ +------------------------------+ |
 |                                                                                |
 +--------------------------------------------------------------------------------+
 ```
+
+### 6.3 组件说明
+
+指标卡片：
+
+```text
+MetricCard
+  label
+  value
+```
+
+Stream 消费任务表格：
+
+```text
+WriterStreamTable
+  columns:
+    stream_key
+    lag
+    pel
+    ack
+```
+
+日志面板：
+
+```text
+LogPanel
+  header:
+    title
+    auto_scroll_toggle
+    clear_button
+  body:
+    internal_scroll_area
+    max_lines: 5000
+  rows:
+    timestamp
+    level_chip
+    message
+```
+
+布局约束：
+
+- 页面主体采用左 3/5、右 2/5 两列布局。
+- 主体区域固定高度，当前实现为 `595px`。
+- 右侧日志卡片与左侧「Stream 消费任务 + 入库点趋势」底部对齐。
+- 日志持续追加时只能在日志卡片内部滚动，不得撑高页面。
+- 日志卡片边框与趋势图一致：白底、`1px solid #DDE3ED`、`border-radius: 12px`。
 
 ## 7. 设置页：数据库
 
@@ -590,29 +614,125 @@ Writer 页面应与 Collector 页面结构一致，但内容聚焦 Redis Stream 
 +--------------------------------------------------------------------------------+
 ```
 
-## 11. 交互说明
+## 11. 入口页：登录与 Bootstrap 向导
 
-### 11.1 模块控制按钮
+### 11.1 登录页
+
+登录页是每次打开应用后进入主界面的认证入口。
+
+目标：
+
+- 输入 username / password。
+- 同时获取 Agent JWT 和 Backend Token。
+- 登录成功后进入总览页。
+- 登录失败时在表单下方显示错误信息。
 
 ```text
++--------------------------------------------------------------------------------+
+| [icon] Data Watch Console                                          _  []  X     |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|                                                                                |
+|                         +--------------------------------+                     |
+|                         | Data Watch Console             |                     |
+|                         | 本机采集与入库控制台             |                     |
+|                         |                                |                     |
+|                         | 用户名                         |                     |
+|                         | [ admin                    ]   |                     |
+|                         |                                |                     |
+|                         | 密码                           |                     |
+|                         | [ ******                   ]   |                     |
+|                         |                                |                     |
+|                         | [ 登录 ]                       |                     |
+|                         |                                |                     |
+|                         | Agent: http://127.0.0.1:xxxxx  |                     |
+|                         +--------------------------------+                     |
+|                                                                                |
+|                                                                                |
++--------------------------------------------------------------------------------+
+```
+
+说明：
+
+- 登录页不显示普通页面导航。
+- 登录页不显示设置导航。
+- 登录页不显示 Redis / MySQL / TDengine 连接状态。
+- 密码输入框默认掩码。
+- 登录请求走 Agent API 或 Tauri HTTP proxy，不在前端硬编码 token。
+
+### 11.2 Bootstrap 向导页
+
+Bootstrap 向导页只在首次安装、MySQL 未配置或 Agent 返回 bootstrap required 时出现。
+
+目标：
+
+- 填写 MySQL 连接信息。
+- 测试连接。
+- 完成初始化后跳转登录页。
+
+```text
++--------------------------------------------------------------------------------+
+| [icon] Data Watch Console                                          _  []  X     |
++--------------------------------------------------------------------------------+
+|                                                                                |
+|  初始化向导                                                                     |
+|  首次使用前需要配置 MySQL，Agent 将使用该连接读取系统配置。                     |
+|                                                                                |
+|  +----------------------------------------------------------------------------+|
+|  | MySQL 配置库                                                               ||
+|  |                                                                            ||
+|  | 主机 [127.0.0.1]   端口 [3306]   用户 [root]   密码 [******]               ||
+|  | 数据库 [device_watch]                                                       ||
+|  |                                                                            ||
+|  | [测试连接]                                      [完成初始化]                ||
+|  +----------------------------------------------------------------------------+|
+|                                                                                |
+|  状态: 等待测试连接                                                             |
+|                                                                                |
++--------------------------------------------------------------------------------+
+```
+
+说明：
+
+- Bootstrap 页是进入登录页前的安装向导。
+- 只处理 MySQL 初始连接。
+- 测试连接成功后才能点击完成初始化。
+- 完成初始化后重新检查 `/bootstrap/status`，再跳转登录页。
+
+## 12. 交互说明
+
+### 12.1 模块控制按钮
+
+```text
+位置:
+  - 启动 / 停止 / 重启 / 日志按钮只出现在总览页模块概要卡片中。
+  - Collector / Writer 详情页不再显示模块控制按钮。
+
 启动:
-  - 如果模块未运行，启动对应 exe。
-  - 启动时设置 working directory。
-  - 捕获 stdout / stderr 并写入实时日志面板。
+  - React 调用 Agent HTTP API。
+  - Agent 判断模块状态并启动对应 exe。
+  - Agent 负责设置 workingDirectory。
+  - Tauri 不直接启动 collector / writer。
 
 停止:
-  - 优先温和停止进程。
-  - 超时后可提示是否强制结束。
+  - React 调用 Agent HTTP API。
+  - Agent 优先温和停止进程。
+  - 超时后的强制结束策略由 Agent 决定并返回结果。
 
 重启:
-  - 先停止，再启动。
+  - React 调用 Agent HTTP API。
+  - Agent 执行先停止、再启动。
   - 用于配置变更后生效。
 
 日志:
-  - 总览页点击日志按钮跳转到对应模块详情页，或打开日志面板。
+  - 总览页点击日志按钮跳转到对应模块详情页。
+  - 详情页通过 WS /viewer/logs/{name}/tail 接收 Agent 推送。
+  - 日志面板与左侧任务表 + 趋势图区同高，日志内容在卡片内部滚动。
+  - Agent 将 collector / writer stdout / stderr 写入滚动日志文件。
+  - Tauri 不捕获 stdout / stderr。
 ```
 
-### 11.2 连接状态
+### 12.2 连接状态
 
 ```text
 green dot:
@@ -625,86 +745,211 @@ red dot:
   disconnected
 ```
 
-### 11.3 设置保存
+### 12.3 设置保存
 
 ```text
 保存:
-  - 仅写配置文件。
+  - React 调用 Agent HTTP API。
+  - Agent 写配置文件。
   - 不重启进程。
 
 保存并重启 Collector:
-  - 写配置文件。
+  - Agent 写配置文件。
   - 如果 collector 正在运行，执行重启。
 
 保存并重启 Writer:
-  - 写配置文件。
+  - Agent 写配置文件。
   - 如果 writer 正在运行，执行重启。
 ```
 
-## 12. 推荐实现映射
+## 13. 推荐实现映射
 
-如果使用 PySide6 / Qt Widgets：
-
-```text
-MainWindow
-  QMainWindow
-  central_widget
-    AppTitleBar
-    TopNavigationBar
-    QStackedWidget
-      OverviewPage
-      CollectorPage
-      WriterPage
-      SettingsPage
-
-ProcessManager
-  QProcess for collector
-  QProcess for writer
-  start / stop / restart
-  stdout / stderr capture
-
-ConfigManager
-  read / write toml
-  collector config path
-  writer config path
-
-LogModel
-  append log rows
-  filter by level
-  auto scroll
-
-MetricsProvider
-  process cpu / memory / pid / uptime
-  Redis health
-  MySQL health
-  TDengine health
-  trend series
-```
-
-页面组件建议：
+### 13.1 技术栈
 
 ```text
-SegmentedNav           top tabs and settings tabs
-ModuleSummaryCard      overview module card
-ModuleHeaderCard       collector/writer detail header
-MetricCard             small metrics
-TrendChartCard         line chart
-TaskTable              collector task table
-StreamTable            writer stream table
-LogPanel               realtime logs
-SettingsRow            one-line config card
-StatusPill             running / connected state
-ActionButton           start / stop / restart / logs
+Desktop shell:
+  Tauri window
+  Tauri tray
+  Tauri HTTP proxy
+
+Frontend:
+  React
+  TypeScript
+  shadcn/ui
+  Tailwind CSS
+
+Agent:
+  DataWatch Agent
+  Windows service
+  Python FastAPI
+  Process / Config / Health / Metrics / Logs owner
+
+Charts:
+  lightweight React chart component
+  or ECharts line chart with minimal styling
 ```
 
-## 13. 开发注意事项
+### 13.2 前端页面结构
 
+```text
+App.tsx
+  AppTitleBar
+  MainNavigation
+  <Routes> or page state switcher
+
+pages/
+  LoginPage.tsx
+  BootstrapPage.tsx
+  OverviewPage.tsx
+  CollectorPage.tsx
+  WriterPage.tsx
+  SettingsPage.tsx
+
+components/
+  ModuleSummaryCard.tsx
+  TrendChart.tsx
+  LogPanel.tsx
+  ConnectionStatusBar.tsx
+  AppLayout.tsx
+```
+
+说明：
+
+- Login / Bootstrap 页面不显示普通主导航。
+- 登录成功后的普通页面使用 `MainNavigation` 显示 `总览 / Collector / Writer`。
+- 设置页进入后隐藏普通导航，改用设置页内部导航 `基础 / 数据库 / Collector / Writer`。
+- 页面切换可以使用 React Router，也可以用内部 page state 控制；首版以简单可维护为准。
+
+### 13.3 shadcn/ui 组件建议
+
+```text
+Tabs                   top tabs and settings tabs
+Button                 overview start / stop / restart / log, save, test
+Card                   module cards, metric cards, settings rows
+Badge                  running / connected / warn / error states
+Input                  host / port / user / password / path fields
+Table                  collector task table, writer stream table
+Switch                 auto scroll, auto start, theme follow system
+Dialog                 confirm stop, restart warning, error details
+ScrollArea             optional wrapper; current LogPanel uses internal overflow-y-auto
+Separator              top bar split, settings row split
+Tooltip                icon button hints
+```
+
+自定义组件仍应包裹 shadcn/ui 基础组件，避免直接堆复杂样式。
+
+### 13.4 Agent API 与 Tauri 映射
+
+```text
+React / Tauri proxy -> Agent HTTP API:
+  GET  /bootstrap/status
+  PUT  /bootstrap/config
+  POST /bootstrap/test-connection
+  POST /bootstrap/finish
+
+  POST /auth/login
+
+  POST /admin/processes/collector/start
+  POST /admin/processes/collector/stop
+  POST /admin/processes/collector/restart
+  POST /admin/processes/writer/start
+  POST /admin/processes/writer/stop
+  POST /admin/processes/writer/restart
+
+  GET  /viewer/status
+  GET  /viewer/processes/{name}/metrics
+  GET  /viewer/processes/{name}/status
+
+  GET  /admin/config
+  PUT  /admin/config
+
+  WS   /viewer/logs/{name}/tail
+
+趋势图数据源：
+  TODO: 待 Agent 设计阶段确认。
+  方案 A：Agent 新增 viewer 趋势接口，直接服务桌面端图表。
+  方案 B：前端从 Backend API 拉取历史采集 / 入库统计数据。
+  当前文档不预设 /viewer/trends/* 端点。
+
+顶部连接状态点：
+  TODO: Redis / MySQL / TDengine 健康检查端点待 Agent 设计阶段确认。
+  UI 暂按三态展示：connected / unknown / disconnected。
+  若后续新增 API，建议由一个快照接口一次返回三类连接状态，避免前端分别轮询。
+
+Tauri Rust commands:
+  agent_request(...)
+    - HTTP proxy from WebView to Agent
+    - attaches Agent JWT when available
+    - avoids WebView CORS issues
+
+  show_window()
+    - restore window from tray
+
+  hide_to_tray()
+    - hide main window to system tray
+```
+
+实现要求：
+
+- Tauri Rust 层不实现 ProcessManager / ConfigManager / HealthManager / MetricsManager。
+- 启动 collector / writer 时由 Agent 设置 `workingDirectory`。
+- collector 的工作目录应指向 `data-watch-collector` 部署目录。
+- writer 的工作目录应指向 `data-watch-writer` 部署目录。
+- 日志由 Agent 写滚动文件，并通过 WebSocket 推送给前端。
+- 配置读写统一由 Agent 完成，Tauri 只代理请求。
+- 密码字段只在表单中短暂存在，日志和状态事件中不得输出明文。
+
+### 13.5 推荐目录结构
+
+```text
+app/
+  package.json
+  src/
+    App.tsx
+    main.tsx
+    index.css
+    pages/
+      LoginPage.tsx
+      BootstrapPage.tsx
+      OverviewPage.tsx
+      CollectorPage.tsx
+      WriterPage.tsx
+      SettingsPage.tsx
+    components/
+      ModuleSummaryCard.tsx
+      TrendChart.tsx
+      LogPanel.tsx
+      AppLayout.tsx
+      ConnectionStatusBar.tsx
+    lib/
+      api.ts
+      format.ts
+      constants.ts
+  src-tauri/
+    tauri.conf.json
+    src/
+      main.rs
+      http_proxy.rs
+      tray.rs
+```
+
+## 14. 开发注意事项
+
+- 登录页和 Bootstrap 页是进入主界面的必经路径。
+- Bootstrap 页只在 Agent 判断 MySQL 未配置时显示。
 - 普通页面和设置页面的顶部导航不同，不能混用。
 - 设置页不能显示 Redis / MySQL / TDengine 顶部连接状态。
 - 概览页不显示日志。
 - Collector / Writer 详情页才显示实时日志。
+- Collector / Writer 详情页不显示进程标题卡片和操作按钮卡。
+- 模块启动 / 停止 / 重启入口集中放在总览页。
+- 日志面板高度必须被父级约束，日志行只能在面板内部滚动，不能撑高页面。
+- 日志面板边框必须与趋势图卡片一致。
 - 设置页数据库项必须是一行一个卡片。
-- 启动模块时必须设置工作目录，否则 `config/settings.toml` 可能无法找到。
+- Tauri 不直接启动 collector / writer。
+- Tauri 不直接读写 collector / writer 配置。
+- Tauri 不捕获 collector / writer stdout / stderr。
+- Agent 启动模块时必须设置工作目录，否则 `config/settings.toml` 可能无法找到。
 - Writer 和 Collector 必须指向同一个 Redis 实例。
 - TDengine stable pattern 使用 `sd{type}`。
 - 密码输入框默认掩码，不在日志中打印明文。

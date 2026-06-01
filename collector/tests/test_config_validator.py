@@ -11,6 +11,11 @@ def test_validator_accepts_current_s7_mysql_address_baseline():
             VariableConfig("1", "qc100", "%I101.0", "BOOL", 1, True, 1),
             VariableConfig("2", "qc100", "%MD1304", "DINT", 1, True, 2),
             VariableConfig("3", "qc100", "DB30.DBD100", "REAL", 1, True, 3),
+            VariableConfig("4", "qc100", "%DB1702.DBW0", "INT", 1, True, 4),
+            VariableConfig("5", "qc100", "%DB1702.DBB2", "BYTE", 1, True, 5),
+            VariableConfig("6", "qc100", "%DB1702.DBB3", "BYTE", 1, True, 6),
+            VariableConfig("7", "qc100", "%DB1702.DBD4", "REAL", 1, True, 7),
+            VariableConfig("8", "qc100", "%DB1702.DBX440.6", "BOOL", 1, True, 8),
         ],
     )
 
