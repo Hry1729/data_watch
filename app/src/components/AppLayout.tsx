@@ -31,7 +31,7 @@ export function AppLayout() {
                   [
                     "px-4 py-1.5 rounded-md text-sm font-medium transition-colors border",
                     isActive
-                      ? "border-[#1677FF] text-[#1677FF] bg-white"
+                      ? "border-brand text-brand bg-card"
                       : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/50",
                   ].join(" ")
                 }
