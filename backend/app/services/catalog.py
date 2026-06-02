@@ -723,7 +723,9 @@ class CatalogService:
                             WHEN UPPER(COALESCE(dv.io_type, '')) IN ('OUTPUT', 'WRITE', 'RW')
                                 THEN 0
                             ELSE 1
-                        END AS is_readonly
+                        END AS is_readonly,
+                        d.group_id AS group_id,
+                        dv.td_column_name AS td_column_name
                     FROM device_variable AS dv
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
