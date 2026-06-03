@@ -88,32 +88,12 @@ class TaskExecutor:
                 await self.device_manager.schedule_reconnect(device)
             return
 
-        # 批量读取
+        # 批量读取（读失败：标记设备异常并向调度器抛出）
         start = time.time()
         try:
             result = await device.driver.read(scan_task.read_blocks)
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
                 raise ReadError(f"All read blocks failed for task {task.task_name}")
-            elapsed = time.time() - start
-            self._total_reads += 1
-
-            # 解析结果并写入 Redis
-            points = self._parse_result(device.device_id, scan_task, result)
-
-            if points:
-                loop = asyncio.get_running_loop()
-                loop.run_in_executor(
-                    None, self._write_to_redis, device, scan_task, points
-                )
-
-            logger.debug(
-                "Task %s: read %s points in %.1fms",
-                task.task_name,
-                len(points),
-                elapsed * 1000,
-            )
-            self._record_read_summary(task, len(points), elapsed * 1000)
-
         except Exception as e:
             self._total_errors += 1
             logger.error("Task %s read failed: %s", task.task_name, e)
@@ -123,6 +103,40 @@ class TaskExecutor:
             if self.device_manager:
                 await self.device_manager.mark_device_error(device, f"read failed: {e}", "timeout")
             raise
+
+        elapsed = time.time() - start
+        self._total_reads += 1
+
+        # 解析结果
+        points = self._parse_result(device.device_id, scan_task, result)
+
+        # 写入 Redis（写失败：读已成功，设备保持 ONLINE，但如实计为错误，不谎报成功）
+        # 注意：await 会让本任务等待 Redis 写完，写入耗时会计入该任务的采集周期；
+        # 写操作仍在线程池执行，不阻塞事件循环线程。
+        if points:
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(
+                    None, self._write_to_redis, device, scan_task, points
+                )
+            except Exception as exc:
+                self._total_errors += 1
+                logger.error(
+                    "Redis write failed after successful read for task %s device %s: %s",
+                    task.task_name,
+                    device.device_id,
+                    exc,
+                )
+                self._record_read_summary(task, len(points), elapsed * 1000, error=True)
+                return
+
+        logger.debug(
+            "Task %s: read %s points in %.1fms",
+            task.task_name,
+            len(points),
+            elapsed * 1000,
+        )
+        self._record_read_summary(task, len(points), elapsed * 1000)
 
     def _write_to_redis(self, device, scan_task, points: List[DataPoint]) -> None:
         """将采集结果写入 Redis（latest / window / stream）。在线程池中调用，不阻塞事件循环。"""
@@ -190,7 +204,9 @@ class TaskExecutor:
                         ts_ms, config_version, stream_values,
                     )
         except Exception as exc:
+            # 不在此吞掉异常：交由 execute() 的写入分支统一计错并记录 summary
             logger.error("Redis write failed for device %s: %s", device.device_id, exc)
+            raise
 
     @staticmethod
     def _timestamp_to_millis(timestamp: Any) -> int:

@@ -168,22 +168,46 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         self.opcda_ingest_path = opcda_ingest_path
         self.max_body_bytes = max_body_bytes
         self.redis_writer = redis_writer
-        self._device_meta = {
-            getattr(device, "device_id", ""): device
-            for device in getattr(realtime_config, "devices", [])
-        }
-        self._variable_meta = {
-            str(getattr(variable, "variable_id", "")): variable
-            for variable in getattr(realtime_config, "variables", [])
-        }
+        # 元数据快照在 asyncio 主线程（热重载）写、在 HTTP 工作线程读，
+        # 用锁保证读取时拿到 device_meta / variable_meta 一致的一对。
+        self._metadata_lock = threading.Lock()
+        self._device_meta: Dict[str, Any] = {}
+        self._variable_meta: Dict[str, Any] = {}
+        self.update_metadata(
+            getattr(realtime_config, "devices", []),
+            getattr(realtime_config, "variables", []),
+        )
         self._log_counter = 0
         self._log_last_time = time.time()
         self._log_lock = threading.Lock()
+
+    def update_metadata(self, devices, variables) -> None:
+        """重建设备/变量元数据快照（热重载后由主线程调用）。
+
+        先构造完整的新 dict，再在锁内一次性替换，避免 HTTP 工作线程
+        看到「新 device_meta + 旧 variable_meta」的混合状态。
+        """
+        new_device_meta = {
+            getattr(device, "device_id", ""): device
+            for device in (devices or [])
+        }
+        new_variable_meta = {
+            str(getattr(variable, "variable_id", "")): variable
+            for variable in (variables or [])
+        }
+        with self._metadata_lock:
+            self._device_meta = new_device_meta
+            self._variable_meta = new_variable_meta
 
     def write_points_to_redis(self, points: List[DataPoint]) -> Tuple[int, List[str]]:
         """写入 Redis latest/window/stream，返回 accepted 和错误列表。"""
         if self.redis_writer is None:
             return 0, ["redis writer not configured"]
+
+        # 在锁内抓取一致快照，处理过程使用局部引用，避免读到半更新状态
+        with self._metadata_lock:
+            variable_meta = self._variable_meta
+            device_meta = self._device_meta
 
         by_latest: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
         by_frame: Dict[Tuple[str, str, str, int, int], Dict[str, Any]] = {}
@@ -191,13 +215,13 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         errors: List[str] = []
 
         for idx, point in enumerate(points):
-            var = self._variable_meta.get(str(point.variable_id))
+            var = variable_meta.get(str(point.variable_id))
             if var is None:
                 errors.append(f"points[{idx}]: variable_id not configured: {point.variable_id}")
                 continue
 
             device_id = getattr(var, "device_id", "") or point.device_id
-            device = self._device_meta.get(device_id)
+            device = device_meta.get(device_id)
             if device is None:
                 errors.append(f"points[{idx}]: device not configured: {device_id}")
                 continue
@@ -603,6 +627,16 @@ class InterfaceIngestServer:
             self.host,
             self.port,
             ", ".join(endpoints),
+        )
+
+    def update_metadata(self, realtime_config: Any) -> None:
+        """热重载后刷新 HTTP server 持有的设备/变量元数据快照。"""
+        self.realtime_config = realtime_config
+        if self._server is None or realtime_config is None:
+            return
+        self._server.update_metadata(
+            getattr(realtime_config, "devices", []),
+            getattr(realtime_config, "variables", []),
         )
 
     async def stop(self) -> None:

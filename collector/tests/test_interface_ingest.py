@@ -148,3 +148,71 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
         7,
         {"30041800": "12.5"},
     )
+
+
+def test_ingest_server_update_metadata_refreshes_snapshot():
+    """热重载后新增点位应被接受，旧快照不再拒绝它。"""
+    redis_writer = MagicMock()
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+                config_version=7,
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="30041800",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag30041800",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            )
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+    try:
+        # 重载前：新点位 99999 未配置，应被拒绝
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "99999", 1.0)
+        ])
+        assert accepted == 0
+        assert errors and "not configured" in errors[0]
+
+        # 模拟热重载：新增点位 99999
+        new_variables = list(config.variables) + [
+            VariableConfig(
+                variable_id="99999",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag99999",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=2,
+                group_code="g001",
+            )
+        ]
+        server.update_metadata(config.devices, new_variables)
+
+        # 重载后：新点位被接受
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "99999", 1.0)
+        ])
+        assert accepted == 1
+        assert errors == []
+    finally:
+        server.server_close()

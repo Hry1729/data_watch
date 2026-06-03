@@ -118,6 +118,9 @@ class TaskScheduler:
                 await loop_task
             except asyncio.CancelledError:
                 pass
+            # 同步从扁平任务表移除，避免频繁热重载累积已取消任务引用
+            if loop_task in self._loop_tasks:
+                self._loop_tasks.remove(loop_task)
 
         # 移除旧 CollectTask 记录
         old_names = [n for n, ct in self.tasks.items() if ct.device.device_id == device_id]

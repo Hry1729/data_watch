@@ -29,6 +29,17 @@ class OpcDaTagMapper:
         """
         self._mapping: Dict[str, str] = {}
         self._device_variables: Dict[str, List[str]] = {}  # device_id → [variable_id]
+        self.rebuild(variables)
+
+    def rebuild(self, variables: List) -> None:
+        """
+        用新的变量列表原地重建映射（热重载后调用）。
+
+        原地更新内部 dict 引用，使已注入到 ingest server 的同一 mapper 引用
+        立即生效；不要替换 mapper 对象本身。
+        """
+        mapping: Dict[str, str] = {}
+        device_variables: Dict[str, List[str]] = {}
 
         for var in variables:
             # var.address 存储完整的 item_id
@@ -37,14 +48,15 @@ class OpcDaTagMapper:
             device_id = getattr(var, "device_id", "")
 
             if address and variable_id:
-                self._mapping[address] = variable_id
+                mapping[address] = variable_id
+                device_variables.setdefault(device_id, []).append(variable_id)
 
-                if device_id not in self._device_variables:
-                    self._device_variables[device_id] = []
-                self._device_variables[device_id].append(variable_id)
+        # 一次性替换引用，避免读取方看到半更新状态
+        self._mapping = mapping
+        self._device_variables = device_variables
 
         logger.info(
-            "OpcDaTagMapper initialized: %d mappings, %d devices",
+            "OpcDaTagMapper rebuilt: %d mappings, %d devices",
             len(self._mapping),
             len(self._device_variables),
         )

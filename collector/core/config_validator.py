@@ -208,6 +208,21 @@ class ConfigValidator:
                     "Either set a non-empty api_key or bind to 127.0.0.1 for local-only access."
                 )
 
+        # 验证 Redis 配置（取模分片、Stream 长度、连接参数）
+        redis_cfg = config.redis
+        if redis_cfg.stream_shard_count < 1:
+            result.errors.append(
+                f"redis.stream_shard_count must be >= 1, got {redis_cfg.stream_shard_count}"
+            )
+        if redis_cfg.stream_maxlen < 1:
+            result.errors.append(
+                f"redis.stream_maxlen must be >= 1, got {redis_cfg.stream_maxlen}"
+            )
+        if not (1 <= redis_cfg.port <= 65535):
+            result.errors.append(f"Invalid redis port: {redis_cfg.port}")
+        if redis_cfg.db < 0:
+            result.errors.append(f"Invalid redis db: {redis_cfg.db}")
+
         # 验证设备与变量的关系
         device_ids = {dev.device_id for dev in config.devices}
         for var in config.variables:

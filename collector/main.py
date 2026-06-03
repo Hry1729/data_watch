@@ -36,7 +36,7 @@ from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
-from storage.redis_client import get_redis
+from storage.redis_client import get_redis, close_pool
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
@@ -236,6 +236,7 @@ class CollectorApp:
         if self.ingest_server is not None:
             await self.ingest_server.stop()
         await self.device_manager.disconnect_all()
+        close_pool()
 
         self._log_status()
         logger.info("Collector stopped")
@@ -315,6 +316,19 @@ class CollectorApp:
             device.config_version = new_version
             new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
             await self.scheduler.reload_device_tasks(device_id, new_tasks)
+
+            # 同步外部接口/推送链路所依赖的全局元数据：
+            # 1) 替换该设备在 config.variables 中的条目并刷新 config_version
+            # 2) 原地 rebuild OPC DA mapper（ingest server 持有同一引用）
+            # 3) 刷新 ingest server 的设备/变量快照
+            self.config.variables = [
+                v for v in self.config.variables if v.device_id != device_id
+            ] + list(new_var_cfgs)
+            device_cfg.config_version = new_version
+            self.opcda_mapper.rebuild(self.config.variables)
+            if self.ingest_server is not None:
+                self.ingest_server.update_metadata(self.config)
+
             logger.info(
                 "Device %s reloaded: version=%d, variables=%d, tasks=%d",
                 device_id, new_version, len(device.variables), len(new_tasks),

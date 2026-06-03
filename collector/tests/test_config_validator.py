@@ -1,6 +1,6 @@
 """配置校验测试。"""
 
-from core.config import CollectorConfig, DeviceConfig, VariableConfig
+from core.config import CollectorConfig, DeviceConfig, RedisConfig, VariableConfig
 from core.config_validator import validate_config
 
 
@@ -22,6 +22,22 @@ def test_validator_accepts_current_s7_mysql_address_baseline():
     result = validate_config(config)
 
     assert result.valid, result.errors
+
+
+def test_validator_rejects_invalid_redis_config():
+    config = CollectorConfig(
+        devices=[DeviceConfig("qc100", "QC", "s7", "127.0.0.1")],
+        variables=[VariableConfig("1", "qc100", "%MD1304", "DINT", 1, True, 1)],
+        redis=RedisConfig(port=0, db=-1, stream_shard_count=0, stream_maxlen=0),
+    )
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("stream_shard_count" in e for e in result.errors)
+    assert any("stream_maxlen" in e for e in result.errors)
+    assert any("Invalid redis port" in e for e in result.errors)
+    assert any("Invalid redis db" in e for e in result.errors)
 
 
 def test_validator_rejects_legacy_and_ambiguous_s7_addresses():
