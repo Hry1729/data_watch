@@ -44,7 +44,9 @@ export const staticRoutes: AppRouteRecordRaw[] = [
   },
   {
     path: '/:pathMatch(.*)*',
-    name: 'Exception404',
+    // 名字不能叫 Exception404：后端菜单里有同名动态子路由 /exception/404，
+    // 动态注册时同名会覆盖并移除本静态 catch-all，登出后无法恢复（详见路由告警排查）。
+    name: 'NotFoundCatchAll',
     component: () => import('@views/exception/404/index.vue'),
     meta: { title: '404', isHideTab: true }
   },

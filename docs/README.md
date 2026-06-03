@@ -13,6 +13,7 @@ docs/
 ├── 入库模块/          # 入库模块设计与落库机制（当前有效）
 ├── 后端/              # 后端开发文档
 ├── 前端/              # 前端开发文档
+├── app监控/           # Data Watch Console 桌面应用与采集/入库监控页文档
 ├── 数据库/            # 数据库设计与参考文档
 ├── 运维/              # 环境搭建与部署指南
 ├── 存档/              # 历史快照、审查报告、已完成任务（只读参考）
@@ -41,6 +42,18 @@ docs/
 | `Redis实时缓冲层与点位分组设计方案_v0_6.md` | Redis 快照/窗口/Stream 精细缓冲方案 |
 | `系统日志总体设计方案.md` | 系统日志模块总体设计 |
 | `Perspective集成设计.md` | Perspective 数据可视化组件集成方案 |
+| `Data Watch Console 页面设计说明.md` | Data Watch Console 桌面端页面结构、组件层级和样式约束 |
+
+---
+
+## app监控/
+
+Data Watch Console（Tauri + React）桌面控制台及其采集 / 入库监控页专项方案。
+
+| 文档 | 说明 |
+|------|------|
+| `DataWatch-Console-设计方案.md` | **核心文档**。app1.0 实现基线，说明 Agent / Backend 双数据源、进程管理、配置、日志、健康检查、主题与本地联调约束 |
+| `采集入库页真实数据接入方案.md` | 采集 / 入库页从硬编码假数据到真实数据的接入方案；一期即时指标、二期速率与趋势图均已在 app1.0 落地 |
 
 ---
 
@@ -165,7 +178,9 @@ TDengine（时序数据）与 MySQL（配置数据）设计文档。
 | 配置存储 | MySQL 8.0+ |
 | 后端服务 | TurboAPI + SQLAlchemy（Python 3.14 free-threading） |
 | 前端展示 | Vue 3 + TypeScript + Element Plus（ArtDesignPro） |
+| 桌面应用 | Tauri v2 + React + TypeScript + Tailwind CSS + shadcn/ui |
 | 数据可视化 | Perspective |
+| 桌面图表 | Recharts |
 | 实时通信 | WebSocket |
 
 ---
@@ -176,6 +191,7 @@ TDengine（时序数据）与 MySQL（配置数据）设计文档。
 2. **再看数据库**：`数据库/数据库结构v3.md` — 理解数据模型
 3. **按角色深入**：
    - 前端开发：`前端/开发必读文档.md` → `前端/ArtDesignPro项目结构.md`
+   - 桌面应用开发：`app监控/DataWatch-Console-设计方案.md` → `设计/Data Watch Console 页面设计说明.md`
    - 后端开发：`设计/标准后端架构.md` → `后端/API接口文档.md`
    - 采集开发：`采集模块/采集模块整体结构设计.md` → `采集模块/采集模块代码设计逻辑.md`
    - 入库开发：`入库模块/入库模块代码设计逻辑.md`

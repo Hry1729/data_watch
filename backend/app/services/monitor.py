@@ -9,13 +9,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
-
-
-ONLINE_MAX_AGE_SECONDS = 120
-UNSTABLE_MAX_AGE_SECONDS = 900
 
 
 class MonitorService:

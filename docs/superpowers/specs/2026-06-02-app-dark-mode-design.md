@@ -3,6 +3,9 @@
 - 日期:2026-06-02
 - 范围:`app/`(Tauri + Vite + React 19 + Tailwind v4 + shadcn)
 - 目标:为前端应用增加暗色模式,支持「亮 / 暗 / 跟随系统」三态切换
+- 状态:已实现并纳入 app1.0
+
+> 实现说明（2026-06-03）：app1.0 已完成三态主题切换、自写 `ThemeContext`、`ThemeToggle`、语义 token 迁移、设置页主题联动、Recharts 图表暗色适配。主题选择仅持久化 `data-watch-theme`，token 仍只保存在内存中。
 
 ---
 
@@ -12,7 +15,7 @@
 
 - `app/src/index.css` 中已定义 `:root`(亮色)与 `.dark`(暗色)两套语义变量(`--background`、`--foreground`、`--card`、`--border` 等)。
 - 已配置 `@custom-variant dark (&:is(.dark *))`。
-- `next-themes` 已在依赖中,但**未接线**——当前仅 `src/components/ui/sonner.tsx` 使用了它的 `useTheme()`。
+- app1.0 最终采用自写 `ThemeContext` 完成主题接线；`next-themes` 不作为运行时主题方案。
 
 **核心障碍:172 处硬编码十六进制颜色**,分布在 13 个文件,通过内联 `style={{...}}` 或 Tailwind 任意值类(如 `text-[#111827]`)写死,**不会随主题切换**。
 

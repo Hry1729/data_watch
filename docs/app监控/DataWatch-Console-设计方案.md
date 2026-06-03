@@ -1,8 +1,8 @@
 # DataWatch Console 桌面应用设计方案
 
-> 版本：v1.5  
+> 版本：v1.6  
 > 创建日期：2026-05-24  
-> 状态：架构基线（可进入 Spec/Plan，置信度 ~95%）  
+> 状态：app1.0 实现基线（已落地并提交）  
 > 适用范围：`app/` 目录下 Tauri 桌面应用工程
 
 ---
@@ -1003,6 +1003,20 @@ GET /viewer/health
 
 设置页数据库行的「测试」按钮仍使用 `POST /admin/health/check`，属于手动单项检测，不参与顶部自动轮询。
 
+### 15.10 app1.0 发布基线
+
+app1.0 当前落地形态为单一 `Data Watch Console` 桌面应用：
+
+- Tauri v2 + React + shadcn/ui + Tailwind CSS。
+- 默认窗口尺寸为 `1280 x 800`。
+- 支持亮色 / 暗色 / 跟随系统三态主题，主题选择仅持久化 `data-watch-theme`，不持久化任何 token。
+- 运维动作走 Agent：进程状态、启停/重启、配置读写、健康检查、日志 WebSocket。
+- 业务指标走 Backend：collector / writer 即时指标、Stream 状态、速率和趋势图。
+- Backend 请求当前仍由 WebView `fetch` 直连，因此开发环境需要 Backend 放行 `http://localhost:1420` 与 `http://127.0.0.1:1420`。
+- 打包后的正式应用不依赖 `1420` 端口；`1420` 仅是 `pnpm tauri dev` 时的 Vite/WebView 开发源。
+
+历史章节中关于 Server Edition / Client Edition 的分版设计可作为后续演进方向；app1.0 当前以本节和 15.1-15.9 为准。
+
 ---
 
 ## 十六、变更记录
@@ -1015,3 +1029,4 @@ GET /viewer/health
 | 2026-05-24 | v1.3 | 新增第三节 Bootstrap 模式（首次安装鸡蛋问题解法）；认证节补充双 token 登录体验与 AuthStore 接口定义；Agent 节补充 DATAWATCH_HOME 可配目录、WS 握手鉴权（方式 A/B）、日志脱敏规则；实施顺序新增 Stage 0 前置子任务（shutdown_flag）；整体置信度提升至 ~95% |
 | 2026-05-31 | v1.4 | 补充当前 app 实现：React + shadcn/ui、`.env.development` 联调值、Agent token 内存同步、Backend CORS 约束、WS 首帧鉴权、密码 partial update、登录闪回与 CORS 联调问题处理 |
 | 2026-06-01 | v1.5 | 补充 app 业务指标与图表接入：Backend module-monitor/module-rates、Recharts 图表、1/5/10 分钟切换；顶部 Redis/MySQL/TDengine 状态点改为 `GET /viewer/health` 10 秒轮询，颜色语义为绿/蓝/红/灰 |
+| 2026-06-03 | v1.6 | 收口 app1.0 发布基线：单一 Console 应用、1280x800 默认窗口、三态主题、Agent/Backend 双数据源职责、开发端口与 CORS 说明 |

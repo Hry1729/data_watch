@@ -11,14 +11,13 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import format_local_datetime, now_local, parse_local_datetime
 from app.db.tdengine import TDengineClient
 
 
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
-ONLINE_MAX_AGE_SECONDS = 120
-UNSTABLE_MAX_AGE_SECONDS = 900
 SUPPORTED_RANGE_TYPES = {"last24h", "today", "last7d"}
 SUPPORTED_GRANULARITIES = {"auto", "5m", "15m", "1h", "1d"}
 SUPPORTED_LOG_LEVELS = {"INFO", "WARN", "ERROR"}

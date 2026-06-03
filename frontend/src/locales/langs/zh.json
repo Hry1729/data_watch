@@ -129,11 +129,11 @@
   },
   "login": {
     "leftView": {
-      "title": "一款兼具设计美学与高效开发的后台系统",
-      "subTitle": "美观实用的界面，经过视觉优化，确保卓越的用户体验"
+      "title": "设备数据采集与监控平台",
+      "subTitle": "实时采集 · 可视监控 · 稳定可靠"
     },
-    "title": "欢迎回来",
-    "subTitle": "输入您的账号和密码登录",
+    "title": "欢迎登录",
+    "subTitle": "请输入账号信息以继续",
     "roles": {
       "super": "超级管理员",
       "admin": "管理员",
@@ -309,7 +309,7 @@
     "deviceMonitor": {
       "title": "设备监控",
       "dashboard": "工作台",
-      "monitor": "设备监控",
+      "monitor": "设备通讯",
       "driver": "驱动管理",
       "device": "设备管理",
       "point": "点位管理",

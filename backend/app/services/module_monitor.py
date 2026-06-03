@@ -8,12 +8,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.redis import get_redis_client
 
 
-ONLINE_MAX_AGE_SECONDS = 120
-UNSTABLE_MAX_AGE_SECONDS = 900
 DEFAULT_POINT_GROUP_CODE = "g001"
 
 

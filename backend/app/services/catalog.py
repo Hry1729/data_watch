@@ -13,12 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
 from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workbook_bytes
+from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.tdengine import TDengineClient
 
 
-ONLINE_MAX_AGE_SECONDS = 120
-UNSTABLE_MAX_AGE_SECONDS = 900
 DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 PROTOCOL_KEY_SANITIZE_RE = re.compile(r"[^A-Za-z0-9]+")

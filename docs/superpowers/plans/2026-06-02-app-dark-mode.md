@@ -4,6 +4,10 @@
 
 **Goal:** 为 `app/` 前端增加「亮 / 暗 / 跟随系统」三态主题切换,并将全应用 172 处硬编码颜色迁移到语义 token,保证亮色像素级不变、暗色全页面可读。
 
+**Status:** 已实现并纳入 app1.0（2026-06-03 文档收口）。本计划保留为实现追溯材料，下面的未勾选任务不代表当前待办。
+
+**Implemented Summary:** 当前实现使用自写 `ThemeContext` 管理 `light / dark / system`，顶栏 `ThemeToggle` 与设置页「外观主题」共用同一上下文；`index.css` 已维护亮/暗语义 token；`TrendChart` 通过 `useChartColors` 适配 Recharts 亮暗配色；`next-themes` 不作为运行时依赖。
+
 **Architecture:** 自写轻量 `ThemeProvider`(不用 next-themes),在 `<html>` 上 toggle `.dark` 类;Tailwind v4 已有 `@custom-variant dark`。Token 层先把 `:root` 调成与现有硬编码调色盘一致(亮色不变),再补 `.dark` 与新增业务 token。颜色迁移分波进行,每波过 `tsc` + `vite build` + grep + 目视 + Codex 审查门后才进入下一波。
 
 **Tech Stack:** Tauri 2 + Vite 7 + React 19 + Tailwind v4 + shadcn + lucide-react + recharts + sonner。
@@ -744,7 +748,7 @@ git commit -m "chore(app/theme): 移除 next-themes 依赖并完成暗色终验"
 | 重启保留 + 无白闪 | Task 2(localStorage + index.html 防闪脚本) |
 | 全页面/日志/图表/toast 暗色可读 | Task 3–8 |
 | `pnpm build` 通过 | 每波验证门 + Task 9 |
-| next-themes 已移除 | Task 9 |
+| 不使用 next-themes 运行时主题方案 | Task 9 / app1.0 实现 |
 | 设置页与顶栏联动一致 | Task 7 |
 | 仅 `data-watch-theme` 一个持久化 key | Task 2 + Task 9 安全终验 |
 | grep 无残留硬编码色(限范围+例外) | 各波 grep 门 + Task 9 |

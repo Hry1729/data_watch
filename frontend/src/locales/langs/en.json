@@ -129,11 +129,11 @@
   },
   "login": {
     "leftView": {
-      "title": "A backend system of beauty and efficiency",
-      "subTitle": "A sleek and practical interface for a great user experience"
+      "title": "Device Data Acquisition & Monitoring Platform",
+      "subTitle": "Real-time Acquisition · Visual Monitoring · Reliable"
     },
-    "title": "Welcome back",
-    "subTitle": "Please enter your account and password to login",
+    "title": "Welcome",
+    "subTitle": "Enter your account details to continue",
     "roles": {
       "super": "Super Admin",
       "admin": "Admin",

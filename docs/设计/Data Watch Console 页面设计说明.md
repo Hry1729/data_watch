@@ -1,6 +1,6 @@
 # Data Watch Console 页面设计说明
 
-> 依据 `总览.png`、`collector.png`、`设置.png` 整理，并同步当前 React/Tauri 实现状态。
+> 依据 `总览.png`、`collector.png`、`设置.png` 整理，并同步 app1.0 当前 React/Tauri 实现状态。
 > 目标：为 AI 辅助开发提供清晰的桌面端页面结构、组件层级和样式约束。
 
 ## 1. 设计定位
@@ -13,7 +13,7 @@ Data Watch Console 是一个本机桌面控制台，用于管理 `collector` 和
 - Tauri 负责窗口、系统托盘和 HTTP 代理，用于解决 WebView CORS 与本机 Agent 通信问题。
 - React 负责页面状态、路由和模块化 UI 组织。
 - shadcn/ui 负责基础组件风格，页面样式在其基础上做轻量定制。
-- React 通过 Agent HTTP API 驱动所有运维操作。
+- React 通过 Agent HTTP API 驱动运维操作，通过 Backend API 获取业务指标、速率和趋势数据。
 
 核心能力：
 
@@ -26,7 +26,7 @@ Data Watch Console 是一个本机桌面控制台，用于管理 `collector` 和
 整体风格参考 CC Switch：
 
 - 原生桌面应用感。
-- 浅色主题。
+- 支持亮色 / 暗色 / 跟随系统三态主题。
 - 无左侧导航栏。
 - 无底部状态栏。
 - 页面顶部使用紧凑分段导航。
@@ -113,7 +113,7 @@ chart line blue         #1677FF
 ### 3.2 尺寸与间距
 
 ```text
-window target size      1600 x 940 or scalable
+window target size      1280 x 800 or scalable
 title bar height        64
 top nav height          72
 page padding            24
@@ -121,10 +121,10 @@ card radius             12
 button radius           8
 card border width       1
 overview module card    230 - 260
-overview chart height   270 - 290
+overview chart height   160
 detail main area        595
 metric card height      105 - 120
-log panel height        match detail main area
+log panel height        560
 settings row height     96 - 112
 ```
 
@@ -738,6 +738,9 @@ Bootstrap 向导页只在首次安装、MySQL 未配置或 Agent 返回 bootstra
 green dot:
   connected
 
+blue dot:
+  checking
+
 gray dot:
   unknown or not checked
 
@@ -785,8 +788,14 @@ Agent:
   Process / Config / Health / Metrics / Logs owner
 
 Charts:
-  lightweight React chart component
-  or ECharts line chart with minimal styling
+  Recharts
+  TrendChart lightweight line / area chart
+  1 / 5 / 10 minute range switch
+
+Theme:
+  custom ThemeContext
+  light / dark / system
+  semantic CSS tokens
 ```
 
 ### 13.2 前端页面结构
@@ -859,22 +868,32 @@ React / Tauri proxy -> Agent HTTP API:
   GET  /viewer/status
   GET  /viewer/processes/{name}/metrics
   GET  /viewer/processes/{name}/status
+  GET  /viewer/health
 
   GET  /admin/config
   PUT  /admin/config
+  POST /admin/health/check
 
   WS   /viewer/logs/{name}/tail
 
+React -> Backend API:
+  POST /api/auth/login
+  GET  /api/device-monitor/module-monitor/collector
+  GET  /api/device-monitor/module-monitor/writer
+  GET  /api/device-monitor/module-monitor/rates
+  GET  /api/device-monitor/log/list
+
 趋势图数据源：
-  TODO: 待 Agent 设计阶段确认。
-  方案 A：Agent 新增 viewer 趋势接口，直接服务桌面端图表。
-  方案 B：前端从 Backend API 拉取历史采集 / 入库统计数据。
-  当前文档不预设 /viewer/trends/* 端点。
+  Backend module-monitor/rates。
+  app 通过 useModuleRates 每 5 秒轮询。
+  TrendChart 使用同源数据展示总览 2 张、Collector 1 张、Writer 1 张趋势图。
+  不使用 /viewer/trends/*。
 
 顶部连接状态点：
-  TODO: Redis / MySQL / TDengine 健康检查端点待 Agent 设计阶段确认。
-  UI 暂按三态展示：connected / unknown / disconnected。
-  若后续新增 API，建议由一个快照接口一次返回三类连接状态，避免前端分别轮询。
+  Agent GET /viewer/health。
+  app 通过 useConnectionHealth 每 10 秒轮询。
+  窗口隐藏时暂停，重新可见时立即刷新。
+  颜色语义：green=connected, blue=checking, red=disconnected, gray=unknown。
 
 Tauri Rust commands:
   agent_request(...)
@@ -921,10 +940,20 @@ app/
       LogPanel.tsx
       AppLayout.tsx
       ConnectionStatusBar.tsx
+      ThemeToggle.tsx
+    contexts/
+      AuthContext.tsx
+      ThemeContext.tsx
+    hooks/
+      useModuleStatus.ts
+      useModuleMetrics.ts
+      useModuleRates.ts
+      useConnectionHealth.ts
+      useWebSocketLog.ts
     lib/
-      api.ts
-      format.ts
-      constants.ts
+      agent-client.ts
+      backend-client.ts
+      mock-agent.ts
   src-tauri/
     tauri.conf.json
     src/

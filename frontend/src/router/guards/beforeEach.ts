@@ -275,7 +275,7 @@ function isStaticRoute(path: string): boolean {
     return routes.some((route) => {
       // 404 catch-all 路由不应视为可匿名访问的静态页，
       // 否则未登录时手动输入任意地址会直接落到 404，无法跳转登录页。
-      if (route.name === 'Exception404') {
+      if (route.name === 'NotFoundCatchAll') {
         return false
       }
 
