@@ -271,6 +271,127 @@ class DeviceManager:
 
         logger.info("Registered %s devices", len(self.devices))
 
+    def _build_variables(self, var_cfgs: List[VariableConfig]) -> List[Variable]:
+        """将 VariableConfig 列表转换为 Variable 实例列表。"""
+        return [
+            Variable(
+                variable_id=var_cfg.variable_id,
+                address=var_cfg.address,
+                data_type=var_cfg.data_type,
+                scan_rate=var_cfg.scan_rate,
+                is_storage=var_cfg.is_storage,
+                group_code=var_cfg.group_code,
+            )
+            for var_cfg in var_cfgs
+        ]
+
+    def _setup_scan_tasks(self, device: Device) -> None:
+        """按协议为设备构建采集任务（与 register_devices 同规则）。
+
+        - external-push：无轮询任务
+        - center：先分配代理端口再构建任务
+        - 其余：直接构建任务
+        """
+        if is_external_push_protocol(device.protocol):
+            device.scan_tasks = []
+            return
+        if is_center_collection_protocol(device.protocol):
+            if self._port_mapper is None:
+                self._port_mapper = EndpointPortMapper()
+            endpoint = device.connection_config.get("endpoint", "")
+            proxy_port = self._port_mapper.get_port(endpoint)
+            device.connection_config["proxy_port"] = proxy_port
+            device.build_scan_tasks()
+            return
+        device.build_scan_tasks()
+
+    def add_device(
+        self, dev_cfg: DeviceConfig, var_cfgs: List[VariableConfig]
+    ) -> Optional[Device]:
+        """运行期注册一台新设备。已存在则拒绝（不覆盖已有 Device）。"""
+        if dev_cfg.device_id in self.devices:
+            logger.warning(
+                "add_device rejected: device %s already exists; use reload instead",
+                dev_cfg.device_id,
+            )
+            return None
+
+        if self._port_mapper is None:
+            self._port_mapper = EndpointPortMapper()
+
+        device = Device(
+            device_id=dev_cfg.device_id,
+            device_type=dev_cfg.device_type,
+            protocol=dev_cfg.protocol,
+            connection_config={
+                "ip": dev_cfg.ip,
+                "endpoint": dev_cfg.endpoint,
+                "port": dev_cfg.port,
+                "rack": dev_cfg.rack,
+                "slot": dev_cfg.slot,
+                "opc_server": dev_cfg.opc_server,
+            },
+            device_pk=dev_cfg.device_pk,
+            config_version=dev_cfg.config_version,
+        )
+        for variable in self._build_variables(var_cfgs):
+            device.add_variable(variable)
+        self._setup_scan_tasks(device)
+        self.devices[dev_cfg.device_id] = device
+        logger.info(
+            "Runtime add_device %s protocol=%s vars=%d tasks=%d",
+            device.device_id,
+            device.protocol,
+            len(device.variables),
+            len(device.scan_tasks),
+        )
+        return device
+
+    def rebuild_device_variables(
+        self, device_id: str, var_cfgs: List[VariableConfig]
+    ) -> Optional[Device]:
+        """版本变更时原地重建某设备的变量与采集任务。"""
+        device = self.devices.get(device_id)
+        if device is None:
+            return None
+        device.variables = []
+        for variable in self._build_variables(var_cfgs):
+            device.add_variable(variable)
+        self._setup_scan_tasks(device)
+        return device
+
+    async def remove_device(self, device_id: str) -> None:
+        """运行期下线一台设备。
+
+        固定顺序（调度循环由上层先行取消）：取消重连任务 → 断开 driver
+        → 从 devices / 熔断器移除。不回写 DB 状态（仅日志），保留端口映射。
+        """
+        device = self.devices.get(device_id)
+        if device is None:
+            return
+
+        # 1) 取消重连任务，避免刚下线又被拉起
+        reconnect_task = self._reconnect_tasks.pop(device_id, None)
+        if reconnect_task is not None and not reconnect_task.done():
+            reconnect_task.cancel()
+            try:
+                await reconnect_task
+            except asyncio.CancelledError:
+                pass
+
+        # 2) 断开 driver（不回写 DB 状态，仅日志）
+        try:
+            if device.driver:
+                await device.driver.disconnect()
+        except Exception as exc:
+            logger.warning("remove_device %s driver disconnect error: %s", device_id, exc)
+        device.status = DeviceStatus.OFFLINE
+
+        # 3) 从设备表与熔断器移除（保留端口映射）
+        self.devices.pop(device_id, None)
+        self._circuit_breakers.pop(device_id, None)
+        logger.info("Runtime remove_device %s done (port mapping kept)", device_id)
+
     def get_device(self, device_id: str) -> Optional[Device]:
         """获取设备实例"""
         return self.devices.get(device_id)

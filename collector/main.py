@@ -32,7 +32,6 @@ from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
 from device.manager import DeviceManager
-from device.device import Variable
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
@@ -269,72 +268,121 @@ class CollectorApp:
         self._shutdown.set()
 
     async def _config_reload_loop(self) -> None:
-        """每 10 秒轮询 MySQL，检测设备 variable_config_version 变化并热重载。"""
+        """每 10 秒轮询 MySQL，处理设备新增 / 删除（禁用） / 版本变更。
+
+        get_device_config_versions() 已过滤 enable==1，因此从当前集合消失即按
+        下线处理（删除与禁用同一路径）。每轮只在检测到变更时拉取一次完整快照。
+        """
         tracked: dict[str, int] = {d.device_id: d.config_version for d in self.config.devices}
         while not self._shutdown.is_set():
             try:
                 await asyncio.sleep(10)
                 current = await self.config_db_manager.get_device_config_versions()
-                for device_id, new_ver in current.items():
-                    old_ver = tracked.get(device_id)
-                    if old_ver is not None and new_ver != old_ver:
-                        logger.info(
-                            "Device %s config version changed %d -> %d, reloading",
-                            device_id, old_ver, new_ver,
+                current_ids = set(current.keys())
+                tracked_ids = set(tracked.keys())
+                added = current_ids - tracked_ids
+                removed = tracked_ids - current_ids
+                changed = {
+                    d for d in (current_ids & tracked_ids) if current[d] != tracked[d]
+                }
+
+                if not (added or removed or changed):
+                    continue
+
+                logger.info(
+                    "Topology change detected: added=%s removed=%s changed=%s",
+                    sorted(added), sorted(removed), sorted(changed),
+                )
+
+                # 约束1：本轮只拉取一次完整配置快照
+                devices, variables = await self.config_db_manager.load_devices_and_variables()
+                dev_by_id = {d.device_id: d for d in devices}
+                vars_by_dev: dict[str, list] = {}
+                for var_cfg in variables:
+                    vars_by_dev.setdefault(var_cfg.device_id, []).append(var_cfg)
+
+                # 单台设备失败不应中断整轮，否则收尾的权威快照同步会被跳过，
+                # 导致 tracked / self.config / mapper / ingest 元数据长期不一致。
+                # 删除 / 禁用
+                for device_id in removed:
+                    try:
+                        await self._remove_device(device_id)
+                        tracked.pop(device_id, None)
+                    except Exception as exc:
+                        logger.error("Failed to remove device %s: %s", device_id, exc)
+
+                # 新增
+                for device_id in added:
+                    dev_cfg = dev_by_id.get(device_id)
+                    if dev_cfg is None:
+                        continue
+                    try:
+                        await self._add_device(dev_cfg, vars_by_dev.get(device_id, []))
+                        tracked[device_id] = dev_cfg.config_version
+                    except Exception as exc:
+                        logger.error("Failed to add device %s: %s", device_id, exc)
+
+                # 版本变更
+                for device_id in changed:
+                    dev_cfg = dev_by_id.get(device_id)
+                    if dev_cfg is None:
+                        continue
+                    try:
+                        await self._apply_device_variables(
+                            device_id, dev_cfg, vars_by_dev.get(device_id, [])
                         )
-                        await self._reload_device(device_id, new_ver)
-                        tracked[device_id] = new_ver
+                        tracked[device_id] = dev_cfg.config_version
+                    except Exception as exc:
+                        logger.error("Failed to reload device %s: %s", device_id, exc)
+
+                # 约束4：无论个别设备是否失败，都以本轮完整快照刷新
+                # 权威内存配置，再刷新 mapper 与 ingest 元数据
+                self.config.devices = devices
+                self.config.variables = variables
+                self.opcda_mapper.rebuild(self.config.variables)
+                if self.ingest_server is not None:
+                    self.ingest_server.update_metadata(self.config)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 logger.error("Config reload loop error: %s", exc)
 
-    async def _reload_device(self, device_id: str, new_version: int) -> None:
-        """重建单台设备的变量和采集任务，不影响其他设备。"""
-        device = self.device_manager.get_device(device_id)
-        if device is None or device.device_pk is None:
-            logger.warning("Cannot reload device %s: not found or missing device_pk", device_id)
+    async def _add_device(self, dev_cfg, var_cfgs) -> None:
+        """运行期注册并连接一台新设备，注册其采集任务。"""
+        device = self.device_manager.add_device(dev_cfg, var_cfgs)
+        if device is None:
             return
-        device_cfg = next((d for d in self.config.devices if d.device_id == device_id), None)
-        if device_cfg is None:
+        # 与启动行为一致：新增设备自动连接 PLC（external-push 仅置 online）
+        ok = await self.device_manager.connect_device(device)
+        if not ok:
+            await self.device_manager.schedule_reconnect(device)
+        new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
+        if new_tasks:
+            await self.scheduler.reload_device_tasks(dev_cfg.device_id, new_tasks)
+        logger.info(
+            "Runtime added device %s: connected=%s tasks=%d",
+            dev_cfg.device_id, ok, len(new_tasks),
+        )
+
+    async def _remove_device(self, device_id: str) -> None:
+        """运行期下线一台设备。约束2：先取消调度循环，再交由 device_manager 处理。"""
+        await self.scheduler.reload_device_tasks(device_id, [])
+        await self.device_manager.remove_device(device_id)
+        logger.info("Runtime removed device %s", device_id)
+
+    async def _apply_device_variables(self, device_id: str, dev_cfg, var_cfgs) -> None:
+        """版本变更：重建单台设备的变量与采集任务，不影响其他设备。"""
+        device = self.device_manager.rebuild_device_variables(device_id, var_cfgs)
+        if device is None:
+            logger.warning("Cannot reload device %s: not found", device_id)
             return
-        try:
-            new_var_cfgs = await self.config_db_manager.load_variables_for_device(
-                device.device_pk, device_cfg
-            )
-            device.variables = []
-            for var_cfg in new_var_cfgs:
-                device.add_variable(Variable(
-                    variable_id=var_cfg.variable_id,
-                    address=var_cfg.address,
-                    data_type=var_cfg.data_type,
-                    scan_rate=var_cfg.scan_rate,
-                    is_storage=var_cfg.is_storage,
-                    group_code=var_cfg.group_code,
-                ))
-            device.build_scan_tasks()
-            device.config_version = new_version
-            new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
-            await self.scheduler.reload_device_tasks(device_id, new_tasks)
-
-            # 同步外部接口/推送链路所依赖的全局元数据：
-            # 1) 替换该设备在 config.variables 中的条目并刷新 config_version
-            # 2) 原地 rebuild OPC DA mapper（ingest server 持有同一引用）
-            # 3) 刷新 ingest server 的设备/变量快照
-            self.config.variables = [
-                v for v in self.config.variables if v.device_id != device_id
-            ] + list(new_var_cfgs)
-            device_cfg.config_version = new_version
-            self.opcda_mapper.rebuild(self.config.variables)
-            if self.ingest_server is not None:
-                self.ingest_server.update_metadata(self.config)
-
-            logger.info(
-                "Device %s reloaded: version=%d, variables=%d, tasks=%d",
-                device_id, new_version, len(device.variables), len(new_tasks),
-            )
-        except Exception as exc:
-            logger.error("Failed to reload device %s: %s", device_id, exc)
+        device.config_version = dev_cfg.config_version
+        new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
+        await self.scheduler.reload_device_tasks(device_id, new_tasks)
+        logger.info(
+            "Device %s reloaded: version=%d, variables=%d, tasks=%d",
+            device_id, dev_cfg.config_version, len(device.variables), len(new_tasks),
+        )
 
     def _write_fake_bootstrap_points(self) -> None:
         """在假数据模式下，写入一批可识别的 Redis 联调数据。"""
