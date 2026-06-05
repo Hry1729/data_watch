@@ -7,10 +7,21 @@
 """
 
 import json
+import socket
+import sys
 
+import psutil
 import pytest
 
-from app.services.sidecar_manager import ProxyExecutableNotFound, SidecarManager
+from app.services.managed_process_runner import ManagedProcessRunner
+from app.services.sidecar_manager import (
+    ProxyExecutableNotFound,
+    ProxyStartError,
+    SidecarManager,
+)
+
+_HERE = __import__("os").path.dirname(__file__)
+FAKE_PROXY = __import__("os").path.join(_HERE, "fixtures", "fake_proxy.py")
 
 _EXE = "OpcDaProxyService.exe"
 _INSTALL_REL = "sidecars/opcda_proxy_service/bin"
@@ -130,3 +141,114 @@ def test_generate_proxy_config_rejects_invalid_port(tmp_path):
     for bad in (0, 70000, None, "abc"):
         with pytest.raises(ValueError):
             sm.generate_proxy_config(bad, "10.0.0.1")
+
+
+# ---------------------------------------------------------------------------
+# T014-spawn + T015 — start_proxy 端口闸门三条件（矩阵：ready / never-listen / 外部占用）
+#
+# 注：runner.launch 用 sys.executable（venv redirector python）起 fake_proxy，真正
+# 监听的是其子进程；故条件②必须按"子树归属"判定（属主 ∈ {proxy_pid} ∪ 后代）。
+# ---------------------------------------------------------------------------
+
+def _free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+def _wire(runtime_dir, *extra):
+    """构造接真 runner 的 SidecarManager，spawn 目标换成 fake_proxy（可附加参数）。"""
+    runner = ManagedProcessRunner(runtime_dir)
+    sm = SidecarManager(runtime_dir=runtime_dir, runner=runner)
+    sm._build_proxy_cmd = lambda config_path: [
+        sys.executable, FAKE_PROXY, "--config", str(config_path), *extra
+    ]
+    return sm
+
+
+def _kill_tree(pid):
+    try:
+        proc = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+    for p in (*proc.children(recursive=True), proc):
+        try:
+            p.kill()
+        except psutil.Error:
+            pass
+
+
+def test_start_proxy_ready_returns_instance(runtime_dir):
+    port = _free_port()
+    sm = _wire(runtime_dir)
+    inst = sm.start_proxy(port=port, vm_host="localhost", endpoint="opcda_center://local")
+    try:
+        assert inst.port == port
+        assert inst.pid > 0
+        assert inst.config_path.name == f"proxy_{port}.json"
+        assert inst.log_path == sm.runner.log_file(f"proxy_{port}")
+        assert inst.log_path.exists()
+        # 闸门确实通过：端口此刻可连接
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+            pass
+    finally:
+        _kill_tree(inst.pid)
+        sm.runner.close_log(f"proxy_{port}")
+
+
+def test_start_proxy_never_listen_times_out_and_reaps(runtime_dir):
+    port = _free_port()
+    sm = _wire(runtime_dir, "--never-listen")
+    launched = {}
+    orig = sm.runner.launch
+    sm.runner.launch = lambda name, cmd, **kw: launched.setdefault(
+        "pid", orig(name, cmd, **kw)
+    ) or launched["pid"]
+
+    with pytest.raises(ProxyStartError) as excinfo:
+        sm.start_proxy(
+            port=port, vm_host="localhost",
+            endpoint="opcda_center://never", ready_timeout=1.0,
+        )
+    msg = str(excinfo.value)
+    assert str(port) in msg
+    assert "opcda_center://never" in msg
+    assert str(sm.runner.log_file(f"proxy_{port}")) in msg
+    # 整树已回收：spawn 的 proxy 进程不再存活
+    pid = launched["pid"][0]
+    end = __import__("time").time() + 5
+    while __import__("time").time() < end and psutil.pid_exists(pid):
+        __import__("time").sleep(0.05)
+    assert not psutil.pid_exists(pid)
+
+
+def test_start_proxy_external_occupant_fails_no_drift(runtime_dir):
+    port = _free_port()
+    # 外部进程（pytest 自身）先占住目标端口——不在 proxy 子树内
+    occupant = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    occupant.bind(("127.0.0.1", port))
+    occupant.listen(8)
+    sm = _wire(runtime_dir)
+    launched = {}
+    orig = sm.runner.launch
+    sm.runner.launch = lambda name, cmd, **kw: launched.setdefault(
+        "pid", orig(name, cmd, **kw)
+    ) or launched["pid"]
+    try:
+        with pytest.raises(ProxyStartError) as excinfo:
+            sm.start_proxy(
+                port=port, vm_host="localhost",
+                endpoint="opcda_center://occupied", ready_timeout=2.0,
+            )
+        msg = str(excinfo.value)
+        # 端口虽可连接（被外部占用），但属主不在 proxy 子树 → 判失败、不漂移到别的端口
+        assert str(port) in msg
+        assert "opcda_center://occupied" in msg
+        assert str(sm.runner.log_file(f"proxy_{port}")) in msg
+    finally:
+        if "pid" in launched:
+            _kill_tree(launched["pid"][0])
+        occupant.close()

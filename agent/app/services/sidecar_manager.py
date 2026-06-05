@@ -7,7 +7,12 @@
 from __future__ import annotations
 
 import json
+import socket
+import time
+from dataclasses import dataclass
 from pathlib import Path
+
+import psutil
 
 PROXY_EXE_NAME = "OpcDaProxyService.exe"
 
@@ -29,6 +34,21 @@ _PROXY_BIN_CANDIDATES = (
 
 class ProxyExecutableNotFound(Exception):
     """在所有候选路径下都找不到 OpcDaProxyService.exe。"""
+
+
+class ProxyStartError(Exception):
+    """proxy spawn 后端口闸门未在超时内通过（含 endpoint/port/日志路径）。"""
+
+
+@dataclass(frozen=True)
+class ProxyInstance:
+    """端口闸门通过后的 proxy 句柄。"""
+
+    port: int
+    pid: int
+    create_time: float
+    config_path: Path
+    log_path: Path
 
 
 def _default_install_root() -> Path:
@@ -109,4 +129,107 @@ class SidecarManager:
         listed = "; ".join(str(c) for c in candidates)
         raise ProxyExecutableNotFound(
             f"找不到 {PROXY_EXE_NAME}，已查找候选路径: {listed}"
+        )
+
+    # ── spawn + 端口闸门（T014-spawn / T015）─────────────────────
+    def _build_proxy_cmd(self, config_path: Path) -> list[str]:
+        """spawn 命令：<解析到的 exe> --config <proxy_{port}.json>。测试在此注入桩。"""
+        return [str(self.resolve_proxy_executable()), "--config", str(config_path)]
+
+    @staticmethod
+    def _port_connectable(port: int) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _proxy_owns_listen(proc: psutil.Process, port: int) -> bool:
+        """该端口的 LISTEN 属主是否为 proxy 进程本身或其后代（子树归属）。
+
+        受管 proxy 经 venv redirector 启动时真正 bind 的是子进程，故须走子树；
+        外部无关进程占同端口不在子树内 → 判否，守"不漂移"。
+        """
+        try:
+            procs = [proc, *proc.children(recursive=True)]
+        except psutil.Error:
+            return False
+        for p in procs:
+            try:
+                for c in p.net_connections(kind="inet"):
+                    if (
+                        c.status == psutil.CONN_LISTEN
+                        and c.laddr
+                        and c.laddr.port == port
+                        # 须与 ① 的 127.0.0.1 连接同端点：回环或通配地址才覆盖本地连接，
+                        # 监听在具体 LAN IP 不服务 127.0.0.1，不算归属（防 ①②指向不同 socket）。
+                        and c.laddr.ip in ("127.0.0.1", "0.0.0.0", "::", "::1")
+                    ):
+                        return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return False
+
+    def _terminate_tree(self, proc: psutil.Process) -> None:
+        """整树强停。
+
+        先快照后代（父被杀后 orphan 经 ppid 不可再枚举），再**先杀父**止住继续派生、
+        后杀快照子代——缩小"父在回收期间又 spawn"的窗口。
+        """
+        try:
+            kids = proc.children(recursive=True)
+        except psutil.Error:
+            kids = []
+        for p in (proc, *kids):
+            try:
+                self.runner.force_stop(p)
+            except psutil.Error:
+                pass
+
+    def start_proxy(
+        self,
+        *,
+        port: int,
+        vm_host: str,
+        endpoint: str,
+        ready_timeout: float = 10.0,
+        poll_interval: float = 0.1,
+    ) -> ProxyInstance:
+        """生成 config → spawn proxy → 端口闸门三条件轮询；通过返回实例，否则整树回收 + 抛错。
+
+        三条件须同时满足：① 127.0.0.1:{port} 可连接；② 该端口 LISTEN 属主在 proxy
+        子树内；③ proxy 进程仍存活。超时或进程先退 → 不返回实例，错误含 endpoint/port/日志路径。
+        """
+        if self.runner is None:
+            raise ValueError("SidecarManager 未配置 runner，无法 spawn proxy")
+
+        config_path = self.generate_proxy_config(port, vm_host)
+        name = f"proxy_{port}"
+        cmd = self._build_proxy_cmd(config_path)
+        pid, create_time = self.runner.launch(name, cmd, cwd=str(self.runtime_dir))
+        proc = psutil.Process(pid)
+        log_path = self.runner.log_file(name)
+
+        deadline = time.monotonic() + ready_timeout
+        while time.monotonic() < deadline:
+            if not proc.is_running():
+                break  # proxy 进程先退（如端口被占致 bind 失败）→ 提前判失败
+                # 注：不查 proc.status()——Windows 无 POSIX zombie，且 status() 在进程
+                # 刚退时抛 NoSuchProcess，会绕过统一失败路径；is_running() 对死进程返回 False。
+            if self._port_connectable(port) and self._proxy_owns_listen(proc, port):
+                return ProxyInstance(
+                    port=port,
+                    pid=pid,
+                    create_time=create_time,
+                    config_path=config_path,
+                    log_path=log_path,
+                )
+            time.sleep(poll_interval)
+
+        self._terminate_tree(proc)
+        self.runner.close_log(name)
+        self.runner.delete_pid_record(name)
+        raise ProxyStartError(
+            f"proxy 端口闸门未通过: endpoint={endpoint} port={port} 日志={log_path}"
         )
