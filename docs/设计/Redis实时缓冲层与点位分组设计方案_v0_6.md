@@ -1,5 +1,7 @@
 # Redis 实时缓冲层与点位分组设计方案 v0.6
 
+> 重要说明：本文为 v0.6 历史设计方案，保留当时对 `v0001`、`st_{type}_{group}`、`t_{device_code}_{group}` 等模型的推演记录。当前实现以 `docs/数据库/数据库结构v3.md`、`docs/数据库/TDengine数据模型调整简述.md` 和 writer 代码为准：TDengine 使用 `device_data -> sd{device_type} -> device_code 子表 -> device_variable.td_column_name 点位列`，Writer 负责按当前配置自动建超级表/子表；旧 `st_qc_g001` / `t_qc100_g001` 口径不再作为当前事实源。
+
 > 适用项目：自动化码头设备数据采集、实时监控与 TDengine 历史入库  
 > 当前规模：305 台设备，每台设备约 1000 个点位  
 > 扩展目标：支持单设备 5000、10000 甚至更多点位  

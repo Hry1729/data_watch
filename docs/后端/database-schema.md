@@ -109,7 +109,7 @@
     *   `device_id` (BigInteger, FK): 关联 `device.id`。
     *   `point_group_id` (BigInteger): 关联 `device_point_group.id`。
     *   `group_index` (Integer): 该点位在对应时序宽表中的列序号位置 (1 ~ 3072)。
-    *   `td_column_name` (String(8)): 在 TDengine 物理表中的列字段名 (形如 `v0001` - `v3072`)。
+    *   `td_column_name` (String(8)): 在 TDengine 物理表中的列字段名，由当前点位配置生成并持久化（如 `qc1`、`asc85`、`agv100`）。
     *   `var_seq` (Integer): 变量的物理业务序号（Modbus寄存器序列/PLC唯一逻辑键）。
     *   `var_name` (String(50)): 变量显示名称。
     *   `var_type` (String(20)): 物理数据类型 (如 `BOOL`, `REAL`, `DINT`, `STRING` 等)。
@@ -183,7 +183,7 @@
 
 超级表设计规范如下：
 *   **时序主键**：`ts TIMESTAMP`，代表数据上报的毫秒级时间戳。
-*   **数据列 (Data Columns)**：采用纯扁平化设计，预先且动态分配 `v0001` 至 `v3072`，共计 3072 列。所有数据列类型均定义为 `DOUBLE`，用以容纳整型、浮点型、布尔型等各类数值，字符类型在入库前会被排除。
+*   **数据列 (Data Columns)**：采用纯扁平化设计，列名来自 MySQL `device_variable.td_column_name`，由当前设备点位配置决定。所有数据列类型均定义为 `DOUBLE`，用以容纳整型、浮点型、布尔型等各类数值，字符类型在入库前会被排除。
 *   **标签列 (Tag Columns)**：
     *   `device_code NCHAR(32)`：用于过滤和区分具体物理设备的子表标签（也是子表的路由依据）。
 
@@ -202,7 +202,7 @@ USING device_data.sdqc TAGS ('qc100')
 在 `device_variable` 表中，`var_seq` 作为关键字段拥有极高的架构意义：
 1.  **物理采集唯一标识键**：`var_seq`（Canonical Sequence）作为点位的物理规范序号，在工业协议通信和边缘网关配置中充当物理点位的“门牌号”，保证同一个物理设备下的 `var_seq` 拥有全局唯一的防重约束（通过唯一性索引）。
 2.  **物理存储与业务检索的解耦桥梁**：
-    时序库（TDengine）的宽表中使用物理位置编码 `v0001`~`v3072`（即 `td_column_name`）保存数据，这有助于实现动态建表和极速列扫描。然而，在应用层、前端监控报表、或历史数据查询的 API 接口中，用户是通过“物理点位序号 `var_seq`”（如点位 3、点位 150）来进行数据查询的。
+    时序库（TDengine）的宽表中使用 `device_variable.td_column_name` 保存数据，这有助于实现动态建表和极速列扫描。然而，在应用层、前端监控报表、或历史数据查询的 API 接口中，用户是通过“物理点位序号 `var_seq`”（如点位 3、点位 150）来进行数据查询的。
     **`var_seq` 在这里完成了屏蔽底层数据库列改动的职责**：后端业务通过 `device_code` and `var_seq` 查询 MySQL 元数据，翻译得出对应的物理列 `td_column_name`，从而拼接出 TDengine 的 SQL 发起检索。因此，时序表的列位置发生重构时，业务层感知完全不受影响。
 
 ---
@@ -255,4 +255,3 @@ Redis 被部署为边缘采集到中心存储的数据桥梁，用以提供低�
 *   **后端 ORM 模型**：[models 目录](file:///D:/python/device_alarm/data_watch/backend/app/models/)
 *   **采集器数据 ORM**：[config_db.py](file:///D:/python/device_alarm/data_watch/collector/core/config_db.py)
 *   **时序库写入器与命名映射**：[tdengine_writer.py](file:///D:/python/device_alarm/data_watch/writer/tdengine_writer.py) | [mysql_mapper.py](file:///D:/python/device_alarm/data_watch/writer/mysql_mapper.py)
-

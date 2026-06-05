@@ -1,6 +1,6 @@
 # TDengine 数据模型调整简述
 
-> 更新时间：2026-05-19
+> 更新时间：2026-06-03
 > 适用范围：工业数据采集与监控平台当前 TDengine 设计基线
 
 ---
@@ -24,7 +24,7 @@
 因此当前正式口径调整为“宽表历史落库 + Redis 实时短窗口”：
 
 - TDengine 负责历史时序落库和历史查询。
-- Redis 计划负责前端 100ms 实时监控所需的最新快照和最近 N 行短窗口。
+- Redis 负责前端 100ms 实时监控所需的最新快照、最近 N 行短窗口和待入库 Stream。
 - MySQL 仍负责设备、点位、模板、协议等主数据。
 
 ---
@@ -40,7 +40,7 @@ device_data 数据库 -> 设备类型超级表 -> 设备子表 -> 点位列
 对应关系：
 
 - 一个项目级 TDengine 数据库：`device_data`
-- 一个设备类型对应一个超级表：`qc`、`asc`、`agv`
+- 一个设备类型对应一个超级表：`sdqc`、`sdasc`、`sdagv`，即 `sd{device_type}`
 - 一台设备对应一个子表：如 `qc100`、`asc7011`、`agv801`
 - 一个点位对应超级表中的一个数据列：如 `qc1`、`asc85`、`agv100`
 
@@ -48,14 +48,14 @@ device_data 数据库 -> 设备类型超级表 -> 设备子表 -> 点位列
 
 ```text
 device_data
-├── qc
+├── sdqc
 │   ├── qc100
 │   ├── qc101
 │   └── qc128
-├── asc
+├── sdasc
 │   ├── asc7011
 │   └── ...
-└── agv
+└── sdagv
     ├── agv801
     └── ...
 ```
@@ -74,11 +74,11 @@ device_data
 
 ### 2. 超级表名
 
-按设备类型小写命名：
+按 `sd{device_type}` 小写命名：
 
-- `qc`
-- `asc`
-- `agv`
+- `sdqc`
+- `sdasc`
+- `sdagv`
 
 ### 3. 子表名
 
@@ -93,11 +93,7 @@ device_data
 
 ### 4. 点位列名
 
-列名由设备类型和 MySQL `device_variable.var_seq` 生成：
-
-```text
-{device_type_lower}{var_seq}
-```
+列名以 MySQL `device_variable.td_column_name` 为事实源。
 
 示例：
 
@@ -107,7 +103,7 @@ device_data
 
 说明：
 
-- `var_seq` 是设备内点位序号，也是同设备类型宽表列的稳定来源。
+- `var_seq` 是设备内点位业务序号；TDengine 物理列名以 `td_column_name` 为准。
 - 不使用中文点位名、PLC 地址或 MySQL 自增主键作为 TDengine 列名。
 - 后续点位新增时，只需根据 `device_variable` 追加缺失列。
 
@@ -122,7 +118,7 @@ TDengine 历史表只保存点位数值，不再保存 `quality`。
 ```sql
 CREATE DATABASE IF NOT EXISTS device_data;
 
-CREATE STABLE IF NOT EXISTS device_data.qc (
+CREATE STABLE IF NOT EXISTS device_data.sdqc (
     ts TIMESTAMP,
     qc1 DOUBLE,
     qc2 DOUBLE,
@@ -138,7 +134,7 @@ CREATE STABLE IF NOT EXISTS device_data.qc (
 
 ```sql
 CREATE TABLE IF NOT EXISTS device_data.qc100
-USING device_data.qc TAGS ('qc100');
+USING device_data.sdqc TAGS ('qc100');
 ```
 
 说明：
@@ -151,10 +147,10 @@ USING device_data.qc TAGS ('qc100');
 
 ## 五、动态列策略
 
-collector 初始化 TDengine 时必须以 MySQL `device_variable` 为事实源：
+writer 写入 TDengine 时必须以 MySQL `device_variable` 为事实源：
 
 1. 读取启用设备与需要存储的点位。
-2. 按设备类型归集所有 `var_seq`。
+2. 按设备类型归集所有 `td_column_name`。
 3. 对每个设备类型超级表检查已有列。
 4. 对缺失点位执行 `ALTER STABLE ... ADD COLUMN ...`。
 5. 为每台设备创建或确认对应子表存在。
@@ -162,7 +158,7 @@ collector 初始化 TDengine 时必须以 MySQL `device_variable` 为事实源�
 示例：
 
 ```sql
-ALTER STABLE device_data.qc ADD COLUMN qc1001 DOUBLE;
+ALTER STABLE device_data.sdqc ADD COLUMN qc1001 DOUBLE;
 ```
 
 约束：
@@ -193,8 +189,8 @@ collector 采集
 TDengine 采用批量写入：
 
 ```text
-Redis / collector 批量缓冲
--> 每 500ms 写 5 行，或每 1000ms 写 10 行
+collector -> Redis Stream
+-> writer 每 500ms 写 5 行，或每 1000ms 写 10 行
 -> TDengine 宽表设备子表
 ```
 

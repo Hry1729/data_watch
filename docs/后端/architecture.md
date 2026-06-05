@@ -78,7 +78,7 @@ flowchart TD
 1.  **数据采集输入**：
     采集器（Collector）以指定扫描率读取 PLC，组装数据帧，并行写入 Redis 最新哈希（`HSET`）、短窗口列表（`LPUSH`），并将仅含需存储点位的负载以 CRC32 物理设备分片算法哈希到指定的待落库 Redis Stream。
 2.  **异步落库执行**：
-    落库写入器（Writer）运行独立的消费进程，通过 `xreadgroup` 从 Redis Stream 批量读取。读取后查询 `MysqlMapper` 获取当前的 `config_version` 变量映射关系，将 `var_id` 转换为超级表对应的 `v0001`~`v3072` 列名，执行批量 `INSERT USING` 插入 TDengine 的设备子表中，落库成功后向 Redis 发送 `XACK` 剔除 PEL 记录。
+    落库写入器（Writer）运行独立的消费进程，通过 `xreadgroup` 从 Redis Stream 批量读取。读取后查询 `MysqlMapper` 获取当前的 `config_version` 变量映射关系，将 `var_id` 转换为 `device_variable.td_column_name` 中登记的物理列名，按 `device_data -> sd{device_type} -> device_code 子表` 执行批量 `INSERT USING`，落库成功后向 Redis 发送 `XACK` 剔除 PEL 记录。
 3.  **应用层数据消费**：
     后端服务收到实时请求时直接由 Redis 读出；当收到大跨度趋势图表或明细报表查询时，解析请求的 `var_seq`，到 MySQL 翻译出物理列名 `td_column_name` 后，到 TDengine 拉取并执行降采样或分页游标明细，对齐规整后下发给前端。
 
@@ -118,4 +118,3 @@ flowchart TD
 
 *   **自定义 ASGI 适配层**：[main.py](file:///D:/python/device_alarm/data_watch/backend/app/main.py)
 *   **日志调度与清理服务**：[log.py](file:///D:/python/device_alarm/data_watch/backend/app/services/log.py)
-

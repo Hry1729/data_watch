@@ -3,6 +3,7 @@
 > 更新时间：2026-05-08
 > 适用范围：`device-monitor` 七个核心页面真实数据联调
 > 目标：在 auth / permission 闭环恢复后，明确页面级缺口、接口优先级和联调顺序，避免前后端继续各自猜测
+> 当前说明：本文为阶段性联调 TODO 与执行记录。实时推送当前路径统一为 `/api/device-monitor/ws/realtime-push`；文中较早记录如出现 `/ws/realtime`，仅表示当时的历史执行口径，不再作为当前接口事实源。
 
 ---
 
@@ -14,7 +15,7 @@
 
 1. `frontend/src/api/device-monitor.ts` 中预期的大量业务接口还没有后端实现
 2. Dashboard / Log 所依赖的报警、日志、统计样本还没有形成稳定数据库事实源
-3. Realtime 页此前只具备初始化 HTTP 接口；2026-04-21 已补 `/ws/realtime` 源码并完成本地 ASGI 复验，下一步转入当前运行中进程的页面级联调
+3. Realtime 页此前只具备初始化 HTTP 接口；2026-04-21 已补实时推送源码并完成本地 ASGI 复验，当前路径统一为 `/ws/realtime-push`
 
 本文件用于承接 auth 闭环之后的下一阶段联调执行。
 
@@ -31,7 +32,7 @@
 | Device / Point 新增链路 | ✅ 已实现 | 已补 `POST /api/device-monitor/device`、`POST /api/device-monitor/point`，并完成真实数据库写入与详情回查验证 |
 | 实时监控 HTTP 基线 | ✅ 部分可用 | `GET /api/device-monitor/monitor/device-tree`、`GET /api/device-monitor/monitor/realtime-init` 已存在 |
 | 历史数据 HTTP 基线 | ✅ 部分可用 | `history/devices`、`history/points`、`history/query`、`history/export` 已有首版实现 |
-| 页面实时推送 | ✅ 已完成源码复验 | `/ws/realtime` 已补齐，订阅 / 快照 / `ping-pong` 已通过本地 ASGI 验证；待对当前运行中的 8000 进程热重载后做页面级冒烟 |
+| 页面实时推送 | ✅ 已完成源码复验 | `/ws/realtime-push` 已补齐，订阅 / 快照 / `ping-pong` 已通过本地 ASGI 验证；待对当前运行中的 8000 进程热重载后做页面级冒烟 |
 
 ---
 
@@ -43,7 +44,7 @@
 | 驱动管理 `driver` | `driver/list`、`driver/options` | ✅ 已完成并测试 | 驱动列表真实数据链路已补齐及测试 | P0 |
 | 设备管理 `device` | `device/group-tree`、`device/list`、`device/{id}`、`POST/PUT/DELETE`、`batch`、`import/export` | ✅ 已完成并测试 | 页面已完成人工点验及联调验收 | P0 |
 | 点位管理 `point` | `point/device-tree`、`point/list`、`point/{id}`、`POST/PUT/DELETE`、`batch`、`import/export`、`point/import/template` | ✅ 已完成并测试 | 页面已完成人工点验及联调验收 | P0 |
-| 实时监控 `realtime` | `monitor/device-tree`、`monitor/realtime-init`、`WS /ws/realtime` | ✅ 已完成并测试 | 前端四段式布局、订阅、快照、重连等页面级验证已完成并测试通过 | P0 |
+| 实时监控 `realtime` | `monitor/device-tree`、`monitor/realtime-init`、`WS /ws/realtime-push` | ✅ 已完成并测试 | 前端四段式布局、订阅、快照、重连等页面级验证已完成并测试通过 | P0 |
 | 历史数据 `history` | `history/devices`、`history/points`、`history/query`、`history/export` | ✅ 已完成并测试 | 历史查询采用 ECharts 图表，已完美落地完成页面级人工点验及联调验收 | P1 |
 | 系统日志 `log` | `log/list` | ✅ 已完成并测试 | 日志页列表筛选、分页及真实标签映射已完成联调及测试 | P1 |
 
@@ -112,7 +113,7 @@
 
 优先级次高：
 
-1. 实现 `WS /api/device-monitor/ws/realtime`
+1. 实现 `WS /api/device-monitor/ws/realtime-push`
 2. 明确订阅、心跳、断线重连、异常消息口径
 3. 恢复前端 Realtime 页自动建连与状态显示
 
@@ -140,7 +141,7 @@
 | GAP-004 | 补报警 / 日志表与联调用 seed 数据 | `@database` | P0 | ✅ 已完成：报警 / 日志事实表已落地；2026-05-06 已补日志策略表、索引和管理权限 |
 | GAP-005 | 实现 Dashboard 统计接口六件套 | `@backend` | P0 | ✅ 已完成：所有统计接口均已彻底切换到正式真实数据口径并测试通过 |
 | GAP-006 | 实现 `log/list` 与日志标签口径 | `@backend` | P1 | 🔄 数据库已就绪：`operation_log / system_log` 已落表并保留 seed，下一步切真实查询与统计口径 |
-| GAP-007 | 实现 `WS /ws/realtime` 并固定消息契约 | `@backend` | P0 | ✅ 已完成：已补订阅 / 取消订阅 / `ping-pong` / 快照推送首版，并完成本地 ASGI 复验 |
+| GAP-007 | 实现 `WS /ws/realtime-push` 并固定消息契约 | `@backend` | P0 | ✅ 已完成：已补订阅 / 取消订阅 / `ping-pong` / 快照推送首版，并完成本地 ASGI 复验 |
 | GAP-008 | 前端补七页空态 / 错误态 / 加载态处理 | `@frontend` | P1 | 避免接口未齐时页面表现混乱 |
 | GAP-009 | 建立七页真实数据联调 smoke checklist | `@test` | P0 | 覆盖登录后页面是否可见、是否有数据、是否有分页和错误提示 |
 | GAP-010 | 实现设备新增接口：`POST /api/device-monitor/device` | `@backend` | P0 | ✅ 已完成：已对齐 `DeviceForm` 契约，真实 MySQL 写入 + 详情回查通过 |
@@ -200,13 +201,13 @@
 - 已在后端补齐并复验以下接口：
   - `POST /api/device-monitor/device`
   - `POST /api/device-monitor/point`
-  - `WS /api/device-monitor/ws/realtime`
+  - `WS /api/device-monitor/ws/realtime-push`
 - 已完成本地代码级复验：
   - `GET /api/device-monitor/device/{id}` 返回 `200`
   - `GET /api/device-monitor/point/{id}` 返回 `200`
   - `POST /api/device-monitor/device` 可真实写入 MySQL，并能详情回查
   - `POST /api/device-monitor/point` 可真实写入 MySQL，并能详情回查
-  - `WS /api/device-monitor/ws/realtime` 可完成 `subscribe -> snapshot -> ping/pong`
+  - `WS /api/device-monitor/ws/realtime-push` 可完成 `subscribe -> snapshot -> ping/pong`
 - 已新增一组可识别联调测试数据，供后续删改接口只针对“我们新增的数据”继续验证：
   - 设备编码前缀：`AUTOQC*`
   - 点位名称前缀：`AUTO_SIGNAL_*`
@@ -230,10 +231,10 @@
   - 设备：`AUTOQC0421155437`，`id=991007`
   - 点位：`AUTO_POINT_0421155437`，`id=992010`
 - 已完成的实时链路复验：
-  - 直连后端 `ws://127.0.0.1:8000/api/device-monitor/ws/realtime` 已可完成 `subscribe -> snapshot -> pong`
+  - 直连后端 `ws://127.0.0.1:8000/api/device-monitor/ws/realtime-push` 已可完成 `subscribe -> snapshot -> pong`
   - 说明当前后端源码、运行时依赖与 8000 进程内的 WS 路由均已正常
 - 已定位一处新的页面级阻塞：
-  - 当前前端开发代理 `http://127.0.0.1:3006` 对 `/api` 仅开启了 HTTP 代理，未开启 WebSocket 代理，因此 `ws://127.0.0.1:3006/api/device-monitor/ws/realtime` 无法转发到 8000
+  - 当前前端开发代理 `http://127.0.0.1:3006` 对 `/api` 仅开启了 HTTP 代理，未开启 WebSocket 代理，因此 `ws://127.0.0.1:3006/api/device-monitor/ws/realtime-push` 无法转发到 8000
 - 已同步完成的仓库级修正：
   - `backend/requirements.txt` 新增 `websockets>=14.0`
   - `frontend/.env.development` 已将 `VITE_DEVICE_MONITOR_WS_ENABLED` 改为 `true`
@@ -250,8 +251,8 @@
   - `http://127.0.0.1:3006/` 返回 `200`
   - 经 `3006` 代理的 `auth/login`、`user/info`、`dashboard/overview`、`driver/list`、`device/list`、`point/list`、`monitor/realtime-init` 均返回 `200`
 - 已确认前端开发代理上的实时 WS 链路恢复正常：
-  - `ws://127.0.0.1:3006/api/device-monitor/ws/realtime` 可完成 `subscribe -> snapshot -> pong`
-  - `ws://127.0.0.1:8000/api/device-monitor/ws/realtime` 同样可完成 `subscribe -> snapshot -> pong`
+  - `ws://127.0.0.1:3006/api/device-monitor/ws/realtime-push` 可完成 `subscribe -> snapshot -> pong`
+  - `ws://127.0.0.1:8000/api/device-monitor/ws/realtime-push` 同样可完成 `subscribe -> snapshot -> pong`
 - 本轮最终结论：
   - 五页优先范围的“命令级前后端联调”已收口完成
   - 当前剩余工作已转为页面人工点验与下一阶段 backlog（History / Log / Dashboard 告警侧 / Device&Point 编辑删除导入导出）
@@ -551,7 +552,7 @@
     - 设备点位枚举改为只选取 `var_seq > 0` 的点位，并按 `var_seq` 排序
     - 仍保留旧 TDengine 子表与 `variable_id` TAG 回退
   - `backend/app/api/routes/monitor.py`
-    - `WS /ws/realtime` 的快照签名改为基于 `varSeq`
+    - `WS /ws/realtime-push` 的快照签名改为基于 `varSeq`
   - `frontend/src/types/api/device-monitor.d.ts`
   - `frontend/src/views/device_monitor/realtime/index.vue`
     - Realtime 页的变化高亮键、前后值比较键已统一从 `pointId` 切到 `varSeq`

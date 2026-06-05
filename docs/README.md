@@ -85,12 +85,12 @@ Data Watch Console（Tauri + React）桌面控制台及其采集 / 入库监控�
 
 | 文档 | 说明 |
 |------|------|
-| [API接口文档.md](file:///D:/python/device_alarm/data_watch/docs/后端/API接口文档.md) | **核心契约**。v1.1 联调冻结基线，唯一接口事实源 |
+| [API接口文档.md](file:///D:/python/device_alarm/data_watch/docs/后端/API接口文档.md) | v1.1 联调冻结基线，保留前后端二次确认时的接口口径 |
 | [Perspective会话隔离与保护策略.md](file:///D:/python/device_alarm/data_watch/docs/后端/Perspective会话隔离与保护策略.md) | Perspective WebSocket 会话隔离与资源保护策略 |
 | [config-reference.md](file:///D:/python/device_alarm/data_watch/docs/后端/config-reference.md) | **配置参考**。涵盖所有环境变量默认值及多源配置优先级（env > .env > settings.toml） |
 | [auth.md](file:///D:/python/device_alarm/data_watch/docs/后端/auth.md) | **认证与权限**。描述登录/登出流、所有 40 个权限码以及默认角色用户种子数据 |
-| [api-reference.md](file:///D:/python/device_alarm/data_watch/docs/后端/api-reference.md) | **API 参考**。列出所有 80 个 HTTP 路由的详细请求/返回结构与权限要求 |
-| [websocket-protocol.md](file:///D:/python/device_alarm/data_watch/docs/后端/websocket-protocol.md) | **WS 协议**。实时监控推送与 Perspective 历史分析通道协议规范 |
+| [api-reference.md](file:///D:/python/device_alarm/data_watch/docs/后端/api-reference.md) | **HTTP API 当前事实源**。列出所有 83 个 HTTP 路由的详细请求/返回结构与权限要求 |
+| [websocket-protocol.md](file:///D:/python/device_alarm/data_watch/docs/后端/websocket-protocol.md) | **WebSocket 当前事实源**。实时监控推送与 Perspective 历史分析通道协议规范 |
 | [database-schema.md](file:///D:/python/device_alarm/data_watch/docs/后端/database-schema.md) | **数据库 Schema**。MySQL 配置库、TDengine 时序库及 Redis 实时缓冲物理模型 |
 | [history-query-guide.md](file:///D:/python/device_alarm/data_watch/docs/后端/history-query-guide.md) | **历史数据查询**。规范基于 TDengine 和 Redis 的历史指标 4 种查询和降采样机制 |
 | [architecture.md](file:///D:/python/device_alarm/data_watch/docs/后端/architecture.md) | **技术架构**。包含 EnhancedASGITurboAPI 设计、高并发数据流闭环与日志清理机制 |
@@ -106,18 +106,18 @@ Data Watch Console（Tauri + React）桌面控制台及其采集 / 入库监控�
 | 文档 | 说明 |
 |------|------|
 | `开发必读文档.md` | **必读**。响应格式、菜单接口、权限模式等开发规范 |
-| `ArtDesignPro项目结构.md` | 前端模板目录结构 |
-| `路由和菜单.md` | 路由配置与菜单注册规则 |
-| `权限说明.md` | 按钮级、路由级权限控制机制 |
-| `环境变量配置.md` | `.env` 环境变量配置项说明 |
+| `art design pro/项目结构.md` | 前端模板目录结构 |
+| `art design pro/路由和菜单.md` | 路由配置与菜单注册规则 |
+| `art design pro/权限说明.md` | 按钮级、路由级权限控制机制 |
+| `art design pro/环境变量配置.md` | `.env` 环境变量配置项说明 |
 | `实时监控核心页面.md` | 实时监控页面专项设计文档 |
 | `页面设计文档.md` | 各页面交互与视觉设计规范 |
 | `系统日志前端设计文档.md` | 系统日志模块前端页面设计 |
-| `useTable 组合式函数.md` | 表格组件组合式函数 API |
-| `ArtSearchBar 搜索栏组件.md` | 搜索栏组件 API |
-| `构建与部署.md` | 前端构建与部署说明 |
-| `脚本说明.md` | 工具脚本使用说明 |
-| `图标.md` | 图标使用规范 |
+| `art design pro/useTable 组合式函数.md` | 表格组件组合式函数 API |
+| `art design pro/ArtSearchBar 搜索栏组件.md` | 搜索栏组件 API |
+| `art design pro/构建与部署.md` | 前端构建与部署说明 |
+| `art design pro/脚本说明.md` | 工具脚本使用说明 |
+| `art design pro/图标.md` | 图标使用规范 |
 | `页面设计TODO.md` | 前端页面设计进度跟踪 |
 
 ---
@@ -130,9 +130,6 @@ TDengine（时序数据）与 MySQL（配置数据）设计文档。
 |------|------|
 | `数据库结构v3.md` | **核心文档**。MySQL + Redis + TDengine 完整表结构设计 |
 | `TDengine数据模型调整简述.md` | TDengine 宽表模型变更说明（旧点位子表 → 设备宽表） |
-| `TDengine全量设备建库说明.md` | TDengine 建库/建超级表方案 |
-| `TDengine TSDB Python Connector.md` | TDengine Python 连接器使用参考 |
-| `数据库优化.md` | 数据库性能优化方案与索引调整 |
 | `数据库开发TODO.md` | 数据库架构与 SQL 调优开发计划 |
 
 ---
@@ -190,7 +187,7 @@ TDengine（时序数据）与 MySQL（配置数据）设计文档。
 1. **先读概要设计**：`设计/概要设计说明书v3.md` — 建立项目全貌
 2. **再看数据库**：`数据库/数据库结构v3.md` — 理解数据模型
 3. **按角色深入**：
-   - 前端开发：`前端/开发必读文档.md` → `前端/ArtDesignPro项目结构.md`
+   - 前端开发：`前端/art design pro/开发必读文档.md` → `前端/art design pro/项目结构.md`
    - 桌面应用开发：`app监控/DataWatch-Console-设计方案.md` → `设计/Data Watch Console 页面设计说明.md`
    - 后端开发：`设计/标准后端架构.md` → `后端/API接口文档.md`
    - 采集开发：`采集模块/采集模块整体结构设计.md` → `采集模块/采集模块代码设计逻辑.md`

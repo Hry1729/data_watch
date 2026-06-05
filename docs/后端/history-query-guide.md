@@ -92,7 +92,7 @@
 由于历史系统经历了架构演进，新采集数据写入的是时序宽表，而老数据可能依然存放在旧的窄表和旧的超级表中。为了避免接口调用因历史表结构差异而失败，HistoryService 内部实现了**三层级 Fallback 容错检索链**（以 `get_raw_data` 为例）：
 
 1.  **第一层（主路径 - 新宽表）**：
-    查询 `device_data` 时序库下以设备编码命名的宽表子表 `{device_code}`，过滤特定列名 `td_column_name`（如 `v0001`）。
+    查询 `device_data` 时序库下以设备编码命名的宽表子表 `{device_code}`，过滤特定列名 `td_column_name`（如 `qc1`、`asc85`、`agv100`）。
 2.  **第二层（一级 Fallback - 旧窄表子表）**：
     如果第一层因宽表未就绪、或者该字段没有配置映射关系而失败，系统捕捉异常，转而查询旧窄表时序库下的单点子表 `{device_code_lower}_{var_seq_or_point_id}`（即不带 `t_` 前缀，且后缀优先选用点位的 `var_seq`，不存在时才使用 `point_id`）里的 `value` 字段。
 3.  **第三层（二级 Fallback - 旧超级表）**：

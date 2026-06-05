@@ -1,6 +1,6 @@
 # API 参考手册
 
-本篇文档为后端的 API 接口参考手册，整理了后端所有路由模块共计 80 个 HTTP 接口。每个接口都列出了对应的 Method、Path、权限码要求（提取自 `require_permissions`）、Query/Body 参数模型、以及标准的返回结构。
+本篇文档为后端的 API 接口参考手册，整理了后端所有路由模块共计 83 个 HTTP 接口。每个接口都列出了对应的 Method、Path、权限码要求（提取自 `require_permissions`）、Query/Body 参数模型、以及标准的返回结构。
 
 ---
 
@@ -947,7 +947,56 @@
 
 ---
 
-## 八、 日志管理模块 (7 个接口)
+## 八、 模块监控模块 (3 个接口)
+*源码参考：[module_monitor.py](file:///D:/python/device_alarm/data_watch/backend/app/api/routes/module_monitor.py)*
+
+### 1. 获取采集模块即时指标
+- **Method**: `GET`
+- **Path**: `/api/device-monitor/module-monitor/collector`
+- **权限要求**: 需携带有效 JWT 凭证
+- **请求参数**: 无
+- **返回结构 (`data` 字段)**:
+  ```json
+  {
+    "minCycleMs": 100,
+    "connectedDevices": 3,
+    "collectedPoints": 1200,
+    "tasks": []
+  }
+  ```
+
+### 2. 获取入库模块即时指标
+- **Method**: `GET`
+- **Path**: `/api/device-monitor/module-monitor/writer`
+- **权限要求**: 需携带有效 JWT 凭证
+- **请求参数**: 无
+- **返回结构 (`data` 字段)**:
+  ```json
+  {
+    "streamLag": 0,
+    "pel": 0,
+    "dlq": 0,
+    "streams": []
+  }
+  ```
+
+### 3. 获取采集/入库速率趋势
+- **Method**: `GET`
+- **Path**: `/api/device-monitor/module-monitor/rates`
+- **权限要求**: 需携带有效 JWT 凭证
+- **请求参数**: 无
+- **返回结构 (`data` 字段)**:
+  ```json
+  {
+    "collector": [],
+    "writer": [],
+    "windows": ["1m", "5m", "10m"]
+  }
+  ```
+
+---
+
+## 九、 日志管理模块 (7 个接口)
 *源码参考：[log.py 路由](file:///D:/python/device_alarm/data_watch/backend/app/api/routes/log.py) | [log.py 服务](file:///D:/python/device_alarm/data_watch/backend/app/services/log.py)*
 
 ### 1. 日志列表查询
@@ -1121,7 +1170,7 @@
 
 ---
 
-## 九、 系统管理模块 (27 个接口)
+## 十、 系统管理模块 (27 个接口)
 *源码参考：[system_manage.py](file:///D:/python/device_alarm/data_watch/backend/app/api/routes/system_manage.py)*
 
 ### 【系统基本接口 (2 个)】

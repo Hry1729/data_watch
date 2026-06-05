@@ -11,7 +11,7 @@
 当前项目统一按以下事实执行：
 
 1. **MySQL**：负责配置与主数据，如设备、点位、分组、报警规则、用户权限等。
-2. **Redis**：计划负责 100ms 实时监控所需的最新快照和最近 N 行短窗口。
+2. **Redis**：负责 100ms 实时监控所需的最新快照、最近 N 行短窗口和待入库 Stream。
 3. **TDengine**：负责 500ms/1s 批量历史落库、历史查询和聚合统计。
 
 对前端与后端的直接影响：
@@ -43,7 +43,7 @@
 3. 前端不直接读取 Redis 或 TDengine 原始结构，只认后端转换后的 API / WebSocket 语义。
 4. collector 可以使用内部缓存结构，但所有对前端的 WebSocket 事件都必须由后端统一归一化。
 5. 若 Redis 中无最新值，后端可回退 TDengine 最近历史值或返回结构化空态，不能返回裸 `null`。
-6. TDengine 当前统一采用“`device_data` -> `qc/asc/agv` 超级表 -> 设备子表 -> 点位列”宽表模型。
+6. TDengine 当前统一采用“`device_data` -> `sdqc/sdasc/sdagv` 超级表 -> `device_code` 子表 -> `td_column_name` 点位列”宽表模型。
 7. TDengine 历史宽表不保存 `quality`，异常/bad/离线等状态由 Redis 实时态、采集异常、规则引擎或告警事件承载。
 
 ---
@@ -68,16 +68,16 @@
 首版建议：
 
 ```text
-rt:latest:{device_code}
-rt:window:{device_code}
-td:stream:{device_type}
+rt:latest:{device_code}:{group_code}
+rt:window:{device_code}:{group_code}:{scan_rate}
+rt:stream:{device_type}:{group_code}:{shard_no}
 ```
 
 语义：
 
-- `rt:latest:{device_code}`：设备最新快照，包含各点位最近值和时间。
-- `rt:window:{device_code}`：设备最近 N 行短窗口，用于前端 100ms 监控与趋势图刷新。
-- `td:stream:{device_type}`：待写入 TDengine 的可靠队列，按 `qc/asc/agv` 分流，入库模块写成功后 ACK。
+- `rt:latest:{device_code}:{group_code}`：设备指定点位分组的最新快照，包含各点位最近值和时间。
+- `rt:window:{device_code}:{group_code}:{scan_rate}`：设备指定点位分组和采集周期的最近 N 行短窗口，用于前端 100ms 监控与趋势图刷新。
+- `rt:stream:{device_type}:{group_code}:{shard_no}`：待写入 TDengine 的可靠队列，按设备类型、点位分组和稳定分片分流，入库模块写成功后 ACK。
 
 窗口长度建议：
 
@@ -96,7 +96,7 @@ td:stream:{device_type}
 
 ### 4.4 WebSocket 语义
 
-`WS /api/device-monitor/ws/realtime` 应满足：
+`WS /api/device-monitor/ws/realtime-push` 应满足：
 
 - `snapshot`：后端按当前订阅设备读取 Redis 最新快照后统一输出；
 - `update`：后端基于 Redis 最新帧或短窗口变化统一输出；
@@ -114,7 +114,7 @@ td:stream:{device_type}
 TDengine 当前模型：
 
 ```text
-device_data -> qc/asc/agv -> device_code 子表 -> 点位列
+device_data -> sdqc/sdasc/sdagv -> device_code 子表 -> td_column_name 点位列
 ```
 
 `GET /api/device-monitor/history/query` 应满足：

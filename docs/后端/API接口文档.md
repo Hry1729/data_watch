@@ -2,7 +2,7 @@
 
 > 文档状态：v1.1 联调冻结基线（已补 auth / system-manage）  
 > 适用范围：`/device-monitor` + 登录鉴权 / 系统权限基础接口  
-> 唯一契约事实源：本文  
+> 当前说明：本文为 v1 联调冻结稿；当前 HTTP 路由详表以 `docs/后端/api-reference.md` 为准，WebSocket 通道以 `docs/后端/websocket-protocol.md` 为准。  
 > 派生文件：`frontend/src/api/device-monitor.ts`、`frontend/src/api/auth.ts`、`frontend/src/api/system-manage.ts`、`frontend/src/types/api/device-monitor.d.ts`、`frontend/src/types/api/api.d.ts`  
 > 变更门禁：`docs/前后端联调/01-v1接口契约冻结与变更门禁.md`  
 > 更新时间：2026-04-19
@@ -12,7 +12,7 @@
 ## 1. 文档目标
 
 本版用于后端联调确认，统一 `device-monitor` 与真实数据登录 / 权限基础接口口径。  
-本次将本文确认为 v1 联调期间的唯一契约事实源，前端类型、前端 API 适配层和后端实现均从本文派生。
+本文保留 v1 联调冻结口径；项目开发完成后的当前 HTTP 路由详表以 `docs/后端/api-reference.md` 为准，WebSocket 通道以 `docs/后端/websocket-protocol.md` 为准。
 
 对外声明：
 - 本轮联调不改历史查询契约，仅记录优化方向。
@@ -416,8 +416,8 @@ interface RoleGrantPayload {
 - 默认值与约束：`deviceId` 为可选参数（前端已按可选处理）；`connectStatus` 遵循 `ConnectStatus`
 - 错误处理/空数据约定：遵循全局错误码；无实时点位时返回 `data: []`
 
-#### WS `/api/device-monitor/ws/realtime`
-- Method/Path：`WS /api/device-monitor/ws/realtime`
+#### WS `/api/device-monitor/ws/realtime-push`
+- Method/Path：`WS /api/device-monitor/ws/realtime-push`
 - 用途：用于实时监控页初始化、订阅与推送
 - Path 参数：无
 - Query 参数：无
