@@ -4,14 +4,14 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal
+from typing import Literal
 
 import psutil
-import toml
+
+from app.services.managed_process_runner import ManagedProcessError, ManagedProcessRunner
 
 logger = logging.getLogger(__name__)
 
@@ -62,59 +62,34 @@ class ProcessManager:
         self._locks: dict[str, asyncio.Lock] = {
             name: asyncio.Lock() for name in modules
         }
-        # 子进程 stdout/stderr 重定向文件句柄（spawn 时打开，stop 时关闭）
-        self._log_files: dict[str, BinaryIO] = {}
+        # 共享进程监管内核（PID 文件、日志重定向、存活校验、强停）
+        self._runner = ManagedProcessRunner(self.runtime_dir)
 
+    # ── 以下机制委托给 ManagedProcessRunner（行为不变）──────────────
     def _ensure_dirs(self) -> None:
-        self.pids_dir.mkdir(parents=True, exist_ok=True)
+        self._runner.ensure_dirs()
 
     def _pid_file(self, name: str) -> Path:
-        return self.pids_dir / f"{name}.pid"
+        return self._runner.pid_file(name)
 
     def _flag_file(self, name: str) -> Path:
         return self.runtime_dir / f"{name}.shutdown_flag"
 
     def log_file(self, name: str) -> Path:
         """子进程控制台输出落盘路径（实时日志唯一来源，LogManager.attach 也读它）。"""
-        return self.runtime_dir / "logs" / name / "current.log"
+        return self._runner.log_file(name)
 
     def _close_log_file(self, name: str) -> None:
-        fp = self._log_files.pop(name, None)
-        if fp is not None:
-            try:
-                fp.close()
-            except OSError:
-                pass
+        self._runner.close_log(name)
 
     def _read_pid_file(self, name: str) -> dict | None:
-        path = self._pid_file(name)
-        if not path.exists():
-            return None
-        try:
-            return toml.load(path)
-        except (toml.TomlDecodeError, OSError):
-            logger.warning("Corrupt PID file: %s, treating as no record", path)
-            return None
+        return self._runner.read_pid_record(name)
 
     def _write_pid_file(self, name: str, pid: int, create_time: float) -> None:
-        path = self._pid_file(name)
-        data = {
-            "pid": pid,
-            "create_time": create_time,
-            "started_at": time.strftime(
-                "%Y-%m-%d %H:%M:%S",
-                time.localtime(create_time),
-            ),
-            "module": name,
-        }
-        path.write_text(toml.dumps(data), encoding="utf-8")
+        self._runner.write_pid_record(name, pid, create_time)
 
     def _delete_pid_file(self, name: str) -> None:
-        path = self._pid_file(name)
-        try:
-            path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.warning("Failed to delete PID file %s: %s", path, exc)
+        self._runner.delete_pid_record(name)
 
     # ── restart_count 持久化（runtime/state/process_state.json）──────────────
     def _load_state(self) -> dict:
@@ -159,16 +134,13 @@ class ProcessManager:
         return count
 
     def _verify_alive(self, record: dict) -> psutil.Process | None:
-        try:
-            proc = psutil.Process(record["pid"])
-            recorded = float(record.get("create_time", 0))
-            if abs(proc.create_time() - recorded) < 1.0:
-                return proc
-        except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError, ValueError):
-            return None
-        return None
+        return self._runner.verify_alive(record)
 
-    async def start(self, name: str) -> ProcessInfo:
+    async def start(
+        self,
+        name: str,
+        extra_args: list[str] | None = None,
+    ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
 
@@ -189,67 +161,31 @@ class ProcessManager:
             if not spec.working_dir:
                 raise ProcessManagerError(f"module {name}: working_dir not configured")
 
-            cmd = [spec.executable, *spec.args]
+            # 防御：extra_args 必须是 list[str]；误传字符串会被 * 拆成单字符。
+            if extra_args is not None and not (
+                isinstance(extra_args, (list, tuple))
+                and all(isinstance(a, str) for a in extra_args)
+            ):
+                raise ProcessManagerError(
+                    f"module {name}: extra_args must be a list[str]"
+                )
+
+            # 静态 spec.args + 运行期 extra_args（如 --config / --port-mapping，
+            # 由 Agent 编排按约定拼入，不写回 config）。
+            cmd = [spec.executable, *spec.args, *(extra_args or [])]
             logger.info("starting module %s: cmd=%s cwd=%s", name, cmd, spec.working_dir)
 
-            # 子进程 stdout/stderr → logs/{name}/current.log（实时日志数据源）；
-            # 启动前截断（"wb"）避免文件无限增长；PYTHONUNBUFFERED 保证实时落盘。
-            log_path = self.log_file(name)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._close_log_file(name)  # 防御：关掉可能残留的旧句柄
-            log_fp = open(log_path, "wb")  # 二进制 sink，交给子进程直接写
             try:
-                popen = subprocess.Popen(
-                    cmd,
-                    cwd=spec.working_dir,
-                    close_fds=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                    stdout=log_fp,
-                    stderr=subprocess.STDOUT,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
-                )
-            except (OSError, FileNotFoundError) as exc:
-                log_fp.close()
-                raise ProcessManagerError(f"spawn failed for {name}: {exc}") from exc
-            self._log_files[name] = log_fp
+                pid, create_time = self._runner.launch(name, cmd, spec.working_dir)
+            except ManagedProcessError as exc:
+                raise ProcessManagerError(str(exc)) from exc
 
-            try:
-                proc = psutil.Process(popen.pid)
-                create_time = proc.create_time()
-            except psutil.NoSuchProcess as exc:
-                # 子进程秒退：其继承的 fd 已随进程释放，关掉我方残留句柄避免泄漏
-                self._close_log_file(name)
-                raise ProcessManagerError(
-                    f"spawned process for {name} died immediately: {exc}"
-                ) from exc
-
-            try:
-                self._write_pid_file(name, popen.pid, create_time)
-            except OSError as exc:
-                # PID 文件落不下 → 子进程已起但 Agent 无法追踪，必须回收
-                logger.error(
-                    "module %s: failed to write PID file: %s; terminating spawned process",
-                    name,
-                    exc,
-                )
-                try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except psutil.TimeoutExpired:
-                        proc.kill()
-                except psutil.Error:
-                    pass
-                self._close_log_file(name)
-                raise ProcessManagerError(
-                    f"failed to persist PID file for {name}: {exc}"
-                ) from exc
-            logger.info("module %s started pid=%s", name, popen.pid)
+            logger.info("module %s started pid=%s", name, pid)
 
             return ProcessInfo(
                 name=name,
                 status="running",
-                pid=popen.pid,
+                pid=pid,
                 started_at=time.strftime(
                     "%Y-%m-%d %H:%M:%S",
                     time.localtime(create_time),
@@ -315,14 +251,7 @@ class ProcessManager:
 
             if proc.is_running():
                 logger.warning("module %s: timeout, terminating pid=%s", name, proc.pid)
-                try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except psutil.TimeoutExpired:
-                        proc.kill()
-                except psutil.Error as exc:
-                    logger.error("module %s terminate failed: %s", name, exc)
+                self._runner.force_stop(proc)
 
             self._delete_pid_file(name)
             try:

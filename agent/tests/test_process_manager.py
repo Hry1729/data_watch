@@ -6,6 +6,10 @@ agent 此前无测试。本文件记录现状 ProcessManager 的可观察行为�
 import asyncio
 import time
 
+import pytest
+
+from app.services.process_manager import ProcessManagerError
+
 
 async def _wait(cond, timeout=6.0, interval=0.05):
     end = time.time() + timeout
@@ -68,6 +72,25 @@ async def test_status_reports_crashed_on_nonzero_exit(make_pm):
         assert await _wait(lambda: pm.status(name).status == "crashed")
     finally:
         await pm.stop(name)
+
+
+async def test_start_appends_extra_args_to_cmd(make_pm, tmp_path):
+    out = tmp_path / "argv.txt"
+    pm, name = make_pm()  # 默认 child_args = ["--flag", <flag>]
+    await pm.start(name, extra_args=["--argv-out", str(out)])
+    try:
+        assert await _wait(lambda: out.exists())
+        content = out.read_text(encoding="utf-8")
+        assert "--argv-out" in content
+        assert str(out) in content
+    finally:
+        await pm.stop(name)
+
+
+async def test_start_rejects_non_list_extra_args(make_pm):
+    pm, name = make_pm()
+    with pytest.raises(ProcessManagerError):
+        await pm.start(name, extra_args="--oops")  # 字符串而非 list[str]
 
 
 async def test_restart_increments_persisted_count(make_pm):

@@ -20,7 +20,12 @@ def main() -> None:
     p.add_argument("--ignore-flag", action="store_true")
     p.add_argument("--exit-after", type=float, default=None)
     p.add_argument("--exit-code", type=int, default=0)
+    p.add_argument("--argv-out", default=None)  # 启动时把 argv 落盘，供测 extra_args 透传
     a, _ = p.parse_known_args()
+
+    if a.argv_out:
+        with open(a.argv_out, "w", encoding="utf-8") as f:
+            f.write("\n".join(sys.argv))
 
     start = time.time()
     while True:
