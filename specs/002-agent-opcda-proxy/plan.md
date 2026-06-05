@@ -12,11 +12,11 @@
 
 **Language/Version**: Python 3.14（free-threaded `python3.14t`），与 agent / collector 现状一致
 
-**Primary Dependencies**: Agent: FastAPI + Uvicorn、`psutil`、`toml`、`sqlalchemy`+`aiomysql`（检测查询）、Windows DPAPI（`agent/app/core/security.py` 解密 `password_enc`）。Proxy: `collector/sidecars/opcda_proxy_service/bin/OpcDaProxyService.exe`（.NET Framework 4.8 / x86，已编译）
+**Primary Dependencies**: Agent: FastAPI + Uvicorn、`psutil`、`toml`、**`pymysql`（检测查询，与 `health_checker.py` 一致——agent 现状用 pymysql 同步连接，非 sqlalchemy/aiomysql）**、Windows DPAPI（`agent/app/core/security.py` 的 `dpapi_decrypt` 解密 `password_enc`）。Proxy: `collector/sidecars/opcda_proxy_service/bin/OpcDaProxyService.exe`（.NET Framework 4.8 / x86，已编译）
 
 **Storage**: 文件态——`<runtime_dir>/opcda_proxy/port_mapping.json`、`<runtime_dir>/opcda_proxy/proxy_{port}.json`、`<runtime_dir>/pids/proxy_{port}.pid`、`<runtime_dir>/logs/proxy_{port}/current.log`；检测数据源为 MySQL（`device` JOIN `comm_protocol`）
 
-**Testing**: `pytest`（agent 与 collector 均已有 `tests/`）；proxy 编排用可控的假 exe（长驻监听指定端口）做集成测试，避免依赖真实 OPC
+**Testing**: `pytest`（collector 已有 `tests/`；**agent 现状无 `tests/`、requirements 未含 pytest——需新建测试脚手架：dev 依赖加 `pytest`+`pytest-asyncio`、建 `agent/tests/`+`conftest`，并为现状 ProcessManager 写表征测试作回归网**）；proxy 编排用可控的假桩（长驻监听指定端口）做集成测试，避免依赖真实 OPC
 
 **Target Platform**: Windows（服务化部署，Agent 作为 Windows 服务）
 

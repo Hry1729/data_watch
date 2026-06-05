@@ -29,7 +29,7 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 ## Phase 1: Setup（共享基础）
 
 - [ ] T001 [P] 新建假 proxy 测试桩 `agent/tests/fixtures/fake_proxy.py`：参数化 `--port`，可选 `--delay-ready`（延迟监听）/`--never-listen`（不监听），用于 US1/US2/US4 集成测试（plan O3：Python 桩）。
-- [ ] T002 [P] 测试 fixtures：临时 `runtime_dir`（tmp_path 下 `pids/`、`opcda_proxy/`、`logs/`）与假 collector/proxy spec helper。
+- [ ] T002 [P] **搭 agent 测试脚手架（agent 现状无 `tests/`、requirements 无 pytest）**：dev 依赖加 `pytest`+`pytest-asyncio`（建议 `agent/requirements-dev.txt`），建 `agent/tests/` + `conftest.py`；测试 fixtures：临时 `runtime_dir`（tmp_path 下 `pids/`、`opcda_proxy/`、`logs/`）与假 collector/proxy spec helper。
 
 ---
 
@@ -37,7 +37,7 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 **⚠️ 完成前任何 US 不可开工。** 含监管内核抽取 + per-start args 通道（点2）。
 
-- [ ] T003 [P] 基线确认：现状下 `agent/tests/test_process_manager.py` 全绿（抽取前 baseline，保证后续重构"保持绿"）。
+- [ ] T003 **为现状 ProcessManager 写表征(characterization)测试** `agent/tests/test_process_manager.py`（agent 此前无此测试）：覆盖 start/stop/restart/status/PID 文件/restart_count 等当前行为，**在抽取前即 PASS**，作为 T005/T006 重构的回归网。
 - [ ] T004 [P] 写 `agent/tests/test_managed_process_runner.py` → 先 FAIL：覆盖 spawn、PID 读写/校验、存活、terminate→kill、以及 **per-start `extra_args` 覆盖**（cmd = executable + spec.args + extra_args）。
 - [ ] T005 抽取监管内核：新建 `agent/app/services/managed_process_runner.py`，迁移 `process_manager.py` 的 PID 读写/校验（pid+create_time）、子进程 spawn（stdout/stderr→`logs/{name}/current.log`、`CREATE_NO_WINDOW`）、terminate→kill、日志路径管理（FR-P10）。
 - [ ] T006 `process_manager.py` 改为持有/调用 runner，并将 `start(name)` 扩为 **`start(name, extra_args: list[str] | None = None)`**——`cmd = [executable, *spec.args, *extra_args]`（点2：不写回 config、不扩 `/admin/config`）；`shutdown_flag` 优雅停止保留在 ProcessManager（FR-A11）；保持 `test_process_manager.py` 全绿。
@@ -60,7 +60,7 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 ### Implementation
 
-- [ ] T010 [US1] `agent/app/services/opcda_detect.py`：用 Agent `config.toml` 的 `[mysql]`（DPAPI 解密）查 `device JOIN comm_protocol WHERE enable=1`，协议归一化复用 `CENTER_PROTOCOLS` 语义（FR-P01/P02）。
+- [ ] T010 [US1] `agent/app/services/opcda_detect.py`：用 Agent `config.toml` 的 `[mysql]`（**`pymysql` + `dpapi_decrypt`，与 `health_checker.py` 一致，非 sqlalchemy/aiomysql**）查 `device JOIN comm_protocol WHERE enable=1`，协议归一化复用 `CENTER_PROTOCOLS` 语义（FR-P01/P02）。
 - [ ] T011 [US1] `opcda_detect.py`：粘性分配 + **历史持久化策略（点4）**——读旧 `port_mapping.json`（视为历史超集）；已存在 endpoint 沿用旧端口；新端点取 `max(文件内所有端口)+1`；**已删除 endpoint 的条目继续保留在文件中**（不删除→历史不丢、端口不复用）；写 `<runtime_dir>/opcda_proxy/port_mapping.json`（FR-P03/P04/P05）。
 - [ ] T012 [US1] `opcda_detect.py`：FR-P13 一致性校验（Agent MySQL vs collector `settings.toml` 的 host/port/database），不一致返回配置不一致错误、拒绝启动 collector。
 - [ ] T013 [US1] **proxy exe 路径解析（点3）**：`sidecar_manager.py`（或 `opcda_detect`/小工具）按部署约定解析 `OpcDaProxyService.exe`（依次找：安装目录 `sidecars/opcda_proxy_service/bin/`、`collector/sidecars/opcda_proxy_service/bin/`），**缺失返回明确错误**（含期望路径），不硬编码散落。
