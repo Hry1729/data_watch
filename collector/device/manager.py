@@ -38,6 +38,10 @@ def is_center_collection_protocol(protocol: str) -> bool:
     return (protocol or "").strip().lower() in CENTER_COLLECTION_PROTOCOLS
 
 
+class PortMappingError(Exception):
+    """权威 mapping_file 缺失/损坏，或请求的 endpoint 不在权威映射中。"""
+
+
 class EndpointPortMapper:
     """
     VM endpoint 到代理端口的动态映射器
@@ -49,16 +53,46 @@ class EndpointPortMapper:
     - 从 base_port 开始依次分配
     """
 
-    def __init__(self, base_port: int = 9090, max_port: int = 9200, load_mapping_file: bool = True):
+    def __init__(
+        self,
+        base_port: int = 9090,
+        max_port: int = 9200,
+        load_mapping_file: bool = True,
+        mapping_file: Optional[str] = None,
+    ):
         self._base_port = base_port
         self._max_port = max_port
         self._endpoint_to_port: Dict[str, int] = {}
         self._next_port = base_port
         self._lock = asyncio.Lock()
+        # 显式 mapping_file → 权威只读模式：只读该文件、不探测/不分配/不写回。
+        self._authoritative = mapping_file is not None
+        self._mapping_file = mapping_file
 
-        # 从文件加载已有映射
-        if load_mapping_file:
+        if mapping_file is not None:
+            self._load_authoritative(mapping_file)
+        elif load_mapping_file:
             self._load_mapping_from_file()
+
+    def _load_authoritative(self, mapping_file: str) -> None:
+        """加载权威映射文件；缺失或损坏即 fail-fast，避免静默退化成动态分配致漂移。"""
+        if not os.path.exists(mapping_file):
+            raise PortMappingError(f"权威端口映射文件不存在: {mapping_file}")
+        try:
+            with open(mapping_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            raise PortMappingError(f"权威端口映射文件无法解析: {mapping_file}: {e}") from e
+        if not isinstance(data, dict):
+            raise PortMappingError(f"权威端口映射文件格式非法(须为对象): {mapping_file}")
+        for endpoint, port in data.items():
+            # 损坏的端口值（非 int / bool / 越界）须 fail-fast，不能静默丢弃成"缺失"。
+            if type(port) is not int or not (1 <= port <= 65535):
+                raise PortMappingError(
+                    f"权威端口映射文件含非法端口: {mapping_file} {endpoint!r}={port!r}"
+                )
+            self._endpoint_to_port[endpoint] = port
+        logger.info("加载权威端口映射 %s: %s", mapping_file, self._endpoint_to_port)
 
     def _load_mapping_from_file(self) -> None:
         """从文件加载端口映射"""
@@ -127,11 +161,24 @@ class EndpointPortMapper:
 
         endpoint = endpoint.strip()
 
+        # 权威只读：命中返回文件端口；缺失即报错，绝不分配/写回。
+        if self._authoritative:
+            return self._authoritative_port(endpoint)
+
         if endpoint not in self._endpoint_to_port:
             self._endpoint_to_port[endpoint] = self._find_next_available_port()
             logger.info("为 endpoint %s 分配端口 %d", endpoint, self._endpoint_to_port[endpoint])
             self._save_mapping_to_file()
 
+        return self._endpoint_to_port[endpoint]
+
+    def _authoritative_port(self, endpoint: str) -> int:
+        """权威模式查表（已归一）：命中返回，缺失抛错。同步/异步两入口共用。"""
+        if endpoint not in self._endpoint_to_port:
+            raise PortMappingError(
+                f"endpoint 不在权威端口映射中: {endpoint} "
+                f"(文件={self._mapping_file} 已知={sorted(self._endpoint_to_port)})"
+            )
         return self._endpoint_to_port[endpoint]
 
     async def get_port_async(self, endpoint: str) -> int:
@@ -141,6 +188,10 @@ class EndpointPortMapper:
                 endpoint = "localhost"
 
             endpoint = endpoint.strip()
+
+            # 权威只读：与同步 get_port 对称，权威模式绝不进入动态分配分支。
+            if self._authoritative:
+                return self._authoritative_port(endpoint)
 
             if endpoint not in self._endpoint_to_port:
                 self._endpoint_to_port[endpoint] = await self._find_next_available_port_async()
@@ -178,9 +229,12 @@ class DeviceManager:
         self,
         config: CollectorConfig,
         status_reporter: Optional[Callable[[str, int, str, str], Awaitable[None]]] = None,
+        port_mapping_file: Optional[str] = None,
     ):
         self.config = config
         self._status_reporter = status_reporter
+        # 显式权威端口映射文件（Agent 生成）；None 时沿用动态分配（dev 期 run.bat 链路）。
+        self._port_mapping_file = port_mapping_file
         self.devices: Dict[str, Device] = {}
         self._lock = asyncio.Lock()
         # 设备连接熔断器
@@ -198,7 +252,7 @@ class DeviceManager:
     def register_devices(self) -> None:
         """根据配置注册所有设备"""
         # 初始化端口映射器
-        self._port_mapper = EndpointPortMapper()
+        self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
 
         # 从配置创建设备
         device_map: Dict[str, Device] = {}
@@ -297,7 +351,7 @@ class DeviceManager:
             return
         if is_center_collection_protocol(device.protocol):
             if self._port_mapper is None:
-                self._port_mapper = EndpointPortMapper()
+                self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
             endpoint = device.connection_config.get("endpoint", "")
             proxy_port = self._port_mapper.get_port(endpoint)
             device.connection_config["proxy_port"] = proxy_port
@@ -317,7 +371,7 @@ class DeviceManager:
             return None
 
         if self._port_mapper is None:
-            self._port_mapper = EndpointPortMapper()
+            self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
 
         device = Device(
             device_id=dev_cfg.device_id,

@@ -67,7 +67,7 @@ async def _watch_shutdown_flag(app: "CollectorApp", flag_path: Path, interval: f
 class CollectorApp:
     """采集应用主类"""
 
-    def __init__(self, config: CollectorConfig, config_db_manager=None):
+    def __init__(self, config: CollectorConfig, config_db_manager=None, port_mapping_file=None):
         self.config = config
         self.config_db_manager = config_db_manager
         self._shutdown = asyncio.Event()
@@ -86,7 +86,9 @@ class CollectorApp:
             if self.config_db_manager is not None
             else None
         )
-        self.device_manager = DeviceManager(config, status_reporter=status_reporter)
+        self.device_manager = DeviceManager(
+            config, status_reporter=status_reporter, port_mapping_file=port_mapping_file
+        )
         self.scheduler = TaskScheduler()
         redis_client = get_redis(config)
         self.redis_writer = RedisWriter(redis_client, config)
@@ -475,6 +477,13 @@ async def main():
         help="配置文件路径 (默认: config/settings.toml 或环境变量 COLLECTOR_CONFIG)",
     )
     parser.add_argument("--runtime-dir", type=str, default=None)
+    parser.add_argument(
+        "--port-mapping",
+        type=str,
+        default=None,
+        help="权威端口映射文件路径（Agent 生成）。指定后 center 采集端口只读该文件、"
+             "不再动态探测分配。未指定时回退环境变量 COLLECTOR_PORT_MAPPING。",
+    )
     args = parser.parse_args()
 
     # 先用默认级别初始化日志，读取配置后再调整
@@ -559,7 +568,12 @@ async def main():
         return exit_code
 
     # 创建并启动应用
-    app = CollectorApp(config, config_db_manager=runtime_db_manager)
+    port_mapping_file = args.port_mapping or os.environ.get("COLLECTOR_PORT_MAPPING")
+    app = CollectorApp(
+        config,
+        config_db_manager=runtime_db_manager,
+        port_mapping_file=port_mapping_file,
+    )
     runtime_dir = _resolve_runtime_dir(args.runtime_dir)
     flag_path = runtime_dir / "collector.shutdown_flag"
     watchdog_task = asyncio.create_task(_watch_shutdown_flag(app, flag_path))
