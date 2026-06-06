@@ -11,8 +11,18 @@ import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Mapping
 
 import psutil
+
+from app.services.opcda_detect import (
+    assign_sticky_ports,
+    detect_center_endpoints,
+    load_collector_mysql,
+    load_port_mapping,
+    save_port_mapping,
+    verify_mysql_consistency,
+)
 
 PROXY_EXE_NAME = "OpcDaProxyService.exe"
 
@@ -51,6 +61,17 @@ class ProxyInstance:
     log_path: Path
 
 
+@dataclass(frozen=True)
+class CollectorStartPlan:
+    """prepare_for_collector_start 的产物。
+
+    port_mapping_path 为 None 表示无 OPC DA 端点——T019 据此**不**拼 --port-mapping。
+    """
+
+    port_mapping_path: Path | None
+    proxies: list[ProxyInstance]
+
+
 def _default_install_root() -> Path:
     # agent/app/services/sidecar_manager.py → parents[3] = 安装根（打包）/仓库根（开发）。
     # 注意：PyInstaller frozen（onefile/onedir）下 __file__ 可能指向解包临时目录，
@@ -66,6 +87,8 @@ class SidecarManager:
         runtime_dir: Path | str | None = None,
         install_root: Path | str | None = None,
         runner=None,
+        agent_mysql: Mapping[str, Any] | None = None,
+        collector_settings_path: Path | str | None = None,
         server_prog_id: str = DEFAULT_SERVER_PROG_ID,
         channel: str = DEFAULT_CHANNEL,
         update_rate_ms: int = DEFAULT_UPDATE_RATE_MS,
@@ -76,10 +99,18 @@ class SidecarManager:
             Path(install_root).resolve() if install_root else _default_install_root()
         )
         self.runner = runner
+        # 仅注入、不在构造里校验：无 OPC DA 场景也不应因配置文件暂缺而失败，
+        # 校验留到 prepare_for_collector_start() 流程内。
+        self._agent_mysql = agent_mysql
+        self._collector_settings_path = (
+            Path(collector_settings_path) if collector_settings_path else None
+        )
         self._server_prog_id = server_prog_id
         self._channel = channel
         self._update_rate_ms = update_rate_ms
         self._connection_timeout_ms = connection_timeout_ms
+        # 本进程内已起 proxy 注册表（key=endpoint）；跨 Agent 重启认领是 T022。
+        self._proxies: dict[str, ProxyInstance] = {}
 
     # ── proxy 配置生成（T014）────────────────────────────────────
     def _opcda_dir(self) -> Path:
@@ -233,3 +264,87 @@ class SidecarManager:
         raise ProxyStartError(
             f"proxy 端口闸门未通过: endpoint={endpoint} port={port} 日志={log_path}"
         )
+
+    # ── prepare 编排（T018）──────────────────────────────────────
+    def _mapping_path(self) -> Path:
+        return self._opcda_dir() / "port_mapping.json"
+
+    def _detect_endpoints(self) -> list[str]:
+        """薄封装，便于单测 stub，不连真 MySQL。"""
+        return detect_center_endpoints(self._agent_mysql)
+
+    def _verify_consistency(self) -> None:
+        """Agent 与 collector 的 MySQL 一致性（FR-P13）；薄封装便于单测 stub。"""
+        collector_mysql = load_collector_mysql(self._collector_settings_path)
+        verify_mysql_consistency(self._agent_mysql, collector_mysql)
+
+    @staticmethod
+    def _instance_alive(inst: ProxyInstance) -> bool:
+        """轻量校验：pid 存活且 create_time 一致（防 pid 复用误判）。"""
+        try:
+            proc = psutil.Process(inst.pid)
+            return proc.is_running() and proc.create_time() == inst.create_time
+        except psutil.Error:
+            return False
+
+    def _stop_instance(self, inst: ProxyInstance) -> None:
+        """停掉一个 proxy 实例：整树强停 + 收日志 + 清 PID 记录（回滚/US5 复用）。"""
+        try:
+            proc = psutil.Process(inst.pid)
+        except psutil.Error:
+            proc = None
+        if proc is not None:
+            self._terminate_tree(proc)
+        name = f"proxy_{inst.port}"
+        self.runner.close_log(name)
+        self.runner.delete_pid_record(name)
+
+    def prepare_for_collector_start(
+        self,
+        *,
+        ready_timeout: float = 10.0,
+        poll_interval: float = 0.1,
+    ) -> CollectorStartPlan:
+        """检测→粘性映射→差量起缺失 proxy→端口闸门，返回供 collector 启动的计划（FR-P14）。
+
+        无 OPC DA 端点 → 返回 port_mapping_path=None（不拼 --port-mapping）。
+        某个新增 proxy 启动失败 → 只回滚**本次新起**的 proxy，保留既有，再抛 ProxyStartError。
+        """
+        endpoints = self._detect_endpoints()
+        if not endpoints:
+            return CollectorStartPlan(port_mapping_path=None, proxies=[])
+
+        self._verify_consistency()
+
+        mapping_path = self._mapping_path()
+        existing = load_port_mapping(mapping_path)
+        mapping = assign_sticky_ports(endpoints, existing)
+        save_port_mapping(mapping_path, mapping)  # 先写后起：失败也保住粘性端口，不漂移
+
+        started_this_run: list[tuple[str, ProxyInstance]] = []
+        proxies: list[ProxyInstance] = []
+        try:
+            for ep in endpoints:
+                inst = self._proxies.get(ep)
+                if inst is not None and self._instance_alive(inst):
+                    proxies.append(inst)
+                    continue
+                if inst is not None:  # 注册表里有但已死 → 剔除后重起
+                    self._proxies.pop(ep, None)
+                inst = self.start_proxy(
+                    port=mapping[ep],
+                    vm_host=ep,
+                    endpoint=ep,
+                    ready_timeout=ready_timeout,
+                    poll_interval=poll_interval,
+                )
+                started_this_run.append((ep, inst))
+                proxies.append(inst)
+        except ProxyStartError:
+            for _ep, inst in started_this_run:  # 只清本次新起的，既有/认领的不动
+                self._stop_instance(inst)
+            raise
+
+        for ep, inst in started_this_run:
+            self._proxies[ep] = inst
+        return CollectorStartPlan(port_mapping_path=mapping_path, proxies=proxies)

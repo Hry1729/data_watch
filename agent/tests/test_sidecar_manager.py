@@ -9,11 +9,14 @@
 import json
 import socket
 import sys
+import time
+from pathlib import Path
 
 import psutil
 import pytest
 
 from app.services.managed_process_runner import ManagedProcessRunner
+from app.services.opcda_detect import save_port_mapping
 from app.services.sidecar_manager import (
     ProxyExecutableNotFound,
     ProxyStartError,
@@ -252,3 +255,146 @@ def test_start_proxy_external_occupant_fails_no_drift(runtime_dir):
         if "pid" in launched:
             _kill_tree(launched["pid"][0])
         occupant.close()
+
+
+# ---------------------------------------------------------------------------
+# T018 — prepare_for_collector_start() 编排（检测→粘性映射→差量起 proxy→闸门）
+#
+# detect / 一致性校验走薄方法（_detect_endpoints / _verify_consistency），单测在
+# 实例上 stub 掉，不连真 MySQL；proxy spawn 仍用 fake_proxy。端口经 port_mapping.json
+# 预置为 _free_port()，避开默认 9090 可能被占。
+# ---------------------------------------------------------------------------
+
+_DUMMY_MYSQL = {"host": "h", "port": 3306, "database": "db"}
+
+
+def _mapping_path(runtime_dir):
+    return runtime_dir / "opcda_proxy" / "port_mapping.json"
+
+
+def _wire_prepare(runtime_dir, endpoints):
+    """接真 runner 的 SidecarManager；detect/一致性 stub，spawn 换 fake_proxy。"""
+    runner = ManagedProcessRunner(runtime_dir)
+    sm = SidecarManager(
+        runtime_dir=runtime_dir,
+        runner=runner,
+        agent_mysql=_DUMMY_MYSQL,
+        collector_settings_path=runtime_dir / "settings.toml",
+    )
+    sm._build_proxy_cmd = lambda config_path: [
+        sys.executable, FAKE_PROXY, "--config", str(config_path)
+    ]
+    sm._detect_endpoints = lambda: list(endpoints)
+    sm._verify_consistency = lambda: None
+    return sm
+
+
+def test_prepare_no_opcda_returns_none_and_no_spawn(runtime_dir):
+    sm = _wire_prepare(runtime_dir, [])
+    calls = []
+    orig = sm.runner.launch
+    sm.runner.launch = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+
+    plan = sm.prepare_for_collector_start()
+
+    # 无 OPC DA → 不拼 --port-mapping 的语义靠 port_mapping_path is None 写死
+    assert plan.port_mapping_path is None
+    assert plan.proxies == []
+    assert calls == []  # 零 spawn
+
+
+def test_prepare_single_endpoint_starts_proxy_and_returns_path(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})  # 让 sticky 复用可用端口
+    sm = _wire_prepare(runtime_dir, [ep])
+
+    plan = sm.prepare_for_collector_start()
+    try:
+        assert plan.port_mapping_path == _mapping_path(runtime_dir)
+        assert len(plan.proxies) == 1
+        inst = plan.proxies[0]
+        assert inst.port == port
+        with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+            pass  # 闸门已通过，端口此刻可连接
+    finally:
+        _kill_tree(plan.proxies[0].pid)
+        sm.runner.close_log(f"proxy_{port}")
+
+
+def test_prepare_reuses_existing_proxy_no_double_start(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})
+    sm = _wire_prepare(runtime_dir, [ep])
+    calls = []
+    orig = sm.runner.launch
+    sm.runner.launch = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+
+    plan1 = sm.prepare_for_collector_start()
+    plan2 = sm.prepare_for_collector_start()  # 第二次：proxy 仍存活 → 复用
+    try:
+        assert len(calls) == 1  # 只 spawn 一次
+        assert len(plan2.proxies) == 1
+        assert plan2.proxies[0].pid == plan1.proxies[0].pid
+    finally:
+        _kill_tree(plan1.proxies[0].pid)
+        sm.runner.close_log(f"proxy_{port}")
+
+
+def test_prepare_rollback_stops_only_new_keeps_existing(runtime_dir):
+    p1, p2, p3 = _free_port(), _free_port(), _free_port()
+    ep1, ep2, ep3 = "host-1", "host-2", "host-3"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2, ep3: p3})
+    sm = _wire_prepare(runtime_dir, [ep1])
+
+    # p3 的 proxy 永不监听 → 闸门超时失败
+    def build(config_path):
+        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
+        extra = ["--never-listen"] if cfg["listenPort"] == p3 else []
+        return [sys.executable, FAKE_PROXY, "--config", str(config_path), *extra]
+    sm._build_proxy_cmd = build
+
+    # 先建立 ep1 为"既有 proxy"
+    plan0 = sm.prepare_for_collector_start()
+    ep1_pid = plan0.proxies[0].pid
+
+    # 现在检测出三个端点；记录本轮 spawn 的 pid
+    sm._detect_endpoints = lambda: [ep1, ep2, ep3]
+    launched = []
+    orig = sm.runner.launch
+
+    def track(name, cmd, **kw):
+        r = orig(name, cmd, **kw)
+        launched.append((name, r[0]))
+        return r
+    sm.runner.launch = track
+
+    try:
+        with pytest.raises(ProxyStartError):
+            sm.prepare_for_collector_start(ready_timeout=1.0)
+
+        # 既有 ep1 不受牵连：仍存活、且仍登记在注册表、pid 未变（被复用而非重起）
+        assert psutil.pid_exists(ep1_pid) and psutil.Process(ep1_pid).is_running()
+        assert sm._proxies.get(ep1) is not None and sm._proxies[ep1].pid == ep1_pid
+
+        # 本轮新起的 ep2 回滚后不残留在注册表（成功后才登记，回滚不登记）
+        assert ep2 not in sm._proxies
+
+        # 本轮新起的 ep2 被回滚（不存活）
+        p2_pids = [pid for (n, pid) in launched if n == f"proxy_{p2}"]
+        assert p2_pids, "ep2 应当在本轮被 spawn 过"
+        end = time.time() + 5
+        while end > time.time() and any(psutil.pid_exists(pid) for pid in p2_pids):
+            time.sleep(0.05)
+        for pid in p2_pids:
+            assert not psutil.pid_exists(pid)
+    finally:
+        _kill_tree(ep1_pid)
+        for (_n, pid) in launched:
+            _kill_tree(pid)
+        for port in (p1, p2, p3):
+            try:
+                sm.runner.close_log(f"proxy_{port}")
+            except Exception:
+                pass
