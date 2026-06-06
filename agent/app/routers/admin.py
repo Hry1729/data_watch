@@ -54,8 +54,29 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     _require_known(pm, name)
     if pm.status(name).status == "running":
         raise HTTPException(status_code=409, detail=f"{name} is already running")
+
+    extra_args = None
+    if name == "collector":
+        # sidecar_manager 在 try 外取：未接好属 T020 接线 bug，让 AttributeError→500，
+        # 不伪装成 400。writer 路径完全不碰 sidecar_manager。
+        sm = request.app.state.sidecar_manager
+        settings_path = sm.collector_settings_path
+        if settings_path is None:
+            raise HTTPException(
+                status_code=400, detail="collector settings path is not configured"
+            )
+        try:
+            plan = sm.prepare_for_collector_start()
+        except Exception as exc:
+            # 准备阶段所有错误（ProxyStartError/MysqlConsistencyError/检测期等）统一 400，
+            # detail 原样保留 endpoint/port/日志路径，不吞。
+            raise HTTPException(status_code=400, detail=str(exc))
+        extra_args = ["--config", str(settings_path)]
+        if plan.port_mapping_path is not None:
+            extra_args += ["--port-mapping", str(plan.port_mapping_path)]
+
     try:
-        await pm.start(name)
+        await pm.start(name, extra_args=extra_args)
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     request.app.state.log_manager.attach(

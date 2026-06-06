@@ -112,6 +112,11 @@ class SidecarManager:
         # 本进程内已起 proxy 注册表（key=endpoint）；跨 Agent 重启认领是 T022。
         self._proxies: dict[str, ProxyInstance] = {}
 
+    @property
+    def collector_settings_path(self) -> Path | None:
+        """collector settings.toml 路径——与一致性校验同源，供 admin 拼 --config。"""
+        return self._collector_settings_path
+
     # ── proxy 配置生成（T014）────────────────────────────────────
     def _opcda_dir(self) -> Path:
         if self.runtime_dir is None:
