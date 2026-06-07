@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -9,12 +10,47 @@ from fastapi.exceptions import RequestValidationError
 from app.core.config import load_config
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.services.log_manager import LogManager
+from app.services.managed_process_runner import ManagedProcessRunner
 from app.services.process_manager import ModuleSpec, ProcessManager
+from app.services.sidecar_manager import (
+    DEFAULT_CHANNEL,
+    DEFAULT_SERVER_PROG_ID,
+    SidecarManager,
+)
 
 logger = logging.getLogger(__name__)
 
 _MODULE_NAMES = ("collector", "writer")
 _SHUTDOWN_TIMEOUT_SECONDS = 25.0
+
+
+def build_sidecar_manager(cfg: dict, runtime_dir: Path) -> SidecarManager:
+    """纯函数构建 SidecarManager（不依赖 app.state，便于单测）。
+
+    约定：collector settings.toml = working_dir/config/settings.toml（与 collector 运行期
+    默认、一致性校验同源）；working_dir 为空 → None（admin 端 400 兜底）。
+    [opcda] 缺省走内置默认 progId/channel。install_root frozen-aware（frozen 取 exe 父目录，
+    否则取仓库根；frozen 真实定位放 T033 手工验收）。
+    """
+    working_dir = cfg.get("collector", {}).get("working_dir", "")
+    settings_path = (
+        Path(working_dir) / "config" / "settings.toml" if working_dir else None
+    )
+    opcda = cfg.get("opcda", {})
+    install_root = (
+        Path(sys.executable).resolve().parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[2]
+    )
+    return SidecarManager(
+        runtime_dir=runtime_dir,
+        install_root=install_root,
+        runner=ManagedProcessRunner(runtime_dir),
+        agent_mysql=cfg.get("mysql", {}),
+        collector_settings_path=settings_path,
+        server_prog_id=opcda.get("server_prog_id", DEFAULT_SERVER_PROG_ID),
+        channel=opcda.get("channel", DEFAULT_CHANNEL),
+    )
 
 
 async def _stop_child_processes(pm: ProcessManager) -> None:
@@ -50,6 +86,7 @@ async def lifespan(app: FastAPI):
     pm = ProcessManager(runtime_dir=runtime_dir, modules=modules)
     app.state.pm = pm
     app.state.log_manager = LogManager()
+    app.state.sidecar_manager = build_sidecar_manager(cfg, runtime_dir)
 
     health_task = asyncio.create_task(pm.health_check_loop())
     try:
