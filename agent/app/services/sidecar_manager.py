@@ -295,6 +295,19 @@ class SidecarManager:
         except psutil.Error:
             return False
 
+    def _stop_removed(self, endpoints: list[str]) -> None:
+        """停掉注册表里端点已不在 `endpoints` 的 proxy（差量删，FR-P16）。
+
+        只停 proxy + 出注册表；**不动 mapping 文件端口**（sticky 保留历史、不回收）。
+        删除独立于「本次新起 proxy 失败」的回滚：被删端点本就已从配置消失、应当停止，
+        与后续新增 proxy 是否成功无关。
+        """
+        keep = set(endpoints)
+        for ep in list(self._proxies.keys()):
+            if ep not in keep:
+                inst = self._proxies.pop(ep)
+                self._stop_instance(inst)
+
     def _stop_instance(self, inst: ProxyInstance) -> None:
         """停掉一个 proxy 实例：整树强停 + 收日志 + 清 PID 记录（回滚/US5 复用）。"""
         try:
@@ -319,10 +332,14 @@ class SidecarManager:
         某个新增 proxy 启动失败 → 只回滚**本次新起**的 proxy，保留既有，再抛 ProxyStartError。
         """
         endpoints = self._detect_endpoints()
+        if endpoints:
+            # 有端点才校验；失败先于 _stop_removed → 配置不一致时不动任何 proxy 状态。
+            self._verify_consistency()
+        # 差量：停掉不再检测到的端点的 proxy（FR-P16）。mapping 文件仍保留被删端点
+        # （sticky，端口不回收，见 assign_sticky）——只停 proxy、不动 mapping 端口。
+        self._stop_removed(endpoints)
         if not endpoints:
             return CollectorStartPlan(port_mapping_path=None, proxies=[])
-
-        self._verify_consistency()
 
         mapping_path = self._mapping_path()
         existing = load_port_mapping(mapping_path)

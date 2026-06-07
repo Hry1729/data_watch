@@ -16,7 +16,11 @@ import psutil
 import pytest
 
 from app.services.managed_process_runner import ManagedProcessRunner
-from app.services.opcda_detect import load_port_mapping, save_port_mapping
+from app.services.opcda_detect import (
+    MysqlConsistencyError,
+    load_port_mapping,
+    save_port_mapping,
+)
 from app.services.sidecar_manager import (
     ProxyExecutableNotFound,
     ProxyStartError,
@@ -559,3 +563,111 @@ def test_claim_then_prepare_reuses_no_double_start(runtime_dir):
         _kill_tree(pid)
         sm.runner.close_log(name)
         runner0.close_log(name)
+
+
+# ---------------------------------------------------------------------------
+# T024/T025 — prepare 差量调整（增/删端点动 proxy，未变不重起，粘性不漂移；FR-P16）
+# ---------------------------------------------------------------------------
+
+def test_prepare_added_endpoint_starts_only_new_no_drift(runtime_dir):
+    p1, p2 = _free_port(), _free_port()
+    ep1, ep2 = "host-1", "host-2"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2})
+    sm = _wire_prepare(runtime_dir, [ep1])
+    sm.prepare_for_collector_start()
+    ep1_pid = sm._proxies[ep1].pid
+    calls = []
+    orig = sm.runner.launch
+    sm.runner.launch = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+    try:
+        sm._detect_endpoints = lambda: [ep1, ep2]
+        plan = sm.prepare_for_collector_start()
+        assert len(calls) == 1                       # 只起新增 ep2
+        assert sm._proxies[ep1].pid == ep1_pid       # 未变端点不重起
+        assert sm._proxies[ep2].port == p2           # 新端点用粘性端口，不漂移
+        assert load_port_mapping(_mapping_path(runtime_dir)) == {ep1: p1, ep2: p2}
+        assert {i.port for i in plan.proxies} == {p1, p2}
+    finally:
+        _kill_tree(ep1_pid)
+        if ep2 in sm._proxies:
+            _kill_tree(sm._proxies[ep2].pid)
+        sm.runner.close_log(f"proxy_{p1}")
+        sm.runner.close_log(f"proxy_{p2}")
+
+
+def test_prepare_removed_endpoint_stops_proxy_keeps_others_and_mapping(runtime_dir):
+    p1, p2 = _free_port(), _free_port()
+    ep1, ep2 = "host-1", "host-2"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2})
+    sm = _wire_prepare(runtime_dir, [ep1, ep2])
+    plan = sm.prepare_for_collector_start()
+    ep1_pid = sm._proxies[ep1].pid
+    ep2_pid = sm._proxies[ep2].pid
+    try:
+        sm._detect_endpoints = lambda: [ep1]      # ep2 被删
+        plan2 = sm.prepare_for_collector_start()
+        # ep2 proxy 停 + 出注册表
+        assert ep2 not in sm._proxies
+        end = time.time() + 5
+        while end > time.time() and psutil.pid_exists(ep2_pid):
+            time.sleep(0.05)
+        assert not psutil.pid_exists(ep2_pid)
+        # ep1 不动（pid 不变、仍存活）
+        assert sm._proxies[ep1].pid == ep1_pid and psutil.pid_exists(ep1_pid)
+        # mapping 仍保留 ep2（sticky，端口不回收）
+        assert load_port_mapping(_mapping_path(runtime_dir)) == {ep1: p1, ep2: p2}
+        assert [i.port for i in plan2.proxies] == [p1]
+    finally:
+        _kill_tree(ep1_pid)
+        _kill_tree(ep2_pid)
+        sm.runner.close_log(f"proxy_{p1}")
+        sm.runner.close_log(f"proxy_{p2}")
+
+
+def test_prepare_all_endpoints_removed_stops_all_returns_none_keeps_mapping(runtime_dir):
+    p1 = _free_port()
+    ep1 = "host-1"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1})
+    sm = _wire_prepare(runtime_dir, [ep1])
+    sm.prepare_for_collector_start()
+    ep1_pid = sm._proxies[ep1].pid
+    try:
+        sm._detect_endpoints = lambda: []
+        plan = sm.prepare_for_collector_start()
+        assert plan.port_mapping_path is None and plan.proxies == []
+        assert sm._proxies == {}
+        end = time.time() + 5
+        while end > time.time() and psutil.pid_exists(ep1_pid):
+            time.sleep(0.05)
+        assert not psutil.pid_exists(ep1_pid)
+        # mapping 文件保留历史（端点回归不漂移）
+        assert load_port_mapping(_mapping_path(runtime_dir)) == {ep1: p1}
+    finally:
+        _kill_tree(ep1_pid)
+        sm.runner.close_log(f"proxy_{p1}")
+
+
+def test_prepare_consistency_error_does_not_stop_existing_proxies(runtime_dir):
+    # 边界：一致性校验失败先于 _stop_removed → 不停任何 proxy
+    p1, p2 = _free_port(), _free_port()
+    ep1, ep2 = "host-1", "host-2"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2})
+    sm = _wire_prepare(runtime_dir, [ep1, ep2])
+    sm.prepare_for_collector_start()
+    ep1_pid = sm._proxies[ep1].pid
+    ep2_pid = sm._proxies[ep2].pid
+    try:
+        sm._detect_endpoints = lambda: [ep1]  # ep2 看似被删
+        def _boom():
+            raise MysqlConsistencyError("mismatch")
+        sm._verify_consistency = _boom
+        with pytest.raises(MysqlConsistencyError):
+            sm.prepare_for_collector_start()
+        # 配置不一致 → 不动任何 proxy（ep2 未被停、仍在注册表）
+        assert ep2 in sm._proxies and psutil.pid_exists(ep2_pid)
+        assert ep1 in sm._proxies and psutil.pid_exists(ep1_pid)
+    finally:
+        _kill_tree(ep1_pid)
+        _kill_tree(ep2_pid)
+        sm.runner.close_log(f"proxy_{p1}")
+        sm.runner.close_log(f"proxy_{p2}")

@@ -14,7 +14,7 @@ import types
 import pytest
 from fastapi import HTTPException
 
-from app.routers.admin import start_process
+from app.routers.admin import restart_process, start_process
 from app.services.sidecar_manager import ProxyStartError
 
 
@@ -23,12 +23,16 @@ class FakePM:
         self.modules = {n: object() for n in names}
         self._running = running
         self.start_calls = []
+        self.restart_calls = []
 
     def status(self, name):
         return types.SimpleNamespace(status="running" if self._running else "stopped")
 
     async def start(self, name, extra_args=None):
         self.start_calls.append((name, extra_args))
+
+    async def restart(self, name, extra_args=None):
+        self.restart_calls.append((name, extra_args))
 
     def log_file(self, name):
         return f"/logs/{name}.log"
@@ -130,6 +134,35 @@ async def test_collector_already_running_409_before_prepare():
     assert ei.value.status_code == 409
     assert sm.prepare_calls == 0  # 已运行不动 proxy
     assert pm.start_calls == []
+
+
+async def test_collector_restart_prepares_and_passes_args():
+    pm = FakePM()
+    sm = FakeSM(
+        port_mapping_path="/rt/opcda_proxy/port_mapping.json",
+        settings_path="/cfg/settings.toml",
+    )
+    await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert sm.prepare_calls == 1
+    assert pm.restart_calls == [(
+        "collector",
+        ["--config", "/cfg/settings.toml",
+         "--port-mapping", "/rt/opcda_proxy/port_mapping.json"],
+    )]
+    assert pm.start_calls == []  # restart 走 pm.restart，不是 pm.start
+
+
+async def test_writer_restart_does_not_touch_sidecar_manager():
+    pm = FakePM()
+    await restart_process("writer", _req(pm), _user="u")  # 不放 sidecar_manager
+    assert pm.restart_calls == [("writer", None)]
+
+
+async def test_collector_restart_no_opcda_only_config():
+    pm = FakePM()
+    sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")
+    await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert pm.restart_calls == [("collector", ["--config", "/cfg/settings.toml"])]
 
 
 async def test_collector_already_running_409_even_without_sidecar_manager():

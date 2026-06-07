@@ -87,6 +87,20 @@ async def test_start_appends_extra_args_to_cmd(make_pm, tmp_path):
         await pm.stop(name)
 
 
+async def test_restart_appends_extra_args_to_cmd(make_pm, tmp_path):
+    out = tmp_path / "argv_restart.txt"
+    pm, name = make_pm()
+    await pm.start(name)
+    await pm.restart(name, extra_args=["--argv-out", str(out)])
+    try:
+        assert await _wait(lambda: out.exists())
+        content = out.read_text(encoding="utf-8")
+        assert "--argv-out" in content
+        assert str(out) in content
+    finally:
+        await pm.stop(name)
+
+
 async def test_start_rejects_non_list_extra_args(make_pm):
     pm, name = make_pm()
     with pytest.raises(ProcessManagerError):

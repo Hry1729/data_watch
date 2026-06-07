@@ -48,6 +48,29 @@ def _process_config_out(cfg: dict, section: str) -> dict:
     }
 
 
+def _collector_extra_args(request: Request) -> list[str]:
+    """collector 启动/重启前的准备 + 拼参（start/restart 共用，避免一改一漏）。
+
+    sidecar_manager 在 try 外取：未接好属接线 bug，让 AttributeError→500，不伪装 400。
+    settings 未配置 / prepare 任何错误 → 400（detail 不吞 endpoint/port/日志路径）。
+    无 OPC DA（port_mapping_path=None）→ 只拼 --config，不拼 --port-mapping。
+    """
+    sm = request.app.state.sidecar_manager
+    settings_path = sm.collector_settings_path
+    if settings_path is None:
+        raise HTTPException(
+            status_code=400, detail="collector settings path is not configured"
+        )
+    try:
+        plan = sm.prepare_for_collector_start()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    extra_args = ["--config", str(settings_path)]
+    if plan.port_mapping_path is not None:
+        extra_args += ["--port-mapping", str(plan.port_mapping_path)]
+    return extra_args
+
+
 @router.post("/processes/{name}/start")
 async def start_process(name: str, request: Request, _user: str = Depends(get_current_user)):
     pm = request.app.state.pm
@@ -55,25 +78,8 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     if pm.status(name).status == "running":
         raise HTTPException(status_code=409, detail=f"{name} is already running")
 
-    extra_args = None
-    if name == "collector":
-        # sidecar_manager 在 try 外取：未接好属 T020 接线 bug，让 AttributeError→500，
-        # 不伪装成 400。writer 路径完全不碰 sidecar_manager。
-        sm = request.app.state.sidecar_manager
-        settings_path = sm.collector_settings_path
-        if settings_path is None:
-            raise HTTPException(
-                status_code=400, detail="collector settings path is not configured"
-            )
-        try:
-            plan = sm.prepare_for_collector_start()
-        except Exception as exc:
-            # 准备阶段所有错误（ProxyStartError/MysqlConsistencyError/检测期等）统一 400，
-            # detail 原样保留 endpoint/port/日志路径，不吞。
-            raise HTTPException(status_code=400, detail=str(exc))
-        extra_args = ["--config", str(settings_path)]
-        if plan.port_mapping_path is not None:
-            extra_args += ["--port-mapping", str(plan.port_mapping_path)]
+    # writer 路径完全不碰 sidecar_manager。
+    extra_args = _collector_extra_args(request) if name == "collector" else None
 
     try:
         await pm.start(name, extra_args=extra_args)
@@ -100,8 +106,12 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
 async def restart_process(name: str, request: Request, _user: str = Depends(get_current_user)):
     pm = request.app.state.pm
     _require_known(pm, name)
+
+    # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
+    extra_args = _collector_extra_args(request) if name == "collector" else None
+
     try:
-        await pm.restart(name)
+        await pm.restart(name, extra_args=extra_args)
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     request.app.state.log_manager.attach(

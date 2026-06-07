@@ -269,11 +269,13 @@ class ProcessManager:
                 uptime_seconds=0,
             )
 
-    async def restart(self, name: str) -> ProcessInfo:
+    async def restart(
+        self, name: str, extra_args: list[str] | None = None
+    ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
         await self.stop(name)
-        info = await self.start(name)
+        info = await self.start(name, extra_args)
         count = self._bump_restart_count(name)
         info.restart_count = count
         logger.info("module %s restarted, restart_count=%d", name, count)
