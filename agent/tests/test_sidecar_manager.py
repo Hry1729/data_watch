@@ -16,7 +16,7 @@ import psutil
 import pytest
 
 from app.services.managed_process_runner import ManagedProcessRunner
-from app.services.opcda_detect import save_port_mapping
+from app.services.opcda_detect import load_port_mapping, save_port_mapping
 from app.services.sidecar_manager import (
     ProxyExecutableNotFound,
     ProxyStartError,
@@ -25,6 +25,7 @@ from app.services.sidecar_manager import (
 
 _HERE = __import__("os").path.dirname(__file__)
 FAKE_PROXY = __import__("os").path.join(_HERE, "fixtures", "fake_proxy.py")
+DUMMY_CHILD = __import__("os").path.join(_HERE, "fixtures", "dummy_child.py")
 
 _EXE = "OpcDaProxyService.exe"
 _INSTALL_REL = "sidecars/opcda_proxy_service/bin"
@@ -398,3 +399,163 @@ def test_prepare_rollback_stops_only_new_keeps_existing(runtime_dir):
                 sm.runner.close_log(f"proxy_{port}")
             except Exception:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# T022 — claim_existing_proxies() Agent 重启认领存活 proxy（FR-P15）
+#
+# 认领只校验 pid+create_time（不看监听），故用 dummy_child（空转存活、不绑端口）。
+# port→endpoint 经 port_mapping.json 反转；活着不可映射→跳过保留；死亡/stale→清 pid。
+# ---------------------------------------------------------------------------
+
+def _sm_claim(runtime_dir):
+    return SidecarManager(
+        runtime_dir=runtime_dir,
+        runner=ManagedProcessRunner(runtime_dir),
+        agent_mysql={"host": "h", "port": 3306, "database": "db"},
+        collector_settings_path=runtime_dir / "settings.toml",
+    )
+
+
+def _launch_dummy(runtime_dir, name, *extra):
+    runner = ManagedProcessRunner(runtime_dir)
+    pid, ct = runner.launch(
+        name, [sys.executable, DUMMY_CHILD, *extra], cwd=str(runtime_dir)
+    )
+    return runner, pid, ct
+
+
+def test_claim_alive_matching_proxy_into_registry(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})
+    name = f"proxy_{port}"
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()
+        assert ep in sm._proxies
+        inst = sm._proxies[ep]
+        assert inst.port == port
+        assert inst.pid == pid
+        assert inst.create_time == pytest.approx(ct)
+        # config_path / log_path 按现有约定重建，不依赖 pid 文件内容
+        assert inst.config_path == runtime_dir / "opcda_proxy" / f"proxy_{port}.json"
+        assert inst.log_path == sm.runner.log_file(name)
+        # 活着的 pid 文件保留
+        assert runner.pid_file(name).exists()
+    finally:
+        _kill_tree(pid)
+        runner.close_log(name)
+
+
+def test_claim_dead_proxy_cleans_pid_record(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})
+    name = f"proxy_{port}"
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--exit-after", "0.1")
+    end = time.time() + 5
+    while end > time.time() and psutil.pid_exists(pid):
+        time.sleep(0.05)
+    assert not psutil.pid_exists(pid)
+    try:
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()
+        assert ep not in sm._proxies
+        assert not runner.pid_file(name).exists()  # 死亡 pid 记录已清
+    finally:
+        runner.close_log(name)
+
+
+def test_claim_create_time_mismatch_cleans_record_without_kill(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})
+    name = f"proxy_{port}"
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        # 真 pid 但 create_time 写错 → verify_alive 判 stale
+        runner.write_pid_record(name, pid, ct - 10000.0)
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()
+        assert ep not in sm._proxies                 # 不认领
+        assert not runner.pid_file(name).exists()    # stale 记录已删
+        assert psutil.pid_exists(pid)                # 真进程未被杀（无法证明归属，只清记录）
+    finally:
+        _kill_tree(pid)
+        runner.close_log(name)
+
+
+def test_claim_alive_unmappable_port_left_running_not_claimed(runtime_dir):
+    # mapping 里没有该 port（端口不可映射到 endpoint）→ 跳过：保留运行、不认领、不杀
+    port = _free_port()
+    save_port_mapping(_mapping_path(runtime_dir), {"other-ep": _free_port()})
+    name = f"proxy_{port}"
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()
+        assert sm._proxies == {}                  # 未认领
+        assert runner.pid_file(name).exists()     # 未清 pid（进程活着）
+        assert psutil.pid_exists(pid)             # 未杀
+    finally:
+        _kill_tree(pid)
+        runner.close_log(name)
+
+
+def test_claim_skips_whole_round_on_corrupt_mapping(runtime_dir):
+    port = _free_port()
+    name = f"proxy_{port}"
+    # 写损坏的 mapping（非对象）→ load_port_mapping fail-fast；claim 应跳过整轮、不抛
+    _mapping_path(runtime_dir).write_text("[1, 2, 3]", encoding="utf-8")
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()  # 不抛
+        assert sm._proxies == {}
+        assert runner.pid_file(name).exists()  # 跳过整轮，未动 pid
+    finally:
+        _kill_tree(pid)
+        runner.close_log(name)
+
+
+def test_claim_duplicate_port_in_mapping_left_running_not_claimed(runtime_dir):
+    # 损坏 mapping：两 endpoint 指向同一 port → 无法证明归属 → 跳过、保留运行、不杀
+    port = _free_port()
+    save_port_mapping(_mapping_path(runtime_dir), {"ep-1": port, "ep-2": port})
+    name = f"proxy_{port}"
+    runner, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        sm = _sm_claim(runtime_dir)
+        sm.claim_existing_proxies()
+        assert sm._proxies == {}                  # 重复端口不认领（不误配到 ep-2）
+        assert runner.pid_file(name).exists()     # 未清 pid（进程活着）
+        assert psutil.pid_exists(pid)             # 未杀
+    finally:
+        _kill_tree(pid)
+        runner.close_log(name)
+
+
+def test_claim_then_prepare_reuses_no_double_start(runtime_dir):
+    port = _free_port()
+    ep = "host-a"
+    save_port_mapping(_mapping_path(runtime_dir), {ep: port})
+    name = f"proxy_{port}"
+    runner0, pid, ct = _launch_dummy(runtime_dir, name, "--ignore-flag")
+    try:
+        sm = _wire_prepare(runtime_dir, [ep])  # detect/一致性 stub + fake build_proxy_cmd
+        sm.claim_existing_proxies()
+        assert sm._proxies.get(ep) is not None and sm._proxies[ep].pid == pid
+
+        calls = []
+        orig = sm.runner.launch
+        sm.runner.launch = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
+        plan = sm.prepare_for_collector_start()
+        assert calls == []                       # 复用认领的，不再 spawn
+        assert len(plan.proxies) == 1
+        assert plan.proxies[0].pid == pid
+    finally:
+        _kill_tree(pid)
+        sm.runner.close_log(name)
+        runner0.close_log(name)

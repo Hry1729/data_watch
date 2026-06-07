@@ -87,6 +87,7 @@ async def lifespan(app: FastAPI):
     app.state.pm = pm
     app.state.log_manager = LogManager()
     app.state.sidecar_manager = build_sidecar_manager(cfg, runtime_dir)
+    app.state.sidecar_manager.claim_existing_proxies()  # 认领重启前仍存活的 proxy（T022/FR-P15）
 
     health_task = asyncio.create_task(pm.health_check_loop())
     try:

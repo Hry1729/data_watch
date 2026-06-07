@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import time
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from app.services.opcda_detect import (
     save_port_mapping,
     verify_mysql_consistency,
 )
+
+logger = logging.getLogger(__name__)
 
 PROXY_EXE_NAME = "OpcDaProxyService.exe"
 
@@ -353,3 +356,69 @@ class SidecarManager:
         for ep, inst in started_this_run:
             self._proxies[ep] = inst
         return CollectorStartPlan(port_mapping_path=mapping_path, proxies=proxies)
+
+    # ── 启动认领（T022）─────────────────────────────────────────
+    def claim_existing_proxies(self) -> None:
+        """Agent 启动时认领仍存活的 proxy（FR-P15，不依赖硬编码名单）。
+
+        扫 `pids/proxy_*.pid` → pid+create_time 校验存活则重建 ProxyInstance 入注册表，
+        死亡/stale → 清 pid 记录。约束：
+        - mapping 文件缺失/损坏 → 跳过整轮认领（不崩 Agent 启动）；collector 启动时
+          prepare 会对损坏 mapping fail-fast，不丢错。
+        - 活着但端口不在 mapping（不可映射，仅 mapping 被删/损坏才会发生）→ 跳过：
+          保留运行、不认领、不杀（无法证明归属）。
+        - 逐条 try/except 兜底：个别坏 pid 清理/跳过，不让一条坏数据中断整轮。
+        """
+        if self.runtime_dir is None or self.runner is None:
+            return
+        pids_dir = self.runtime_dir / "pids"
+        if not pids_dir.exists():
+            return
+        try:
+            mapping = load_port_mapping(self._mapping_path())
+        except Exception as exc:
+            logger.warning("认领跳过：port_mapping 不可读/损坏: %s", exc)
+            return
+        # 反转 port→endpoint；重复端口（损坏 mapping 才会出现）无法证明归属 → 排除、视为不可映射。
+        port_to_ep: dict[int, str] = {}
+        dup_ports: set[int] = set()
+        for ep, port in mapping.items():
+            if port in port_to_ep:
+                dup_ports.add(port)
+            port_to_ep[port] = ep
+        for port in dup_ports:
+            logger.warning("认领跳过端口 %s：mapping 中重复，无法确定归属 endpoint", port)
+            port_to_ep.pop(port, None)
+        try:
+            pid_files = list(pids_dir.glob("proxy_*.pid"))
+        except OSError as exc:
+            logger.warning("认领跳过：扫描 pids 目录失败: %s", exc)
+            return
+        for pid_file in pid_files:
+            try:
+                self._claim_one(pid_file, port_to_ep)
+            except Exception:
+                logger.warning("认领 proxy 失败（已跳过）: %s", pid_file, exc_info=True)
+
+    def _claim_one(self, pid_file: Path, port_to_ep: dict[int, str]) -> None:
+        name = pid_file.stem  # "proxy_{port}"
+        try:
+            port = int(name[len("proxy_"):])
+        except ValueError:
+            return  # 文件名不含合法端口，忽略
+        record = self.runner.read_pid_record(name)
+        if record is None:
+            return
+        if self.runner.verify_alive(record) is None:
+            self.runner.delete_pid_record(name)  # 死亡/stale → 清记录
+            return
+        ep = port_to_ep.get(port)
+        if ep is None:
+            return  # 活着但不可映射 → 保留运行、不认领、不杀
+        self._proxies[ep] = ProxyInstance(
+            port=port,
+            pid=record["pid"],
+            create_time=float(record["create_time"]),
+            config_path=self._opcda_dir() / f"proxy_{port}.json",
+            log_path=self.runner.log_file(name),
+        )
