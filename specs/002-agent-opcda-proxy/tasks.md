@@ -28,8 +28,8 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 ## Phase 1: Setup（共享基础）
 
-- [ ] T001 [P] 新建假 proxy 测试桩 `agent/tests/fixtures/fake_proxy.py`：参数化 `--port`，可选 `--delay-ready`（延迟监听）/`--never-listen`（不监听），用于 US1/US2/US4 集成测试（plan O3：Python 桩）。
-- [ ] T002 [P] **搭 agent 测试脚手架（agent 现状无 `tests/`、requirements 无 pytest）**：dev 依赖加 `pytest`+`pytest-asyncio`（建议 `agent/requirements-dev.txt`），建 `agent/tests/` + `conftest.py`；测试 fixtures：临时 `runtime_dir`（tmp_path 下 `pids/`、`opcda_proxy/`、`logs/`）与假 collector/proxy spec helper。
+- [x] T001 [P] 新建假 proxy 测试桩 `agent/tests/fixtures/fake_proxy.py`：参数化 `--port`，可选 `--delay-ready`（延迟监听）/`--never-listen`（不监听），用于 US1/US2/US4 集成测试（plan O3：Python 桩）。
+- [x] T002 [P] **搭 agent 测试脚手架（agent 现状无 `tests/`、requirements 无 pytest）**：dev 依赖加 `pytest`+`pytest-asyncio`（建议 `agent/requirements-dev.txt`），建 `agent/tests/` + `conftest.py`；测试 fixtures：临时 `runtime_dir`（tmp_path 下 `pids/`、`opcda_proxy/`、`logs/`）与假 collector/proxy spec helper。
 
 ---
 
@@ -37,10 +37,10 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 **⚠️ 完成前任何 US 不可开工。** 含监管内核抽取 + per-start args 通道（点2）。
 
-- [ ] T003 **为现状 ProcessManager 写表征(characterization)测试** `agent/tests/test_process_manager.py`（agent 此前无此测试）：覆盖 start/stop/restart/status/PID 文件/restart_count 等当前行为，**在抽取前即 PASS**，作为 T005/T006 重构的回归网。
-- [ ] T004 [P] 写 `agent/tests/test_managed_process_runner.py` → 先 FAIL：覆盖 spawn、PID 读写/校验、存活、terminate→kill、以及 **per-start `extra_args` 覆盖**（cmd = executable + spec.args + extra_args）。
-- [ ] T005 抽取监管内核：新建 `agent/app/services/managed_process_runner.py`，迁移 `process_manager.py` 的 PID 读写/校验（pid+create_time）、子进程 spawn（stdout/stderr→`logs/{name}/current.log`、`CREATE_NO_WINDOW`）、terminate→kill、日志路径管理（FR-P10）。
-- [ ] T006 `process_manager.py` 改为持有/调用 runner，并将 `start(name)` 扩为 **`start(name, extra_args: list[str] | None = None)`**——`cmd = [executable, *spec.args, *extra_args]`（点2：不写回 config、不扩 `/admin/config`）；`shutdown_flag` 优雅停止保留在 ProcessManager（FR-A11）；保持 `test_process_manager.py` 全绿。
+- [x] T003 **为现状 ProcessManager 写表征(characterization)测试** `agent/tests/test_process_manager.py`（agent 此前无此测试）：覆盖 start/stop/restart/status/PID 文件/restart_count 等当前行为，**在抽取前即 PASS**，作为 T005/T006 重构的回归网。
+- [x] T004 [P] 写 `agent/tests/test_managed_process_runner.py` → 先 FAIL：覆盖 spawn、PID 读写/校验、存活、terminate→kill、以及 **per-start `extra_args` 覆盖**（cmd = executable + spec.args + extra_args）。
+- [x] T005 抽取监管内核：新建 `agent/app/services/managed_process_runner.py`，迁移 `process_manager.py` 的 PID 读写/校验（pid+create_time）、子进程 spawn（stdout/stderr→`logs/{name}/current.log`、`CREATE_NO_WINDOW`）、terminate→kill、日志路径管理（FR-P10）。
+- [x] T006 `process_manager.py` 改为持有/调用 runner，并将 `start(name)` 扩为 **`start(name, extra_args: list[str] | None = None)`**——`cmd = [executable, *spec.args, *extra_args]`（点2：不写回 config、不扩 `/admin/config`）；`shutdown_flag` 优雅停止保留在 ProcessManager（FR-A11）；保持 `test_process_manager.py` 全绿。
 
 **Checkpoint**: 监管内核 + extra_args 通道就绪，US 可开工。
 
@@ -54,23 +54,23 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 ### Tests（先写、先 FAIL）
 
-- [ ] T007 [P] [US1] `agent/tests/test_opcda_detect.py`：检测、粘性 `max(现有∪历史)+1`、**stale 端点保留在 mapping 文件→不复用**、一致性校验。
-- [ ] T008 [P] [US1] `agent/tests/test_sidecar_manager.py`：用假 proxy 验证 proxy 启动 + **端口闸门三条件**（可连接 / 监听属主 pid==受管 proxy pid / proxy 存活）；含"无关进程占端口 → 判失败、不漂移"。
-- [ ] T009 [P] [US1] `collector/tests/test_device_manager.py`：`EndpointPortMapper` 显式 `mapping_file` 加载 + 权威只读模式（**只对自己拥有的 endpoint 查端口；缺失报错、不探测；忽略文件中多余 stale 项**）。
+- [x] T007 [P] [US1] `agent/tests/test_opcda_detect.py`：检测、粘性 `max(现有∪历史)+1`、**stale 端点保留在 mapping 文件→不复用**、一致性校验。
+- [x] T008 [P] [US1] `agent/tests/test_sidecar_manager.py`：用假 proxy 验证 proxy 启动 + **端口闸门三条件**（可连接 / 监听属主 pid==受管 proxy pid / proxy 存活）；含"无关进程占端口 → 判失败、不漂移"。
+- [x] T009 [P] [US1] `collector/tests/test_device_manager.py`：`EndpointPortMapper` 显式 `mapping_file` 加载 + 权威只读模式（**只对自己拥有的 endpoint 查端口；缺失报错、不探测；忽略文件中多余 stale 项**）。
 
 ### Implementation
 
-- [ ] T010 [US1] `agent/app/services/opcda_detect.py`：用 Agent `config.toml` 的 `[mysql]`（**`pymysql` + `dpapi_decrypt`，与 `health_checker.py` 一致，非 sqlalchemy/aiomysql**）查 `device JOIN comm_protocol WHERE enable=1`，协议归一化复用 `CENTER_PROTOCOLS` 语义（FR-P01/P02）。
-- [ ] T011 [US1] `opcda_detect.py`：粘性分配 + **历史持久化策略（点4）**——读旧 `port_mapping.json`（视为历史超集）；已存在 endpoint 沿用旧端口；新端点取 `max(文件内所有端口)+1`；**已删除 endpoint 的条目继续保留在文件中**（不删除→历史不丢、端口不复用）；写 `<runtime_dir>/opcda_proxy/port_mapping.json`（FR-P03/P04/P05）。
-- [ ] T012 [US1] `opcda_detect.py`：FR-P13 一致性校验（Agent MySQL vs collector `settings.toml` 的 host/port/database），不一致返回配置不一致错误、拒绝启动 collector。
-- [ ] T013 [US1] **proxy exe 路径解析（点3）**：`sidecar_manager.py`（或 `opcda_detect`/小工具）按部署约定解析 `OpcDaProxyService.exe`（依次找：安装目录 `sidecars/opcda_proxy_service/bin/`、`collector/sidecars/opcda_proxy_service/bin/`），**缺失返回明确错误**（含期望路径），不硬编码散落。
-- [ ] T014 [US1] `agent/app/services/sidecar_manager.py`：生成 `proxy_{port}.json`（含 vmHost/serverProgId/channel）+ `runner.spawn(<解析到的 exe> --config ...)`；proxy 实例键 `proxy_{port}`，**不**进 `factory.modules`/`admin._require_known`（FR-P09）；日志落 `logs/proxy_{port}/current.log`（FR-P12）。
-- [ ] T015 [US1] `sidecar_manager.py`：**端口闸门（合并原 T026，点1）**——spawn 后轮询直至同时满足或超时（默认 10s）：① `127.0.0.1:{port}` 可连接；② 经 `psutil.net_connections` 确认该端口 LISTEN 属主 pid == 本次 spawn 的 proxy pid；③ proxy 进程仍存活。任一不满足且超时 → **不启动 collector**，错误含 `endpoint/port/proxy 日志路径`；无关进程占用 sticky port（②不满足）→ 同样判失败、**不漂移端口**（守 SC-P03 / spec Edge Cases）。
-- [ ] T016 [US1] `collector/main.py`：argparse 增 `--port-mapping`（默认 None；回退 `COLLECTOR_PORT_MAPPING`）（FR-P06）。
-- [ ] T017 [US1] `collector/device/manager.py`：`EndpointPortMapper` 增 `mapping_file` 参数（默认现 `PORT_MAPPING_FILE`）+ 权威只读模式；未给 `--port-mapping` 时行为不变（FR-P07）。
-- [ ] T018 [US1] `sidecar_manager.py`：`prepare_for_collector_start()`——检测→粘性映射→差量起缺失 proxy→端口闸门（T015），返回 ok/error（FR-P14）。
-- [ ] T019 [US1] `agent/app/routers/admin.py`：`start_process("collector")` 先 `prepare_for_collector_start()`，通过后 `pm.start("collector", extra_args=[...])`——按约定**自动拼** `--config`/`--port-mapping`（O1，经 T006 的 extra_args 通道，不动 `apply_process_patch`）；无 `opcda_center` 直接起（US1-3）；writer 路径不变。
-- [ ] T020 [US1] `agent/app/factory.py`：lifespan 构建 `SidecarManager`（注入 `runtime_dir` 与 collector 配置约定路径）。
+- [x] T010 [US1] `agent/app/services/opcda_detect.py`：用 Agent `config.toml` 的 `[mysql]`（**`pymysql` + `dpapi_decrypt`，与 `health_checker.py` 一致，非 sqlalchemy/aiomysql**）查 `device JOIN comm_protocol WHERE enable=1`，协议归一化复用 `CENTER_PROTOCOLS` 语义（FR-P01/P02）。
+- [x] T011 [US1] `opcda_detect.py`：粘性分配 + **历史持久化策略（点4）**——读旧 `port_mapping.json`（视为历史超集）；已存在 endpoint 沿用旧端口；新端点取 `max(文件内所有端口)+1`；**已删除 endpoint 的条目继续保留在文件中**（不删除→历史不丢、端口不复用）；写 `<runtime_dir>/opcda_proxy/port_mapping.json`（FR-P03/P04/P05）。
+- [x] T012 [US1] `opcda_detect.py`：FR-P13 一致性校验（Agent MySQL vs collector `settings.toml` 的 host/port/database），不一致返回配置不一致错误、拒绝启动 collector。
+- [x] T013 [US1] **proxy exe 路径解析（点3）**：`sidecar_manager.py`（或 `opcda_detect`/小工具）按部署约定解析 `OpcDaProxyService.exe`（依次找：安装目录 `sidecars/opcda_proxy_service/bin/`、`collector/sidecars/opcda_proxy_service/bin/`），**缺失返回明确错误**（含期望路径），不硬编码散落。
+- [x] T014 [US1] `agent/app/services/sidecar_manager.py`：生成 `proxy_{port}.json`（含 vmHost/serverProgId/channel）+ `runner.spawn(<解析到的 exe> --config ...)`；proxy 实例键 `proxy_{port}`，**不**进 `factory.modules`/`admin._require_known`（FR-P09）；日志落 `logs/proxy_{port}/current.log`（FR-P12）。
+- [x] T015 [US1] `sidecar_manager.py`：**端口闸门（合并原 T026，点1）**——spawn 后轮询直至同时满足或超时（默认 10s）：① `127.0.0.1:{port}` 可连接；② 经 `psutil.net_connections` 确认该端口 LISTEN 属主 pid == 本次 spawn 的 proxy pid；③ proxy 进程仍存活。任一不满足且超时 → **不启动 collector**，错误含 `endpoint/port/proxy 日志路径`；无关进程占用 sticky port（②不满足）→ 同样判失败、**不漂移端口**（守 SC-P03 / spec Edge Cases）。
+- [x] T016 [US1] `collector/main.py`：argparse 增 `--port-mapping`（默认 None；回退 `COLLECTOR_PORT_MAPPING`）（FR-P06）。
+- [x] T017 [US1] `collector/device/manager.py`：`EndpointPortMapper` 增 `mapping_file` 参数（默认现 `PORT_MAPPING_FILE`）+ 权威只读模式；未给 `--port-mapping` 时行为不变（FR-P07）。
+- [x] T018 [US1] `sidecar_manager.py`：`prepare_for_collector_start()`——检测→粘性映射→差量起缺失 proxy→端口闸门（T015），返回 ok/error（FR-P14）。
+- [x] T019 [US1] `agent/app/routers/admin.py`：`start_process("collector")` 先 `prepare_for_collector_start()`，通过后 `pm.start("collector", extra_args=[...])`——按约定**自动拼** `--config`/`--port-mapping`（O1，经 T006 的 extra_args 通道，不动 `apply_process_patch`）；无 `opcda_center` 直接起（US1-3）；writer 路径不变。
+- [x] T020 [US1] `agent/app/factory.py`：lifespan 构建 `SidecarManager`（注入 `runtime_dir` 与 collector 配置约定路径）。
 
 **Checkpoint**: US1 端到端（假 proxy）可验，构成 MVP（SC-P01）。
 
@@ -82,9 +82,9 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 **Independent Test**: 保留一个运行中假 proxy，重建 SidecarManager，验证不再起同端口第二实例。
 
-- [ ] T021 [P] [US2] `agent/tests/test_sidecar_manager.py`：认领（pid+create_time 校验、死亡清理、不重复拉起）。
-- [ ] T022 [US2] `sidecar_manager.py`：启动认领——扫 `pids/proxy_*.pid` → 校验 → 存活加回注册表/死亡清理（FR-P15，不依赖硬编码名单）。
-- [ ] T023 [US2] `factory.py`：Agent 启动时调用认领（构建 SidecarManager 后）。
+- [x] T021 [P] [US2] `agent/tests/test_sidecar_manager.py`：认领（pid+create_time 校验、死亡清理、不重复拉起）。
+- [x] T022 [US2] `sidecar_manager.py`：启动认领——扫 `pids/proxy_*.pid` → 校验 → 存活加回注册表/死亡清理（FR-P15，不依赖硬编码名单）。
+- [x] T023 [US2] `factory.py`：Agent 启动时调用认领（构建 SidecarManager 后）。
 
 **Checkpoint**: 服务重启端口冲突 0 次（SC-P02）。
 
@@ -98,9 +98,9 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 > 注：粘性端口（T011）与"占用不漂移"（T015）已在 US1 落地；本阶段聚焦差量重启。
 
-- [ ] T024 [P] [US3] `agent/tests/test_sidecar_manager.py`：差量重启 + 粘性漂移（增删端点端口不漂移、未变 proxy 不重启）。
-- [ ] T025 [US3] `sidecar_manager.py`：差量调整——端点集合 diff，仅对新增/删除端点动 proxy（FR-P16）。
-- [ ] T026 [US3] `admin.py`：`restart_process("collector")` 走差量——端点不变只 bounce collector。
+- [x] T024 [P] [US3] `agent/tests/test_sidecar_manager.py`：差量重启 + 粘性漂移（增删端点端口不漂移、未变 proxy 不重启）。
+- [x] T025 [US3] `sidecar_manager.py`：差量调整——端点集合 diff，仅对新增/删除端点动 proxy（FR-P16）。
+- [x] T026 [US3] `admin.py`：`restart_process("collector")` 走差量——端点不变只 bounce collector。
 
 **Checkpoint**: 端口漂移 0 次（SC-P03）。
 
@@ -112,9 +112,9 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 **Independent Test**: 假 proxy 不监听 → 端口闸门超时阻断 collector；OPC 不可达 → collector 启动后失败可定位。
 
-- [ ] T027 [P] [US4] `agent/tests/test_sidecar_manager.py` + 相关：端口闸门超时 → collector 不启动、错误含 endpoint/port/proxy 日志路径；连接可观测字段。
-- [ ] T028 [US4] **collector 侧**失败日志补 collector 已知的定位字段 `endpoint/port/serverProgId/channel`（落 `collector/core/opcda_ipc_client.py` 或 `collector/drivers/opcda_center_driver.py`）（点5）。
-- [ ] T029 [US4] **Agent 侧**：`agent/app/schemas/models.py`（及 status model）补运行期错误摘要 + 日志路径（proxy 日志 / collector 日志），由 Agent `GET status` 组合暴露（点5；可观测、非阻断——`POST start` 拉起进程后即返回）。
+- [x] T027 [P] [US4] `agent/tests/test_sidecar_manager.py` + 相关：端口闸门超时 → collector 不启动、错误含 endpoint/port/proxy 日志路径；连接可观测字段。
+- [x] T028 [US4] **collector 侧**失败日志补 collector 已知的定位字段 `endpoint/port/serverProgId/channel`（落 `collector/core/opcda_ipc_client.py` 或 `collector/drivers/opcda_center_driver.py`）（点5）。
+- [x] T029 [US4] **Agent 侧**：`agent/app/schemas/models.py`（及 status model）补运行期错误摘要 + 日志路径（proxy 日志 / collector 日志），由 Agent `GET status` 组合暴露（点5；可观测、非阻断——`POST start` 拉起进程后即返回）。
 
 **Checkpoint**: 两道闸门语义达成（SC-P04/P05）。
 
@@ -126,16 +126,16 @@ description: "Task list — 002 Agent OPC DA Proxy 编排（SidecarManager）"
 
 **Independent Test**: 分别触发停模块/重启，验证 proxy 一停一留。
 
-- [ ] T030 [P] [US5] `agent/tests/test_sidecar_manager.py`：停止策略（停模块停 proxy / 重启不停 proxy）。
-- [ ] T031 [US5] `sidecar_manager.py` `on_collector_stop(mode)` + `admin.py` `stop_process("collector")` 接入（FR-P17）。
+- [x] T030 [P] [US5] `agent/tests/test_sidecar_manager.py`：停止策略（停模块停 proxy / 重启不停 proxy）。
+- [x] T031 [US5] `sidecar_manager.py` `on_collector_stop(mode)` + `admin.py` `stop_process("collector")` 接入（FR-P17）。
 
 ---
 
 ## Phase 8: Polish & 验收
 
-- [ ] T032 [P] 按实现回填 `docs/运维/打包.md` 交叉引用（如有偏差）。
-- [ ] T033 `specs/002-agent-opcda-proxy/quickstart.md`：服务账户上下文 DCOM 验收清单（SC-P06，手工，目标机以服务账户实测读到点位）。
-- [ ] T034 全量回归 `pytest`（agent + collector），确认无破坏。
+- [x] T032 [P] 按实现回填 `docs/运维/打包.md` 交叉引用（如有偏差）。
+- [x] T033 `specs/002-agent-opcda-proxy/quickstart.md`：服务账户上下文 DCOM 验收清单（SC-P06，手工，目标机以服务账户实测读到点位）。
+- [x] T034 全量回归 `pytest`（agent + collector），确认无破坏。
 
 ---
 
