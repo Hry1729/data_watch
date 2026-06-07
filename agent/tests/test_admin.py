@@ -14,7 +14,7 @@ import types
 import pytest
 from fastapi import HTTPException
 
-from app.routers.admin import restart_process, start_process
+from app.routers.admin import restart_process, start_process, stop_process
 from app.services.sidecar_manager import ProxyStartError
 
 
@@ -24,6 +24,7 @@ class FakePM:
         self._running = running
         self.start_calls = []
         self.restart_calls = []
+        self.stop_calls = []
 
     def status(self, name):
         return types.SimpleNamespace(status="running" if self._running else "stopped")
@@ -34,6 +35,9 @@ class FakePM:
     async def restart(self, name, extra_args=None):
         self.restart_calls.append((name, extra_args))
 
+    async def stop(self, name):
+        self.stop_calls.append(name)
+
     def log_file(self, name):
         return f"/logs/{name}.log"
 
@@ -41,9 +45,13 @@ class FakePM:
 class FakeLogManager:
     def __init__(self):
         self.attached = []
+        self.detached = []
 
     def attach(self, name, path, loop):
         self.attached.append(name)
+
+    def detach(self, name):
+        self.detached.append(name)
 
 
 class FakeSM:
@@ -53,6 +61,7 @@ class FakeSM:
         self._port_mapping_path = port_mapping_path
         self._raise = raise_exc
         self.prepare_calls = 0
+        self.on_stop_calls = 0
 
     def prepare_for_collector_start(self):
         self.prepare_calls += 1
@@ -61,6 +70,9 @@ class FakeSM:
         return types.SimpleNamespace(
             port_mapping_path=self._port_mapping_path, proxies=[]
         )
+
+    def on_collector_stop(self):
+        self.on_stop_calls += 1
 
 
 def _req(pm, *, sidecar_manager=None, log_manager=None):
@@ -188,3 +200,27 @@ async def test_collector_already_running_409_even_without_sidecar_manager():
         await start_process("collector", _req(pm), _user="u")  # 不放 sidecar_manager
     assert ei.value.status_code == 409
     assert pm.start_calls == []
+
+
+# ── US5 停止策略（T030-T031, FR-P17）──────────────────────────────────────
+
+async def test_collector_stop_stops_collector_then_proxies():
+    pm = FakePM()
+    sm = FakeSM()
+    await stop_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert pm.stop_calls == ["collector"]
+    assert sm.on_stop_calls == 1  # 停模块 → 停 proxy
+
+
+async def test_writer_stop_does_not_touch_sidecar_manager():
+    pm = FakePM()
+    await stop_process("writer", _req(pm), _user="u")  # 不放 sidecar_manager
+    assert pm.stop_calls == ["writer"]  # 不访问 sidecar → 无 AttributeError
+
+
+async def test_collector_restart_does_not_stop_proxies():
+    # 重启不停 proxy：restart 路由不调 on_collector_stop
+    pm = FakePM()
+    sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")
+    await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert sm.on_stop_calls == 0

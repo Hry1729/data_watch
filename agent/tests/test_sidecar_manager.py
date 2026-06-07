@@ -647,6 +647,29 @@ def test_prepare_all_endpoints_removed_stops_all_returns_none_keeps_mapping(runt
         sm.runner.close_log(f"proxy_{p1}")
 
 
+def test_on_collector_stop_stops_all_proxies_and_clears(runtime_dir):
+    # US5：停 collector 模块 → 停其全部 proxy + 清空注册表（FR-P17）
+    p1, p2 = _free_port(), _free_port()
+    ep1, ep2 = "host-1", "host-2"
+    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2})
+    sm = _wire_prepare(runtime_dir, [ep1, ep2])
+    sm.prepare_for_collector_start()
+    pid1, pid2 = sm._proxies[ep1].pid, sm._proxies[ep2].pid
+    try:
+        sm.on_collector_stop()
+        assert sm._proxies == {}
+        for pid in (pid1, pid2):
+            end = time.time() + 5
+            while end > time.time() and psutil.pid_exists(pid):
+                time.sleep(0.05)
+            assert not psutil.pid_exists(pid)
+    finally:
+        _kill_tree(pid1)
+        _kill_tree(pid2)
+        sm.runner.close_log(f"proxy_{p1}")
+        sm.runner.close_log(f"proxy_{p2}")
+
+
 def test_prepare_consistency_error_does_not_stop_existing_proxies(runtime_dir):
     # 边界：一致性校验失败先于 _stop_removed → 不停任何 proxy
     p1, p2 = _free_port(), _free_port()

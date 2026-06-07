@@ -318,6 +318,14 @@ class SidecarManager:
                 inst = self._proxies.pop(ep)
                 self._stop_instance(inst)
 
+    def on_collector_stop(self) -> None:
+        """用户停止 collector 模块时，停掉其关联的全部 proxy 并清空注册表（FR-P17）。
+
+        仅「停模块」调用；「重启」不调用（proxy 由 prepare 差量保留）。
+        """
+        for ep in list(self._proxies.keys()):
+            self._stop_instance(self._proxies.pop(ep))
+
     def _stop_instance(self, inst: ProxyInstance) -> None:
         """停掉一个 proxy 实例：整树强停 + 收日志 + 清 PID 记录（回滚/US5 复用）。"""
         try:

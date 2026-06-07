@@ -99,6 +99,9 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
     _require_known(pm, name)
     await pm.stop(name)
     await asyncio.to_thread(request.app.state.log_manager.detach, name)
+    # 停模块 → 停其关联 proxy（FR-P17）；writer 不碰 sidecar。重启不走这里、proxy 保留。
+    if name == "collector":
+        request.app.state.sidecar_manager.on_collector_stop()
     return {}
 
 
