@@ -73,6 +73,12 @@ class ViewerHealthResponse(BaseModel):
     tdengine: ServiceHealthItem
 
 
+class ProxyLogItem(BaseModel):
+    endpoint: str
+    port: int
+    log_path: str
+
+
 class ModuleStatusResponse(BaseModel):
     name: Literal["collector", "writer"]
     status: Literal["running", "stopped", "crashed", "unknown"]
@@ -82,6 +88,9 @@ class ModuleStatusResponse(BaseModel):
     cpu_percent: float
     started_at: str | None
     restart_count: int
+    # 可观测、非阻断：只暴露日志路径供现场排查，不读日志内容/不做错误摘要解析。
+    log_path: str | None = None
+    proxy_logs: list[ProxyLogItem] = Field(default_factory=list)
 
 
 class ProcessStatusResponse(BaseModel):

@@ -19,6 +19,7 @@ from app.core.security import verify_token
 from app.schemas.models import (
     ModuleStatusResponse,
     ProcessStatusResponse,
+    ProxyLogItem,
     ServiceHealthItem,
     ViewerHealthResponse,
     ViewerStatusResponse,
@@ -108,6 +109,15 @@ async def process_metrics(
     if name not in pm.modules:
         raise HTTPException(status_code=422, detail=f"unknown module: {name}")
     info = pm.status(name)
+    # 可观测：暴露日志路径供现场排查。proxy_logs 仅 collector 有（writer 为 []）。
+    proxy_logs: list[ProxyLogItem] = []
+    if name == "collector":
+        sm = getattr(request.app.state, "sidecar_manager", None)
+        if sm is not None:
+            proxy_logs = [
+                ProxyLogItem(endpoint=ep, port=port, log_path=log_path)
+                for ep, port, log_path in sm.proxy_log_snapshot()
+            ]
     return ModuleStatusResponse(
         name=info.name,
         status=info.status,
@@ -117,6 +127,8 @@ async def process_metrics(
         cpu_percent=info.cpu_percent,
         started_at=info.started_at,
         restart_count=info.restart_count,
+        log_path=str(pm.log_file(name)),
+        proxy_logs=proxy_logs,
     )
 
 

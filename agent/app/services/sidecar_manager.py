@@ -120,6 +120,16 @@ class SidecarManager:
         """collector settings.toml 路径——与一致性校验同源，供 admin 拼 --config。"""
         return self._collector_settings_path
 
+    def proxy_log_snapshot(self) -> list[tuple[str, int, str]]:
+        """(endpoint, port, log_path) 快照——供 status 暴露日志路径。
+
+        返回快照而非内部结构，避免调用方（viewer）依赖 ProxyInstance 字段名/实例。
+        """
+        return [
+            (ep, inst.port, str(inst.log_path))
+            for ep, inst in list(self._proxies.items())
+        ]
+
     # ── proxy 配置生成（T014）────────────────────────────────────
     def _opcda_dir(self) -> Path:
         if self.runtime_dir is None:

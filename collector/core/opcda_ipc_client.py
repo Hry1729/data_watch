@@ -181,12 +181,21 @@ class OpcDaIpcClient:
                 return True
             else:
                 logger.error(
-                    "连接 OPC DA 服务器失败: %s",
+                    "连接 OPC DA 服务器失败: serverProgId=%s endpoint=%s proxy_port=%s error=%s",
+                    opc_server,
+                    vm_host,
+                    self.port,
                     response.error,
                 )
                 return False
         except Exception as e:
-            logger.error("连接 OPC DA 服务器异常: %s", e)
+            logger.error(
+                "连接 OPC DA 服务器异常: serverProgId=%s endpoint=%s proxy_port=%s err=%s",
+                opc_server,
+                vm_host,
+                self.port,
+                e,
+            )
             return False
 
     async def read_items(

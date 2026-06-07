@@ -158,6 +158,21 @@ async def test_writer_restart_does_not_touch_sidecar_manager():
     assert pm.restart_calls == [("writer", None)]
 
 
+async def test_collector_restart_prepare_error_returns_400_and_no_restart():
+    # 锁住：restart 路由也不吞 prepare 错误，闸门失败时 collector 不重启
+    pm = FakePM()
+    sm = FakeSM(raise_exc=ProxyStartError(
+        "proxy 端口闸门未通过: endpoint=opcda_center://h port=9090 日志=/logs/proxy_9090/current.log"
+    ))
+    with pytest.raises(HTTPException) as ei:
+        await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert ei.value.status_code == 400
+    assert "9090" in ei.value.detail
+    assert "opcda_center://h" in ei.value.detail
+    assert "proxy_9090" in ei.value.detail
+    assert pm.restart_calls == []
+
+
 async def test_collector_restart_no_opcda_only_config():
     pm = FakePM()
     sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")

@@ -96,7 +96,8 @@ class OpcDaCenterDriver(BaseDriver):
         )
         if not success:
             raise ConnectionError(
-                f"无法连接到 OPC DA 服务器: {self._opc_server}@{self._vm_host}"
+                f"无法连接到 OPC DA 服务器: serverProgId={self._opc_server} "
+                f"endpoint={self._vm_host} proxy_port={proxy_port}"
             )
 
         self._connected = True
