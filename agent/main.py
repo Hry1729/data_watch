@@ -30,8 +30,11 @@ def _register_signal_handlers() -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     _register_signal_handlers()
+    # 传 app 对象而非 "main:app" 字符串：PyInstaller frozen 下无独立 main 模块可重新导入，
+    # 字符串形式会触发 ModuleNotFoundError。对象形式不依赖按名导入（也不支持 reload/workers，
+    # Agent 单进程服务不需要）。
     uvicorn.run(
-        "main:app",
+        app,
         host="127.0.0.1",
         port=7070,
         log_level="info",
