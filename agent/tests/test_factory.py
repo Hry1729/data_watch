@@ -6,7 +6,6 @@
 """
 
 import sys
-from pathlib import Path
 
 from app.factory import build_sidecar_manager
 from app.services.sidecar_manager import SidecarManager
@@ -29,14 +28,17 @@ def test_returns_sidecar_manager_with_runner_and_runtime_dir(tmp_path):
     assert sm.runner is not None
 
 
-def test_collector_settings_path_is_working_dir_config_settings(tmp_path):
+def test_collector_settings_path_derived_from_data_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
     sm = build_sidecar_manager(_cfg(), tmp_path)
-    assert sm.collector_settings_path == Path(r"C:\app\collector") / "config" / "settings.toml"
+    assert sm.collector_settings_path == tmp_path / "collector" / "config" / "settings.toml"
 
 
-def test_settings_path_none_when_working_dir_missing(tmp_path):
-    sm = build_sidecar_manager({"collector": {}, "mysql": {}}, tmp_path)
-    assert sm.collector_settings_path is None
+def test_collector_settings_path_independent_of_cfg(tmp_path, monkeypatch):
+    # 派生自数据根，不再依赖 cfg.working_dir；无 collector 段也成立
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
+    sm = build_sidecar_manager({"mysql": {}}, tmp_path)
+    assert sm.collector_settings_path == tmp_path / "collector" / "config" / "settings.toml"
 
 
 def test_agent_mysql_injected_from_cfg(tmp_path):
@@ -67,5 +69,15 @@ def test_install_root_dev_is_repo_root(tmp_path):
 def test_install_root_frozen_uses_executable_parent(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(tmp_path / "bin" / "agent.exe"))
+    monkeypatch.delenv("DATAWATCH_INSTALL_ROOT", raising=False)
     sm = build_sidecar_manager(_cfg(), tmp_path)
     assert sm.install_root == (tmp_path / "bin").resolve()
+
+
+def test_install_root_env_var_takes_precedence(tmp_path, monkeypatch):
+    # 环境变量优先于 frozen 推导（安装器/NSSM 注入场景）
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "agent" / "agent.exe"))
+    monkeypatch.setenv("DATAWATCH_INSTALL_ROOT", str(tmp_path))
+    sm = build_sidecar_manager(_cfg(), tmp_path)
+    assert sm.install_root == tmp_path.resolve()

@@ -14,6 +14,7 @@ import json
 import os
 import socket
 import sys
+import tempfile
 import time
 import types
 
@@ -29,7 +30,10 @@ _HERE = os.path.dirname(__file__)
 FAKE_PROXY = os.path.join(_HERE, "fixtures", "fake_proxy.py")
 DUMMY_CHILD = os.path.join(_HERE, "fixtures", "dummy_child.py")
 
-_SETTINGS = r"C:\app\collector\config\settings.toml"  # dummy_child 忽略其内容，仅验透传
+# 守卫改为「settings.toml 不存在→400」后需真实存在；dummy_child 忽略内容，仅验透传
+_SETTINGS = os.path.join(tempfile.mkdtemp(prefix="dw_e2e_"), "settings.toml")
+with open(_SETTINGS, "w", encoding="utf-8") as _f:
+    _f.write("")
 
 
 def _free_port() -> int:

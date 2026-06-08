@@ -1,13 +1,12 @@
 import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import load_config
+from app.core.config import install_root, load_config, module_paths
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.services.log_manager import LogManager
 from app.services.managed_process_runner import ManagedProcessRunner
@@ -27,24 +26,16 @@ _SHUTDOWN_TIMEOUT_SECONDS = 25.0
 def build_sidecar_manager(cfg: dict, runtime_dir: Path) -> SidecarManager:
     """纯函数构建 SidecarManager（不依赖 app.state，便于单测）。
 
-    约定：collector settings.toml = working_dir/config/settings.toml（与 collector 运行期
-    默认、一致性校验同源）；working_dir 为空 → None（admin 端 400 兜底）。
-    [opcda] 缺省走内置默认 progId/channel。install_root frozen-aware（frozen 取 exe 父目录，
-    否则取仓库根；frozen 真实定位放 T033 手工验收）。
+    约定：collector settings.toml = <collector 工作目录>/config/settings.toml，工作目录由
+    config.module_paths 按数据根派生（与 collector 运行期默认、一致性校验同源），不再取自
+    cfg。[opcda] 缺省走内置默认 progId/channel。install_root 见 config.install_root()。
     """
-    working_dir = cfg.get("collector", {}).get("working_dir", "")
-    settings_path = (
-        Path(working_dir) / "config" / "settings.toml" if working_dir else None
-    )
+    _collector_exe, collector_working_dir = module_paths("collector")
+    settings_path = collector_working_dir / "config" / "settings.toml"
     opcda = cfg.get("opcda", {})
-    install_root = (
-        Path(sys.executable).resolve().parent
-        if getattr(sys, "frozen", False)
-        else Path(__file__).resolve().parents[2]
-    )
     return SidecarManager(
         runtime_dir=runtime_dir,
-        install_root=install_root,
+        install_root=install_root(),
         runner=ManagedProcessRunner(runtime_dir),
         agent_mysql=cfg.get("mysql", {}),
         collector_settings_path=settings_path,
@@ -74,15 +65,15 @@ async def lifespan(app: FastAPI):
     # Stage 3 将在此处初始化 LogManager（日志 tail）
     cfg = load_config()
     runtime_dir = Path(cfg["agent"].get("runtime_dir", r"C:\ProgramData\DataWatch\runtime"))
-    modules = {
-        name: ModuleSpec(
+    modules = {}
+    for name in ("collector", "writer"):
+        exe, working_dir = module_paths(name)
+        modules[name] = ModuleSpec(
             name=name,
-            executable=cfg.get(name, {}).get("executable", ""),
+            executable=str(exe),
             args=list(cfg.get(name, {}).get("args", [])),
-            working_dir=cfg.get(name, {}).get("working_dir", ""),
+            working_dir=str(working_dir),
         )
-        for name in ("collector", "writer")
-    }
     pm = ProcessManager(runtime_dir=runtime_dir, modules=modules)
     app.state.pm = pm
     app.state.log_manager = LogManager()

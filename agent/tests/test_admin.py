@@ -83,24 +83,33 @@ def _req(pm, *, sidecar_manager=None, log_manager=None):
     return types.SimpleNamespace(app=app)
 
 
-async def test_collector_no_opcda_passes_only_config():
+def _existing_settings(tmp_path):
+    """守卫改为「settings.toml 不存在→400」后，成功路径需真实存在的配置文件。"""
+    p = tmp_path / "settings.toml"
+    p.write_text("", encoding="utf-8")
+    return str(p)
+
+
+async def test_collector_no_opcda_passes_only_config(tmp_path):
     pm = FakePM()
-    sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert sm.prepare_calls == 1
-    assert pm.start_calls == [("collector", ["--config", "/cfg/settings.toml"])]
+    assert pm.start_calls == [("collector", ["--config", settings])]
 
 
-async def test_collector_with_opcda_passes_config_and_port_mapping():
+async def test_collector_with_opcda_passes_config_and_port_mapping(tmp_path):
     pm = FakePM()
+    settings = _existing_settings(tmp_path)
     sm = FakeSM(
         port_mapping_path="/rt/opcda_proxy/port_mapping.json",
-        settings_path="/cfg/settings.toml",
+        settings_path=settings,
     )
     await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert pm.start_calls == [(
         "collector",
-        ["--config", "/cfg/settings.toml",
+        ["--config", settings,
          "--port-mapping", "/rt/opcda_proxy/port_mapping.json"],
     )]
 
@@ -112,11 +121,14 @@ async def test_writer_does_not_touch_sidecar_manager():
     assert pm.start_calls == [("writer", None)]
 
 
-async def test_collector_prepare_error_returns_400_and_no_start():
+async def test_collector_prepare_error_returns_400_and_no_start(tmp_path):
     pm = FakePM()
-    sm = FakeSM(raise_exc=ProxyStartError(
-        "proxy 端口闸门未通过: endpoint=opcda_center://h port=9090 日志=/logs/proxy_9090/current.log"
-    ))
+    sm = FakeSM(
+        settings_path=_existing_settings(tmp_path),
+        raise_exc=ProxyStartError(
+            "proxy 端口闸门未通过: endpoint=opcda_center://h port=9090 日志=/logs/proxy_9090/current.log"
+        ),
+    )
     with pytest.raises(HTTPException) as ei:
         await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert ei.value.status_code == 400
@@ -127,14 +139,15 @@ async def test_collector_prepare_error_returns_400_and_no_start():
     assert pm.start_calls == []
 
 
-async def test_collector_missing_settings_path_returns_400_without_prepare():
+async def test_collector_missing_settings_file_returns_400_without_prepare(tmp_path):
     pm = FakePM()
-    sm = FakeSM(settings_path=None)
+    # 文件不存在(bootstrap 未跑) → 400，且不 prepare、不动 proxy
+    sm = FakeSM(settings_path=str(tmp_path / "nope.toml"))
     with pytest.raises(HTTPException) as ei:
         await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert ei.value.status_code == 400
-    assert "collector settings path is not configured" in ei.value.detail
-    assert sm.prepare_calls == 0  # 未配置就别 prepare、别动 proxy
+    assert "collector settings.toml not found" in ei.value.detail
+    assert sm.prepare_calls == 0
     assert pm.start_calls == []
 
 
@@ -148,17 +161,18 @@ async def test_collector_already_running_409_before_prepare():
     assert pm.start_calls == []
 
 
-async def test_collector_restart_prepares_and_passes_args():
+async def test_collector_restart_prepares_and_passes_args(tmp_path):
     pm = FakePM()
+    settings = _existing_settings(tmp_path)
     sm = FakeSM(
         port_mapping_path="/rt/opcda_proxy/port_mapping.json",
-        settings_path="/cfg/settings.toml",
+        settings_path=settings,
     )
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert sm.prepare_calls == 1
     assert pm.restart_calls == [(
         "collector",
-        ["--config", "/cfg/settings.toml",
+        ["--config", settings,
          "--port-mapping", "/rt/opcda_proxy/port_mapping.json"],
     )]
     assert pm.start_calls == []  # restart 走 pm.restart，不是 pm.start
@@ -170,12 +184,15 @@ async def test_writer_restart_does_not_touch_sidecar_manager():
     assert pm.restart_calls == [("writer", None)]
 
 
-async def test_collector_restart_prepare_error_returns_400_and_no_restart():
+async def test_collector_restart_prepare_error_returns_400_and_no_restart(tmp_path):
     # 锁住：restart 路由也不吞 prepare 错误，闸门失败时 collector 不重启
     pm = FakePM()
-    sm = FakeSM(raise_exc=ProxyStartError(
-        "proxy 端口闸门未通过: endpoint=opcda_center://h port=9090 日志=/logs/proxy_9090/current.log"
-    ))
+    sm = FakeSM(
+        settings_path=_existing_settings(tmp_path),
+        raise_exc=ProxyStartError(
+            "proxy 端口闸门未通过: endpoint=opcda_center://h port=9090 日志=/logs/proxy_9090/current.log"
+        ),
+    )
     with pytest.raises(HTTPException) as ei:
         await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert ei.value.status_code == 400
@@ -185,11 +202,12 @@ async def test_collector_restart_prepare_error_returns_400_and_no_restart():
     assert pm.restart_calls == []
 
 
-async def test_collector_restart_no_opcda_only_config():
+async def test_collector_restart_no_opcda_only_config(tmp_path):
     pm = FakePM()
-    sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
-    assert pm.restart_calls == [("collector", ["--config", "/cfg/settings.toml"])]
+    assert pm.restart_calls == [("collector", ["--config", settings])]
 
 
 async def test_collector_already_running_409_even_without_sidecar_manager():
@@ -218,9 +236,9 @@ async def test_writer_stop_does_not_touch_sidecar_manager():
     assert pm.stop_calls == ["writer"]  # 不访问 sidecar → 无 AttributeError
 
 
-async def test_collector_restart_does_not_stop_proxies():
+async def test_collector_restart_does_not_stop_proxies(tmp_path):
     # 重启不停 proxy：restart 路由不调 on_collector_stop
     pm = FakePM()
-    sm = FakeSM(port_mapping_path=None, settings_path="/cfg/settings.toml")
+    sm = FakeSM(port_mapping_path=None, settings_path=_existing_settings(tmp_path))
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert sm.on_stop_calls == 0

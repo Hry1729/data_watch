@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.config import (
     DB_SECTIONS,
-    PROCESS_SECTIONS,
     apply_db_patch,
-    apply_process_patch,
     load_config,
+    module_paths,
     mutate_config,
 )
 from app.core.deps import get_current_user
@@ -40,26 +40,25 @@ def _db_config_out(cfg: dict, section: str) -> dict:
     }
 
 
-def _process_config_out(cfg: dict, section: str) -> dict:
-    source = cfg.get(section, {})
-    return {
-        "executable": source.get("executable", ""),
-        "working_dir": source.get("working_dir", ""),
-    }
+def _process_config_out(section: str) -> dict:
+    """只读展示 factory 派生的实际路径；executable/working_dir 不再可由 PUT 配置。"""
+    executable, working_dir = module_paths(section)
+    return {"executable": str(executable), "working_dir": str(working_dir)}
 
 
 def _collector_extra_args(request: Request) -> list[str]:
     """collector 启动/重启前的准备 + 拼参（start/restart 共用，避免一改一漏）。
 
     sidecar_manager 在 try 外取：未接好属接线 bug，让 AttributeError→500，不伪装 400。
-    settings 未配置 / prepare 任何错误 → 400（detail 不吞 endpoint/port/日志路径）。
-    无 OPC DA（port_mapping_path=None）→ 只拼 --config，不拼 --port-mapping。
+    settings.toml 不存在(bootstrap 未跑) / prepare 任何错误 → 400（detail 不吞 endpoint/
+    port/日志路径）。无 OPC DA（port_mapping_path=None）→ 只拼 --config，不拼 --port-mapping。
     """
     sm = request.app.state.sidecar_manager
     settings_path = sm.collector_settings_path
-    if settings_path is None:
+    if settings_path is None or not Path(settings_path).exists():
         raise HTTPException(
-            status_code=400, detail="collector settings path is not configured"
+            status_code=400,
+            detail="collector settings.toml not found; run bootstrap first",
         )
     try:
         plan = sm.prepare_for_collector_start()
@@ -132,24 +131,21 @@ async def get_config(_user: str = Depends(get_current_user)):
         redis=_db_config_out(cfg, "redis"),
         mysql=_db_config_out(cfg, "mysql"),
         tdengine=_db_config_out(cfg, "tdengine"),
-        collector=_process_config_out(cfg, "collector"),
-        writer=_process_config_out(cfg, "writer"),
+        collector=_process_config_out("collector"),
+        writer=_process_config_out("writer"),
     )
 
 
 @router.put("/config")
 async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_current_user)):
     try:
+        # 进程段(collector/writer)路径由 config.module_paths 按安装根/数据根派生，
+        # 只读不可配置；PUT 仅处理 DB 段。
         def apply_patches(cfg: dict) -> None:
             for section in DB_SECTIONS:
                 section_patch = getattr(payload, section)
                 if section_patch is not None:
                     apply_db_patch(cfg, section, section_patch.model_dump(exclude_unset=True))
-
-            for section in PROCESS_SECTIONS:
-                section_patch = getattr(payload, section)
-                if section_patch is not None:
-                    apply_process_patch(cfg, section, section_patch.model_dump(exclude_unset=True))
 
         mutate_config(apply_patches)
     except ValueError as exc:
