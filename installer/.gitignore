@@ -1,0 +1,8 @@
+# installer/ 下只跟踪安装脚本与脱敏配置模板。
+# NSSM 源码/二进制、WebView2 引导器、Inno 编译产物(Output)、nssm zip 等一律不入库
+# （体积大 / 外部获取，由部署手册或构建脚本提供）。
+*
+!.gitignore
+!DataWatch.iss
+!templates/
+!templates/*.example

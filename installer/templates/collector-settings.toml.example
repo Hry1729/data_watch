@@ -1,0 +1,39 @@
+# collector settings 模板 —— 安装器复制到 C:\ProgramData\DataWatch\collector\config\settings.toml
+# 密码留空，目标机部署后按实际环境填写。
+# 注意：collector 的 [mysql] 须与 Agent config.toml 的 [mysql] 一致（host/port/database），
+# 否则 OPC DA proxy 编排的一致性校验会拒绝启动。
+
+[runtime]
+log_level = "INFO"
+log_file = "logs/collector.log"
+log_max_bytes = 10485760  # 10MB
+log_backup_count = 5
+enable_fake_bootstrap = false
+
+[mysql]
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+database = "device_watch"
+charset = "utf8mb4"
+pool_size = 10
+max_overflow = 20
+pool_timeout = 30
+pool_recycle = 3600
+
+[interface_ingest]
+enabled = true
+host = "127.0.0.1"
+port = 8090
+path = "/ingest"
+api_key = ""
+max_batch_size = 1000
+
+[redis]
+host = "127.0.0.1"
+port = 6379
+db = 0
+password = ""
+stream_shard_count = 4
+stream_maxlen = 500000  # 约 3 分钟停机容量（305 台 × 10 帧/s × 180s ≈ 549000）
