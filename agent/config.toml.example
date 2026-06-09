@@ -30,10 +30,5 @@ user               = "root"
 database           = "device_data"
 password_enc       = ""            # DPAPI 加密后的 base64
 
-[collector]
-executable         = "collector.exe"
-working_dir        = ""            # 必须配置，否则 start 返回 400
-
-[writer]
-executable         = "writer.exe"
-working_dir        = ""            # 必须配置，否则 start 返回 400
+# collector / writer 进程路径由安装根(DATAWATCH_INSTALL_ROOT)与数据根(DATAWATCH_DATA_ROOT)
+# 自动派生，不在 config.toml 中配置。

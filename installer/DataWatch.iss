@@ -95,6 +95,14 @@ begin
   Result := rc;
 end;
 
+procedure NssmRequired(StepName, Params: String);
+var rc: Integer;
+begin
+  rc := Nssm(Params);
+  if rc <> 0 then
+    RaiseException('NSSM ' + StepName + ' failed (rc=' + IntToStr(rc) + ')');
+end;
+
 procedure CopyIfAbsent(Src, Dst: String);
 begin
   if not FileExists(Dst) then
@@ -120,14 +128,14 @@ begin
   // 幂等：先停删已存在的同名服务，再全新注册
   Nssm('stop ' + '{#MyServiceName}');
   Nssm('remove ' + '{#MyServiceName} confirm');
-  Nssm('install {#MyServiceName} "' + exe + '"');
-  Nssm('set {#MyServiceName} AppDirectory "' + app + '\agent"');
+  NssmRequired('install', 'install {#MyServiceName} "' + exe + '"');
+  NssmRequired('set AppDirectory', 'set {#MyServiceName} AppDirectory "' + app + '\agent"');
   // 两个根环境变量须在进程启动前注入(CONFIG_PATH 在 import 期计算)
-  Nssm('set {#MyServiceName} AppEnvironmentExtra "DATAWATCH_INSTALL_ROOT=' + app + '" "DATAWATCH_DATA_ROOT=' + data + '"');
-  Nssm('set {#MyServiceName} Start SERVICE_AUTO_START');
-  Nssm('set {#MyServiceName} AppStdout "' + data + '\runtime\logs\agent-service.out.log"');
-  Nssm('set {#MyServiceName} AppStderr "' + data + '\runtime\logs\agent-service.err.log"');
-  Nssm('start {#MyServiceName}');
+  NssmRequired('set AppEnvironmentExtra', 'set {#MyServiceName} AppEnvironmentExtra "DATAWATCH_INSTALL_ROOT=' + app + '" "DATAWATCH_DATA_ROOT=' + data + '"');
+  NssmRequired('set Start', 'set {#MyServiceName} Start SERVICE_AUTO_START');
+  NssmRequired('set AppStdout', 'set {#MyServiceName} AppStdout "' + data + '\runtime\logs\agent-service.out.log"');
+  NssmRequired('set AppStderr', 'set {#MyServiceName} AppStderr "' + data + '\runtime\logs\agent-service.err.log"');
+  NssmRequired('start', 'start {#MyServiceName}');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
