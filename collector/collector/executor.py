@@ -175,10 +175,10 @@ class TaskExecutor:
                     }
                     for var_id, (point, _, _) in var_data.items()
                 }
-                self._redis_writer.write_latest(device_code, group_code, fields)
-
                 ts_ms = max(field["t"] for field in fields.values())
 
+                # 写顺序：window -> stream -> latest。latest 必须最后写，
+                # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
                 # window List：所有点位
                 frame = {
                     "device_code": device_code,
@@ -203,6 +203,8 @@ class TaskExecutor:
                         device_code, device_type, group_code, scan_rate_ms,
                         ts_ms, config_version, stream_values,
                     )
+
+                self._redis_writer.write_latest(device_code, group_code, fields)
         except Exception as exc:
             # 不在此吞掉异常：交由 execute() 的写入分支统一计错并记录 summary
             logger.error("Redis write failed for device %s: %s", device.device_id, exc)
