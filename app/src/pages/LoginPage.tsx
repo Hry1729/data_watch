@@ -67,7 +67,7 @@ export function LoginPage() {
   return (
     // 全屏居中，无任何主导航（FR-015）
     <div
-      className="min-h-screen flex items-center justify-center px-4 bg-background"
+      className="min-h-full flex items-center justify-center px-4 bg-background"
     >
       <Card
         className="w-full max-w-sm"

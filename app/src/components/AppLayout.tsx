@@ -16,7 +16,7 @@ export function AppLayout() {
   const isSettings = location.pathname === "/settings";
 
   return (
-    <div className="flex flex-col h-screen bg-background">
+    <div className="flex h-full flex-col bg-background">
       {/* 顶部应用导航栏（/settings 时完全隐藏，FR-014） */}
       {!isSettings && (
         <header className="h-[72px] flex-shrink-0 border-b border-border flex items-center px-6 gap-4">

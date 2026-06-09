@@ -15,7 +15,8 @@
         "title": "Data Watch Console",
         "width": 1280,
         "height": 800,
-        "backgroundColor": "#F7F9FC"
+        "backgroundColor": "#F7F9FC",
+        "decorations": false
       }
     ],
     "security": {
