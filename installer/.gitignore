@@ -4,5 +4,6 @@
 *
 !.gitignore
 !DataWatch.iss
+!build.ps1
 !templates/
 !templates/*.example
