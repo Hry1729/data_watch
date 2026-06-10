@@ -253,6 +253,15 @@ class DataValidator:
             quality=DataQuality.GOOD
         )
 
+    def _get_historical_changes(self, variable_id: str, time_window: int) -> List[float]:
+        """获取历史变化率"""
+        if self._historical_data_provider:
+            try:
+                return self._historical_data_provider(variable_id, time_window)
+            except Exception as e:
+                logger.warning("Failed to get historical changes for %s: %s", variable_id, e)
+        return []
+
     def _check_with_neighbor(self, variable_id: str, value: Any, parameter: Dict) -> DataQualityResult:
         """
         与相邻变量比较

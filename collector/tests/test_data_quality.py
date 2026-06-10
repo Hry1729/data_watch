@@ -132,3 +132,20 @@ class TestDataQualityManager:
             "custom_var", 100.0, datetime.now()
         )
         assert result.quality == DataQuality.GOOD
+
+    def test_extreme_rate_of_change_is_bad(self):
+        """极端变化率（>5x 阈值且无历史相似变化）应判定为 BAD，不应再被 AttributeError 静默放行"""
+        self.quality_manager.configure_rules({
+            "pressure_ext": {
+                "max_change_rate": 10.0,
+                "change_time_window": 60
+            }
+        })
+
+        now = datetime.now()
+        self.quality_manager.validate_and_store("pressure_ext", 0.0, now - timedelta(seconds=1))
+        # 变化率 200 units/sec，远超 5*10 = 50 的极端门槛
+        result = self.quality_manager.validate_and_store("pressure_ext", 200.0, now)
+
+        assert result.quality == DataQuality.BAD
+        assert "Extreme change rate" in result.message
