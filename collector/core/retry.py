@@ -75,7 +75,7 @@ def with_retry(
                             base_delay * (backoff_factor ** attempt),
                             max_delay
                         )
-                        logger = args[0] if args and hasattr(args[0], 'logger') else None
+                        logger = args[0].logger if args and hasattr(args[0], 'logger') else None
                         if logger:
                             logger.warning(
                                 f"Retry {attempt + 1}/{max_retries} after {delay}s. "
