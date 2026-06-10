@@ -254,7 +254,11 @@ class OpcDaIpcClient:
             bad_quality: Dict[str, int] = {}
             if response.data and isinstance(response.data, list):
                 for item_data in response.data:
-                    result = OpcDaReadResult.from_dict(item_data)
+                    try:
+                        result = OpcDaReadResult.from_dict(item_data)
+                    except Exception as e:
+                        logger.warning("跳过无法解析的 OPC DA 结果项: %s, data=%s", e, item_data)
+                        continue
                     # 只返回质量好的数据
                     if result.quality >= 192:  # OPC Good quality
                         results[result.item_id] = result.value
