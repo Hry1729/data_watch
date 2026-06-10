@@ -70,6 +70,7 @@ class VariableConfig:
     is_storage: bool = True  # whether to store in TDengine
     var_seq: int = 0  # canonical TDengine point sequence
     group_code: str = "g001"  # 所属点位分组编码，来自 device_point_group.group_code
+    group_config_version: int = 1  # device_point_group.config_version，用于 Redis Stream 版本对齐 writer
 
 
 @dataclass

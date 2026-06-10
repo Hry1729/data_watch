@@ -149,13 +149,13 @@ class TaskExecutor:
             scan_rate_ms = int(scan_task.scan_rate * 1000)
             device_code = device.device_id
             device_type = device.device_type.lower()
-            config_version = device.config_version
 
             # variable_id → Variable 元数据
             var_meta: Dict[str, Any] = {v.variable_id: v for v in scan_task.variables}
 
             # 按 group_code 分组
             by_group: Dict[str, Dict[str, tuple]] = {}
+            group_versions: Dict[str, int] = {}
             for var_id, point in var_points.items():
                 var = var_meta.get(var_id)
                 if var is None:
@@ -163,6 +163,7 @@ class TaskExecutor:
                 gc = var.group_code
                 if gc not in by_group:
                     by_group[gc] = {}
+                group_versions[gc] = getattr(var, "group_config_version", 1)
                 by_group[gc][var_id] = (point, var.data_type, var.is_storage)
 
             for group_code, var_data in by_group.items():
@@ -201,7 +202,7 @@ class TaskExecutor:
                 if stream_values:
                     self._redis_writer.write_stream(
                         device_code, device_type, group_code, scan_rate_ms,
-                        ts_ms, config_version, stream_values,
+                        ts_ms, group_versions[group_code], stream_values,
                     )
 
                 self._redis_writer.write_latest(device_code, group_code, fields)

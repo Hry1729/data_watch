@@ -290,6 +290,7 @@ class DeviceManager:
                 scan_rate=var_cfg.scan_rate,
                 is_storage=var_cfg.is_storage,
                 group_code=var_cfg.group_code,
+                group_config_version=var_cfg.group_config_version,
             )
             device.add_variable(variable)
 
@@ -335,6 +336,7 @@ class DeviceManager:
                 scan_rate=var_cfg.scan_rate,
                 is_storage=var_cfg.is_storage,
                 group_code=var_cfg.group_code,
+                group_config_version=var_cfg.group_config_version,
             )
             for var_cfg in var_cfgs
         ]

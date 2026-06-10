@@ -27,6 +27,7 @@ class Variable:
     scan_rate: float = 1.0  # 采集周期（秒）
     is_storage: bool = True  # 是否存储到TDengine
     group_code: str = "g001"  # 所属点位分组编码
+    group_config_version: int = 1  # 所属点位组配置版本
     last_value: Optional[Any] = None
     last_storage_time: Optional[float] = None  # 上次入库时间戳
 

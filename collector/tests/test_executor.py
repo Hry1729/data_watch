@@ -51,8 +51,14 @@ def _make_multi_group_config() -> CollectorConfig:
             DeviceConfig("EXE_MG", "QC", "s7", "192.168.1.100", port=102, slot=1),
         ],
         variables=[
-            VariableConfig("p1", "EXE_MG", "DB100.DBW0", "INT", 1, True, 1, group_code="g001"),
-            VariableConfig("p2", "EXE_MG", "DB100.DBW2", "INT", 1, True, 2, group_code="g002"),
+            VariableConfig(
+                "p1", "EXE_MG", "DB100.DBW0", "INT", 1, True, 1,
+                group_code="g001", group_config_version=11,
+            ),
+            VariableConfig(
+                "p2", "EXE_MG", "DB100.DBW2", "INT", 1, True, 2,
+                group_code="g002", group_config_version=22,
+            ),
         ],
     )
 
@@ -181,6 +187,30 @@ async def test_executor_redis_multi_group_partial_failure_counted():
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 1
     assert device.status.value == "online"
+    await device_manager.disconnect_all()
+
+
+@pytest.mark.asyncio
+async def test_executor_stream_uses_group_config_version_per_group():
+    """多 group 设备写 stream 时，各组使用自己的 device_point_group.config_version。"""
+    config = _make_multi_group_config()
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    _connect_with_read(device_manager, {"DB100.DBW0": 1, "DB100.DBW2": 2})
+    await device_manager.connect_all()
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
+    device = device_manager.devices["EXE_MG"]
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+
+    stream_versions = {
+        call.args[2]: call.args[5]
+        for call in redis_writer.write_stream.call_args_list
+    }
+    assert stream_versions == {"g001": 11, "g002": 22}
     await device_manager.disconnect_all()
 
 

@@ -323,6 +323,7 @@ class ConfigDBManager:
                         DBDeviceVariable.scan_rate,
                         DBDeviceVariable.is_storage,
                         DBDevicePointGroup.group_code,
+                        DBDevicePointGroup.config_version,
                     )
                     .outerjoin(
                         DBDevicePointGroup,
@@ -358,6 +359,7 @@ class ConfigDBManager:
                         is_storage=bool(row.is_storage),
                         var_seq=var_seq,
                         group_code=str(row.group_code or "g001"),
+                        group_config_version=int(row.config_version or 1),
                     )
                 )
 
