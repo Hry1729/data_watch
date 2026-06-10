@@ -1,4 +1,18 @@
-"""外部接口采集协议测试"""
+"""外部接口采集协议测试
+
+P1-2b：_IngestHTTPServer.write_points_to_redis 的多段 Redis 写入
+（window / stream / latest）非原子问题。修复点：
+
+1. 写顺序：window -> stream -> latest。latest 必须最后写，
+   否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
+2. 每段失败都通过返回值 errors 显式上抛，调用方据此降级 / 重试，
+   不再被静默当整批成功。
+
+本测试文件覆盖：
+- 既有契约（成功路径、点位校验、热重载快照）。
+- 失败语义：stream / window / latest 任一段失败时的写入次数与 errors 列表。
+- 顺序回归：write_latest 必须在 write_window 与 write_stream 之后被调用。
+"""
 
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -216,3 +230,206 @@ def test_ingest_server_update_metadata_refreshes_snapshot():
         assert errors == []
     finally:
         server.server_close()
+
+
+# ---------------------------------------------------------------------------
+# P1-2b: write_points_to_redis 多段写入失败语义（与 HRY-54 / test_executor.py 对称）
+# ---------------------------------------------------------------------------
+
+
+def _make_ingest_server(redis_writer):
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+                config_version=7,
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="30041800",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag30041800",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            )
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+    return server
+
+
+def test_ingest_server_redis_stream_failure_does_not_refresh_latest():
+    """stream 失败 → 错误计为一次，write_latest 未被调用（latest 不被假装推进）。"""
+    redis_writer = MagicMock()
+    redis_writer.write_stream.side_effect = RuntimeError("stream write failed")
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert len(errors) == 1
+    assert "write_stream" in errors[0]
+    redis_writer.write_window.assert_called_once()
+    redis_writer.write_stream.assert_called_once()
+    redis_writer.write_latest.assert_not_called()
+
+
+def test_ingest_server_redis_window_failure_does_not_call_stream_or_latest():
+    """window 失败 → 错误计为一次，stream / latest 都不会被调用。"""
+    redis_writer = MagicMock()
+    redis_writer.write_window.side_effect = RuntimeError("window write failed")
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert len(errors) == 1
+    assert "write_window" in errors[0]
+    redis_writer.write_window.assert_called_once()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+
+
+def test_ingest_server_redis_latest_failure_reported_in_errors():
+    """latest 失败（window/stream 已成功）→ 错误计为一次，window+stream 已落库。"""
+    redis_writer = MagicMock()
+    redis_writer.write_latest.side_effect = RuntimeError("latest write failed")
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert len(errors) == 1
+    assert "write_latest" in errors[0]
+    redis_writer.write_window.assert_called_once()
+    redis_writer.write_stream.assert_called_once()
+    redis_writer.write_latest.assert_called_once()
+
+
+def test_ingest_server_redis_write_order_latest_last():
+    """回归：write_latest 必须在 write_window 与 write_stream 之后被调用。"""
+    redis_writer = MagicMock()
+    parent = MagicMock()
+    parent.attach_mock(redis_writer.write_window, "write_window")
+    parent.attach_mock(redis_writer.write_stream, "write_stream")
+    parent.attach_mock(redis_writer.write_latest, "write_latest")
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert errors == []
+    method_names = [c[0] for c in parent.mock_calls]
+    assert method_names.index("write_latest") > method_names.index("write_window")
+    assert method_names.index("write_latest") > method_names.index("write_stream")
+
+
+def test_ingest_server_redis_multi_scan_rate_frame_failure_isolates_latest():
+    """同 (device, group) 不同 scan_rate 帧：失败帧的变量不应进入 latest。
+
+    场景：一次 ingest 批次包含两个不同 scan_rate 的帧（A 帧 100ms、B 帧 500ms）。
+    B 帧 stream 失败 → B 帧的变量不应被 A 帧的 latest 写入带进去。
+    """
+    redis_writer = MagicMock()
+
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+                config_version=7,
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="fast_var",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.TagFast",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            ),
+            VariableConfig(
+                variable_id="slow_var",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.TagSlow",
+                data_type="REAL",
+                scan_rate=0.5,
+                is_storage=True,
+                var_seq=2,
+                group_code="g001",
+            ),
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+
+    def stream_side_effect(device_code, device_type, group_code, scan_rate_ms, ts, config_version, values):
+        if scan_rate_ms == 500:
+            raise RuntimeError("stream write failed for 500ms frame")
+
+    redis_writer.write_stream.side_effect = stream_side_effect
+
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "fast_var", 1.0, quality=4),
+            DataPoint("AGV801", "slow_var", 2.0, quality=4),
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 2
+    assert len(errors) == 1
+    assert "write_stream" in errors[0]
+    assert "500ms" in errors[0]
+
+    assert redis_writer.write_window.call_count == 2
+    assert redis_writer.write_stream.call_count == 2
+    redis_writer.write_latest.assert_called_once()
+
+    latest_args = redis_writer.write_latest.call_args
+    latest_fields = latest_args.args[2]
+    assert "fast_var" in latest_fields
+    assert "slow_var" not in latest_fields

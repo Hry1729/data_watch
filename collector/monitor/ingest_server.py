@@ -209,7 +209,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             variable_meta = self._variable_meta
             device_meta = self._device_meta
 
-        by_latest: Dict[Tuple[str, str], Dict[str, Dict[str, Any]]] = {}
+        by_latest: Dict[Tuple[str, str, int], Dict[str, Dict[str, Any]]] = {}
         by_frame: Dict[Tuple[str, str, str, int, int], Dict[str, Any]] = {}
         accepted = 0
         errors: List[str] = []
@@ -235,7 +235,10 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             value_text = str(point.value)
             quality = int(getattr(point, "quality", 0))
 
-            by_latest.setdefault((device_code, group_code), {})[str(point.variable_id)] = {
+            # latest 聚合键必须包含 scan_rate_ms：同一 (device, group) 不同 scan_rate 的
+            # 帧各自独立落库，latest 字段也要与 frame 对齐，否则任一帧失败时其它帧的
+            # 变量会先于失败帧进 latest，客户端据此误判已落库。
+            by_latest.setdefault((device_code, group_code, scan_rate_ms), {})[str(point.variable_id)] = {
                 "v": value_text,
                 "t": ts_ms,
                 "q": quality,
@@ -250,9 +253,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
 
             accepted += 1
 
-        for (device_code, group_code), fields in by_latest.items():
-            self.redis_writer.write_latest(device_code, group_code, fields)
-
         for (device_code, device_type, group_code, scan_rate_ms, config_version), frame_data in by_frame.items():
             frame = {
                 "device_code": device_code,
@@ -261,17 +261,41 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 "scan_rate": scan_rate_ms,
                 "values": frame_data["values"],
             }
-            self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
+            frame_label = f"{device_code}/{group_code}/{scan_rate_ms}ms"
+
+            # 写顺序：window -> stream -> latest。latest 必须最后写，
+            # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
+            try:
+                self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
+            except Exception as exc:
+                errors.append(f"redis write_window failed for {frame_label}: {exc}")
+                logger.error("redis write_window failed for %s: %s", frame_label, exc)
+                continue
+
             if frame_data["stream_values"]:
-                self.redis_writer.write_stream(
-                    device_code,
-                    device_type,
-                    group_code,
-                    scan_rate_ms,
-                    frame_data["ts"],
-                    config_version,
-                    frame_data["stream_values"],
-                )
+                try:
+                    self.redis_writer.write_stream(
+                        device_code,
+                        device_type,
+                        group_code,
+                        scan_rate_ms,
+                        frame_data["ts"],
+                        config_version,
+                        frame_data["stream_values"],
+                    )
+                except Exception as exc:
+                    errors.append(f"redis write_stream failed for {frame_label}: {exc}")
+                    logger.error("redis write_stream failed for %s: %s", frame_label, exc)
+                    continue
+
+            latest_fields = by_latest.get((device_code, group_code, scan_rate_ms))
+            if latest_fields is None:
+                continue
+            try:
+                self.redis_writer.write_latest(device_code, group_code, latest_fields)
+            except Exception as exc:
+                errors.append(f"redis write_latest failed for {frame_label}: {exc}")
+                logger.error("redis write_latest failed for %s: %s", frame_label, exc)
 
         return accepted, errors
 
