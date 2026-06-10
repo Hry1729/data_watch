@@ -7,7 +7,7 @@ import socket
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
@@ -75,6 +75,21 @@ class DBDevicePointGroup(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     device_id: Mapped[int] = mapped_column()
     group_code: Mapped[str] = mapped_column()
+    config_version: Mapped[Optional[int]] = mapped_column(nullable=True)
+
+
+class DeviceSignature(NamedTuple):
+    """用于运行期热更新检测的设备签名。"""
+
+    config_version: int
+    endpoint: str
+    protocol_id: int
+    rack: int
+    slot: int
+    scan_cycle: int
+
+    def device_fields_changed(self, other: "DeviceSignature") -> bool:
+        return self[1:] != other[1:]
 
 
 class DBDeviceType(Base):
@@ -549,14 +564,32 @@ class ConfigDBManager:
         if system_log_payload is not None:
             await self.write_system_log(**system_log_payload)
 
-    async def get_device_config_versions(self) -> Dict[str, int]:
-        """返回所有启用设备的 {device_code: variable_config_version}。"""
+    async def get_device_config_versions(self) -> Dict[str, DeviceSignature]:
+        """返回所有启用设备的 {device_code: DeviceSignature}。"""
         async with self.get_session() as session:
             rows = (await session.execute(
-                select(DBDevice.device_code, DBDevice.variable_config_version)
+                select(
+                    DBDevice.device_code,
+                    DBDevice.variable_config_version,
+                    DBDevice.endpoint,
+                    DBDevice.protocol_id,
+                    DBDevice.rack,
+                    DBDevice.slot,
+                    DBDevice.scan_cycle,
+                )
                 .where(DBDevice.enable == 1)
             )).all()
-            return {row.device_code: int(row.variable_config_version or 1) for row in rows}
+            return {
+                row.device_code: DeviceSignature(
+                    config_version=int(row.variable_config_version or 1),
+                    endpoint=str(row.endpoint or ""),
+                    protocol_id=int(row.protocol_id or 0),
+                    rack=int(row.rack or 0),
+                    slot=int(row.slot or 1),
+                    scan_cycle=int(row.scan_cycle or 1000),
+                )
+                for row in rows
+            }
 
     async def load_variables_for_device(
         self, device_pk: int, device_cfg: "DeviceConfig"

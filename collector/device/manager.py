@@ -94,6 +94,18 @@ class EndpointPortMapper:
             self._endpoint_to_port[endpoint] = port
         logger.info("加载权威端口映射 %s: %s", mapping_file, self._endpoint_to_port)
 
+    def reload(self) -> None:
+        """权威模式下重新读取端口映射文件；非权威模式不做动态重载。"""
+        if not self._authoritative or self._mapping_file is None:
+            return
+        previous = self._endpoint_to_port
+        self._endpoint_to_port = {}
+        try:
+            self._load_authoritative(self._mapping_file)
+        except Exception:
+            self._endpoint_to_port = previous
+            raise
+
     def _load_mapping_from_file(self) -> None:
         """从文件加载端口映射"""
         mapping_file = os.path.abspath(PORT_MAPPING_FILE)
@@ -355,7 +367,11 @@ class DeviceManager:
             if self._port_mapper is None:
                 self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
             endpoint = device.connection_config.get("endpoint", "")
-            proxy_port = self._port_mapper.get_port(endpoint)
+            try:
+                proxy_port = self._port_mapper.get_port(endpoint)
+            except PortMappingError:
+                self._port_mapper.reload()
+                proxy_port = self._port_mapper.get_port(endpoint)
             device.connection_config["proxy_port"] = proxy_port
             device.build_scan_tasks()
             return

@@ -31,7 +31,7 @@ from core.logger import get_logger
 from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
-from device.manager import DeviceManager
+from device.manager import DeviceManager, is_center_collection_protocol
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
@@ -275,7 +275,7 @@ class CollectorApp:
         get_device_config_versions() 已过滤 enable==1，因此从当前集合消失即按
         下线处理（删除与禁用同一路径）。每轮只在检测到变更时拉取一次完整快照。
         """
-        tracked: dict[str, int] = {d.device_id: d.config_version for d in self.config.devices}
+        tracked = await self.config_db_manager.get_device_config_versions()
         while not self._shutdown.is_set():
             try:
                 await asyncio.sleep(10)
@@ -320,7 +320,7 @@ class CollectorApp:
                         continue
                     try:
                         await self._add_device(dev_cfg, vars_by_dev.get(device_id, []))
-                        tracked[device_id] = dev_cfg.config_version
+                        tracked[device_id] = current[device_id]
                     except Exception as exc:
                         logger.error("Failed to add device %s: %s", device_id, exc)
 
@@ -330,10 +330,21 @@ class CollectorApp:
                     if dev_cfg is None:
                         continue
                     try:
-                        await self._apply_device_variables(
-                            device_id, dev_cfg, vars_by_dev.get(device_id, [])
-                        )
-                        tracked[device_id] = dev_cfg.config_version
+                        old_sig = tracked[device_id]
+                        new_sig = current[device_id]
+                        if old_sig.device_fields_changed(new_sig):
+                            if is_center_collection_protocol(dev_cfg.protocol):
+                                logger.warning(
+                                    "OPC DA device %s config changed; Agent must have reconciled proxy and port mapping before collector rebuild",
+                                    device_id,
+                                )
+                            await self._remove_device(device_id)
+                            await self._add_device(dev_cfg, vars_by_dev.get(device_id, []))
+                        else:
+                            await self._apply_device_variables(
+                                device_id, dev_cfg, vars_by_dev.get(device_id, [])
+                            )
+                        tracked[device_id] = new_sig
                     except Exception as exc:
                         logger.error("Failed to reload device %s: %s", device_id, exc)
 

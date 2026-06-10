@@ -229,6 +229,21 @@ def test_authoritative_does_not_allocate_or_write(tmp_path):
     assert before == after
 
 
+def test_authoritative_reload_reads_updated_mapping(tmp_path):
+    path = _write_mapping(tmp_path, {"172.27.18.221": 9091})
+    mapper = EndpointPortMapper(mapping_file=path)
+    with pytest.raises(PortMappingError):
+        mapper.get_port("10.0.0.99")
+
+    (tmp_path / "port_mapping.json").write_text(
+        json.dumps({"172.27.18.221": 9091, "10.0.0.99": 9092}),
+        encoding="utf-8",
+    )
+    mapper.reload()
+
+    assert mapper.get_port("10.0.0.99") == 9092
+
+
 def test_authoritative_missing_file_raises(tmp_path):
     # 文件不存在 → 构造期 fail-fast，避免静默退化成动态分配导致漂移。
     missing = str(tmp_path / "nope.json")
@@ -275,6 +290,21 @@ def test_device_manager_authoritative_missing_center_endpoint_raises(tmp_path):
     manager = DeviceManager(_center_config("10.0.0.99"), port_mapping_file=path)
     with pytest.raises(PortMappingError):
         manager.register_devices()
+
+
+def test_device_manager_center_missing_endpoint_reloads_once():
+    config = _center_config("10.0.0.99")
+    manager = DeviceManager(CollectorConfig(devices=[], variables=[]))
+    fake_mapper = MagicMock()
+    fake_mapper.get_port.side_effect = [PortMappingError("missing"), 9092]
+    manager._port_mapper = fake_mapper
+
+    device = manager.add_device(config.devices[0], config.variables)
+
+    assert device is not None
+    assert device.connection_config["proxy_port"] == 9092
+    fake_mapper.reload.assert_called_once()
+    assert fake_mapper.get_port.call_count == 2
 
 
 @pytest.mark.parametrize("bad", ["9091", True, 0, -1, 70000])
