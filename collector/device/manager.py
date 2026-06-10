@@ -410,10 +410,17 @@ class DeviceManager:
         device = self.devices.get(device_id)
         if device is None:
             return None
-        device.variables = []
-        for variable in self._build_variables(var_cfgs):
-            device.add_variable(variable)
-        self._setup_scan_tasks(device)
+        prev_variables = device.variables
+        prev_scan_tasks = device.scan_tasks
+        try:
+            device.variables = []
+            for variable in self._build_variables(var_cfgs):
+                device.add_variable(variable)
+            self._setup_scan_tasks(device)
+        except Exception:
+            device.variables = prev_variables
+            device.scan_tasks = prev_scan_tasks
+            raise
         return device
 
     async def remove_device(self, device_id: str) -> None:
