@@ -26,6 +26,8 @@ from core.opcda_ipc_protocol import (
 
 logger = get_logger("opcda_ipc_client")
 
+_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
 
 class OpcDaIpcClient:
     """与代理进程通信的 IPC 客户端"""
@@ -114,6 +116,9 @@ class OpcDaIpcClient:
                     timeout=self.timeout,
                 )
                 response_length = int.from_bytes(response_length_bytes, byteorder="big")
+                if response_length <= 0 or response_length > _MAX_RESPONSE_BYTES:
+                    self._connected = False
+                    raise ValueError(f"响应帧长非法: {response_length}")
 
                 # 读取响应数据
                 response_bytes = await asyncio.wait_for(
@@ -126,7 +131,11 @@ class OpcDaIpcClient:
                 return response
 
             except asyncio.TimeoutError:
+                self._connected = False
                 raise TimeoutError(f"请求超时: {request.request_type}")
+            except asyncio.IncompleteReadError as e:
+                self._connected = False
+                raise ConnectionError(f"连接中断(读取不完整): {e}")
             except json.JSONDecodeError as e:
                 raise ValueError(f"响应解析失败: {e}")
             except ConnectionResetError as e:
