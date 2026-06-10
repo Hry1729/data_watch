@@ -13,6 +13,7 @@ from app.core.config import (
     mutate_config,
 )
 from app.core.deps import get_current_user
+from app.core.security import dpapi_decrypt
 from app.schemas.models import (
     ConnectionConfigIn,
     ConnectionConfigOut,
@@ -70,6 +71,17 @@ def _collector_extra_args(request: Request) -> list[str]:
     return extra_args
 
 
+def _collector_env() -> dict[str, str]:
+    try:
+        cfg = load_config()
+        password = dpapi_decrypt(cfg.get("mysql", {}).get("password_enc", ""))
+    except Exception:
+        return {}
+    if not password:
+        return {}
+    return {"DATAWATCH_MYSQL_PASSWORD": password}
+
+
 @router.post("/processes/{name}/start")
 async def start_process(name: str, request: Request, _user: str = Depends(get_current_user)):
     pm = request.app.state.pm
@@ -79,9 +91,10 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
     # writer 路径完全不碰 sidecar_manager。
     extra_args = _collector_extra_args(request) if name == "collector" else None
+    env = _collector_env() if name == "collector" else None
 
     try:
-        await pm.start(name, extra_args=extra_args)
+        await pm.start(name, extra_args=extra_args, env=env)
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     request.app.state.log_manager.attach(
@@ -111,9 +124,10 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
     extra_args = _collector_extra_args(request) if name == "collector" else None
+    env = _collector_env() if name == "collector" else None
 
     try:
-        await pm.restart(name, extra_args=extra_args)
+        await pm.restart(name, extra_args=extra_args, env=env)
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     request.app.state.log_manager.attach(

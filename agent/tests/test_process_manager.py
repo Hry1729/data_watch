@@ -4,6 +4,7 @@ agent 此前无测试。本文件记录现状 ProcessManager 的可观察行为�
 002 特性中抽取 ManagedProcessRunner 的回归网——抽取前后均须全绿。
 """
 import asyncio
+import os
 import time
 
 import pytest
@@ -85,6 +86,23 @@ async def test_start_appends_extra_args_to_cmd(make_pm, tmp_path):
         assert str(out) in content
     finally:
         await pm.stop(name)
+
+
+async def test_start_passes_env_to_runner(make_pm, monkeypatch):
+    captured = {}
+    pm, name = make_pm()
+
+    def fake_launch(module_name, cmd, cwd, env=None):
+        captured["module_name"] = module_name
+        captured["env"] = env
+        return os.getpid(), time.time()
+
+    monkeypatch.setattr(pm._runner, "launch", fake_launch)
+    await pm.start(name, env={"DATAWATCH_MYSQL_PASSWORD": "secret"})
+    assert captured == {
+        "module_name": name,
+        "env": {"DATAWATCH_MYSQL_PASSWORD": "secret"},
+    }
 
 
 async def test_restart_appends_extra_args_to_cmd(make_pm, tmp_path):

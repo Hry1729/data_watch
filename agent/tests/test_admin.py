@@ -23,17 +23,21 @@ class FakePM:
         self.modules = {n: object() for n in names}
         self._running = running
         self.start_calls = []
+        self.start_envs = []
         self.restart_calls = []
+        self.restart_envs = []
         self.stop_calls = []
 
     def status(self, name):
         return types.SimpleNamespace(status="running" if self._running else "stopped")
 
-    async def start(self, name, extra_args=None):
+    async def start(self, name, extra_args=None, env=None):
         self.start_calls.append((name, extra_args))
+        self.start_envs.append(env)
 
-    async def restart(self, name, extra_args=None):
+    async def restart(self, name, extra_args=None, env=None):
         self.restart_calls.append((name, extra_args))
+        self.restart_envs.append(env)
 
     async def stop(self, name):
         self.stop_calls.append(name)
@@ -114,11 +118,40 @@ async def test_collector_with_opcda_passes_config_and_port_mapping(tmp_path):
     )]
 
 
+async def test_collector_start_injects_mysql_password_env(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", lambda: {
+        "mysql": {"password_enc": "encrypted"}
+    })
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", lambda value: "plain-password")
+    pm = FakePM()
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
+    await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert pm.start_envs == [{"DATAWATCH_MYSQL_PASSWORD": "plain-password"}]
+
+
+async def test_collector_start_uses_empty_env_when_password_decrypt_fails(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", lambda: {
+        "mysql": {"password_enc": "encrypted"}
+    })
+
+    def fail_decrypt(_value):
+        raise RuntimeError("dpapi unavailable")
+
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", fail_decrypt)
+    pm = FakePM()
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
+    await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert pm.start_envs == [{}]
+
+
 async def test_writer_does_not_touch_sidecar_manager():
     pm = FakePM()
     # 故意不在 state 上放 sidecar_manager：writer 路径若误访问会 AttributeError→测试失败
     await start_process("writer", _req(pm), _user="u")
     assert pm.start_calls == [("writer", None)]
+    assert pm.start_envs == [None]
 
 
 async def test_collector_prepare_error_returns_400_and_no_start(tmp_path):
@@ -178,10 +211,23 @@ async def test_collector_restart_prepares_and_passes_args(tmp_path):
     assert pm.start_calls == []  # restart 走 pm.restart，不是 pm.start
 
 
+async def test_collector_restart_injects_mysql_password_env(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", lambda: {
+        "mysql": {"password_enc": "encrypted"}
+    })
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", lambda value: "plain-password")
+    pm = FakePM()
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
+    await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert pm.restart_envs == [{"DATAWATCH_MYSQL_PASSWORD": "plain-password"}]
+
+
 async def test_writer_restart_does_not_touch_sidecar_manager():
     pm = FakePM()
     await restart_process("writer", _req(pm), _user="u")  # 不放 sidecar_manager
     assert pm.restart_calls == [("writer", None)]
+    assert pm.restart_envs == [None]
 
 
 async def test_collector_restart_prepare_error_returns_400_and_no_restart(tmp_path):

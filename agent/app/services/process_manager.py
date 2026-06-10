@@ -140,6 +140,7 @@ class ProcessManager:
         self,
         name: str,
         extra_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
@@ -176,7 +177,7 @@ class ProcessManager:
             logger.info("starting module %s: cmd=%s cwd=%s", name, cmd, spec.working_dir)
 
             try:
-                pid, create_time = self._runner.launch(name, cmd, spec.working_dir)
+                pid, create_time = self._runner.launch(name, cmd, spec.working_dir, env=env)
             except ManagedProcessError as exc:
                 raise ProcessManagerError(str(exc)) from exc
 
@@ -270,12 +271,15 @@ class ProcessManager:
             )
 
     async def restart(
-        self, name: str, extra_args: list[str] | None = None
+        self,
+        name: str,
+        extra_args: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
         await self.stop(name)
-        info = await self.start(name, extra_args)
+        info = await self.start(name, extra_args, env=env)
         count = self._bump_restart_count(name)
         info.restart_count = count
         logger.info("module %s restarted, restart_count=%d", name, count)

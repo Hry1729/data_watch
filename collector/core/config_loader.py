@@ -68,6 +68,10 @@ def load_collector_config(path: str) -> CollectorConfig:
     except Exception as exc:
         raise ConfigError(f"Invalid config content: {exc}") from exc
 
+    env_password = os.getenv("DATAWATCH_MYSQL_PASSWORD")
+    if env_password:
+        config.mysql.password = env_password
+
     return config
 
 
