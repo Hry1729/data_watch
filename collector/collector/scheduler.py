@@ -83,7 +83,7 @@ class TaskScheduler:
         logger.info("Task %s loop started, interval=%ss", task.task_name, interval)
 
         while self._running:
-            start = time.time()
+            start = time.monotonic()
             try:
                 await execute_func(task)
                 task.error_count = 0
@@ -96,7 +96,7 @@ class TaskScheduler:
                     e,
                 )
 
-            elapsed = time.time() - start
+            elapsed = time.monotonic() - start
 
             # 仅当执行时间小于间隔时才等待
             # 执行时间 >= 间隔时立即进入下一轮（不额外等待）
