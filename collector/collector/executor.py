@@ -347,7 +347,12 @@ class TaskExecutor:
                 return values[word_offset] & 0xFF
 
             # 2 word 类型：组合为 32 位值
-            if word_length >= 2 and word_offset + 1 < len(values):
+            if word_length >= 2:
+                if word_offset + 1 >= len(values):
+                    raise ValueError(
+                        f"GE 2-word type {data_type} needs words at offset "
+                        f"{word_offset},{word_offset + 1} but only {len(values)} values available"
+                    )
                 if word_order != "low_high":
                     raise ValueError(f"Unsupported GE word_order: {word_order}. Current only supports low_high.")
 

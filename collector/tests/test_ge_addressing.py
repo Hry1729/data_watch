@@ -346,6 +346,18 @@ class TestGEValueExtraction:
         with pytest.raises(ValueError, match="Unsupported GE word_order"):
             TaskExecutor._extract_mapped_ge_value(raw, mapping)
 
+    def test_extract_2_word_type_requires_enough_words(self):
+        """2-word 类型 word 不足时抛错，避免静默返回低 word。"""
+        raw = [100]
+        mapping = {
+            "area": "R",
+            "word_offset": 0,
+            "word_length": 2,
+            "data_type": "DINT",
+        }
+        with pytest.raises(ValueError, match="GE 2-word type DINT needs words"):
+            TaskExecutor._extract_mapped_ge_value(raw, mapping)
+
     def test_extract_dint_from_register_block(self):
         """从寄存器块提取 DINT（2 words 组合）"""
         raw = [0, 0x0001, 0x0000]  # low=1, high=0 -> DINT=1
