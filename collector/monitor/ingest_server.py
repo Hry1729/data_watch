@@ -220,7 +220,17 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 errors.append(f"points[{idx}]: variable_id not configured: {point.variable_id}")
                 continue
 
-            device_id = getattr(var, "device_id", "") or point.device_id
+            var_device_id = getattr(var, "device_id", "") or ""
+            # C9：变量已配置且归属设备明确时，客户端传入的 device_id 必须与之一致，
+            # 否则会静默误路由（数据被写到变量真正归属的设备）。仅在两边都非空且不一致
+            # 时拒绝；point.device_id 为空时（如 OPC DA 端点）仍按变量归属回退。
+            if var_device_id and point.device_id and var_device_id != point.device_id:
+                errors.append(
+                    f"points[{idx}]: device_id mismatch: client sent {point.device_id} "
+                    f"but variable {point.variable_id} belongs to {var_device_id}"
+                )
+                continue
+            device_id = var_device_id or point.device_id
             device = device_meta.get(device_id)
             if device is None:
                 errors.append(f"points[{idx}]: device not configured: {device_id}")

@@ -433,3 +433,44 @@ def test_ingest_server_redis_multi_scan_rate_frame_failure_isolates_latest():
     latest_fields = latest_args.args[2]
     assert "fast_var" in latest_fields
     assert "slow_var" not in latest_fields
+
+
+# ---------------------------------------------------------------------------
+# C9: 已配置变量的 device_id 一致性校验（消灭静默误路由）
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_server_rejects_device_id_mismatch():
+    """变量已配置且归属 AGV801，客户端传错 device_id → 该点被拒，不写 Redis。"""
+    redis_writer = MagicMock()
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("WRONG_DEV", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 0
+    assert len(errors) == 1
+    assert "device_id mismatch" in errors[0]
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+
+
+def test_ingest_server_empty_device_id_falls_back_to_variable_owner():
+    """device_id 为空（如 OPC DA 端点）→ 按变量归属 AGV801 回退，正常落库。"""
+    redis_writer = MagicMock()
+    server = _make_ingest_server(redis_writer)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert errors == []
+    redis_writer.write_latest.assert_called_once()
+    assert redis_writer.write_latest.call_args.args[0] == "AGV801"
