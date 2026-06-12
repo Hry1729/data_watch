@@ -52,6 +52,18 @@ def _resolve_runtime_dir(arg_value: str | None) -> Path:
     return Path(r"C:\ProgramData\DataWatch\runtime")
 
 
+def _clear_stale_shutdown_flag(flag_path: Path) -> None:
+    """启动时清掉上一轮残留的 shutdown_flag（异常退出或未被消费的）。
+
+    否则本进程启动后 watchdog 立刻读到旧 flag → 刚启动就被停。flag 是一次性
+    停机信号，每次启动都从干净状态开始（C10）。
+    """
+    try:
+        flag_path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("无法清理残留 shutdown_flag %s: %s", flag_path, exc)
+
+
 async def _watch_shutdown_flag(app: "CollectorApp", flag_path: Path, interval: float = 1.0) -> None:
     while not app._shutdown.is_set():
         try:
@@ -587,6 +599,7 @@ async def main():
     )
     runtime_dir = _resolve_runtime_dir(args.runtime_dir)
     flag_path = runtime_dir / "collector.shutdown_flag"
+    _clear_stale_shutdown_flag(flag_path)
     watchdog_task = asyncio.create_task(_watch_shutdown_flag(app, flag_path))
 
     # 注册信号处理
