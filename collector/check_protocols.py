@@ -119,7 +119,10 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
                 """)
             )
 
-            endpoints_seen = set()
+            # center / sidecar 各自独立去重：同一 endpoint 若两类协议都配置，
+            # 用单集合会让先处理的一类把它加入 seen，另一类被静默漏掉（A方-10）。
+            center_seen = set()
+            sidecar_seen = set()
             port_counter = 9090
 
             for row in rows:
@@ -128,16 +131,16 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
 
                 if protocol_lower in CENTER_PROTOCOLS:
                     result["has_center"] = True
-                    if endpoint and endpoint not in endpoints_seen:
-                        endpoints_seen.add(endpoint)
+                    if endpoint and endpoint not in center_seen:
+                        center_seen.add(endpoint)
                         result["center_collection"].append(endpoint)
                         result["port_mapping"][endpoint] = port_counter
                         port_counter += 1
 
                 elif protocol_lower in SIDECAR_PROTOCOLS:
                     result["has_sidecar"] = True
-                    if endpoint and endpoint not in endpoints_seen:
-                        endpoints_seen.add(endpoint)
+                    if endpoint and endpoint not in sidecar_seen:
+                        sidecar_seen.add(endpoint)
                         result["sidecar_push"].append(endpoint)
 
     except Exception as e:

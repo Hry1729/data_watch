@@ -44,6 +44,12 @@ if not defined PYTHON_EXE (
 )
 
 REM Detect protocols from MySQL and import the generated SET commands.
+REM C12: check_protocols uses the default env-based MySQL config and does NOT
+REM receive the args forwarded to main.py below (e.g. --config). In dev,
+REM "run.bat --config custom.toml" makes protocol detection use the default
+REM config while the main process uses custom.toml, so the two can diverge.
+REM Production is unaffected: the Agent invokes the collector exe directly with
+REM an explicit --config and never goes through run.bat.
 echo [INFO] Checking device protocols...
 set "PROTO_ENV=%TEMP%\collector_protocol_%RANDOM%%RANDOM%.bat"
 set "PROTO_ERR=%TEMP%\collector_protocol_%RANDOM%%RANDOM%.err"
