@@ -338,6 +338,28 @@ async def test_center_reconnect_bypasses_circuit_breaker():
 
 
 @pytest.mark.asyncio
+async def test_connect_all_uses_device_snapshot(collector_config):
+    """A方-5：connect_all 用同源快照；连接期间往 devices 注入新设备不致 zip 错配。"""
+    manager = DeviceManager(collector_config)
+    manager.register_devices()
+    snapshot_size = len(manager.devices)
+
+    async def connect_and_mutate(device, use_circuit_breaker=True):
+        # 模拟连接期间热更新往 devices 注入新设备
+        manager.devices["INJECTED_DURING_CONNECT"] = MagicMock()
+        return True
+
+    with patch.object(manager, "connect_device", side_effect=connect_and_mutate):
+        with patch.object(manager, "schedule_reconnect", new=AsyncMock()) as sched:
+            await manager.connect_all()  # 快照隔离注入项，不抛、不错配
+
+    # 本轮只处理快照内设备：全部成功 → 无 reconnect 调度；注入项不在本轮范围
+    assert snapshot_size >= 1
+    sched.assert_not_awaited()
+    assert "INJECTED_DURING_CONNECT" in manager.devices
+
+
+@pytest.mark.asyncio
 async def test_center_connect_with_circuit_breaker_creates_breaker():
     """对照：use_circuit_breaker=True（初始连接/默认）→ 仍走熔断器。"""
     manager = DeviceManager(CollectorConfig(devices=[], variables=[]))

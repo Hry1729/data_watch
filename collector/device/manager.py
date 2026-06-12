@@ -651,13 +651,16 @@ class DeviceManager:
 
     async def connect_all(self) -> None:
         """并发连接所有设备"""
-        tasks = [self.connect_device(d) for d in self.devices.values()]
+        # 同源快照：tasks 与配对 results 的遍历必须基于同一份设备列表，
+        # 否则连接期间 self.devices 增删会让 zip 错配 device↔result（A方-5）。
+        devices = list(self.devices.values())
+        tasks = [self.connect_device(d) for d in devices]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         success = sum(1 for r in results if r is True)
-        for device, result in zip(self.devices.values(), results):
+        for device, result in zip(devices, results):
             if result is not True:
                 await self.schedule_reconnect(device)
-        logger.info("Connected %s/%s devices", success, len(self.devices))
+        logger.info("Connected %s/%s devices", success, len(devices))
 
     async def disconnect_all(self) -> None:
         """断开所有设备"""
