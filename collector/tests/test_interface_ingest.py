@@ -126,6 +126,7 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
                 is_storage=True,
                 var_seq=1,
                 group_code="g001",
+                group_config_version=7,
             )
         ],
     )
@@ -474,3 +475,59 @@ def test_ingest_server_empty_device_id_falls_back_to_variable_owner():
     assert errors == []
     redis_writer.write_latest.assert_called_once()
     assert redis_writer.write_latest.call_args.args[0] == "AGV801"
+
+
+# ---------------------------------------------------------------------------
+# C2: ingest 写 stream 的 config_version 用 group_config_version（对齐 writer），
+# 不用 device 表的 config_version（与 executor 035a532 同源）
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_stream_uses_group_config_version_not_device_version():
+    """device.config_version=1 但 var.group_config_version=7 → stream 帧用 7。"""
+    redis_writer = MagicMock()
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+                config_version=1,  # device 表 variable_config_version
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="30041800",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag30041800",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+                group_config_version=7,  # device_point_group.config_version
+            )
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert errors == []
+    redis_writer.write_stream.assert_called_once()
+    # write_stream 第 6 个位置参数（index 5）是 config_version
+    assert redis_writer.write_stream.call_args.args[5] == 7

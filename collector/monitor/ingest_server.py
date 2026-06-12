@@ -241,7 +241,11 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             ts_ms = _timestamp_to_millis(point.timestamp)
             device_code = getattr(device, "device_id", device_id)
             device_type = str(getattr(device, "device_type", "")).lower()
-            config_version = int(getattr(device, "config_version", 1))
+            # C2：stream/frame 的 config_version 必须与 writer 对账列同源。writer
+            # （mysql_mapper）用 device_point_group.config_version，故这里用变量的
+            # group_config_version（与 executor 路径 035a532 一致），不用 device 表的
+            # variable_config_version——否则两列不恒等时 writer 版本错配 → 刷屏告警/DLQ。
+            config_version = int(getattr(var, "group_config_version", 1))
             value_text = str(point.value)
             quality = int(getattr(point, "quality", 0))
 
