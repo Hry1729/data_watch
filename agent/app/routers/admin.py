@@ -65,7 +65,11 @@ def _collector_extra_args(request: Request) -> list[str]:
         plan = sm.prepare_for_collector_start()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    extra_args = ["--config", str(settings_path)]
+    # 显式下发 runtime_dir：与 Agent 写 shutdown_flag 的目录(pm.runtime_dir)同源。
+    # 否则 collector 自行推导默认目录（DATAWATCH_HOME/runtime 或 ProgramData\...），
+    # 自定义数据根时两端分叉 → collector 收不到优雅停机 flag → 被强杀。
+    pm = request.app.state.pm
+    extra_args = ["--config", str(settings_path), "--runtime-dir", str(pm.runtime_dir)]
     if plan.port_mapping_path is not None:
         extra_args += ["--port-mapping", str(plan.port_mapping_path)]
     return extra_args

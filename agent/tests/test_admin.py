@@ -22,6 +22,7 @@ class FakePM:
     def __init__(self, names=("collector", "writer"), running=False):
         self.modules = {n: object() for n in names}
         self._running = running
+        self.runtime_dir = "/runtime"  # 写 shutdown_flag 的同源目录
         self.start_calls = []
         self.start_envs = []
         self.restart_calls = []
@@ -100,7 +101,10 @@ async def test_collector_no_opcda_passes_only_config(tmp_path):
     sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert sm.prepare_calls == 1
-    assert pm.start_calls == [("collector", ["--config", settings])]
+    assert pm.start_calls == [(
+        "collector",
+        ["--config", settings, "--runtime-dir", "/runtime"],
+    )]
 
 
 async def test_collector_with_opcda_passes_config_and_port_mapping(tmp_path):
@@ -114,8 +118,22 @@ async def test_collector_with_opcda_passes_config_and_port_mapping(tmp_path):
     assert pm.start_calls == [(
         "collector",
         ["--config", settings,
+         "--runtime-dir", "/runtime",
          "--port-mapping", "/rt/opcda_proxy/port_mapping.json"],
     )]
+
+
+async def test_collector_start_passes_runtime_dir_matching_pm(tmp_path):
+    """C7 回归：collector 启动参数必须显式带 --runtime-dir，且值 == pm.runtime_dir
+    （Agent 写 shutdown_flag 的同源目录）。否则自定义数据根时两端分叉，collector
+    收不到优雅停机 flag 被强杀。"""
+    pm = FakePM()
+    settings = _existing_settings(tmp_path)
+    sm = FakeSM(port_mapping_path=None, settings_path=settings)
+    await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    args = pm.start_calls[0][1]
+    assert "--runtime-dir" in args
+    assert args[args.index("--runtime-dir") + 1] == pm.runtime_dir
 
 
 async def test_collector_start_injects_mysql_password_env(tmp_path, monkeypatch):
@@ -206,6 +224,7 @@ async def test_collector_restart_prepares_and_passes_args(tmp_path):
     assert pm.restart_calls == [(
         "collector",
         ["--config", settings,
+         "--runtime-dir", "/runtime",
          "--port-mapping", "/rt/opcda_proxy/port_mapping.json"],
     )]
     assert pm.start_calls == []  # restart 走 pm.restart，不是 pm.start
@@ -253,7 +272,10 @@ async def test_collector_restart_no_opcda_only_config(tmp_path):
     settings = _existing_settings(tmp_path)
     sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
-    assert pm.restart_calls == [("collector", ["--config", settings])]
+    assert pm.restart_calls == [(
+        "collector",
+        ["--config", settings, "--runtime-dir", "/runtime"],
+    )]
 
 
 async def test_collector_already_running_409_even_without_sidecar_manager():
