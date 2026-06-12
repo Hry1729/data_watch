@@ -65,6 +65,7 @@ class DBDeviceVariable(Base):
     scan_rate: Mapped[Optional[int]] = mapped_column(nullable=True)
     is_alarm: Mapped[Optional[int]] = mapped_column(nullable=True)
     is_storage: Mapped[int] = mapped_column()
+    td_column_name: Mapped[Optional[str]] = mapped_column(nullable=True)
     enable: Mapped[Optional[int]] = mapped_column(nullable=True)
     deleted: Mapped[Optional[int]] = mapped_column(nullable=True)
 
@@ -337,6 +338,7 @@ class ConfigDBManager:
                         DBDeviceVariable.var_address,
                         DBDeviceVariable.scan_rate,
                         DBDeviceVariable.is_storage,
+                        DBDeviceVariable.td_column_name,
                         DBDevicePointGroup.group_code,
                         DBDevicePointGroup.config_version,
                     )
@@ -350,6 +352,10 @@ class ConfigDBManager:
             ).all()
 
             variables: List[VariableConfig] = []
+            # C5：is_storage=1 但缺 td_column_name 的点位，writer 侧会静默跳过/丢值
+            # （consumer 找不到列名 continue，无响亮日志）。在配置加载这个源头收集，
+            # 循环后打一条聚合告警，让缺列配置在采集启动时就可见。
+            missing_td_column: List[str] = []
             for row in variable_rows:
                 device_cfg = by_device_pk.get(int(row.device_id))
                 if device_cfg is None:
@@ -376,6 +382,17 @@ class ConfigDBManager:
                         group_code=str(row.group_code or "g001"),
                         group_config_version=int(row.config_version or 1),
                     )
+                )
+                if bool(row.is_storage) and not row.td_column_name:
+                    missing_td_column.append(f"{device_cfg.device_id}/{variable_id}")
+
+            if missing_td_column:
+                logger.warning(
+                    "%s storage variable(s) missing td_column_name; writer will silently "
+                    "drop them (never written to TDengine). Fix device_variable.td_column_name. "
+                    "e.g. %s",
+                    len(missing_td_column),
+                    missing_td_column[:5],
                 )
 
             if not variables:
