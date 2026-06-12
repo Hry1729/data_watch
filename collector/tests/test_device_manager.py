@@ -307,6 +307,56 @@ def test_device_manager_center_missing_endpoint_reloads_once():
     assert fake_mapper.get_port.call_count == 2
 
 
+# ---------------------------------------------------------------------------
+# A方-11(a) — center 设备的 use_circuit_breaker 透传
+#
+# 重连路径调 connect_device(device, use_circuit_breaker=False) 想绕过熔断强制重试；
+# 此前 center 设备早 return 到 _connect_center_collection_device，总走熔断 → 熔断
+# OPEN 期间重连空转。修复后 center 路径与普通设备路径对称地尊重该参数。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_center_reconnect_bypasses_circuit_breaker():
+    """use_circuit_breaker=False（重连）→ 直接调 impl，不创建/触发熔断器。"""
+    manager = DeviceManager(CollectorConfig(devices=[], variables=[]))
+    device = MagicMock()
+    device.device_id = "VM001"
+    device.protocol = "opcda_center"
+    device.status = DeviceStatus.ERROR
+
+    with patch.object(
+        manager,
+        "_connect_center_collection_device_impl",
+        new=AsyncMock(return_value=True),
+    ) as impl:
+        result = await manager.connect_device(device, use_circuit_breaker=False)
+
+    assert result is True
+    impl.assert_awaited_once_with(device)
+    assert "VM001" not in manager._circuit_breakers  # 绕过：熔断器未创建
+
+
+@pytest.mark.asyncio
+async def test_center_connect_with_circuit_breaker_creates_breaker():
+    """对照：use_circuit_breaker=True（初始连接/默认）→ 仍走熔断器。"""
+    manager = DeviceManager(CollectorConfig(devices=[], variables=[]))
+    device = MagicMock()
+    device.device_id = "VM001"
+    device.protocol = "opcda_center"
+    device.status = DeviceStatus.ERROR
+
+    with patch.object(
+        manager,
+        "_connect_center_collection_device_impl",
+        new=AsyncMock(return_value=True),
+    ):
+        result = await manager.connect_device(device, use_circuit_breaker=True)
+
+    assert result is True
+    assert "VM001" in manager._circuit_breakers  # 走熔断：熔断器已创建
+
+
 @pytest.mark.parametrize("bad", ["9091", True, 0, -1, 70000])
 def test_authoritative_rejects_invalid_port_value(tmp_path, bad):
     # 损坏的端口值（字符串/布尔/越界/非正）须 fail-fast，而非被静默丢弃成"缺失"。

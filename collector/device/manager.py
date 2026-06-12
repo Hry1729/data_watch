@@ -501,8 +501,9 @@ class DeviceManager:
             return True
 
         if is_center_collection_protocol(device.protocol):
-            # 中心采集协议：连接到代理进程
-            return await self._connect_center_collection_device(device)
+            # 中心采集协议：连接到代理进程（透传 use_circuit_breaker，
+            # 否则重连路径 use_circuit_breaker=False 对 center 设备失效）
+            return await self._connect_center_collection_device(device, use_circuit_breaker)
 
         # 获取设备的熔断器
         if device.device_id not in self._circuit_breakers:
@@ -548,11 +549,19 @@ class DeviceManager:
             await self._report_device_status(device, 0, f"connect failed: {e}", "connect")
             raise
 
-    async def _connect_center_collection_device(self, device: Device) -> bool:
+    async def _connect_center_collection_device(
+        self, device: Device, use_circuit_breaker: bool = True
+    ) -> bool:
         """连接中心采集设备（通过代理进程）
 
         使用熔断器和重试机制保护连接。
         """
+        # 重连路径（use_circuit_breaker=False）直接尝试，绕过熔断，与普通设备路径
+        # (connect_device 的 else 分支) 对称：否则熔断 OPEN 期间重连被直接拒绝、
+        # 空转至 recovery_timeout，无法按 reconnect_interval 真正重试。
+        if not use_circuit_breaker:
+            return await self._connect_center_collection_device_impl(device)
+
         # 获取设备的熔断器
         if device.device_id not in self._circuit_breakers:
             self._circuit_breakers[device.device_id] = CircuitBreaker(
