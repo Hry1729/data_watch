@@ -44,6 +44,7 @@
 | 2026-06-02 | Data Watch Console app1.0 完成：模块控制、配置、健康状态、暗色模式、module-monitor/rates、图表视觉优化 | DONE | `docs/app监控/DataWatch-Console-设计方案.md`、`docs/app监控/采集入库页真实数据接入方案.md` |
 | 2026-06-03 | app1.0 相关设计文档、技术方案、README 与暗色模式文档已同步 | DONE | `docs/README.md`、`docs/设计/技术方案.md`、`docs/superpowers/*` |
 | 2026-06-03 | 登录页缺陷修复：手输账号无法登录（ElSelect allow-create 未写入 v-model）、登录失败静默无提示、登录成功滑块空引用崩溃；前端静态 404 catch-all 与后端动态 `Exception404` 重名冲突修复（路由 `No match` 告警消除、path 级 404 兜底恢复） | DONE | `docs/前端/登录与路由缺陷修复-2026-06-03.md` |
+| 2026-06-12 | A方-11(b)：OPC DA IPC 连接池 `get_client` 借出前去掉锁内 `ping`（网络往返），改为内存态 `is_connected` 判断，消除取连接串行延迟；坏连接由 read 失败 + 上层重连闭环兜底 | DONE | 提交 `perf(collector): drop in-lock ping when lending pooled IPC client`、`docs/运维/06-09审查报告.md` A方-11(b) |
 
 ---
 

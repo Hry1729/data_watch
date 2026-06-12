@@ -79,3 +79,52 @@ async def test_ipc_read_items_isolates_bad_result_item(caplog):
 
     assert values == {"tag_ok_1": 12.5, "tag_bad": None, "tag_ok_2": 7.0}
     assert "跳过无法解析的 OPC DA 结果项" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# A方-11(b) / P1-007: 连接池借出前仅看 is_connected（内存态），不在锁内 ping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pool_get_client_returns_connected_without_ping():
+    """已连接的 client 直接借出，不触发 ping（消除锁内网络往返）。"""
+    from core.opcda_ipc_client import OpcDaIpcClientPool
+
+    pool = OpcDaIpcClientPool()
+    existing = MagicMock()
+    existing.is_connected = True
+    existing.ping = AsyncMock(return_value=True)
+    existing.close = AsyncMock()
+    pool._clients["127.0.0.1:9090"] = existing
+
+    result = await pool.get_client("127.0.0.1", 9090)
+
+    assert result is existing
+    existing.ping.assert_not_awaited()   # 借出不 ping
+    existing.close.assert_not_awaited()  # 未重建
+
+
+@pytest.mark.asyncio
+async def test_pool_get_client_rebuilds_when_disconnected(monkeypatch):
+    """is_connected=False 的失效连接被清理重建，全程不 ping。"""
+    from core import opcda_ipc_client
+    from core.opcda_ipc_client import OpcDaIpcClientPool
+
+    pool = OpcDaIpcClientPool()
+    stale = MagicMock()
+    stale.is_connected = False
+    stale.ping = AsyncMock(return_value=True)
+    stale.close = AsyncMock()
+    pool._clients["127.0.0.1:9090"] = stale
+
+    new_client = MagicMock()
+    new_client.connect = AsyncMock()
+    monkeypatch.setattr(opcda_ipc_client, "OpcDaIpcClient", lambda **kw: new_client)
+
+    result = await pool.get_client("127.0.0.1", 9090)
+
+    assert result is new_client
+    stale.close.assert_awaited_once()         # 失效连接被关闭
+    stale.ping.assert_not_awaited()           # 即便失效也不 ping（纯内存态）
+    new_client.connect.assert_awaited_once()  # 新连接被建立

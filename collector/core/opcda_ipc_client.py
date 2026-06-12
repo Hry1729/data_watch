@@ -342,13 +342,12 @@ class OpcDaIpcClientPool:
         async with self._lock:
             if key in self._clients:
                 client = self._clients[key]
-                # 验证连接有效性
+                # 借出前仅做内存态判断（is_connected），不在锁内 ping：
+                # ping 是网络往返，会把所有取连接串行化。坏连接由 read 失败
+                # （_send_request 置 _connected=False）+ 上层重连兜底，借出时的
+                # 冗余 ping 没必要。
                 if client.is_connected:
-                    try:
-                        if await client.ping():
-                            return client
-                    except Exception as e:
-                        logger.warning("连接健康检查失败 %s: %s，将重建连接", key, e)
+                    return client
                 # 连接无效，清理并重建
                 try:
                     await client.close()
