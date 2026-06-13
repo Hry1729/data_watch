@@ -37,3 +37,11 @@ async def get_mysql_session() -> AsyncIterator[AsyncSession]:
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         yield session
+
+
+async def close_mysql() -> None:
+    """释放 MySQL 连接池。应用关闭时调用，避免连接池生命周期悬挂。"""
+    if get_mysql_engine.cache_info().currsize > 0:
+        await get_mysql_engine().dispose()
+    get_mysql_session_factory.cache_clear()
+    get_mysql_engine.cache_clear()

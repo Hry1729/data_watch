@@ -170,6 +170,11 @@ class HistoryService:
 
         for point, rows in zip(points, series_list, strict=False):
             if isinstance(rows, Exception):
+                # 不静默丢点：某点位查询异常须留痕，便于排查数据源故障。
+                logger.warning(
+                    "[history] point series failed device=%s var_seq=%s: %s",
+                    device.device_code, point.var_seq, rows,
+                )
                 continue
             value_map: dict[str, str | int | float] = {}
             for ts, value in rows:

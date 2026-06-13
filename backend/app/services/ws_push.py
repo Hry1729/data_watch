@@ -33,6 +33,8 @@ class WsPushManager:
         self._subscribers: dict[tuple, set] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
         self._snapshots: dict[tuple, dict] = {}
+        # 离线状态去重：仅在 在线→离线 跳变时推一次 offline，避免每 0.1s 刷屏。
+        self._offline: dict[tuple, bool] = {}
 
     async def subscribe(self, ws, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
@@ -64,6 +66,7 @@ class WsPushManager:
                 t.cancel()
             self._subscribers.pop(key, None)
             self._snapshots.pop(key, None)
+            self._offline.pop(key, None)
 
     async def remove_all_subscriptions(self, ws) -> None:
         keys = list(self._subscribers.keys())
@@ -106,8 +109,12 @@ class WsPushManager:
                     continue
                 prev = self._snapshots.get(key, {})
                 if not latest:
-                    await self._broadcast(key, {"type": "offline", "device_code": device_code})
+                    # 仅在跳变为离线时推一次，离线持续期间不再重复广播。
+                    if not self._offline.get(key, False):
+                        await self._broadcast(key, {"type": "offline", "device_code": device_code})
+                        self._offline[key] = True
                     continue
+                self._offline[key] = False
                 diff = {k: v for k, v in latest.items() if v != prev.get(k)}
                 if diff:
                     self._snapshots[key] = {**prev, **diff}

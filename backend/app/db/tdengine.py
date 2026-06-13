@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 import re
 from typing import Any
+from urllib.parse import quote
 
 from app.core.config import get_settings
 
@@ -24,7 +25,10 @@ class TDengineClient:
     def build_ws_dsn(self, database: str | None = None) -> str:
         scheme = "wss" if self.use_ssl else "ws"
         database_name = database or self.database
-        return f"{scheme}://{self.user}:{self.password}@{self.host}:{self.port}/{database_name}"
+        # user/password 经 URL 编码，避免密码含 @ : / # % 等字符时 DSN 被解析错误。
+        user = quote(self.user, safe="")
+        password = quote(self.password, safe="")
+        return f"{scheme}://{user}:{password}@{self.host}:{self.port}/{database_name}"
 
     @property
     def rest_url(self) -> str:

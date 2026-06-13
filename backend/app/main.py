@@ -21,6 +21,7 @@ from app.api.router import api_router
 from app.api.routes.monitor import register_ws_push_websocket
 from app.api.routes.perspective import register_perspective_websocket
 from app.core.config import get_settings
+from app.db.mysql import close_mysql
 from app.db.redis import close_redis
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
@@ -29,6 +30,14 @@ from app.core.log_scheduler import start_log_scheduler, stop_log_scheduler
 from app.services.auth_bootstrap import bootstrap_auth_schema
 from app.services.rate_sampler import start_rate_sampler, stop_rate_sampler
 from app.services.perspective import get_perspective_session_manager
+
+
+# 不安全的 JWT secret 集合：旧硬编码默认值、模板占位符、空串。命中则启动告警。
+_UNSAFE_AUTH_SECRETS = {
+    "device-monitor-dev-secret",
+    "replace-with-a-strong-random-secret",
+    "",
+}
 
 
 def _write_startup_error_file(message: str, stack: str, phase: str) -> None:
@@ -42,7 +51,8 @@ def _write_startup_error_file(message: str, stack: str, phase: str) -> None:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(entry)
     except Exception as e:
-        logger.exception(f"Failed to write startup error file: {e}")
+        # 本函数作用域没有模块级 logger；现取一个，避免兜底路径自身抛 NameError 吞掉原始错误。
+        get_logger("backend.startup").exception("Failed to write startup error file: %s", e)
 
 
 class CaseInsensitiveHeaders(dict[str, str]):
@@ -536,7 +546,8 @@ class EnhancedASGITurboAPI(TurboAPI):
 
         if hasattr(exc, "status_code") and hasattr(exc, "detail"):
             return JSONResponse(status_code=int(exc.status_code), content={"detail": str(exc.detail)})
-        return JSONResponse(status_code=500, content={"detail": str(exc)})
+        # 兜底 500 不回传 str(exc)，避免泄露内部细节（详细异常由注册的异常处理器落日志）。
+        return JSONResponse(status_code=500, content={"detail": "服务器内部错误"})
 
     async def _send_asgi_response(
         self,
@@ -597,7 +608,6 @@ async def lifespan(_: TurboAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
     logger = get_logger("backend.startup")
-    startup_completed = False
     try:
         logger.info("Starting backend skeleton for %s", settings.app_name)
         logger.info("MySQL target: %s:%s/%s", settings.mysql_host, settings.mysql_port, settings.mysql_database)
@@ -625,6 +635,14 @@ async def lifespan(_: TurboAPI):
             "auth_auto_bootstrap": settings.auth_auto_bootstrap,
         }
 
+        # JWT secret 安全自检：漏配时会回落到不安全的默认/占位值，任何人可伪造 token。
+        # 开发态仅 WARN，不阻断启动；生产须在 backend/.env 配置强随机 AUTH_SECRET_KEY。
+        if settings.auth_secret_key in _UNSAFE_AUTH_SECRETS:
+            logger.warning(
+                "AUTH_SECRET_KEY 使用了不安全的默认/占位值，token 可被伪造；"
+                "生产环境必须在 backend/.env 配置强随机 AUTH_SECRET_KEY"
+            )
+
         if settings.auth_auto_bootstrap:
             await bootstrap_auth_schema()
             logger.info("Auth schema bootstrap enabled and completed")
@@ -643,7 +661,6 @@ async def lifespan(_: TurboAPI):
             content=f"后端服务启动完成: {settings.app_name}",
             detail=startup_detail,
         )
-        startup_completed = True
     except Exception as exc:
         exception_stack = traceback.format_exc()
         logger.error("Backend startup failed: %s", exc, exc_info=True)
@@ -673,9 +690,6 @@ async def lifespan(_: TurboAPI):
     try:
         yield
     finally:
-        if not startup_completed:
-            return
-
         # 关闭 Redis 连接
         await close_redis()
         logger.info("Redis connection closed")
@@ -695,6 +709,11 @@ async def lifespan(_: TurboAPI):
             source="backend.lifecycle",
             content=f"后端服务关闭: {settings.app_name}",
         )
+
+        # 释放 MySQL 连接池（须在最后一条日志写入之后，避免日志写入时引擎已关闭）
+        await close_mysql()
+        logger.info("MySQL connection pool disposed")
+
         logger.info("Backend skeleton stopped")
 
 

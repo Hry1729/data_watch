@@ -59,7 +59,8 @@ def register_exception_handlers(app) -> None:
                 "exception_type": type(exc).__name__,
             },
         )
+        # 不向客户端泄露内部异常细节（SQL/路径/驱动等）；详细异常已写入系统日志。
         return JSONResponse(
             status_code=500,
-            content={"code": 500, "msg": f"Internal server error: {exc}", "data": None},
+            content={"code": 500, "msg": "服务器内部错误", "data": None},
         )

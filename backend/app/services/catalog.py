@@ -4,6 +4,7 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
+import logging
 import re
 from typing import Any
 
@@ -16,6 +17,8 @@ from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workb
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.tdengine import TDengineClient
+
+logger = logging.getLogger("backend.catalog")
 
 
 DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
@@ -2289,34 +2292,59 @@ class CatalogService:
         if not devices:
             return {}
 
-        tasks = [self._fetch_device_latest_collect_time(device) for device in devices]
-        results = await asyncio.gather(*tasks)
-        return {
-            device.device_code: latest_time
-            for device, latest_time in zip(devices, results, strict=False)
-            if latest_time is not None
-        }
+        database_name = self._resolve_current_tdengine_database()
 
-    async def _fetch_device_latest_collect_time(
+        # 按设备类型分组：一种类型查一次超级表（GROUP BY tbname），避免逐设备直查可能不存在的子表，
+        # 导致 TDengine 服务端对每个缺失子表刷 "Table does not exist" 错误日志。
+        devices_by_type: dict[str, list[DeviceCatalogItem]] = {}
+        for device in devices:
+            raw_type = (device.device_type_code or "").strip()
+            if not raw_type:
+                continue
+            type_code = self._normalize_identifier(raw_type).lower()
+            devices_by_type.setdefault(type_code, []).append(device)
+
+        if not devices_by_type:
+            return {}
+
+        type_codes = list(devices_by_type.keys())
+        results = await asyncio.gather(
+            *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
+            return_exceptions=True,
+        )
+
+        last_ts_by_table: dict[str, datetime] = {}
+        for type_code, result in zip(type_codes, results, strict=False):
+            if isinstance(result, Exception):
+                # 超级表尚未建（writer 未运行）或真故障都不静默：留痕便于排查。
+                logger.warning("[catalog] 查询超级表最后采集时间失败 type=%s: %s", type_code, result)
+                continue
+            last_ts_by_table.update(result)
+
+        out: dict[str, datetime] = {}
+        for device in devices:
+            tbname = self._resolve_current_child_table_name(device.device_code)
+            latest_time = last_ts_by_table.get(tbname)
+            if latest_time is not None:
+                out[device.device_code] = latest_time
+        return out
+
+    async def _fetch_type_latest_collect_times(
         self,
-        device: DeviceCatalogItem,
-    ) -> datetime | None:
-        try:
-            database_name = self._resolve_current_tdengine_database()
-            table_name = self.tdengine.qualify_table(
-                database_name,
-                self._resolve_current_child_table_name(device.device_code),
-            )
-            rows = await self.tdengine.fetch_all(
-                f"SELECT LAST(ts) AS last_ts FROM {table_name}",
-                database=database_name,
-            )
-        except Exception:
-            return None
-
-        if not rows:
-            return None
-        return self._coerce_datetime(rows[0][0])
+        database_name: str,
+        type_code: str,
+    ) -> dict[str, datetime]:
+        stable_name = self.tdengine.qualify_table(database_name, f"sd{type_code}")
+        rows = await self.tdengine.fetch_all(
+            f"SELECT tbname AS tbl, LAST(ts) AS last_ts FROM {stable_name} GROUP BY tbname",
+            database=database_name,
+        )
+        result: dict[str, datetime] = {}
+        for tbl, last_ts in rows:
+            latest_time = self._coerce_datetime(last_ts)
+            if tbl is not None and latest_time is not None:
+                result[str(tbl)] = latest_time
+        return result
 
     async def _fetch_latest_point_value_map(
         self,

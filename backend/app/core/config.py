@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 try:
     import tomllib
@@ -31,8 +32,8 @@ def _env_or_default(name: str, default: Any) -> Any:
 
 def _load_backend_env_defaults() -> dict[str, str]:
     env_defaults: dict[str, str] = {}
+    # 仅读取真实的 .env；.env.example 是模板，绝不作为运行配置来源（避免漏配时回落到模板里的占位/示例值）。
     candidates = [
-        _repo_root() / "backend" / ".env.example",
         _repo_root() / "backend" / ".env",
     ]
 
@@ -94,18 +95,13 @@ class Settings:
 
     @property
     def mysql_async_dsn(self) -> str:
+        # user/password 经 URL 编码，避免密码含 @ : / # % 等字符时 DSN 被解析错误。
+        user = quote(self.mysql_user, safe="")
+        password = quote(self.mysql_password, safe="")
         return (
-            f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}"
+            f"mysql+aiomysql://{user}:{password}"
             f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
             f"?charset={self.mysql_charset}"
-        )
-
-    @property
-    def tdengine_ws_dsn(self) -> str:
-        scheme = "wss" if self.tdengine_use_ssl else "ws"
-        return (
-            f"{scheme}://{self.tdengine_user}:{self.tdengine_password}"
-            f"@{self.tdengine_host}:{self.tdengine_port}/{self.tdengine_database}"
         )
 
     @property

@@ -17,6 +17,7 @@ services:
       - infra
     environment:
       - TAOS_QUERY_USE_MEMORY_POOL=0
+      - TZ=Asia/Shanghai
     ports:
       - "6030:6030"
       - "6041:6041"

@@ -29,7 +29,6 @@ class LogScheduler:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._last_capacity_check: datetime | None = None
-        self._last_cleanup_date: str | None = None
 
     async def start(self) -> None:
         """启动定时任务"""
@@ -99,22 +98,17 @@ class LogScheduler:
                 except (ValueError, AttributeError):
                     hour, minute = 3, 0
 
-                # 构造今天的清理时间点
-                target_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if target_time <= now:
-                    # 今天的时间点已过，计算明天的时间点
-                    target_time += timedelta(days=1)
-
-                # 检查今天是否已经清理过
-                today_str = now.strftime("%Y-%m-%d")
-                if self._last_cleanup_date == today_str:
-                    # 已经清理过，等待到明天
-                    sleep_seconds = (target_time - now).total_seconds() + 60
-                    await asyncio.sleep(max(60, sleep_seconds))
-                    continue
+                # 计算下一个清理时间点：今天未到点则等今天，已过点则等明天。
+                # 睡到目标点再执行可天然保证每天恰好触发一次，无需“今天是否清过”的标志
+                # （旧逻辑因 +60 过冲到次日目标点之后、target 又顺延一天，实际每 48h 才清一次）。
+                today_target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if now < today_target:
+                    next_target = today_target
+                else:
+                    next_target = today_target + timedelta(days=1)
 
                 # 等待到清理时间
-                sleep_seconds = (target_time - now).total_seconds()
+                sleep_seconds = (next_target - now).total_seconds()
                 if sleep_seconds > 0:
                     await asyncio.sleep(sleep_seconds)
 
@@ -224,8 +218,6 @@ class LogScheduler:
         duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
         # 记录清理结果
-        self._last_cleanup_date = now_local().strftime("%Y-%m-%d")
-
         await write_system_log(
             level="INFO",
             log_type="system",

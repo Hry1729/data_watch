@@ -47,8 +47,9 @@ backend/.tmp_*
 # 本地配置（含密码，不进版本库）
 # agent/config.toml 含 jwt_secret + DPAPI 加密密码，有 config.toml.example 作为模板
 agent/config.toml
-# backend/.env          # 有 .env.example 作为模板
-# deploy/backend.env    # 有 .env.example 作为模板
+# backend/.env、deploy/backend.env 含真实密码与 JWT secret，.env.example 仅作模板
+backend/.env
+deploy/backend.env
 
 # 数据导出
 backend/exports/

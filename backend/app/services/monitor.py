@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from datetime import datetime
 import json
+import logging
 from typing import Any
 
 from sqlalchemy import text
@@ -13,6 +14,8 @@ from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
+
+logger = logging.getLogger("backend.monitor")
 
 
 class MonitorService:
@@ -144,7 +147,12 @@ class MonitorService:
                 except Exception:
                     pass
             return result
-        except Exception:
+        except Exception as exc:
+            # 区分“无数据”与“Redis 故障”：故障不能静默吞掉，否则会被前端当成设备离线且无从排障。
+            logger.warning(
+                "Redis 读取设备最新值失败 device=%s group=%s: %s",
+                device_code, group_code, exc,
+            )
             return {}
 
     async def get_realtime_window(
