@@ -267,7 +267,7 @@
     "deviceMonitor": {
       "title": "设备监控",
       "dashboard": "工作台",
-      "monitor": "设备监控",
+      "monitor": "设备通讯",
       "driver": "驱动管理",
       "device": "设备管理",
       "point": "点位管理",
