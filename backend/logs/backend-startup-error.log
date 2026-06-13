@@ -1764,3 +1764,11 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~^^
 TypeError: AsyncAdapt_aiomysql_connection.ping() missing 1 required positional argument: 'reconnect'
 
+
+[2026-06-13 19:49:46] Backend startup failed
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\backend\main.py", line 47, in <module>
+    from app.main import create_app
+  File "D:\python\device_alarm\data_watch\backend\app\main.py", line 14, in <module>
+    from turboapi import CORSMiddleware, JSONResponse, TurboAPI
+ModuleNotFoundError: No module named 'turboapi'

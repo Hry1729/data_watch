@@ -412,7 +412,18 @@ namespace OpcDaProxyService
                 ? Convert.ToString(payload["vm_host"])
                 : null;
 
+            Log("HandleReadItems begin: count=" + itemIds.Count + ", opc_server=" + opcServer + ", vm_host=" + vmHost + ", first_item=" + itemIds[0]);
             List<Dictionary<string, object>> results = connectionManager.ReadItems(itemIds, opcServer, vmHost);
+            if (results.Count > 0)
+            {
+                Dictionary<string, object> first = results[0];
+                object resultItemId = first.ContainsKey("item_id") ? first["item_id"] : "<missing>";
+                object resultQuality = first.ContainsKey("quality") ? first["quality"] : "<missing>";
+                object resultValue = first.ContainsKey("value") ? first["value"] : "<missing>";
+                object resultError = first.ContainsKey("error") ? first["error"] : "";
+                Log("HandleReadItems first_result: item_id=" + resultItemId + ", quality=" + resultQuality + ", value=" + (resultValue == null ? "<null>" : resultValue.ToString()) + ", error=" + resultError);
+            }
+            Log("HandleReadItems end: result_count=" + results.Count);
             return IpcResponse.Ok(request.RequestId, results);
         }
 

@@ -1,0 +1,298 @@
+	名称	数据类型	偏移量	起始值	保持	可访问	可写	可见	设定值	监控	注释	
+   	FLT0001	Bool	0.0	false	True	True	True	True	False		FLT0001：PN总线:001 D435通讯检测 故障
+	FLT0002	Bool	0.1	false	True	True	True	True	False		FLT0002：PN总线:002 ALM_CU320通讯检测 故障
+	FLT0004	Bool	0.2	false	True	True	True	True	False		FLT0004：PN总线:004 +13F01-A9通讯检测 故障
+	FLT0021	Bool	0.3	false	True	True	True	True	False		FLT0021：PN总线:021 GCR_CU310通讯检测 故障
+	FLT0022	Bool	0.4	false	True	True	True	True	False		FLT0022：PN总线:022 +01F18-A95通讯检测 故障
+	FLT0023	Bool	0.5	false	True	True	True	True	False		FLT0023：PN总线:023 +01F13-A7通讯检测 故障
+	FLT0024	Bool	0.6	false	True	True	True	True	False		FLT0024：PN总线:024 +01F13-A8通讯检测 故障
+	FLT0025	Bool	0.7	false	True	True	True	True	False		FLT0025：PN总线:025 +01F15-A5通讯检测 故障
+	FLT0026	Bool	1.0	false	True	True	True	True	False		FLT0026：PN总线:026 +01F15-A6通讯检测 故障
+	FLT0027	Bool	1.1	false	True	True	True	True	False		FLT0027：PN总线:027 +01F15-A15通讯检测 故障
+	FLT0028	Bool	1.2	false	True	True	True	True	False		FLT0028：PN总线:028 +10F01-A9通讯检测 故障
+	FLT0029	Bool	1.3	false	True	True	True	True	False		FLT0029：PN总线:029 +10F01-A10通讯检测 故障
+	FLT0030	Bool	1.4	false	True	True	True	True	False		FLT0030：PN总线:030 SCR_CU310通讯检测 故障
+	FLT0031	Bool	1.5	false	True	True	True	True	False		FLT0031：PN总线:031 +10F02-A93通讯检测 故障
+	FLT0032	Bool	1.6	false	True	True	True	True	False		FLT0032：PN总线:032 +10S01通讯检测 故障
+	FLT0033	Bool	1.7	false	True	True	True	True	False		FLT0033：PN总线:033 +10S02通讯检测 故障
+	FLT0034	Bool	2.0	false	True	True	True	True	False		FLT0034：PN总线:034 +18F02-A49通讯检测 故障
+	FLT0035	Bool	2.1	false	True	True	True	True	False		FLT0035：PN总线:035 +18F02-A50通讯检测 故障
+	FLT0036	Bool	2.2	false	True	True	True	True	False		FLT0036：PN总线:036 +18F02-SM_CU320_1通讯检测 故障
+	FLT0037	Bool	2.3	false	True	True	True	True	False		FLT0037：PN总线:037 +18F02-SM_CU320_2通讯检测 故障
+	FLT0038	Bool	2.4	false	True	True	True	True	False		FLT0038：PN总线:038 +06F01-A13通讯检测 故障
+	FLT0039	Bool	2.5	false	True	True	True	True	False		FLT0039：PN总线:039 +06F01-A14通讯检测 故障
+	FLT0040	Bool	2.6	false	True	True	True	True	False		FLT0040：PN总线:040 +09F01-A45通讯检测 故障
+	FLT0041	Bool	2.7	false	True	True	True	True	False		FLT0041：PN总线:041 +09F01-A46通讯检测 故障
+	FLT0043	Bool	3.0	false	True	True	True	True	False		FLT0043：PN总线:043 +08S01-A12通讯检测 故障
+	FLT0044	Bool	3.1	false	True	True	True	True	False		FLT0044：PN总线:044 +14S01-A16通讯检测 故障
+	FLT0046	Bool	3.2	false	True	True	True	True	False		FLT0046：PN总线:046 +14S01-A17通讯检测 故障
+	FLT0047	Bool	3.3	false	True	True	True	True	False		FLT0047: PN总线:047 +01F42+ A4通讯检测 故障
+	FLT0120	Bool	3.4	false	True	True	True	True	False		FLT0120：PN总线 通讯检测 故障
+	FLT0180	Bool	3.5	false	True	True	True	True	False		FLT0180：PB总线1:060 WAMPFLER拖令通讯检测 故障
+	FLT0185	Bool	3.6	false	True	True	True	True	False		FLT0185：PB总线1:065 后大梁倾转MD2模块通讯检测 故障
+	FLT0200	Bool	3.7	false	True	True	True	True	False		FLT0200 : PB总线2:080 05S01通讯故障
+	FLT0201	Bool	4.0	false	True	True	True	True	False		FLT0201：PB总线1:081 高压柜仪表通讯故障
+	FLT0240	Bool	4.1	false	True	True	True	True	False		FLT0240：PB总线1 通讯检测 故障
+	FLT0265	Bool	4.2	false	True	True	True	True	False		FLT0265：PB总线2:025 主起升绝对值位置编码器通讯检测 故障
+	FLT0266	Bool	4.3	false	True	True	True	True	False		FLT0266：PB总线2:026 主小车绝对值位置编码器通讯检测 故障
+	FLT0267	Bool	4.4	false	True	True	True	True	False		FLT0267：PB总线2:027 俯仰绝对值位置编码器通讯检测 故障
+	FLT0270	Bool	4.5	false	True	True	True	True	False		FLT0270：PB总线2:030 RAM吊具上架DP-COUPLER通讯检测 故障
+	FLT0271	Bool	4.6	false	True	True	True	True	False		FLT0271：PB总线2:031 海侧吊具通讯检测 故障
+	FLT0272	Bool	4.7	false	True	True	True	True	False		FLT0272：PB总线2:032 SPSS船型扫描系统通讯检测 故障
+	FLT0274	Bool	5.0	false	True	True	True	True	False		FLT0274：PB总线2:034 门架吊具上架绝对值位置编码器1通讯检测 故障
+	FLT0275	Bool	5.1	false	True	True	True	True	False		FLT0275：PB总线2:035 门架吊具上架绝对值位置编码器2通讯检测 故障
+	FLT0276	Bool	5.2	false	True	True	True	True	False		FLT0276：PB总线2:036 门架吊具上架绝对值位置编码器3通讯检测 故障
+	FLT0277	Bool	5.3	false	True	True	True	True	False		FLT0277：PB总线2:037 门架吊具上架绝对值位置编码器4通讯检测 故障
+	FLT0278	Bool	5.4	false	True	True	True	True	False		FLT0278：PB总线2:038 门架起升绝对值位置编码器通讯检测 故障
+	FLT0280	Bool	5.5	false	True	True	True	True	False		FLT0280：PB总线2:040 门架小车直线位置编码器通讯检测 故障
+	FLT0284	Bool	5.6	false	True	True	True	True	False		FLT0284：PB总线2:044 陆侧吊具通讯检测 故障
+	FLT0285	Bool	5.7	false	True	True	True	True	False		FLT0285：PB总线2:045 门架吊具通讯检测 故障
+	FLT0286	Bool	6.0	false	True	True	True	True	False		FLT0286：PB总线2:046 门架上架通讯检测 故障
+	FLT0290	Bool	6.1	false	True	True	True	True	False		FLT0290：PB总线2:050 大车 电缆卷盘 绝对值 位置编码器通讯检测 故障
+	FLT0291	Bool	6.2	false	True	True	True	True	False		FLT0291：PB总线2:051 大车 陆侧绝对值 位置编码器通讯检测 故障
+	FLT0292	Bool	6.3	false	True	True	True	True	False		FLT0292：PB总线2:052 BTG 大车 定位系统通讯检测 故障
+	FLT0293	Bool	6.4	false	True	True	True	True	False		FLT0293：PB总线2:053 大车 海侧绝对值 位置编码器通讯检测 故障
+	FLT0294	Bool	6.5	false	True	True	True	True	False		FLT0294 : PB总线1:054 01F11_MA600高压柜通讯故障
+	FLT0410	Bool	6.6	false	True	True	True	True	False		FLT0410：大风故障
+	FLT0417	Bool	6.7	false	True	True	True	True	False		FLT0417：ALM 故障
+	FLT0418	Bool	7.0	false	True	True	True	True	False		FLT0418：ALM 报警
+	FLT0419	Bool	7.1	false	True	True	True	True	False		FLT0419：ALM 接地#1 检测故障
+	FLT0420	Bool	7.2	false	True	True	True	True	False		FLT0420：ALM 接地#2 检测故障
+	FLT0442	Bool	7.3	false	True	True	True	True	False		FLT0442：远程操作站 通讯 检测故障
+	FLT0444	Bool	7.4	false	True	True	True	True	False		FLT0444：远程操作站 心跳 检测故障
+	FLT0446	Bool	7.5	false	True	True	True	True	False		FLT0446：SPSS控制器 心跳 检测故障
+	FLT0488	Bool	7.6	false	True	True	True	True	False		FLT0488：门架机房过湿检测报警
+	FLT0502	Bool	7.7	false	True	True	True	True	False		FLT0502：门架机房过湿检测故障
+	FLT0503	Bool	8.0	false	True	True	True	True	False		FLT0503：机房过湿检测报警
+	FLT0504	Bool	8.1	false	True	True	True	True	False		FLT0504：机房过湿检测故障
+	FLT0505	Bool	8.2	false	True	True	True	True	False		FLT0505：+01F15-TSK1 机房过温 检测警告 /5GA10M
+	FLT0506	Bool	8.3	false	True	True	True	True	False		FLT0506：+01F15-TSK1 机房过温 检测故障 /5GA10M
+	FLT0507	Bool	8.4	false	True	True	True	True	False		FLT0507：+01F15-TSK2 电气房过温 检测警告 /5GA14M
+	FLT0508	Bool	8.5	false	True	True	True	True	False		FLT0508：+01F15-TSK2 电气房过温 检测故障 /5GA14M
+	FLT0509	Bool	8.6	false	True	True	True	True	False		FLT0509：电气房过湿检测报警
+	FLT0510	Bool	8.7	false	True	True	True	True	False		FLT0510：电气房过湿检测故障
+	FLT0511	Bool	9.0	false	True	True	True	True	False		FLT0511：门架机房过温检测报警
+	FLT0512	Bool	9.1	false	True	True	True	True	False		FLT0512：门架机房过温检测故障
+	FLT0545	Bool	9.2	false	True	True	True	True	False		FLT0545：海侧吊具 中锁陆右 闭锁限位 S28 检测故障
+	FLT0546	Bool	9.3	false	True	True	True	True	False		FLT0546：海侧吊具 20英寸 限位S17 检测故障
+	FLT0547	Bool	9.4	false	True	True	True	True	False		FLT0547：海侧吊具 40英寸 海侧限位 S18 检测故障
+	FLT0548	Bool	9.5	false	True	True	True	True	False		FLT0548：海侧吊具 40英寸 陆侧限位 S19 检测故障
+	FLT0549	Bool	9.6	false	True	True	True	True	False		FLT0549：海侧吊具 45英寸 限位S20 检测故障
+	FLT0550	Bool	9.7	false	True	True	True	True	False		FLT0550：海侧吊具 陆左 中锁上限位 S33 检测故障
+	FLT0551	Bool	10.0	false	True	True	True	True	False		FLT0551：海侧吊具 海左 中锁上限位 S34 检测故障
+	FLT0552	Bool	10.1	false	True	True	True	True	False		FLT0552：海侧吊具 海右 中锁上限位 S35 检测故障
+	FLT0553	Bool	10.2	false	True	True	True	True	False		FLT0553：海侧吊具 陆右 中锁上限位 S36 检测故障
+	FLT0554	Bool	10.3	false	True	True	True	True	False		FLT0554：海侧吊具 海侧吊钩 连接限位 S42 检测故障
+	FLT0555	Bool	10.4	false	True	True	True	True	False		FLT0555：海侧吊具 海侧吊钩 断开限位 S43 检测故障
+	FLT0556	Bool	10.5	false	True	True	True	True	False		FLT0556：海侧吊具 陆侧吊钩 连接限位 S45 检测故障
+	FLT0557	Bool	10.6	false	True	True	True	True	False		FLT0557：海侧吊具 陆侧吊钩 断开限位 S46 检测故障
+	FLT0558	Bool	10.7	false	True	True	True	True	False		FLT0558：海侧吊具 海侧吊钩 允许限位 S41 检测故障
+	FLT0559	Bool	11.0	false	True	True	True	True	False		FLT0559：海侧吊具 陆侧吊钩 允许限位 S44 检测故障
+	FLT0560	Bool	11.1	false	True	True	True	True	False		FLT0560：海侧吊具 海侧 最小位限位 S37 检测故障
+	FLT0733	Bool	11.2	false	True	True	True	True	False		FLT0733：门架起升 绝对值 编码器 输入信号 丢失 警告
+	FLT0734	Bool	11.3	false	True	True	True	True	False		FLT0734：门架小车 磁尺 输入信号 丢失 警告
+	FLT0735	Bool	11.4	false	True	True	True	True	False		FLT0735：主起升 绝对值 编码器 输入信号 丢失 警告
+	FLT0736	Bool	11.5	false	True	True	True	True	False		FLT0736：主小车 绝对值 编码器 输入信号 丢失 警告
+	FLT0737	Bool	11.6	false	True	True	True	True	False		FLT0737：主小车 磁尺 输入信号 丢失 警告
+	FLT0738	Bool	11.7	false	True	True	True	True	False		FLT0738：俯仰 绝对值 编码器 输入信号 丢失 警告
+	FLT0739	Bool	12.0	false	True	True	True	True	False		FLT0739：大车 BTG 输入信号 丢失 警告
+	FLT0740	Bool	12.1	false	True	True	True	True	False		FLT0740：大车 绝对值 编码器 输入信号 丢失 警告
+	FLT0801	Bool	12.2	false	True	True	True	True	False		FLT0801：主起升 紧急停车 驱动器#1故障检测 故障
+	FLT0802	Bool	12.3	false	True	True	True	True	False		FLT0802：主起升 紧急停车 驱动器#2故障检测 故障
+	FLT0803	Bool	12.4	false	True	True	True	True	False		FLT0803：主起升 紧急停车 马达#1主接触器#1检测 故障
+	FLT0804	Bool	12.5	false	True	True	True	True	False		FLT0804：主起升 紧急停车 马达#1主接触器#2检测 故障
+	FLT0805	Bool	12.6	false	True	True	True	True	False		FLT0805：主起升 紧急停车 马达#2主接触器#1检测 故障
+	FLT0806	Bool	12.7	false	True	True	True	True	False		FLT0806：主起升 紧急停车 马达#2主接触器#2检测 故障
+	FLT0807	Bool	13.0	false	True	True	True	True	False		FLT0807：主起升 紧急停车 驱动器#1紧急停车继电器检测 故障
+	FLT0808	Bool	13.1	false	True	True	True	True	False		FLT0808：主起升 紧急停车 驱动器#2紧急停车继电器检测 故障
+	FLT0815	Bool	13.2	false	True	True	True	True	False		FLT0815：主起升 紧急停车 速度偏差检测 故障
+	FLT0846	Bool	13.3	false	True	True	True	True	False		FLT0846：主起升 紧急停车 自动模式下位置保护检测 故障
+	FLT0847	Bool	13.4	false	True	True	True	True	False		FLT0847：主起升 紧急停车 自动模式下速度保护检测 故障
+	FLT0849	Bool	13.5	false	True	True	True	True	False		FLT0849：主起升 紧急停车 加速度异常检测 报警
+	FLT0850	Bool	13.6	false	True	True	True	True	False		FLT0850：主起升 紧急停车 加速度异常检测 故障
+	FLT0861	Bool	13.7	false	True	True	True	True	False		FLT0861：主起升 上升允许 重量传感器超载检测 故障
+	FLT0862	Bool	14.0	false	True	True	True	True	False		FLT0862：主起升 上升允许 重量传感器偏载检测 故障
+	FLT0879	Bool	14.1	false	True	True	True	True	False		FLT0879：主起升 下降允许 上架松绳检测 故障
+	FLT0880	Bool	14.2	false	True	True	True	True	False		FLT0880：主起升 下降允许 重量传感器松绳检测 故障
+	FLT0881	Bool	14.3	false	True	True	True	True	False		FLT0881：主起升 下降允许 吊具着箱松绳检测 故障
+	FLT0885	Bool	14.4	false	True	True	True	True	False		FLT0885：主起升 下降允许 自动模式下降软件停止位置检测 故障
+	FLT0920	Bool	14.5	false	True	True	True	True	False		FLT0920：主起升 运行允许 吊具模式检测 故障
+	FLT0921	Bool	14.6	false	True	True	True	True	False		FLT0921：主起升 运行允许 吊具开闭锁信号检测 故障
+	FLT1056	Bool	14.7	false	True	True	True	True	False		FLT1056：主起升 位置 位置值检测 错误
+	FLT1129	Bool	15.0	false	True	True	True	True	False		FLT1129：机房液压站 油泵运行超时检测 故障
+	FLT1134	Bool	15.1	false	True	True	True	True	False		FLT1134：机房液压站 油泵频繁启动检测 故障
+	FLT1201	Bool	15.2	false	True	True	True	True	False		FLT1201：门架起升 紧急停车 驱动器故障检测 故障
+	FLT1202	Bool	15.3	false	True	True	True	True	False		FLT1202：门架起升 紧急停车 驱动器紧急停车继电器检测 故障
+	FLT1241	Bool	15.4	false	True	True	True	True	False		FLT1241：门架起升 运行允许 马达过温检测 警告
+	FLT1242	Bool	15.5	false	True	True	True	True	False		FLT1242：门架起升 运行允许 马达过温检测 故障
+	FLT1243	Bool	15.6	false	True	True	True	True	False		FLT1243：门架起升 运行允许 马达温度传感器检测 故障
+	FLT1325	Bool	15.7	false	True	True	True	True	False		FLT1325：门架起升 位置 位置值无效检测 错误
+	FLT1332	Bool	16.0	false	True	True	True	True	False		FLT1332：门架起升 液压站 油泵电机运行时间检测 故障
+	FLT1333	Bool	16.1	false	True	True	True	True	False		FLT1333：门架起升 液压站 油泵电机频繁启动检测 故障
+	FLT1521	Bool	16.2	false	True	True	True	True	False		FLT1521：主小车 紧急停车 驱动器故障检测 故障
+	FLT1528	Bool	16.3	false	True	True	True	True	False		FLT1528：主小车 紧急停车 速度偏差检测 故障
+	FLT1547	Bool	16.4	false	True	True	True	True	False		FLT1547：主小车 紧急停车 速度检测 故障
+	FLT1548	Bool	16.5	false	True	True	True	True	False		FLT1548：主小车 紧急停车 加速度异常检测 报警
+	FLT1549	Bool	16.6	false	True	True	True	True	False		FLT1549：主小车 紧急停车 加速度异常检测 故障
+	FLT1592	Bool	16.7	false	True	True	True	True	False		FLT1592：主小车 位置 位置值检测 错误
+	FLT1650	Bool	17.0	false	True	True	True	True	False		FLT1650：门架小车左右偏载警告
+	FLT1681	Bool	17.1	false	True	True	True	True	False		FLT1681：门架小车 紧急停车 驱动器故障检测 故障
+	FLT1687	Bool	17.2	false	True	True	True	True	False		FLT1687：门架小车 紧急停车 速度偏差检测 故障
+	FLT1708	Bool	17.3	false	True	True	True	True	False		FLT1708：门架小车 紧急停车 加速度异常检测 警告
+	FLT1709	Bool	17.4	false	True	True	True	True	False		FLT1709：门架小车 紧急停车 加速度异常检测 故障
+	FLT1755	Bool	17.5	false	True	True	True	True	False		FLT1755：门架小车 减速运行 门架起升高度太低 警告
+	FLT1761	Bool	17.6	false	True	True	True	True	False		FLT1761：门架小车 位置 位置值超范围检测 警告
+	FLT1765	Bool	17.7	false	True	True	True	True	False		FLT1765：门架小车 位置 位置值无效 错误
+	FLT1766	Bool	18.0	false	True	True	True	True	False		FLT1766：门架小车 位置 磁尺通讯 检测故障
+	FLT1801	Bool	18.1	false	True	True	True	True	False		FLT1801：俯仰 紧急停车 驱动器故障检测 故障
+	FLT1809	Bool	18.2	false	True	True	True	True	False		FLT1809：俯仰 紧急停车 速度偏差检测 故障
+	FLT1823	Bool	18.3	false	True	True	True	True	False		FLT1823：俯仰 紧急停车 加速度异常检测 报警
+	FLT1824	Bool	18.4	false	True	True	True	True	False		FLT1824：俯仰 紧急停车 加速度异常检测 故障
+	FLT1825	Bool	18.5	false	True	True	True	True	False		FLT1825：俯仰 上升允许 缓冲器限位检测 故障
+	FLT1826	Bool	18.6	false	True	True	True	True	False		FLT1826：俯仰 上升允许 上极限限位检测 故障
+	FLT1845	Bool	18.7	false	True	True	True	True	False		FLT1845：俯仰 下降允许 左侧松绳限位检测 故障
+	FLT1846	Bool	19.0	false	True	True	True	True	False		FLT1846：俯仰 下降允许 右侧松绳限位检测 故障
+	FLT1857	Bool	19.1	false	True	True	True	True	False		FLT1857：俯仰 运行允许 卷筒左侧跳绳限位检测 故障
+	FLT1858	Bool	19.2	false	True	True	True	True	False		FLT1858：俯仰 运行允许 卷筒右侧跳绳限位检测 故障
+	FLT1885	Bool	19.3	false	True	True	True	True	False		FLT1885：俯仰 落钩限位#1检测 故障
+	FLT1886	Bool	19.4	false	True	True	True	True	False		FLT1886：俯仰 落钩限位#2检测 故障
+	FLT1887	Bool	19.5	false	True	True	True	True	False		FLT1887：俯仰 抬钩限位#1检测 故障
+	FLT1888	Bool	19.6	false	True	True	True	True	False		FLT1888：俯仰 抬钩限位#2检测 故障
+	FLT1952	Bool	19.7	false	True	True	True	True	False		FLT1952：俯仰 位置 位置值无效 错误
+	FLT2105	Bool	20.0	false	True	True	True	True	False		FLT2105：大车 紧急停车 驱动器#1故障检测 故障
+	FLT2106	Bool	20.1	false	True	True	True	True	False		FLT2106：大车 紧急停车 驱动器#2故障检测 故障
+	FLT2107	Bool	20.2	false	True	True	True	True	False		FLT2107：大车 紧急停车 马达主接触器#1检测 故障
+	FLT2108	Bool	20.3	false	True	True	True	True	False		FLT2108：大车 紧急停车 马达主接触器#2检测 故障
+	FLT2115	Bool	20.4	false	True	True	True	True	False		FLT2115：大车 紧急停车 速度偏差检测 故障
+	FLT2121	Bool	20.5	false	True	True	True	True	False		FLT2121：大车 紧急停车 GCR故障检测 故障
+	FLT2122	Bool	20.6	false	True	True	True	True	False		FLT2122：大车 紧急停车 加速度异常检测 报警
+	FLT2123	Bool	20.7	false	True	True	True	True	False		FLT2123：大车 紧急停车 加速度异常检测 故障
+	FLT2302	Bool	21.0	false	True	True	True	True	False		FLT2302：大车 减速运行 大车电缆卷盘 减速信号 激活 警告
+	FLT2303	Bool	21.1	false	True	True	True	True	False		FLT2303：大车 减速运行 大车电缆卷盘 预满盘信号 激活 警告
+	FLT2304	Bool	21.2	false	True	True	True	True	False		FLT2304：大车 减速运行 大车电缆卷盘 预空盘信号 激活 警告
+	FLT2313	Bool	21.3	false	True	True	True	True	False		FLT2313：大车 位置 BTG故障 检测错误
+	FLT2315	Bool	21.4	false	True	True	True	True	False		FLT2315：大车 位置 陆侧绝对值 编码器 位置值 超范围 检测故障
+	FLT2316	Bool	21.5	false	True	True	True	True	False		FLT2316：大车 位置 海侧绝对值 编码器 位置值 超范围 检测故障
+	FLT2318	Bool	21.6	false	True	True	True	True	False		FLT2318：大车 位置 海侧绝对值编码器 BTG位置 偏差值 检测故障
+	FLT2319	Bool	21.7	false	True	True	True	True	False		FLT2319：大车 位置 陆侧绝对值编码器 BTG位置 偏差值 检测故障
+	FLT2326	Bool	22.0	false	True	True	True	True	False		FLT2326：大车 减速运行 大车位置故障 检测报警
+	FLT2327	Bool	22.1	false	True	True	True	True	False		FLT2327：大车 位置 BTG_Device_Error 检测故障
+	FLT2328	Bool	22.2	false	True	True	True	True	False		FLT2328：大车 位置 BTG_Transponder_Number_Error 检测故障
+	FLT2329	Bool	22.3	false	True	True	True	True	False		FLT2329：大车 位置 BTG_Pos_Fault 检测故障
+	FLT2330	Bool	22.4	false	True	True	True	True	False		FLT2330：大车 位置 BTG_Pulse_Encoder_Error 检测报警
+	FLT2331	Bool	22.5	false	True	True	True	True	False		FLT2331：大车 位置 BTG_Transmitter_Error 检测报警
+	FLT2332	Bool	22.6	false	True	True	True	True	False		FLT2332：大车 位置 BTG_Supply_12VDC_Low 检测报警
+	FLT2333	Bool	22.7	false	True	True	True	True	False		FLT2333：大车 位置 BTG_Supply_15VDC_Low 检测报警
+	FLT2334	Bool	23.0	false	True	True	True	True	False		FLT2334：大车 位置 BTG_Supply_5VDC_Low 检测报警
+	FLT2335	Bool	23.1	false	True	True	True	True	False		FLT2335：大车 位置 BTG_Supply_Minus_15VDC_Low 检测报警
+	FLT2336	Bool	23.2	false	True	True	True	True	False		FLT2336：大车 位置 BTG_Logging_Fault 检测报警
+	FLT2343	Bool	23.3	false	True	True	True	True	False		FLT2343：大车 海侧液压站 油泵 频繁启动 检测故障
+	FLT2355	Bool	23.4	false	True	True	True	True	False		FLT2355：大车 陆侧液压站 油泵 频繁启动 检测故障
+	FLT2420	Bool	23.5	false	True	True	True	True	False		FLT2420：海侧吊具 着箱限位异常 检测故障
+	FLT2421	Bool	23.6	false	True	True	True	True	False		FLT2421：陆侧吊具 着箱限位异常 检测故障
+	FLT2422	Bool	23.7	false	True	True	True	True	False		FLT2422：门架吊具 着箱限位异常 检测故障
+	FLT2423	Bool	24.0	false	True	True	True	True	False		FLT2423：海侧吊具 开闭锁限位异常 检测故障
+	FLT2424	Bool	24.1	false	True	True	True	True	False		FLT2424：陆侧吊具 开闭锁限位异常 检测故障
+	FLT2425	Bool	24.2	false	True	True	True	True	False		FLT2425：门架吊具 开闭锁限位异常 检测故障
+	FLT2426	Bool	24.3	false	True	True	True	True	False		FLT2426：海侧吊具 中锁上限位异常 检测故障
+	FLT2427	Bool	24.4	false	True	True	True	True	False		FLT2427：陆侧吊具 中锁上限位异常 检测故障
+	FLT2428	Bool	24.5	false	True	True	True	True	False		FLT2428：门架吊具 中锁上限位异常 检测故障
+	FLT2429	Bool	24.6	false	True	True	True	True	False		FLT2429：海侧吊具 尺寸限位异常 检测故障
+	FLT2430	Bool	24.7	false	True	True	True	True	False		FLT2430：陆侧吊具 尺寸限位异常 检测故障
+	FLT2431	Bool	25.0	false	True	True	True	True	False		FLT2431：门架吊具 尺寸限位异常 检测故障
+	FLT2432	Bool	25.1	false	True	True	True	True	False		FLT2432：海侧吊具 中锁缩最小位限位异常 检测故障
+	FLT2433	Bool	25.2	false	True	True	True	True	False		FLT2433：陆侧吊具 中锁缩最小位限位异常 检测故障
+	FLT2434	Bool	25.3	false	True	True	True	True	False		FLT2434：门架吊具 中锁缩最小位限位异常 检测故障
+	FLT2435	Bool	25.4	false	True	True	True	True	False		FLT2435：海侧吊具 吊钩相关限位异常 检测故障
+	FLT2436	Bool	25.5	false	True	True	True	True	False		FLT2436：陆侧吊具 吊钩相关限位异常 检测故障
+	FLT2437	Bool	25.6	false	True	True	True	True	False		FLT2437：门架吊具 吊钩相关限位异常 检测故障
+	FLT2452	Bool	25.7	false	True	True	True	True	False		FLT_2452：TLS 油缸位置 检测错误#
+	FLT2457	Bool	26.0	false	True	True	True	True	False		FLT2457：TLS1 MD2 油缸#1 检测故障
+	FLT2458	Bool	26.1	false	True	True	True	True	False		FLT2458：TLS1 MD2 油缸#2 检测故障
+	FLT2459	Bool	26.2	false	True	True	True	True	False		FLT2459：TLS1 MD2 油缸#3 检测故障
+	FLT2460	Bool	26.3	false	True	True	True	True	False		FLT2460：TLS1 MD2 油缸#4 检测故障
+	FLT2461	Bool	26.4	false	True	True	True	True	False		FLT2461：TLS1 MD2 检测故障
+	FLT2496	Bool	26.5	false	True	True	True	True	False		FLT2496：小车钢丝绳 张紧油缸#1 过松 检测故障
+	FLT2497	Bool	26.6	false	True	True	True	True	False		FLT2497：小车钢丝绳 张紧油缸#1 过紧 检测故障
+	FLT2498	Bool	26.7	false	True	True	True	True	False		FLT2498：小车钢丝绳 张紧油缸#2 过松 检测故障
+	FLT2499	Bool	27.0	false	True	True	True	True	False		FLT2499：小车钢丝绳 张紧油缸#2 过紧 检测故障
+	FLT2500	Bool	27.1	false	True	True	True	True	False		FLT2500：托架钢丝绳 张紧油缸#1 过松 检测故障
+	FLT2501	Bool	27.2	false	True	True	True	True	False		FLT2501：托架钢丝绳 张紧油缸#1 过紧 检测故障
+	FLT2502	Bool	27.3	false	True	True	True	True	False		FLT2502：托架钢丝绳 张紧油缸#2 过松 检测故障
+	FLT2503	Bool	27.4	false	True	True	True	True	False		FLT2503：托架钢丝绳 张紧油缸#2 过紧 检测故障
+	FLT2561	Bool	27.5	false	True	True	True	True	False		FLT2561：门架微动 驱动器MOMO#1故障检测 故障
+	FLT2562	Bool	27.6	false	True	True	True	True	False		FLT2562：门架微动 驱动器MOMO#2故障检测 故障
+	FLT2563	Bool	27.7	false	True	True	True	True	False		FLT2563：门架微动 驱动器MOMO#3故障检测 故障
+	FLT2564	Bool	28.0	false	True	True	True	True	False		FLT2564：门架微动 驱动器MOMO#4故障检测 故障
+	FLT2600	Bool	28.1	false	True	True	True	True	False		FLT2600：门架微动 位置值无效检测 错误
+	FLT2641	Bool	28.2	false	True	True	True	True	False		FLT2641：海侧吊具 心跳 检测故障
+	FLT2721	Bool	28.3	false	True	True	True	True	False		FLT2721：陆侧吊具 心跳 检测故障
+	FLT2801	Bool	28.4	false	True	True	True	True	False		FLT2801：门架吊具 心跳 检测故障
+	FLT3001	Bool	28.5	false	True	True	True	True	False		FLT3001：SCR1 总故障
+	FLT3002	Bool	28.6	false	True	True	True	True	False		FLT3002：SCR1 主电源 电源空开 检测故障
+	FLT3003	Bool	28.7	false	True	True	True	True	False		FLT3003：SCR1 制动器 电源空开#1 检测故障
+	FLT3004	Bool	29.0	false	True	True	True	True	False		FLT3004：SCR1 制动器 电源空开#2 检测故障
+	FLT3005	Bool	29.1	false	True	True	True	True	False		FLT3005：SCR1 马达 过温 检测故障
+	FLT3006	Bool	29.2	false	True	True	True	True	False		FLT3006：SCR1 缓冲器 过紧 检测故障
+	FLT3007	Bool	29.3	false	True	True	True	True	False		FLT3007：SCR1 驱动器故障 检测故障
+	FLT3008	Bool	29.4	false	True	True	True	True	False		FLT3008：SCR1 制动器 接触器 检测故障
+	FLT3009	Bool	29.5	false	True	True	True	True	False		FLT3009：SCR1 制动器 电流继电器 检测故障
+	FLT3010	Bool	29.6	false	True	True	True	True	False		FLT3010：SCR1 驱动器 不运行 检测故障
+	FLT3011	Bool	29.7	false	True	True	True	True	False		FLT3011：SCR1 驱动器 运行 检测故障
+	FLT3012	Bool	30.0	false	True	True	True	True	False		FLT3012：SCR1 选择 检测故障
+	FLT3013	Bool	30.1	false	True	True	True	True	False		FLT3013：SCR1 满盘 检测故障
+	FLT3014	Bool	30.2	false	True	True	True	True	False		FLT3014：SCR1 空盘  检测故障
+	FLT3015	Bool	30.3	false	True	True	True	True	False		FLT3015：SCR1 速度 不匹配 检测故障
+	FLT3016	Bool	30.4	false	True	True	True	True	False		FLT3016：SCR1 马达 编码器 检测故障
+	FLT3017	Bool	30.5	false	True	True	True	True	False		FLT3017：SCR1 松绳 检测故障
+	FLT3018	Bool	30.6	false	True	True	True	True	False		FLT3018：SCR1 电机加热器 接触器 检测故障
+	FLT3019	Bool	30.7	false	True	True	True	True	False		FLT3019：SCR1 吊具电缆卷盘 电机加热器 开关检测故障//+13F01/9FA30E
+	FLT3020	Bool	31.0	false	True	True	True	True	False		FLT3020：SCR1吊具电缆卷盘 减速箱 加热器 开关检测故障//+13F01/9FA35E
+	FLT3121	Bool	31.1	false	True	True	True	True	False		FLT3121：GCR 主电源 电源空开 检测故障
+	FLT3122	Bool	31.2	false	True	True	True	True	False		FLT3122：GCR 制动器 电源空开#1 检测故障
+	FLT3123	Bool	31.3	false	True	True	True	True	False		FLT3123：GCR 制动器 电源空开#2 检测故障
+	FLT3124	Bool	31.4	false	True	True	True	True	False		FLT3124：GCR 马达 过温 检测故障
+	FLT3125	Bool	31.5	false	True	True	True	True	False		FLT3125：GCR 驱动器故障 检测故障
+	FLT3126	Bool	31.6	false	True	True	True	True	False		FLT3126：GCR 过紧 检测故障
+	FLT3127	Bool	31.7	false	True	True	True	True	False		FLT3127：GCR 过松 检测故障
+	FLT3128	Bool	32.0	false	True	True	True	True	False		FLT3128：GCR 方向限位 检测故障
+	FLT3129	Bool	32.1	false	True	True	True	True	False		FLT3129：GCR 空盘 检测故障
+	FLT3130	Bool	32.2	false	True	True	True	True	False		FLT3130：GCR 选择 检测故障
+	FLT3131	Bool	32.3	false	True	True	True	True	False		FLT3131：GCR 制动器 电流继电器 检测故障
+	FLT3132	Bool	32.4	false	True	True	True	True	False		FLT3132：GCR 制动器 接触器 检测故障
+	FLT3133	Bool	32.5	false	True	True	True	True	False		FLT3133：GCR 满盘 凸轮限位 检测故障
+	FLT3134	Bool	32.6	false	True	True	True	True	False		FLT3134：GCR 减速 检测故障
+	FLT3135	Bool	32.7	false	True	True	True	True	False		FLT3135：GCR 速度 不匹配 检测故障
+	FLT3136	Bool	33.0	false	True	True	True	True	False		FLT3136：GCR 绝对值 编码器 检测故障
+	FLT3137	Bool	33.1	false	True	True	True	True	False		FLT3137：GCR 总故障
+	FLT3138	Bool	33.2	false	True	True	True	True	False		FLT3138：GCR 电机加热器 接触器 检测故障
+	FLT3161	Bool	33.3	false	True	True	True	True	False		FLT3161：Wampfler 托令#1 没准备就绪 检测故障
+	FLT3162	Bool	33.4	false	True	True	True	True	False		FLT3162：Wampfler 托令#1 海侧限位 检测故障
+	FLT3163	Bool	33.5	false	True	True	True	True	False		FLT3163：Wampfler 托令#1 陆侧限位 检测故障
+	FLT3164	Bool	33.6	false	True	True	True	True	False		FLT3164：Wampfler 托令#1 变频器 检测故障
+	FLT3165	Bool	33.7	false	True	True	True	True	False		FLT3165：Wampfler 托令#1 皮带损坏 检测故障
+	FLT3166	Bool	34.0	false	True	True	True	True	False		FLT3166：Wampfler 托令#1 总故障
+	FLT3169	Bool	34.1	false	True	True	True	True	False		FLT3169：Wampfler 托令#2 没准备就绪 检测故障
+	FLT3170	Bool	34.2	false	True	True	True	True	False		FLT3170：Wampfler 托令#2 海侧限位 检测故障
+	FLT3171	Bool	34.3	false	True	True	True	True	False		FLT3171：Wampfler 托令#2 陆侧限位 检测故障
+	FLT3172	Bool	34.4	false	True	True	True	True	False		FLT3172：Wampfler 托令#2 变频器 检测故障
+	FLT3173	Bool	34.5	false	True	True	True	True	False		FLT3173：Wampfler 托令#2 皮带损坏 检测故障
+	FLT3174	Bool	34.6	false	True	True	True	True	False		FLT3174：Wampfler 托令#2 总故障
+	FLT3177	Bool	34.7	false	True	True	True	True	False		FLT3177：Wampfler 托令#3 没准备就绪 检测故障
+	FLT3178	Bool	35.0	false	True	True	True	True	False		FLT3178：Wampfler 托令#3 海侧限位 检测故障
+	FLT3179	Bool	35.1	false	True	True	True	True	False		FLT3179：Wampfler 托令#3 陆侧限位 检测故障
+	FLT3180	Bool	35.2	false	True	True	True	True	False		FLT3180：Wampfler 托令#3 变频器 检测故障
+	FLT3181	Bool	35.3	false	True	True	True	True	False		FLT3181：Wampfler 托令#3 皮带损坏 检测故障
+	FLT3182	Bool	35.4	false	True	True	True	True	False		FLT3182：Wampfler 托令#3 总故障
+	FLT3853	Bool	35.5	false	True	True	True	True	False		FLT3853：Bit12, Error_Camera
+	FLT8134	Bool	35.6	false	True	True	True	True	False		FLT8134：门架小车对箱超时
+	FLT8135	Bool	35.7	false	True	True	True	True	False		FLT8135：检测到门架小车放斜箱
+	FLT8200	Bool	36.0	false	True	True	True	True	False		FLT8200：TDS设备状态处于错误状态
+	FLT8201	Bool	36.1	false	True	True	True	True	False		FLT8201：TDS无法就绪
+	FLT8202	Bool	36.2	false	True	True	True	True	False		FLT8202：TDS激光器状态异常
+	FLT8203	Bool	36.3	false	True	True	True	True	False		FLT8203：TDS激光器设备掉线
+	FLT8204	Bool	36.4	false	True	True	True	True	False		FLT8204：TDS马达错误
+	FLT8205	Bool	36.5	false	True	True	True	True	False		FLT8205：TDS马达掉线
+	FLT9003	Bool	36.6	false	True	True	True	True	False		FLT9003：海侧激光器返回数据错误
+	FLT9024	Bool	36.7	false	True	True	True	True	False		FLT9024：SPSS 大车方向激光器返回数据错误
+	FLT9045	Bool	37.0	false	True	True	True	True	False		FLT9045：陆侧激光器返回数据错误

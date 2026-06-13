@@ -221,6 +221,7 @@ namespace OpcDaProxyService
 
             // 创建临时组读取数据
             GroupContext group = CreateTempGroup(itemIds);
+            System.Threading.Thread.Sleep(1000);
             if (group == null)
             {
                 return results;
@@ -285,7 +286,13 @@ namespace OpcDaProxyService
                             OPCITEMSTATE state = (OPCITEMSTATE)Marshal.PtrToStructure(statePtr, typeof(OPCITEMSTATE));
 
                             ushort quality = (ushort)state.wQuality;
-                            result["value"] = ConvertJsonValue(state.vDataValue);
+                            object value = ConvertJsonValue(state.vDataValue);
+                            Program.Log(
+                                "Read item=" + readableBindings[i].ItemId +
+                                " error=0x" + itemError.ToString("X8") +
+                                " quality=0x" + quality.ToString("X4") +
+                                " value=" + (value == null ? "<null>" : value.ToString()));
+                            result["value"] = value;
                             result["quality"] = quality;
                             result["timestamp"] = FileTimeToIsoString(state.ftTimeStamp, now);
 
@@ -293,9 +300,13 @@ namespace OpcDaProxyService
                         }
                         else
                         {
+                            Program.LogWarn(
+                                "Read item=" + readableBindings[i].ItemId +
+                                " error=0x" + itemError.ToString("X8"));
                             result["value"] = null;
                             result["quality"] = 0;
                             result["timestamp"] = now.ToString("o", CultureInfo.InvariantCulture);
+                            result["error"] = "Read failed: 0x" + itemError.ToString("X8");
                         }
 
                         results.Add(result);
@@ -383,6 +394,15 @@ namespace OpcDaProxyService
                 {
                     int itemError = Marshal.ReadInt32(AddPtr(errorsPtr, i * 4));
                     OPCITEMRESULT result = (OPCITEMRESULT)Marshal.PtrToStructure(AddPtr(resultsPtr, i * resultSize), typeof(OPCITEMRESULT));
+                    string addMessage = "AddItems item=" + itemIds[i] + " error=0x" + itemError.ToString("X8") + " handle=" + result.hServer;
+                    if (itemError >= 0)
+                    {
+                        Program.Log(addMessage);
+                    }
+                    else
+                    {
+                        Program.LogWarn(addMessage);
+                    }
 
                     ItemBinding binding = new ItemBinding();
                     binding.ItemId = itemIds[i];

@@ -1,0 +1,683 @@
+	名称	数据类型	偏移量	起始值	监视值	保持	可访问	可写	可见	设定值	监控	注释												
+	CraneId	Int	0.0	0		True	True	True	True	False		
+	CycleCount	DInt	2.0	0		True	True	True	True	False		
+	AC3	Bool	6.0	false		True	True	True	True	False		
+	ROS	Bool	6.1	false		True	True	True	True	False		
+	ALM_NOR_MODE	Bool	6.2	false		True	True	True	True	False		
+	ALM1_Q1	Bool	6.3	false		True	True	True	True	False		
+	ALM2_Q1	Bool	6.4	false		True	True	True	True	False		
+	ALM3_Q1	Bool	6.5	false		True	True	True	True	False		
+	ALM1_ON	Bool	6.6	false		True	True	True	True	False		
+	ALM2_ON	Bool	6.7	false		True	True	True	True	False		
+	ALM3_ON	Bool	7.0	false		True	True	True	True	False		
+	ALM_ON_DELAY	Bool	7.1	false		True	True	True	True	False		
+	ALL_B_SET	Bool	7.2	false		True	True	True	True	False		
+	MT_ALL_CMD_OFF	Bool	7.3	false		True	True	True	True	False		
+	PT_ALL_CMD_OFF	Bool	7.4	false		True	True	True	True	False		
+	CONREQ	Bool	7.5	false		True	True	True	True	False		
+	RST	Bool	7.6	false		True	True	True	True	False		
+	CONTROL_ON_PRM	Bool	7.7	false		True	True	True	True	False		
+	H1_ES	Bool	8.0	false		True	True	True	True	False		
+	FCFSG	Bool	8.1	false		True	True	True	True	False		
+	H1_RUN_PRM_AUTO	Bool	8.2	false		True	True	True	True	False		
+	H1_RUN_PRM	Bool	8.3	false		True	True	True	True	False		
+	H1_UP_REQ	Bool	8.4	false		True	True	True	True	False		
+	H1_DN_REQ	Bool	8.5	false		True	True	True	True	False		
+	SCR_Running	Bool	8.6	false		True	True	True	True	False		
+	H1_HYD_B_RUN_PRM	Bool	8.7	false		True	True	True	True	False		
+	H1_SEL	Bool	9.0	false		True	True	True	True	False		主起升硬件机构已选中
+	MHEMK1	Bool	9.1	false		True	True	True	True	False		机房液压站油泵电机接触器
+	H1_HYD_B_SOL_ACTIVE	Bool	9.2	false		True	True	True	True	False		
+	HEMRLS1	Bool	9.3	false		True	True	True	True	False		
+	HEMRLS2	Bool	9.4	false		True	True	True	True	False		
+	HEMRLS3	Bool	9.5	false		True	True	True	True	False		
+	HEMRLS4	Bool	9.6	false		True	True	True	True	False		
+	HEMRLS5	Bool	9.7	false		True	True	True	True	False		
+	HEMRLS6	Bool	10.0	false		True	True	True	True	False		
+	HEMRLS7	Bool	10.1	false		True	True	True	True	False		
+	HEMRLS8	Bool	10.2	false		True	True	True	True	False		
+	H1_SldCmd	Bool	10.3	false		True	True	True	True	False		主起升减速命令
+	HBK1	Bool	10.4	false		True	True	True	True	False		主起升高速释放Q
+	HBK2	Bool	10.5	false		True	True	True	True	False		
+	HBK3	Bool	10.6	false		True	True	True	True	False		
+	HBK4	Bool	10.7	false		True	True	True	True	False		
+	HBRLS1	Bool	11.0	false		True	True	True	True	False		主起升高速度制动器释放限位
+	HBRLS2	Bool	11.1	false		True	True	True	True	False		
+	HBRLS3	Bool	11.2	false		True	True	True	True	False		
+	HBRLS4	Bool	11.3	false		True	True	True	True	False		
+	H1_I830	Bool	11.4	false		True	True	True	True	False		
+	H1_I831	Bool	11.5	false		True	True	True	True	False		
+	H1_I833	Bool	11.6	false		True	True	True	True	False		
+	H1_I834	Bool	11.7	false		True	True	True	True	False		
+	H1_UpOvt	Bool	12.0	false		True	True	True	True	False		主起升上极限限位
+	H1_UpStp	Bool	12.1	false		True	True	True	True	False		主起升凸轮限位上停止
+	H1_UpSld	Bool	12.2	false		True	True	True	True	False		主起升凸轮限位上减速
+	H1_DnSldLs	Bool	12.3	false		True	True	True	True	False		主起升凸轮限位陆侧下减速
+	H1_DnStpLs	Bool	12.4	false		True	True	True	True	False		主起升凸轮限位陆侧下停止
+	H1_DnSldWs	Bool	12.5	false		True	True	True	True	False		主起升凸轮限位海侧下减速
+	H1_DnStpWs	Bool	12.6	false		True	True	True	True	False		主起升凸轮限位海侧下停止
+	H1_ScrFull	Bool	12.7	false		True	True	True	True	False		主起升卷盘满盘限位
+	H1_Inv1ToActive	Bool	13.0	false		True	True	True	True	False		
+	H1_Inv1Homed	Bool	13.1	false		True	True	True	True	False		
+	H1_Inv1Homing	Bool	13.2	false		True	True	True	True	False		
+	H1_Inv2ToActive	Bool	13.3	false		True	True	True	True	False		
+	H1_Inv2Homed	Bool	13.4	false		True	True	True	True	False		
+	H1_Inv2Homing	Bool	13.5	false		True	True	True	True	False		
+	H1_Q1030	Bool	13.6	false		True	True	True	True	False		
+	H1_Q1031	Bool	13.7	false		True	True	True	True	False		
+	H1_Inv1FaultNum	Int	14.0	0		True	True	True	True	False		
+	Mt_Load	Int	16.0	0		True	True	True	True	False		
+	H1_Inv1Setpoint	Int	18.0	0		True	True	True	True	False		
+	H1_Inv1DrivePos	DInt	20.0	0		True	True	True	True	False		
+	H1_ActSpd	Int	24.0	0		True	True	True	True	False		
+	H1_ActPos	DInt	26.0	0		True	True	True	True	False		
+	ALM_fault_code	Int	30.0	0		True	True	True	True	False		
+	ALM_alarm_code	Int	32.0	0		True	True	True	True	False		
+	ALM_VolInput	Int	34.0	0		True	True	True	True	False		
+	ALM_ActPower	Int	36.0	0		True	True	True	True	False		
+	OutDoor_Humidity	Int	38.0	0		True	True	True	True	False		户外湿度
+	TlsA	Int	40.0	0		True	True	True	True	False		
+	TlsB	Int	42.0	0		True	True	True	True	False		
+	TlsC	Int	44.0	0		True	True	True	True	False		
+	TlsD	Int	46.0	0		True	True	True	True	False		
+	MtTargetToDrive	DInt	48.0	0		True	True	True	True	False		
+	MHTargetToDrive	DInt	52.0	0		True	True	True	True	False		
+	MtAutoStateInfo	Int	56.0	0		True	True	True	True	False		UDT_AutoStateCode;
+	AutoMoveActive	Bool	58.0	false		True	True	True	True	False		
+	AutoChangeActive	Bool	58.1	false		True	True	True	True	False		
+	Change1To2	Bool	58.2	false		True	True	True	True	False		
+	Change2To1	Bool	58.3	false		True	True	True	True	False		
+	AutoMoveDone	Bool	58.4	false		True	True	True	True	False		
+	ChangeDone	Bool	58.5	false		True	True	True	True	False		
+	SwayOn	Bool	58.6	false		True	True	True	True	False		
+	SwayOff	Bool	58.7	false		True	True	True	True	False		
+	T1_ES	Bool	59.0	false		True	True	True	True	False		
+	FCFSB	Bool	59.1	false		True	True	True	True	False		
+	T1_FWD_PRM	Bool	59.2	false		True	True	True	True	False		
+	T1_REV_PRM	Bool	59.3	false		True	True	True	True	False		
+	T1_RUN_PRM	Bool	59.4	false		True	True	True	True	False		
+	T1_TBK	Bool	59.5	false		True	True	True	True	False		
+	T1_BrkRls1	Bool	59.6	false		True	True	True	True	False		
+	T1_BrkRls2	Bool	59.7	false		True	True	True	True	False		
+	T1_RevOvt	Bool	60.0	false		True	True	True	True	False		
+	T1_RevStp	Bool	60.1	false		True	True	True	True	False		
+	T1_RevSld	Bool	60.2	false		True	True	True	True	False		
+	T1_SyncLs	Bool	60.3	false		True	True	True	True	False		
+	T1_FwdSld	Bool	60.4	false		True	True	True	True	False		
+	T1_FwdStp	Bool	60.5	false		True	True	True	True	False		
+	T1_FwdOvt	Bool	60.6	false		True	True	True	True	False		
+	T1_Inv1ToActive	Bool	60.7	false		True	True	True	True	False		
+	T1_Inv1Homed	Bool	61.0	false		True	True	True	True	False		
+	T1_Inv1Homing	Bool	61.1	false		True	True	True	True	False		
+	T1_Inv1Setpoint	Int	62.0	0		True	True	True	True	False		
+	T1_ActSpd	Int	64.0	0		True	True	True	True	False		
+	T1_Inv1DrivePos	DInt	66.0	0		True	True	True	True	False		
+	T1_EncPos	DInt	70.0	0		True	True	True	True	False		
+	T1_LinearPos	DInt	74.0	0		True	True	True	True	False		
+	T2_ES	Bool	78.0	false		True	True	True	True	False		
+	T2_SldCmd	Bool	78.1	false		True	True	True	True	False		
+	T2_FWD_PRM	Bool	78.2	false		True	True	True	True	False		
+	T2_REV_PRM	Bool	78.3	false		True	True	True	True	False		
+	T2_RUN_PRM	Bool	78.4	false		True	True	True	True	False		
+	T2_TBK	Bool	78.5	false		True	True	True	True	False		
+	T2_BrkRls1	Bool	78.6	false		True	True	True	True	False		
+	T2_BrkRls2	Bool	78.7	false		True	True	True	True	False		
+	T2_BrkRls3	Bool	79.0	false		True	True	True	True	False		
+	T2_BrkRls4	Bool	79.1	false		True	True	True	True	False		
+	T2_PosSynReq	Bool	79.2	false		True	True	True	True	False		
+	T2_RevOvt	Bool	79.3	false		True	True	True	True	False		
+	T2_RevStp	Bool	79.4	false		True	True	True	True	False		
+	T2_RevSld	Bool	79.5	false		True	True	True	True	False		
+	T2_SyncLs	Bool	79.6	false		True	True	True	True	False		
+	T2_FwdSld	Bool	79.7	false		True	True	True	True	False		
+	T2_FwdStp	Bool	80.0	false		True	True	True	True	False		
+	T2_FwdOvt	Bool	80.1	false		True	True	True	True	False		
+	T2_RefMan	Int	82.0	0		True	True	True	True	False		
+	T2_RefAuto	Int	84.0	0		True	True	True	True	False		
+	T2_ActSpd	Int	86.0	0		True	True	True	True	False		
+	T2_LinearPos	DInt	88.0	0		True	True	True	True	False		
+	H3_ES	Bool	92.0	false		True	True	True	True	False		
+	H3_RUN_PRM	Bool	92.1	false		True	True	True	True	False		
+	H3_UP_REQ	Bool	92.2	false		True	True	True	True	False		
+	H3_DN_REQ	Bool	92.3	false		True	True	True	True	False		
+	H3_HYD_B_RUN_PRM	Bool	92.4	false		True	True	True	True	False		
+	H3_PMHEMK1	Bool	92.5	false		True	True	True	True	False		机房液压站油泵电机接触器
+	H3_HYD_B_SOL_ACTIVE1	Bool	92.6	false		True	True	True	True	False		
+	H3_HEMRLS1	Bool	92.7	false		True	True	True	True	False		
+	H3_HEMRLS2	Bool	93.0	false		True	True	True	True	False		
+	H3_HEMRLS3	Bool	93.1	false		True	True	True	True	False		
+	H3_HEMRLS4	Bool	93.2	false		True	True	True	True	False		
+	H3_SldCmd	Bool	93.3	false		True	True	True	True	False		主起升减速命令
+	H3_PHBK1	Bool	93.4	false		True	True	True	True	False		主起升高速释放Q
+	H3_PHBK2	Bool	93.5	false		True	True	True	True	False		
+	H3_BRLS1	Bool	93.6	false		True	True	True	True	False		起升高速度制动器释放限位
+	H3_BRLS2	Bool	93.7	false		True	True	True	True	False		
+	H3_SynReq	Bool	94.0	false		True	True	True	True	False		
+	H3_UpOvt	Bool	94.1	false		True	True	True	True	False		主起升上极限限位
+	H3_UpStp	Bool	94.2	false		True	True	True	True	False		主起升凸轮限位上停止
+	H3_UpSld	Bool	94.3	false		True	True	True	True	False		主起升凸轮限位上减速
+	H3_DnSld	Bool	94.4	false		True	True	True	True	False		主起升凸轮限位陆侧下减速
+	H3_DnStp	Bool	94.5	false		True	True	True	True	False		主起升凸轮限位陆侧下停止
+	H3_InvToActive	Bool	94.6	false		True	True	True	True	False		
+	H3_PMHFK1	Bool	94.7	false		True	True	True	True	False		门架起升电机强迫风冷电机接触器
+	H3_MotorTemp	Int	96.0	0		True	True	True	True	False		
+	H3_RefMan	Int	98.0	0		True	True	True	True	False		
+	H3_RefAuto	Int	100.0	0		True	True	True	True	False		
+	H3_ActSpd	Int	102.0	0		True	True	True	True	False		
+	H3_ActPos	DInt	104.0	0		True	True	True	True	False		
+	DP_System_Head	Word	108.0	16#0		True	True	True	True	False		Fixed value
+	Heart_Beat_Signal_SPSS	Word	110.0	16#0		True	True	True	True	False		If the value is incremental(0-1000),the communication is OK
+	COMMAND_ID_SPSS	Word	112.0	16#0		True	True	True	True	False		The value is send to PLC by SPSS(0-65535)
+	Obstacle_Pos_In_Trolley	Int	114.0	0		True	True	True	True	False		0=no slowdown,1=slowdown
+	Trolley_Speed_Limit	Int	116.0	0		True	True	True	True	False		The value is positive,from 0 to max speed value
+	Hoist_Speed_Limit	Int	118.0	0		True	True	True	True	False		The value is positive,from 0 to max speed value
+	Container_Height_Below_H	Int	120.0	0		True	True	True	True	False		Unit:cm
+	Target_HO_Position	Int	122.0	0		True	True	True	True	False		目标排位起升高度(cm)
+	SPSS_Status	Byte	124.0	16#0		True	True	True	True	False		Fault=3,IDEL=1,WORK=2
+	HatchCove_Status	Byte	125.0	16#0		True	True	True	True	False		1:hatch cover;2:not hatchcover
+	SPSS_Error_Cord	Word	126.0	16#0		True	True	True	True	False		Error number
+	Obstacl_Height1_5	Int	128.0	0		True	True	True	True	False		
+	Obstacl_Height5_10	Int	130.0	0		True	True	True	True	False		
+	Obstacl_Height11_15	Int	132.0	0		True	True	True	True	False		
+	Obstacl_Height15_20	Int	134.0	0		True	True	True	True	False		
+	Obstacl_Height21_25	Int	136.0	0		True	True	True	True	False		
+	Obstacl_Height26_30	Int	138.0	0		True	True	True	True	False		
+	In_Byte0_bit0	Bool	140.0	false		True	True	True	True	False		吊具闭锁信号------主海吊具
+	In_Byte0_bit1	Bool	140.1	false		True	True	True	True	False		吊具开锁信号
+	In_Byte0_bit2	Bool	140.2	false		True	True	True	True	False		吊具着箱信号
+	In_Byte0_bit3	Bool	140.3	false		True	True	True	True	False		吊具20英尺信号
+	In_Byte0_bit4	Bool	140.4	false		True	True	True	True	False		吊具40英尺信号
+	In_Byte0_bit5	Bool	140.5	false		True	True	True	True	False		吊具45英尺信号
+	In_Byte0_bit6	Bool	140.6	false		True	True	True	True	False		吊具中锁上信号
+	In_Byte0_bit7	Bool	140.7	false		True	True	True	True	False		吊具中锁下信号
+	In_Byte1_bit0	Bool	141.0	false		True	True	True	True	False		吊具中锁记忆位置1到位信号
+	In_Byte1_bit1	Bool	141.1	false		True	True	True	True	False		吊具中锁记忆位置2到位信号
+	In_Byte1_bit2	Bool	141.2	false		True	True	True	True	False		吊具在移动中信号
+	In_Byte1_bit3	Bool	141.3	false		True	True	True	True	False		吊具TTDS故障信号
+	In_Byte1_bit4	Bool	141.4	false		True	True	True	True	False		吊具30英尺信号（8300毫米）
+	In_Byte1_bit5	Bool	141.5	false		True	True	True	True	False		吊具脉冲反馈信号
+	In_Byte1_bit6	Bool	141.6	false		True	True	True	True	False		吊具中锁零位信号
+	In_Byte1_bit7	Bool	141.7	false		True	True	True	True	False		吊具中锁40英尺信号
+	In_Byte2_bit0	Bool	142.0	false		True	True	True	True	False		吊具中锁45英尺信号
+	In_Byte2_bit1	Bool	142.1	false		True	True	True	True	False		吊具所有导板上信号
+	In_Byte2_bit2	Bool	142.2	false		True	True	True	True	False		到达主控给定双箱位置信号(V20161215)
+	In_Byte2_bit3	Bool	142.3	false		True	True	True	True	False		SPARE
+	In_Byte2_bit4	Bool	142.4	false		True	True	True	True	False		SPARE
+	In_Byte2_bit5	Bool	142.5	false		True	True	True	True	False		SPARE
+	In_Byte2_bit6	Bool	142.6	false		True	True	True	True	False		SPARE
+	In_Byte2_bit7	Bool	142.7	false		True	True	True	True	False		SPARE
+	In_Byte4_bit0	Bool	143.0	false		True	True	True	True	False		吊具海左开锁限位S2
+	In_Byte4_bit1	Bool	143.1	false		True	True	True	True	False		吊具海右开锁限位S3
+	In_Byte4_bit2	Bool	143.2	false		True	True	True	True	False		吊具陆左开锁限位S1
+	In_Byte4_bit3	Bool	143.3	false		True	True	True	True	False		吊具陆右开锁限位S4
+	In_Byte4_bit4	Bool	143.4	false		True	True	True	True	False		吊具海左闭锁限位S6
+	In_Byte4_bit5	Bool	143.5	false		True	True	True	True	False		吊具海右闭锁限位S7
+	In_Byte4_bit6	Bool	143.6	false		True	True	True	True	False		吊具陆左闭锁限位S5
+	In_Byte4_bit7	Bool	143.7	false		True	True	True	True	False		吊具陆右闭锁限位S8
+	In_Byte5_bit0	Bool	144.0	false		True	True	True	True	False		吊具海左着箱限位S10
+	In_Byte5_bit1	Bool	144.1	false		True	True	True	True	False		吊具海右着箱限位S11
+	In_Byte5_bit2	Bool	144.2	false		True	True	True	True	False		吊具陆左着箱限位S9
+	In_Byte5_bit3	Bool	144.3	false		True	True	True	True	False		吊具陆右着箱限位S12
+	In_Byte5_bit4	Bool	144.4	false		True	True	True	True	False		吊具海左双箱开锁限位S22
+	In_Byte5_bit5	Bool	144.5	false		True	True	True	True	False		吊具海右双箱开锁限位S23
+	In_Byte5_bit6	Bool	144.6	false		True	True	True	True	False		吊具陆左双箱开锁限位S21
+	In_Byte5_bit7	Bool	144.7	false		True	True	True	True	False		吊具陆右双箱开锁限位S24
+	In_Byte6_bit0	Bool	145.0	false		True	True	True	True	False		吊具海左双箱闭锁限位S26
+	In_Byte6_bit1	Bool	145.1	false		True	True	True	True	False		吊具海右双箱闭锁限位S27
+	In_Byte6_bit2	Bool	145.2	false		True	True	True	True	False		吊具陆左双箱闭锁限位S25
+	In_Byte6_bit3	Bool	145.3	false		True	True	True	True	False		吊具陆右双箱闭锁限位S28
+	In_Byte6_bit4	Bool	145.4	false		True	True	True	True	False		吊具海左双箱着箱限位S30
+	In_Byte6_bit5	Bool	145.5	false		True	True	True	True	False		吊具海右双箱着箱限位S31
+	In_Byte6_bit6	Bool	145.6	false		True	True	True	True	False		吊具陆左双箱着箱限位S29
+	In_Byte6_bit7	Bool	145.7	false		True	True	True	True	False		吊具陆右双箱着箱限位S32
+	In_Byte7_bit0	Bool	146.0	false		True	True	True	True	False		吊具海左侧中锁上限位S34
+	In_Byte7_bit1	Bool	146.1	false		True	True	True	True	False		吊具海右侧中锁上限位S35
+	In_Byte7_bit2	Bool	146.2	false		True	True	True	True	False		吊具陆左侧中锁上限位S33
+	In_Byte7_bit3	Bool	146.3	false		True	True	True	True	False		吊具陆右侧中锁上限位S36
+	In_Byte7_bit4	Bool	146.4	false		True	True	True	True	False		吊具海侧吊钩连接限位S42
+	In_Byte7_bit5	Bool	146.5	false		True	True	True	True	False		吊具海侧吊钩断开限位S43
+	In_Byte7_bit6	Bool	146.6	false		True	True	True	True	False		吊具海侧吊钩允许限位S41
+	In_Byte7_bit7	Bool	146.7	false		True	True	True	True	False		吊具陆侧吊钩连接限位S45
+	In_Byte8_bit0	Bool	147.0	false		True	True	True	True	False		吊具陆侧吊钩断开限位S46
+	In_Byte8_bit1	Bool	147.1	false		True	True	True	True	False		吊具陆侧吊钩允许限位S44
+	In_Byte8_bit2	Bool	147.2	false		True	True	True	True	False		吊具海侧最小位限位S37
+	In_Byte8_bit3	Bool	147.3	false		True	True	True	True	False		吊具陆侧最小位限位S38
+	In_Byte8_bit4	Bool	147.4	false		True	True	True	True	False		吊具30英尺限位S47
+	In_Byte8_bit5	Bool	147.5	false		True	True	True	True	False		吊具30英尺限位S48
+	In_Byte8_bit6	Bool	147.6	false		True	True	True	True	False		吊具20英尺限位S17
+	In_Byte8_bit7	Bool	147.7	false		True	True	True	True	False		吊具40英尺外侧限位S18
+	In_Byte9_bit0	Bool	148.0	false		True	True	True	True	False		吊具40英尺内侧限位S19
+	In_Byte9_bit1	Bool	148.1	false		True	True	True	True	False		吊具45英尺限位S20
+	In_Byte9_bit2	Bool	148.2	false		True	True	True	True	False		吊具光电传感器PH1
+	In_Byte9_bit3	Bool	148.3	false		True	True	True	True	False		吊具光电传感器PH2
+	In_Byte9_bit4	Bool	148.4	false		True	True	True	True	False		吊具光电传感器PH3
+	In_Byte9_bit5	Bool	148.5	false		True	True	True	True	False		吊具光电传感器PH4
+	In_Byte9_bit6	Bool	148.6	false		True	True	True	True	False		吊具光电传感器PH5
+	In_Byte9_bit7	Bool	148.7	false		True	True	True	True	False		吊具光电传感器PH6
+	In_Byte10_bit0	Bool	149.0	false		True	True	True	True	False		吊具光电传感器PH7
+	In_Byte10_bit1	Bool	149.1	false		True	True	True	True	False		吊具海侧左导板上限位S13
+	In_Byte10_bit2	Bool	149.2	false		True	True	True	True	False		吊具海侧右导板上限位S14
+	In_Byte10_bit3	Bool	149.3	false		True	True	True	True	False		吊具陆侧左导板上限位S15
+	In_Byte10_bit4	Bool	149.4	false		True	True	True	True	False		吊具陆侧右导板上限位S16
+	In_Byte10_bit5	Bool	149.5	false		True	True	True	True	False		吊具下距离检测1
+	In_Byte10_bit6	Bool	149.6	false		True	True	True	True	False		吊具下距离检测2
+	In_Byte10_bit7	Bool	149.7	false		True	True	True	True	False		SPARE
+	In_Byte20_21	Int	150.0	0		True	True	True	True	False		吊具中锁磁尺位置
+	In_Byte0_bit01	Bool	152.0	false		True	True	True	True	False		吊具闭锁信号------门架吊具
+	In_Byte0_bit11	Bool	152.1	false		True	True	True	True	False		吊具开锁信号
+	In_Byte0_bit21	Bool	152.2	false		True	True	True	True	False		吊具着箱信号
+	In_Byte0_bit31	Bool	152.3	false		True	True	True	True	False		吊具20英尺信号
+	In_Byte0_bit41	Bool	152.4	false		True	True	True	True	False		吊具40英尺信号
+	In_Byte0_bit51	Bool	152.5	false		True	True	True	True	False		吊具45英尺信号
+	In_Byte0_bit61	Bool	152.6	false		True	True	True	True	False		吊具中锁上信号
+	In_Byte0_bit71	Bool	152.7	false		True	True	True	True	False		吊具中锁下信号
+	In_Byte1_bit01	Bool	153.0	false		True	True	True	True	False		吊具中锁记忆位置1到位信号
+	In_Byte1_bit11	Bool	153.1	false		True	True	True	True	False		吊具中锁记忆位置2到位信号
+	In_Byte1_bit21	Bool	153.2	false		True	True	True	True	False		吊具在移动中信号
+	In_Byte1_bit31	Bool	153.3	false		True	True	True	True	False		吊具TTDS故障信号
+	In_Byte1_bit41	Bool	153.4	false		True	True	True	True	False		吊具30英尺信号（8300毫米）
+	In_Byte1_bit51	Bool	153.5	false		True	True	True	True	False		吊具脉冲反馈信号
+	In_Byte1_bit61	Bool	153.6	false		True	True	True	True	False		吊具中锁零位信号
+	In_Byte1_bit71	Bool	153.7	false		True	True	True	True	False		吊具中锁40英尺信号
+	In_Byte2_bit01	Bool	154.0	false		True	True	True	True	False		吊具中锁45英尺信号
+	In_Byte2_bit11	Bool	154.1	false		True	True	True	True	False		吊具所有导板上信号
+	In_Byte2_bit21	Bool	154.2	false		True	True	True	True	False		到达主控给定双箱位置信号(V20161215)
+	In_Byte2_bit31	Bool	154.3	false		True	True	True	True	False		SPARE
+	In_Byte2_bit41	Bool	154.4	false		True	True	True	True	False		SPARE
+	In_Byte2_bit51	Bool	154.5	false		True	True	True	True	False		SPARE
+	In_Byte2_bit61	Bool	154.6	false		True	True	True	True	False		SPARE
+	In_Byte2_bit71	Bool	154.7	false		True	True	True	True	False		SPARE
+	In_Byte4_bit01	Bool	155.0	false		True	True	True	True	False		吊具海左开锁限位S2
+	In_Byte4_bit11	Bool	155.1	false		True	True	True	True	False		吊具海右开锁限位S3
+	In_Byte4_bit21	Bool	155.2	false		True	True	True	True	False		吊具陆左开锁限位S1
+	In_Byte4_bit31	Bool	155.3	false		True	True	True	True	False		吊具陆右开锁限位S4
+	In_Byte4_bit41	Bool	155.4	false		True	True	True	True	False		吊具海左闭锁限位S6
+	In_Byte4_bit51	Bool	155.5	false		True	True	True	True	False		吊具海右闭锁限位S7
+	In_Byte4_bit61	Bool	155.6	false		True	True	True	True	False		吊具陆左闭锁限位S5
+	In_Byte4_bit71	Bool	155.7	false		True	True	True	True	False		吊具陆右闭锁限位S8
+	In_Byte5_bit01	Bool	156.0	false		True	True	True	True	False		吊具海左着箱限位S10
+	In_Byte5_bit11	Bool	156.1	false		True	True	True	True	False		吊具海右着箱限位S11
+	In_Byte5_bit21	Bool	156.2	false		True	True	True	True	False		吊具陆左着箱限位S9
+	In_Byte5_bit31	Bool	156.3	false		True	True	True	True	False		吊具陆右着箱限位S12
+	In_Byte5_bit41	Bool	156.4	false		True	True	True	True	False		吊具海左双箱开锁限位S22
+	In_Byte5_bit51	Bool	156.5	false		True	True	True	True	False		吊具海右双箱开锁限位S23
+	In_Byte5_bit61	Bool	156.6	false		True	True	True	True	False		吊具陆左双箱开锁限位S21
+	In_Byte5_bit71	Bool	156.7	false		True	True	True	True	False		吊具陆右双箱开锁限位S24
+	In_Byte6_bit01	Bool	157.0	false		True	True	True	True	False		吊具海左双箱闭锁限位S26
+	In_Byte6_bit11	Bool	157.1	false		True	True	True	True	False		吊具海右双箱闭锁限位S27
+	In_Byte6_bit21	Bool	157.2	false		True	True	True	True	False		吊具陆左双箱闭锁限位S25
+	In_Byte6_bit31	Bool	157.3	false		True	True	True	True	False		吊具陆右双箱闭锁限位S28
+	In_Byte6_bit41	Bool	157.4	false		True	True	True	True	False		吊具海左双箱着箱限位S30
+	In_Byte6_bit51	Bool	157.5	false		True	True	True	True	False		吊具海右双箱着箱限位S31
+	In_Byte6_bit61	Bool	157.6	false		True	True	True	True	False		吊具陆左双箱着箱限位S29
+	In_Byte6_bit71	Bool	157.7	false		True	True	True	True	False		吊具陆右双箱着箱限位S32
+	In_Byte7_bit01	Bool	158.0	false		True	True	True	True	False		吊具海左侧中锁上限位S34
+	In_Byte7_bit11	Bool	158.1	false		True	True	True	True	False		吊具海右侧中锁上限位S35
+	In_Byte7_bit21	Bool	158.2	false		True	True	True	True	False		吊具陆左侧中锁上限位S33
+	In_Byte7_bit31	Bool	158.3	false		True	True	True	True	False		吊具陆右侧中锁上限位S36
+	In_Byte7_bit41	Bool	158.4	false		True	True	True	True	False		吊具海侧吊钩连接限位S42
+	In_Byte7_bit51	Bool	158.5	false		True	True	True	True	False		吊具海侧吊钩断开限位S43
+	In_Byte7_bit61	Bool	158.6	false		True	True	True	True	False		吊具海侧吊钩允许限位S41
+	In_Byte7_bit71	Bool	158.7	false		True	True	True	True	False		吊具陆侧吊钩连接限位S45
+	In_Byte8_bit01	Bool	159.0	false		True	True	True	True	False		吊具陆侧吊钩断开限位S46
+	In_Byte8_bit11	Bool	159.1	false		True	True	True	True	False		吊具陆侧吊钩允许限位S44
+	In_Byte8_bit21	Bool	159.2	false		True	True	True	True	False		吊具海侧最小位限位S37
+	In_Byte8_bit31	Bool	159.3	false		True	True	True	True	False		吊具陆侧最小位限位S38
+	In_Byte8_bit41	Bool	159.4	false		True	True	True	True	False		吊具30英尺限位S47
+	In_Byte8_bit51	Bool	159.5	false		True	True	True	True	False		吊具30英尺限位S48
+	In_Byte8_bit61	Bool	159.6	false		True	True	True	True	False		吊具20英尺限位S17
+	In_Byte8_bit71	Bool	159.7	false		True	True	True	True	False		吊具40英尺外侧限位S18
+	In_Byte9_bit01	Bool	160.0	false		True	True	True	True	False		吊具40英尺内侧限位S19
+	In_Byte9_bit11	Bool	160.1	false		True	True	True	True	False		吊具45英尺限位S20
+	In_Byte9_bit21	Bool	160.2	false		True	True	True	True	False		吊具光电传感器PH1
+	In_Byte9_bit31	Bool	160.3	false		True	True	True	True	False		吊具光电传感器PH2
+	In_Byte9_bit41	Bool	160.4	false		True	True	True	True	False		吊具光电传感器PH3
+	In_Byte9_bit51	Bool	160.5	false		True	True	True	True	False		吊具光电传感器PH4
+	In_Byte9_bit61	Bool	160.6	false		True	True	True	True	False		吊具光电传感器PH5
+	In_Byte9_bit71	Bool	160.7	false		True	True	True	True	False		吊具光电传感器PH6
+	In_Byte10_bit01	Bool	161.0	false		True	True	True	True	False		吊具光电传感器PH7
+	In_Byte10_bit11	Bool	161.1	false		True	True	True	True	False		吊具海侧左导板上限位S13
+	In_Byte10_bit21	Bool	161.2	false		True	True	True	True	False		吊具海侧右导板上限位S14
+	In_Byte10_bit31	Bool	161.3	false		True	True	True	True	False		吊具陆侧左导板上限位S15
+	In_Byte10_bit41	Bool	161.4	false		True	True	True	True	False		吊具陆侧右导板上限位S16
+	In_Byte10_bit51	Bool	161.5	false		True	True	True	True	False		吊具下距离检测1
+	In_Byte10_bit61	Bool	161.6	false		True	True	True	True	False		吊具下距离检测2
+	In_Byte10_bit71	Bool	161.7	false		True	True	True	True	False		SPARE
+	In_Byte20_211	Int	162.0	0		True	True	True	True	False		吊具中锁磁尺位置
+	In_Byte0_bit02	Bool	164.0	false		True	True	True	True	False		吊具闭锁信号------主陆吊具
+	In_Byte0_bit12	Bool	164.1	false		True	True	True	True	False		吊具开锁信号
+	In_Byte0_bit22	Bool	164.2	false		True	True	True	True	False		吊具着箱信号
+	In_Byte0_bit32	Bool	164.3	false		True	True	True	True	False		吊具20英尺信号
+	In_Byte0_bit42	Bool	164.4	false		True	True	True	True	False		吊具40英尺信号
+	In_Byte0_bit52	Bool	164.5	false		True	True	True	True	False		吊具45英尺信号
+	In_Byte0_bit62	Bool	164.6	false		True	True	True	True	False		吊具中锁上信号
+	In_Byte0_bit72	Bool	164.7	false		True	True	True	True	False		吊具中锁下信号
+	In_Byte1_bit02	Bool	165.0	false		True	True	True	True	False		吊具中锁记忆位置1到位信号
+	In_Byte1_bit12	Bool	165.1	false		True	True	True	True	False		吊具中锁记忆位置2到位信号
+	In_Byte1_bit22	Bool	165.2	false		True	True	True	True	False		吊具在移动中信号
+	In_Byte1_bit32	Bool	165.3	false		True	True	True	True	False		吊具TTDS故障信号
+	In_Byte1_bit42	Bool	165.4	false		True	True	True	True	False		吊具30英尺信号（8300毫米）
+	In_Byte1_bit52	Bool	165.5	false		True	True	True	True	False		吊具脉冲反馈信号
+	In_Byte1_bit62	Bool	165.6	false		True	True	True	True	False		吊具中锁零位信号
+	In_Byte1_bit72	Bool	165.7	false		True	True	True	True	False		吊具中锁40英尺信号
+	In_Byte2_bit02	Bool	166.0	false		True	True	True	True	False		吊具中锁45英尺信号
+	In_Byte2_bit12	Bool	166.1	false		True	True	True	True	False		吊具所有导板上信号
+	In_Byte2_bit22	Bool	166.2	false		True	True	True	True	False		到达主控给定双箱位置信号(V20161215)
+	In_Byte2_bit32	Bool	166.3	false		True	True	True	True	False		SPARE
+	In_Byte2_bit42	Bool	166.4	false		True	True	True	True	False		SPARE
+	In_Byte2_bit52	Bool	166.5	false		True	True	True	True	False		SPARE
+	In_Byte2_bit62	Bool	166.6	false		True	True	True	True	False		SPARE
+	In_Byte2_bit72	Bool	166.7	false		True	True	True	True	False		SPARE
+	In_Byte4_bit02	Bool	167.0	false		True	True	True	True	False		吊具海左开锁限位S2
+	In_Byte4_bit12	Bool	167.1	false		True	True	True	True	False		吊具海右开锁限位S3
+	In_Byte4_bit22	Bool	167.2	false		True	True	True	True	False		吊具陆左开锁限位S1
+	In_Byte4_bit32	Bool	167.3	false		True	True	True	True	False		吊具陆右开锁限位S4
+	In_Byte4_bit42	Bool	167.4	false		True	True	True	True	False		吊具海左闭锁限位S6
+	In_Byte4_bit52	Bool	167.5	false		True	True	True	True	False		吊具海右闭锁限位S7
+	In_Byte4_bit62	Bool	167.6	false		True	True	True	True	False		吊具陆左闭锁限位S5
+	In_Byte4_bit72	Bool	167.7	false		True	True	True	True	False		吊具陆右闭锁限位S8
+	In_Byte5_bit02	Bool	168.0	false		True	True	True	True	False		吊具海左着箱限位S10
+	In_Byte5_bit12	Bool	168.1	false		True	True	True	True	False		吊具海右着箱限位S11
+	In_Byte5_bit22	Bool	168.2	false		True	True	True	True	False		吊具陆左着箱限位S9
+	In_Byte5_bit32	Bool	168.3	false		True	True	True	True	False		吊具陆右着箱限位S12
+	In_Byte5_bit42	Bool	168.4	false		True	True	True	True	False		吊具海左双箱开锁限位S22
+	In_Byte5_bit52	Bool	168.5	false		True	True	True	True	False		吊具海右双箱开锁限位S23
+	In_Byte5_bit62	Bool	168.6	false		True	True	True	True	False		吊具陆左双箱开锁限位S21
+	In_Byte5_bit72	Bool	168.7	false		True	True	True	True	False		吊具陆右双箱开锁限位S24
+	In_Byte6_bit02	Bool	169.0	false		True	True	True	True	False		吊具海左双箱闭锁限位S26
+	In_Byte6_bit12	Bool	169.1	false		True	True	True	True	False		吊具海右双箱闭锁限位S27
+	In_Byte6_bit22	Bool	169.2	false		True	True	True	True	False		吊具陆左双箱闭锁限位S25
+	In_Byte6_bit32	Bool	169.3	false		True	True	True	True	False		吊具陆右双箱闭锁限位S28
+	In_Byte6_bit42	Bool	169.4	false		True	True	True	True	False		吊具海左双箱着箱限位S30
+	In_Byte6_bit52	Bool	169.5	false		True	True	True	True	False		吊具海右双箱着箱限位S31
+	In_Byte6_bit62	Bool	169.6	false		True	True	True	True	False		吊具陆左双箱着箱限位S29
+	In_Byte6_bit72	Bool	169.7	false		True	True	True	True	False		吊具陆右双箱着箱限位S32
+	In_Byte7_bit02	Bool	170.0	false		True	True	True	True	False		吊具海左侧中锁上限位S34
+	In_Byte7_bit12	Bool	170.1	false		True	True	True	True	False		吊具海右侧中锁上限位S35
+	In_Byte7_bit22	Bool	170.2	false		True	True	True	True	False		吊具陆左侧中锁上限位S33
+	In_Byte7_bit32	Bool	170.3	false		True	True	True	True	False		吊具陆右侧中锁上限位S36
+	In_Byte7_bit42	Bool	170.4	false		True	True	True	True	False		吊具海侧吊钩连接限位S42
+	In_Byte7_bit52	Bool	170.5	false		True	True	True	True	False		吊具海侧吊钩断开限位S43
+	In_Byte7_bit62	Bool	170.6	false		True	True	True	True	False		吊具海侧吊钩允许限位S41
+	In_Byte7_bit72	Bool	170.7	false		True	True	True	True	False		吊具陆侧吊钩连接限位S45
+	In_Byte8_bit02	Bool	171.0	false		True	True	True	True	False		吊具陆侧吊钩断开限位S46
+	In_Byte8_bit12	Bool	171.1	false		True	True	True	True	False		吊具陆侧吊钩允许限位S44
+	In_Byte8_bit22	Bool	171.2	false		True	True	True	True	False		吊具海侧最小位限位S37
+	In_Byte8_bit32	Bool	171.3	false		True	True	True	True	False		吊具陆侧最小位限位S38
+	In_Byte8_bit42	Bool	171.4	false		True	True	True	True	False		吊具30英尺限位S47
+	In_Byte8_bit52	Bool	171.5	false		True	True	True	True	False		吊具30英尺限位S48
+	In_Byte8_bit62	Bool	171.6	false		True	True	True	True	False		吊具20英尺限位S17
+	In_Byte8_bit72	Bool	171.7	false		True	True	True	True	False		吊具40英尺外侧限位S18
+	In_Byte9_bit02	Bool	172.0	false		True	True	True	True	False		吊具40英尺内侧限位S19
+	In_Byte9_bit12	Bool	172.1	false		True	True	True	True	False		吊具45英尺限位S20
+	In_Byte9_bit22	Bool	172.2	false		True	True	True	True	False		吊具光电传感器PH1
+	In_Byte9_bit32	Bool	172.3	false		True	True	True	True	False		吊具光电传感器PH2
+	In_Byte9_bit42	Bool	172.4	false		True	True	True	True	False		吊具光电传感器PH3
+	In_Byte9_bit52	Bool	172.5	false		True	True	True	True	False		吊具光电传感器PH4
+	In_Byte9_bit62	Bool	172.6	false		True	True	True	True	False		吊具光电传感器PH5
+	In_Byte9_bit72	Bool	172.7	false		True	True	True	True	False		吊具光电传感器PH6
+	In_Byte10_bit02	Bool	173.0	false		True	True	True	True	False		吊具光电传感器PH7
+	In_Byte10_bit12	Bool	173.1	false		True	True	True	True	False		吊具海侧左导板上限位S13
+	In_Byte10_bit22	Bool	173.2	false		True	True	True	True	False		吊具海侧右导板上限位S14
+	In_Byte10_bit32	Bool	173.3	false		True	True	True	True	False		吊具陆侧左导板上限位S15
+	In_Byte10_bit42	Bool	173.4	false		True	True	True	True	False		吊具陆侧右导板上限位S16
+	In_Byte10_bit52	Bool	173.5	false		True	True	True	True	False		吊具下距离检测1
+	In_Byte10_bit62	Bool	173.6	false		True	True	True	True	False		吊具下距离检测2
+	In_Byte10_bit72	Bool	173.7	false		True	True	True	True	False		SPARE
+	In_Byte20_212	Int	174.0	0		True	True	True	True	False		吊具中锁磁尺位置
+	I_ShevLock_SS_HB_LHS	Bool	176.0	false		True	True	True	True	False		Seaside Headblock Left Hand Side Sheave Locked
+	I_ShevLock_SS_HB_RHS	Bool	176.1	false		True	True	True	True	False		Seaside Headblock Right Hand Side Sheave Locked
+	I_ShevLock_LS_HB_LHS	Bool	176.2	false		True	True	True	True	False		Landside Headblock Left Hand Side Sheave Locked
+	I_ShevLock_LS_HB_RHS	Bool	176.3	false		True	True	True	True	False		Landside Headblock Right Hand Side Sheave Locked
+	I_MechLock_SS_HB_LHS	Bool	176.4	false		True	True	True	True	False		Seaside Headblock Left Hand Side Mechanical Locked
+	I_MechLock_SS_HB_RHS	Bool	176.5	false		True	True	True	True	False		Seaside Headblock Right Hand Side Mechanical Locked
+	I_MechLock_LS_HB_LHS	Bool	176.6	false		True	True	True	True	False		Landside Headblock Left Hand Side Mechanical Locked
+	I_MechLock_LS_HB_RHS	Bool	176.7	false		True	True	True	True	False		Landside Headblock Right Hand Side Mechanical Locked
+	I_ShevUnlk_SS_HB_LHS	Bool	177.0	false		True	True	True	True	False		Seaside Headblock Left Hand Side Sheave Unlocked
+	I_ShevUnlk_SS_HB_RHS	Bool	177.1	false		True	True	True	True	False		Seaside Headblock Right Hand Side Sheave Unlocked
+	I_ShevUnlk_LS_HB_LHS	Bool	177.2	false		True	True	True	True	False		Landside Headblock Left Hand Side Sheave Unlocked
+	I_ShevUnlk_LS_HB_RHS	Bool	177.3	false		True	True	True	True	False		Landside Headblock Right Hand Side Sheave Unlocked
+	I_MechUnlk_SS_HB_LHS	Bool	177.4	false		True	True	True	True	False		Seaside Headblock Left Hand Side Mechanical Unlocked
+	I_MechUnlk_SS_HB_RHS	Bool	177.5	false		True	True	True	True	False		Seaside Headblock Right Hand Side Mechanical Unlocked
+	I_MechUnlk_LS_HB_LHS	Bool	177.6	false		True	True	True	True	False		Landside Headblock Left Hand Side Mechanical Unlocked
+	I_MechUnlk_LS_HB_RHS	Bool	177.7	false		True	True	True	True	False		Landside Headblock Right Hand Side Mechanical Unlocked
+	I_Shev_SS_HB_LHS_POS1	Bool	178.0	false		True	True	True	True	False		Seaside Headblock Left Hand Side Sheave At Position#1
+	I_Shev_SS_HB_RHS_POS1	Bool	178.1	false		True	True	True	True	False		Seaside Headblock Right Hand Side Sheave At Position#1
+	I_Shev_LS_HB_LHS_POS1	Bool	178.2	false		True	True	True	True	False		Landside Headblock Left Hand Side Sheave At Position#1
+	I_Shev_LS_HB_RHS_POS1	Bool	178.3	false		True	True	True	True	False		Landside Headblock Right Hand Side Sheave At Position#1
+	I_Shev_SS_HB_LHS_POS2	Bool	178.4	false		True	True	True	True	False		Seaside Headblock Left Hand Side Sheave At Position#2
+	I_Shev_SS_HB_RHS_POS2	Bool	178.5	false		True	True	True	True	False		Seaside Headblock Right Hand Side Sheave At Position#2
+	I_Shev_LS_HB_LHS_POS2	Bool	178.6	false		True	True	True	True	False		Landside Headblock Left Hand Side Sheave At Position#2
+	I_Shev_LS_HB_RHS_POS2	Bool	178.7	false		True	True	True	True	False		Landside Headblock Right Hand Side Sheave At Position#2
+	I_Hdif_P600_LS_HB_LHS	Bool	179.0	false		True	True	True	True	False		Height Differnece is +600mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_P450_LS_HB_LHS	Bool	179.1	false		True	True	True	True	False		Height Differnece is +450mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_P300_LS_HB_LHS	Bool	179.2	false		True	True	True	True	False		Height Differnece is +300mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_P150_LS_HB_LHS	Bool	179.3	false		True	True	True	True	False		Height Differnece is +150mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_Zero_LS_HB_LHS	Bool	179.4	false		True	True	True	True	False		Height Differnece is 0mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_N150_LS_HB_LHS	Bool	179.5	false		True	True	True	True	False		Height Differnece is -150mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_N300_LS_HB_LHS	Bool	179.6	false		True	True	True	True	False		Height Differnece is -300mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_N450_LS_HB_LHS	Bool	179.7	false		True	True	True	True	False		Height Differnece is -450mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_N600_LS_HB_LHS	Bool	180.0	false		True	True	True	True	False		Height Differnece is -600mm Between Seaside Hb left and Lanside Hb left
+	I_Hdif_P600_LS_HB_RHS	Bool	180.1	false		True	True	True	True	False		Height Differnece is +600mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_P450_LS_HB_RHS	Bool	180.2	false		True	True	True	True	False		Height Differnece is +450mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_P300_LS_HB_RHS	Bool	180.3	false		True	True	True	True	False		Height Differnece is +300mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_P150_LS_HB_RHS	Bool	180.4	false		True	True	True	True	False		Height Differnece is +150mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_Zero_LS_HB_RHS	Bool	180.5	false		True	True	True	True	False		Height Differnece is 0mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_N150_LS_HB_RHS	Bool	180.6	false		True	True	True	True	False		Height Differnece is -150mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_N300_LS_HB_RHS	Bool	180.7	false		True	True	True	True	False		Height Differnece is -300mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_N450_LS_HB_RHS	Bool	181.0	false		True	True	True	True	False		Height Differnece is -450mm Between Seaside Hb right and Lanside Hb right
+	I_Hdif_N600_LS_HB_RHS	Bool	181.1	false		True	True	True	True	False		Height Differnece is -600mm Between Seaside Hb right  and Lanside Hb right
+	I_Hdif_300_Warm	Bool	181.2	false		True	True	True	True	False		Height Differnece is large than 300mm warning
+	I_Hdif_450_Warm	Bool	181.3	false		True	True	True	True	False		Height Differnece is large than 450mm warning
+	I_Brdg_Max_HB_LHS	Bool	181.4	false		True	True	True	True	False		Left side Headblock extend bridge is at maximum position
+	I_Brdg_Min_HB_LHS	Bool	181.5	false		True	True	True	True	False		Left side Headblock extend bridge is at minmum position
+	I_Brdg_Max_HB_RHS	Bool	181.6	false		True	True	True	True	False		Right side Headblock extend bridge is at maximum position
+	I_Brdg_Min_HB_RHS	Bool	181.7	false		True	True	True	True	False		Right side Headblock extend bridge is at minmum position
+	I_Brdg_McSS_LHS_HB	Bool	182.0	false		True	True	True	True	False		Left side Headblock extend bridge is at Mode change position seaside
+	I_Brdg_McLS_LHS_HB	Bool	182.1	false		True	True	True	True	False		Left side Headblock extend bridge is at Mode change position landside
+	I_Brdg_McSS_RHS_HB	Bool	182.2	false		True	True	True	True	False		Right side Headblock extend bridge is at Mode change position seaside
+	I_Brdg_McLS_RHS_HB	Bool	182.3	false		True	True	True	True	False		Right side Headblock extend bridge is at Mode change position landside
+	I_Skew_HomeSS_LHS_HB	Bool	182.4	false		True	True	True	True	False		Left side Headblock skew cylinder is at home position seaside
+	I_Skew_HomeLS_LHS_HB	Bool	182.5	false		True	True	True	True	False		Left side Headblock skew cylinder is at home position landside
+	I_Skew_HomeSS_RHS_HB	Bool	182.6	false		True	True	True	True	False		Right side Headblock skew cylinder is at home position seaside
+	I_Skew_HomeLS_RHS_HB	Bool	182.7	false		True	True	True	True	False		Right side Headblock skew cylinder is at home position landside
+	I_SlakeRope_SS_HB_SL	Bool	183.0	false		True	True	True	True	False		Seaside Headblock seaside left slack rope limit switch
+	I_SlakeRope_SS_HB_SR	Bool	183.1	false		True	True	True	True	False		Seaside Headblock seaside right slack rope limit switch
+	I_SlakeRope_SS_HB_LR	Bool	183.2	false		True	True	True	True	False		Seaside Headblock landside right slack rope limit switch
+	I_SlakeRope_SS_HB_LL	Bool	183.3	false		True	True	True	True	False		Seaside Headblock landside left slack rope limit switch
+	I_SlakeRope_LS_HB_SL	Bool	183.4	false		True	True	True	True	False		Landside Headblock seaside left slack rope limit switch
+	I_SlakeRope_LS_HB_SR	Bool	183.5	false		True	True	True	True	False		Landside Headblock seaside right slack rope limit switch
+	I_SlakeRope_LS_HB_LR	Bool	183.6	false		True	True	True	True	False		Landside Headblock landside right slack rope limit switch
+	I_SlakeRope_LS_HB_LL	Bool	183.7	false		True	True	True	True	False		Landside Headblock landside left slack rope limit switch
+	I_Offset_HomePos	Bool	184.0	false		True	True	True	True	False		offset at home position
+	I_Offset_L_LimPos	Bool	184.1	false		True	True	True	True	False		offset at left limit position
+	I_Offset_R_LimPos	Bool	184.2	false		True	True	True	True	False		offset at right limit position
+	I_HB_HomePos	Bool	184.3	false		True	True	True	True	False		Headblock at home position
+	I_HB_McPos	Bool	184.4	false		True	True	True	True	False		Headblock at mode change position
+	I_HB_Rdy_DckPos	Bool	184.5	false		True	True	True	True	False		Headblock is ready to go to mode change docking position
+	I_HB_Rdy_12Mc	Bool	184.6	false		True	True	True	True	False		Headblock is ready for Mode1&2  change
+	I_HB_In_Motion	Bool	184.7	false		True	True	True	True	False		Headblock is in motion
+	I_HB_In_1Sprd	Bool	185.0	false		True	True	True	True	False		Headblock is in 1 spreader mode
+	I_HB_In_2Sprd	Bool	185.1	false		True	True	True	True	False		Headblock is in 2 spreader mode
+	I_HB_Pump_running	Bool	185.2	false		True	True	True	True	False		Headblock pump running
+	I_Brdg_At_LS_Memory	Bool	185.3	false		True	True	True	True	False		Extend bridge at landside memory positon
+	I_Brdg_At_SS_Memory	Bool	185.4	false		True	True	True	True	False		Extend bridge at seaside memory positon
+	I_HBConn_SS_HB_LHS	Bool	185.5	false		True	True	True	True	False		Seaside headblock left side Headblock and spreder is locked
+	I_HBConn_SS_HB_RHS	Bool	185.6	false		True	True	True	True	False		Seaside headblock right side Headblock and spreder is locked
+	I_HBConn_LS_HB_LHS	Bool	185.7	false		True	True	True	True	False		Landside headblock left side Headblock and spreder is locked
+	I_HBConn_LS_HB_RHS	Bool	186.0	false		True	True	True	True	False		Landside headblock right side Headblock and spreder is locked
+	I_HBDisCon_SS_HB_LHS	Bool	186.1	false		True	True	True	True	False		Seaside headblock left side Headblock and spreder is unlocked
+	I_HBDisCon_SS_HB_RHS	Bool	186.2	false		True	True	True	True	False		Seaside headblock right side Headblock and spreder is unlocked
+	I_HBDisCon_LS_HB_LHS	Bool	186.3	false		True	True	True	True	False		Landside headblock left side Headblock and spreder is unlocked
+	I_HBDisCon_LS_HB_RHS	Bool	186.4	false		True	True	True	True	False		Landside headblock right side Headblock and spreder is unlocked
+	I_AutoConnect_Connected	Bool	186.5	false		True	True	True	True	False		AutoConnector connected
+	I_PulseSignal	Bool	186.6	false		True	True	True	True	False		pulse signal return from  RAM
+	I_Spare1	Bool	186.7	false		True	True	True	True	False		spare
+	I_BrdgPos_LHS_1	Byte	187.0	16#0		True	True	True	True	False		Left side bridge distance1
+	I_BrdgPos_LHS_2	Byte	188.0	16#0		True	True	True	True	False		Left side bridge distance2
+	I_BrdgPos_RHS1	Byte	189.0	16#0		True	True	True	True	False		Right side bridge distance1
+	I_BrdgPos_RHS2	Byte	190.0	16#0		True	True	True	True	False		Right side bridge distance2
+	I_LoadLess_SS_HB_LHS	Bool	191.0	false		True	True	True	True	False		Seaside headblock left side load less(eccentric load)
+	I_LoadLess_SS_HB_RHS	Bool	191.1	false		True	True	True	True	False		Seaside headblock right side load less(eccentric load)
+	I_LoadLess_LS_HB_LHS	Bool	191.2	false		True	True	True	True	False		Landside headblock left side load less(eccentric load)
+	I_LoadLess_LS_HB_RHS	Bool	191.3	false		True	True	True	True	False		Landside headblock right side load less(eccentric load)
+	I_CylinA_ExtCmd	Bool	191.4	false		True	True	True	True	False		TLS cylinder A extend command
+	I_CylinA_RetCmd	Bool	191.5	false		True	True	True	True	False		TLS cylinder A retract command
+	I_CylinB_ExtCmd	Bool	191.6	false		True	True	True	True	False		TLS cylinder B extend command
+	I_CylinB_RetCmd	Bool	191.7	false		True	True	True	True	False		TLS cylinder B retract command
+	I_CylinC_ExtCmd	Bool	192.0	false		True	True	True	True	False		TLS cylinder C extend command
+	I_CylinC_RetCmd	Bool	192.1	false		True	True	True	True	False		TLS cylinder C retract command
+	I_CylinD_ExtCmd	Bool	192.2	false		True	True	True	True	False		TLS cylinder D extend command
+	I_CylinD_RetCmd	Bool	192.3	false		True	True	True	True	False		TLS cylinder D retract command
+	I_Hspd_30perc_Cmd	Bool	192.4	false		True	True	True	True	False		hoist reduce to 30% speed command
+	I_Hspd_50perc_Cmd	Bool	192.5	false		True	True	True	True	False		hoist reduce to 50% speed command
+	I_Leveled_SS_HB	Bool	192.6	false		True	True	True	True	False		Seaside headblock is leveled
+	I_Leveled_LS_HB	Bool	192.7	false		True	True	True	True	False		Landside headblock is leveled
+	I_Cannot_Levle_SS_HB	Bool	193.0	false		True	True	True	True	False		Seaside headblock Can not leveled
+	I_Cannot_Levle_LS_HB	Bool	193.1	false		True	True	True	True	False		Landside headblock Can not leveled
+	I_Hdiff_In_Range	Bool	193.2	false		True	True	True	True	False		Height difference within range
+	I_Cannot_Level_HB	Bool	193.3	false		True	True	True	True	False		Headblock cannot level
+	I_Hdiff_Out_Range	Bool	193.4	false		True	True	True	True	False		Height difference out range
+	I_Spare2	Bool	193.5	false		True	True	True	True	False		spare
+	I_Spare3	Bool	193.6	false		True	True	True	True	False		spare
+	I_Spare4	Bool	193.7	false		True	True	True	True	False		spare
+	I_L_SS_HB_LOW_LS_HB_ALM	Bool	194.0	false		True	True	True	True	False		LHS SS-HB lower than LS-HB height difference alarm/(20180622 by ZJ)
+	I_L_SS_HB_HIGH_LS_HB_ALM	Bool	194.1	false		True	True	True	True	False		LHS SS-HB higher than LS-HB height difference alarm/(20180622 by ZJ)
+	I_R_SS_HB_LOW_LS_HB_ALM	Bool	194.2	false		True	True	True	True	False		RHS SS-HB lower than LS-HB height difference alarm/(20180622 by ZJ)
+	I_R_SS_HB_HIGH_LS_HB_ALM	Bool	194.3	false		True	True	True	True	False		RHS SS-HB higher than LS-HB height difference alarm/(20180622 by ZJ)
+	I_Spare11	Bool	194.4	false		True	True	True	True	False		
+	I_Spare110	Byte	195.0	16#0		True	True	True	True	False		
+	Q_Brdg_Ext_Both	Bool	196.0	false		True	True	True	True	False		LHS&RHS extension bridge extend command
+	Q_Brdg_Ret_Both	Bool	196.1	false		True	True	True	True	False		LHS&RHS extension bridge retract command
+	Q_Brdg_Ext_LHS	Bool	196.2	false		True	True	True	True	False		LHS extension bridge extend command
+	Q_Brdg_Ret_LHS	Bool	196.3	false		True	True	True	True	False		LHS extension bridge retract command
+	Q_Brdg_Ext_RHS	Bool	196.4	false		True	True	True	True	False		RHS extension bridge extend command
+	Q_Brdg_Ret_RHS	Bool	196.5	false		True	True	True	True	False		RHS extension bridge retract command
+	Q_OffsetL	Bool	196.6	false		True	True	True	True	False		Offset left command
+	Q_OffsetR	Bool	196.7	false		True	True	True	True	False		Offset right command
+	Q_OffsetHome	Bool	197.0	false		True	True	True	True	False		Offset to home command
+	Q_StorePos_SS_HB	Bool	197.1	false		True	True	True	True	False		Store seaside headblock position command
+	Q_StorePos_LS_HB	Bool	197.2	false		True	True	True	True	False		Store landside headblock position command
+	Q_GotoPos_SS_HB	Bool	197.3	false		True	True	True	True	False		Goto memorized seaside headblock position
+	Q_GotoPos_LS_HB	Bool	197.4	false		True	True	True	True	False		Goto memorized landside headblock position
+	Q_GotoPos_Home	Bool	197.5	false		True	True	True	True	False		Goto home position
+	Q_GotoPos_Home_Over40m	Bool	197.6	false		True	True	True	True	False		Goto home position(When above 40m)
+	Q_AutoModeChange	Bool	197.7	false		True	True	True	True	False		Auto mode change command
+	Q_Free_Brdg	Bool	198.0	false		True	True	True	True	False		Free extend bridge command
+	Q_StopAutoMode	Bool	198.1	false		True	True	True	True	False		Stop auto mode change
+	Q_InDockPos	Bool	198.2	false		True	True	True	True	False		when trolley is above the docking position
+	Q_GoModeChange	Bool	198.3	false		True	True	True	True	False		Goto mode change position
+	Q_Spare_Bool2	Bool	198.4	false		True	True	True	True	False		spare
+	Q_Spare_Bool3	Bool	198.5	false		True	True	True	True	False		spare
+	Q_Spare_Bool4	Bool	198.6	false		True	True	True	True	False		spare
+	Q_Spare_Bool5	Bool	198.7	false		True	True	True	True	False		spare
+	Q_OkToAdjustTLS	Bool	199.0	false		True	True	True	True	False		OK to adjust the TLS cyclinder
+	Q_Tspd_Above30perc	Bool	199.1	false		True	True	True	True	False		trolley speed is above 30%
+	Q_Tspd_Above50perc	Bool	199.2	false		True	True	True	True	False		trolley speed is above 50%
+	Q_Hspd_Above30perc	Bool	199.3	false		True	True	True	True	False		hoist speed is above 30%
+	Q_Hspd_Above50perc	Bool	199.4	false		True	True	True	True	False		hoist speed is above 50%
+	Q_ManAdjust_levl_heigh	Bool	199.5	false		True	True	True	True	False		manual adust level and height diff
+	Q_Spare_Bool6	Bool	199.6	false		True	True	True	True	False		spare
+	Q_Spare_Bool7	Bool	199.7	false		True	True	True	True	False		spare
+	Q_LampTest	Bool	200.0	false		True	True	True	True	False		lamp test
+	Q_PulseSignal	Bool	200.1	false		True	True	True	True	False		pulse signal send to Ram PLC
+	Q_WsSpreaderLocked	Bool	200.2	false		True	True	True	True	False		seaside spreader locked
+	Q_LsSpreaderLocked	Bool	200.3	false		True	True	True	True	False		landside spreader locked
+	Q_Spare_Bool10	Bool	200.4	false		True	True	True	True	False		spare
+	Q_Spare_Bool11	Bool	200.5	false		True	True	True	True	False		spare
+	Q_Spare_Bool12	Bool	200.6	false		True	True	True	True	False		spare
+	Q_Spare_Bool13	Bool	200.7	false		True	True	True	True	False		spare
+	Q_CylinA_P250	Bool	201.0	false		True	True	True	True	False		Cylinder A at +250mm
+	Q_CylinB_P250	Bool	201.1	false		True	True	True	True	False		Cylinder B at +250mm
+	Q_CylinC_P250	Bool	201.2	false		True	True	True	True	False		Cylinder C at +250mm
+	Q_CylinD_P250	Bool	201.3	false		True	True	True	True	False		Cylinder D at +250mm
+	Q_CylinA_N250	Bool	201.4	false		True	True	True	True	False		Cylinder A at -250mm
+	Q_CylinB_N250	Bool	201.5	false		True	True	True	True	False		Cylinder B at -250mm
+	Q_CylinC_N250	Bool	201.6	false		True	True	True	True	False		Cylinder C at -250mm
+	Q_CylinD_N250	Bool	201.7	false		True	True	True	True	False		Cylinder D at -250mm
+	Humidity_In1	Int	202.0	0		True	True	True	True	False		outdoor humidity from 127
+	Humidity_In2	Int	204.0	0		True	True	True	True	False		outdoor humidity from 115
+	HMI_AFRAME_M_FL_ON_CMD	Bool	206.0	false		True	True	True	True	False		梯形架 维修投光灯 按钮//
+	HMI_GANTRY_M_FL_ON_CMD	Bool	206.1	false		True	True	True	True	False		大车 投光灯 按钮//
+	HMI_PLATFORM_M_FL_ON_CMD	Bool	206.2	false		True	True	True	True	False		中转平台下方 投光灯 按钮//
+	HMI_SPARE_9_3	Bool	206.3	false		True	True	True	True	False		备用//
+	HMI_Bypass_Slackrope	Bool	206.4	false		True	True	True	True	False		松绳 旁路 按钮//
+	HMI_Bypass_Highwind	Bool	206.5	false		True	True	True	True	False		大风 旁路 按钮//
+	HMI_Bypass_Snagload	Bool	206.6	false		True	True	True	True	False		挂舱 旁路 按钮//
+	HMI_Bypass_Unlock_lock	Bool	206.7	false		True	True	True	True	False		吊具开闭锁 旁路 按钮//
+	HMI_Bypass_Land	Bool	207.0	false		True	True	True	True	False		吊具着箱 旁路 按钮//
+	HMI_Bypass_Spreader	Bool	207.1	false		True	True	True	True	False		吊具 旁路 按钮//
+	HMI_Bypass_General	Bool	207.2	false		True	True	True	True	False		通用 旁路 按钮//
+	HMI_Bypass_TTDS	Bool	207.3	false		True	True	True	True	False		吊具TTDS 旁路 按钮//
+	HMI_SPARE_10_4	Bool	207.4	false		True	True	True	True	False		备用//
+	HMI_Bypass_Anticollision	Bool	207.5	false		True	True	True	True	False		防撞 旁路 按钮//
+	HMI_SPARE_10_6	Bool	207.6	false		True	True	True	True	False		备用//
+	HMI_SPARE_10_7	Bool	207.7	false		True	True	True	True	False		备用//
+	HMI_Bypass_Spss_scan	Bool	208.0	false		True	True	True	True	False		SPSS 旁路 按钮//
+	HMI_SPR2_TWIN_MODE_CMD	Bool	208.1	false		True	True	True	True	False		备用//
+	HMI_SPR2_20_FEET_CMD	Bool	208.2	false		True	True	True	True	False		备用//
+	HMI_SPR2_30_FEET_CMD	Bool	208.3	false		True	True	True	True	False		备用//
+	HMI_SPR2_40_FEET_CMD	Bool	208.4	false		True	True	True	True	False		备用//
+	HMI_SPR2_45_FEET_CMD	Bool	208.5	false		True	True	True	True	False		备用//
+	HMI_SPARE_11_6	Bool	208.6	false		True	True	True	True	False		备用//
+	HMI_TLS_HOME_POS_CMD	Bool	208.7	false		True	True	True	True	False		倾回转 回零 按钮//
+	HMI_PT_SUSPEND_IN	Bool	209.0	false		True	True	True	True	False		门架机构 手动 介入//
+	HMI_PT_SUSPEND_FINISH	Bool	209.1	false		True	True	True	True	False		门架机构 手动 介入 完成//
+	HMI_PT_SUSPEND_FAIL	Bool	209.2	false		True	True	True	True	False		门架机构 手动 介入 失败//
+	MROS_E_STOP	Bool	209.3	false		True	True	True	True	False		MROS EMERGENCY STOP
+	MROS_SEL_ACT	Bool	209.4	false		True	True	True	True	False		MROS MAINTENCE SELECT ACTIVE
+	HMI_SPARE_12_5	Bool	209.5	false		True	True	True	True	False		备用//
+	HMI_SPARE_12_6	Bool	209.6	false		True	True	True	True	False		备用//
+	HMI_SPARE_12_7	Bool	209.7	false		True	True	True	True	False		备用//
+	MROS_BYP1	Bool	210.0	false		True	True	True	True	False		Overtravel Bypass (Mros to plc)//
+	MROS_BYP2	Bool	210.1	false		True	True	True	True	False		Overload Bypass (Mros to plc)//
+	MROS_BYP3	Bool	210.2	false		True	True	True	True	False		Ecc Load Bypass (Mros to plc)//
+	MROS_BYP4	Bool	210.3	false		True	True	True	True	False		Hoist Up Stop Bypass (Mros to plc)//
+	MROS_BYP5	Bool	210.4	false		True	True	True	True	False		Snagload Reset (Mros to plc)//
+	MROS_BYP6	Bool	210.5	false		True	True	True	True	False		Overspeed Reset (Mros to plc)//
+	MROS_BYP7	Bool	210.6	false		True	True	True	True	False		MROS XXX BYPASS//
+	MROS_FLT_RST_PB	Bool	210.7	false		True	True	True	True	False		Fault Reset Pushbutton(Mros to Cros_plc)//
+	SPARE21	Byte	211.0	16#0		True	True	True	True	False		
+	T_MS	Byte	212.0	16#0		True	True	True	True	False		Trolley Master Switch Signal
+	H_MS	Byte	213.0	16#0		True	True	True	True	False		Hoist Master Switch Signal
+	G_MS	Byte	214.0	16#0		True	True	True	True	False		Gantry Master Switch Signal
+	T_MS_FWD	Bool	215.0	false		True	True	True	True	False		Trolley Master Switch Forward Signal
+	T_MS_REV	Bool	215.1	false		True	True	True	True	False		Trolley Master Switch Reverse Signal
+	T_MS_ZERO	Bool	215.2	false		True	True	True	True	False		Trolley Master Switch Zero Signal
+	H_MS_HDN	Bool	215.3	false		True	True	True	True	False		Hoist Master Switch Down Signal
+	H_MS_HUP	Bool	215.4	false		True	True	True	True	False		Hoist Master Switch Up Signal
+	H_MS_ZERO	Bool	215.5	false		True	True	True	True	False		Hoist Master Switch Zero Signal
+	G_MS_LFT	Bool	215.6	false		True	True	True	True	False		Gantry Master Switch Left Signal
+	G_MS_RGT	Bool	215.7	false		True	True	True	True	False		Gantry Master Switch Right Signal
+	G_MS_ZERO	Bool	216.0	false		True	True	True	True	False		Gantry Master Switch Zero Signal
+	ROS_E_STOP	Bool	216.1	false		True	True	True	True	False		ROS Emergency Stop 1
+	SPARE_21_2	Bool	216.2	false		True	True	True	True	False		备用//
+	SPARE_21_3	Bool	216.3	false		True	True	True	True	False		备用//
+	SPARE_21_4	Bool	216.4	false		True	True	True	True	False		备用//
+	SPARE_21_5	Bool	216.5	false		True	True	True	True	False		备用//
+	SPARE_21_6	Bool	216.6	false		True	True	True	True	False		备用//
+	SPARE_21_7	Bool	216.7	false		True	True	True	True	False		备用//
+	Trim_Left	Bool	217.0	false		True	True	True	True	False		Trim Left/Camera Skew CCW
+	Trim_Right	Bool	217.1	false		True	True	True	True	False		Trim Right/Camera Skew CW
+	ListForward	Bool	217.2	false		True	True	True	True	False		List Forward/Camera Forward
+	List_Reverse	Bool	217.3	false		True	True	True	True	False		List Reverse/Camera Reverse
+	Skew_CCW	Bool	217.4	false		True	True	True	True	False		Skew CCW/Camera Zoom Out
+	Skew_CW	Bool	217.5	false		True	True	True	True	False		Skew CW/Camera Zoom In
+	Spare561	Bool	217.6	false		True	True	True	True	False		
+	Spare571	Bool	217.7	false	FALSE	True	True	True	True	False		
+	TMS_Flot1	Bool	218.0	false	FALSE	True	True	True	True	False		Flipper Down TMS Floating PB1.0
+	TMS_Flot2	Bool	218.1	false	FALSE	True	True	True	True	False		Flipper Up TMS Floating PB2.0
+	TMS_Flot3	Bool	218.2	false	FALSE	True	True	True	True	False		Semi-Auto Start TMS Floating PB3.0
+	TMS_Flot4	Bool	218.3	false	FALSE	True	True	True	True	False		Trolley Slowdown TMS Floating PB4.0
+	TMS_Flot5	Bool	218.4	false	FALSE	True	True	True	True	False		Tandom Spreader Extend TMS Floating PB7.1
+	TMS_Flot6	Bool	218.5	false	FALSE	True	True	True	True	False		Tandom Spreader Retract TMS Floating PB7.2
+	TMS_Flot7	Bool	218.6	false	FALSE	True	True	True	True	False		
+	Spare67	Bool	218.7	false	FALSE	True	True	True	True	False		
+	HMS_Flot1	Bool	219.0	false	FALSE	True	True	True	True	False		Lock HGMS Floating PB1.0
+	HMS_Flot2	Bool	219.1	false	FALSE	True	True	True	True	False		Unlock HGMS Floating PB2.0
+	HMS_Flot3	Bool	219.2	false	FALSE	True	True	True	True	False		Hoist/Gantry Slowdown HGMS Floating PB3.0
+	HMS_Flot4	Bool	219.3	false	FALSE	True	True	True	True	False		Request Platform HGMS Floating PB4.0
+	HMS_Flot5	Bool	219.4	false	FALSE	True	True	True	True	False		Spreader Twin Extend HGMS Floating PB5.1
+	HMS_Flot6	Bool	219.5	false	FALSE	True	True	True	True	False		Spreader Twin Retract HGMS Floating PB5.2
+	Spare76	Bool	219.6	false	FALSE	True	True	True	True	False		
+	Spare77	Bool	219.7	false	FALSE	True	True	True	True	False		

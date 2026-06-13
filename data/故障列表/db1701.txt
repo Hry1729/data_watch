@@ -1,0 +1,35 @@
+	名称	数据类型	偏移量	起始值	监视值	保持	可访问	可写	可见	设定值	监控	注释	
+	Static											
+	CraneId	Int	0.0	0		True	True	True	True	False		
+	CycleCount	DInt	2.0	0		True	True	True	True	False		
+	AC3	Bool	6.0	false		True	True	True	True	False		
+	ROS	Bool	6.1	false		True	True	True	True	False		
+	ALM_ON_DELAY	Bool	6.2	false		True	True	True	True	False		
+	ALM_StatusWord	Word	8.0	16#0		True	True	True	True	False		
+	ALM_fault_code	Int	10.0	0		True	True	True	True	False		
+	ALM_alarm_code	Int	12.0	0		True	True	True	True	False		
+	ALM_VolInput	Int	14.0	0		True	True	True	True	False		
+	ALM_ActPower	Int	16.0	0		True	True	True	True	False		
+	H1_ActSpd	Int	18.0	0		True	True	True	True	False		
+	H1_Inv1FaultNum	Int	20.0	0		True	True	True	True	False		
+	Mh_Load	Int	22.0	0		True	True	True	True	False		
+	T1_ActSpd	Int	24.0	0		True	True	True	True	False		
+	T1_Inv1FaultNum	Int	26.0	0		True	True	True	True	False		
+	H3_ActSpd	Int	28.0	0		True	True	True	True	False		
+	H3_Inv1FaultNum	Int	30.0	0		True	True	True	True	False		
+	T2_ActSpd	Int	32.0	0		True	True	True	True	False		
+	T2_Inv1FaultNum	Int	34.0	0		True	True	True	True	False		
+	Boom_ActSpd	Int	36.0	0		True	True	True	True	False		
+	Gantry_ActSpd	Int	38.0	0		True	True	True	True	False		
+	PtSlm_DCVol	Int	40.0	0		True	True	True	True	False		
+	PtSlm_VolInput	Int	42.0	0		True	True	True	True	False		
+	PtSlm_fault_code	Int	44.0	0		True	True	True	True	False		
+	PtSlm_ActPower_W	Int	46.0	0		True	True	True	True	False		
+	Hv_U12	Int	48.0	0		True	True	True	True	False		
+	Hv_U23	Int	50.0	0		True	True	True	True	False		
+	Hv_U31	Int	52.0	0		True	True	True	True	False		
+	Hv_Frequency	Int	54.0	0		True	True	True	True	False		
+	Hv_Ep_Kw	Int	56.0	0	0	True	True	True	True	False		
+	Hv_Eq_Kvar	Int	58.0	0	0	True	True	True	True	False		
+	Hv_Es_Kva	Int	60.0	0	0	True	True	True	True	False		
+	Hv_PowerFact	Int	62.0	0	1000	True	True	True	True	False		
