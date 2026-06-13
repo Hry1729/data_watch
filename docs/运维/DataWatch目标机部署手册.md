@@ -505,7 +505,14 @@ TDENGINE_PORT=6041
 TDENGINE_DATABASE=device_data
 
 BACKEND_CORS_ORIGINS=http://localhost:1420,http://127.0.0.1:1420
+
+# 必须改成强随机串，不能留模板占位/默认值
+AUTH_SECRET_KEY=换成一串足够长的随机密钥
 ```
+
+> 生成强随机 `AUTH_SECRET_KEY`：
+> `& "C:\Users\Hry\.local\bin\python3.14t.exe" -c "import secrets; print(secrets.token_urlsafe(48))"`
+> 漏配会导致后端启动 WARNING，且任何人可用公开默认密钥伪造登录 token。`backend.env.example` 仅为模板，必须复制成 `backend.env` 填真实值后容器才会加载。
 
 如果目标机可以联网并需要现场构建，则可改用：
 

@@ -107,6 +107,11 @@ TDENGINE_DATABASE=device_data
 AUTH_SECRET_KEY=换成一串足够长的随机密钥
 ```
 
+> **`AUTH_SECRET_KEY` 必须改**：生成强随机串
+> `& "C:\Users\Hry\.local\bin\python3.14t.exe" -c "import secrets; print(secrets.token_urlsafe(48))"`
+> 若留作模板占位/默认值，后端启动会打印 WARNING，且任何人可用公开默认密钥伪造登录 token。
+> 注：`backend.env.example` 仅为模板，必须复制成 `backend.env` 并填真实值后才会被容器加载。
+
 注意：
 
 ```text

@@ -6,18 +6,18 @@
 
 ## 1. 配置加载优先级
 
-后端配置是由 [config.py](file:///D:/python/device_alarm/data_watch/backend/app/core/config.py) 中的 `get_settings()` 函数统一加载的。配置值遵循以下五个层级的覆盖顺序（优先级从高到低）：
+后端配置是由 [config.py](file:///D:/python/device_alarm/data_watch/backend/app/core/config.py) 中的 `get_settings()` 函数统一加载的。配置值遵循以下四个层级的覆盖顺序（优先级从高到低）：
 
 1. **系统环境变量 (System Environment Variables)**
    - 调用 `os.getenv(name)`，具有最高优先级。会直接覆盖任何从配置文件或默认值加载的参数。
 2. **本地环境配置文件 `backend/.env`**
-   - 如果该文件存在，将解析其中的 `KEY=VALUE` 健值对，并覆盖优先级更低的配置。
-3. **环境模板文件 `backend/.env.example`**
-   - 仅用于提供开发环境的默认占位符。在读取 `backend/.env` 前会先尝试读取此文件，如果 `.env` 中有相同的键，`.env` 的值会覆盖 `.env.example`。
-4. **采集器配置文件 `collector/config/settings.toml`**
+   - 如果该文件存在，将解析其中的 `KEY=VALUE` 健值对，并覆盖优先级更低的配置。**这是运行时唯一会被读取的 env 文件。**
+3. **采集器配置文件 `collector/config/settings.toml`**
    - 后端会尝试读取同级目录下的 [settings.toml](file:///D:/python/device_alarm/data_watch/collector/config/settings.toml)（即公共配置文件），提取 `[runtime]`, `[mysql]` 和 `[tdengine]` 区块的内容。若 `.env` 和系统变量中均未配置相应参数，则使用该文件中的对应项（如 MySQL 密码等）。*注：Redis 相关配置项不受此文件影响，直接使用系统环境变量、`.env` 或代码硬编码默认值。*
-5. **代码默认值 (Hardcoded Python Defaults)**
+4. **代码默认值 (Hardcoded Python Defaults)**
    - 当上述配置文件或系统环境变量中均不存在某一配置时，退化为使用 Python 代码中声明的硬编码默认值。
+
+> **关于 `backend/.env.example`**：它**仅是模板**，含占位符、不含真实密钥，**运行时不再被读取**（历史版本曾把它作为回退层，现已移除，避免漏配时回落到模板里的示例值）。部署/开发前必须先把它复制为 `backend/.env` 并填入真实值（尤其 `AUTH_SECRET_KEY` 要用强随机串）。`backend/.env` 已加入 `.gitignore`，不会入库。
 
 ---
 
@@ -107,6 +107,11 @@ REDIS_HOST=host.docker.internal
 
 ### C. 安全与权限（推荐项）
 *   **`AUTH_SECRET_KEY`**：为了保证 JWT token 签名的绝对安全，在部署时必须随机生成一个密钥（可以通过命令行工具生成），避免使用默认 of `"device-monitor-dev-secret"`：
+    ```powershell
+    # 生成强随机密钥
+    & "C:\Users\Hry\.local\bin\python3.14t.exe" -c "import secrets; print(secrets.token_urlsafe(48))"
+    ```
     ```env
     AUTH_SECRET_KEY=b38d3b17b23c791f2c9744f9346a7c0138330b26f69233f53ea86bdb30a2970e
     ```
+    > 启动时若 `AUTH_SECRET_KEY` 仍为默认/占位/空值，后端会打印一条 `WARNING`（开发态仅告警、不阻断），提示生产环境必须配置强随机密钥。
