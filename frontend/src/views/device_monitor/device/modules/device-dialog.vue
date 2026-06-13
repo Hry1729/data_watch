@@ -1,9 +1,9 @@
 <!-- 设备弹窗组件 -->
 <template>
-  <ElDrawer
+  <ElDialog
     v-model="visible"
     :title="title"
-    :size="500"
+    width="500px"
     :before-close="handleClose"
   >
     <ElForm
@@ -63,7 +63,7 @@
       <ElButton @click="handleClose">取消</ElButton>
       <ElButton type="primary" @click="handleSubmit" :loading="submitting">确定</ElButton>
     </template>
-  </ElDrawer>
+  </ElDialog>
 </template>
 
 <script setup lang="ts">

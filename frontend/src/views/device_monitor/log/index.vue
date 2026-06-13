@@ -200,11 +200,10 @@
     </div>
 
     <!-- 详情抽屉 -->
-    <ElDrawer
+    <ElDialog
       v-model="showDetailDrawer"
       title="日志详情"
-      direction="rtl"
-      size="600px"
+      width="600px"
       :destroy-on-close="true"
     >
       <div v-if="currentLog" class="log-detail">
@@ -261,7 +260,7 @@
           <ElButton v-if="currentLog.operatorName" @click="filterByOperator(currentLog.operatorName)">按操作人查询</ElButton>
         </div>
       </div>
-    </ElDrawer>
+    </ElDialog>
 
     <!-- 清理弹窗 -->
     <ElDialog v-model="showCleanupDialog" title="清理日志" width="500px" :destroy-on-close="true">
