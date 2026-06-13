@@ -143,7 +143,7 @@
     </div>
 
     <!-- 设备选择器抽屉 -->
-    <ElDrawer v-model="deviceDrawerVisible" title="选择设备" direction="rtl" size="400px">
+    <ElDialog v-model="deviceDrawerVisible" title="选择设备" width="400px">
       <div class="selector-content">
         <div class="selector-item">
           <label class="selector-label">设备类型</label>
@@ -197,10 +197,10 @@
         <ElButton @click="deviceDrawerVisible = false">取消</ElButton>
         <ElButton type="primary" :disabled="!selectedDeviceId" @click="confirmDeviceSelection">确认</ElButton>
       </template>
-    </ElDrawer>
+    </ElDialog>
 
     <!-- 点位选择器抽屉 -->
-    <ElDrawer v-model="pointDrawerVisible" title="选择查询点位" direction="rtl" size="480px">
+    <ElDialog v-model="pointDrawerVisible" title="选择查询点位" width="480px">
       <div class="selector-content">
         <div class="selector-item">
           <label class="selector-label">选择设备</label>
@@ -238,7 +238,7 @@
         <ElButton @click="pointDrawerVisible = false">取消</ElButton>
         <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
       </template>
-    </ElDrawer>
+    </ElDialog>
 
     <!-- 导出数据对话框 -->
     <ElDialog v-model="exportDialogVisible" title="导出历史数据" width="500px">
