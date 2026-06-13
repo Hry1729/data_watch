@@ -129,7 +129,7 @@
 </template>
 
 <script setup lang="ts">
-  import { computed, nextTick, onActivated, onDeactivated, onUnmounted, ref } from 'vue'
+  import { computed, onActivated, onDeactivated, onUnmounted, ref } from 'vue'
   import { useRouter } from 'vue-router'
   import ArtCountTo from '@/components/core/text-effect/art-count-to/index.vue'
   import ArtTextScroll from '@/components/core/text-effect/art-text-scroll/index.vue'
@@ -202,14 +202,11 @@
   let echartsModulePromise: Promise<typeof import('echarts')> | null = null
   let trendChart: EChartsInstance | null = null
   let refreshTimer: ReturnType<typeof setInterval> | null = null
-  let symbolRevealTimer: ReturnType<typeof setTimeout> | null = null
   let dashboardLoadingPromise: Promise<void> | null = null
   let lastDashboardLoadedAt = 0
 
   const palette = ['#4A6CF7', '#3DBB9A', '#F4A542', '#D66B88', '#6E7FA6', '#95A3BF']
   const DASHBOARD_REFRESH_INTERVAL_MS = 30000
-  // 趋势图入场：先画线 TREND_LINE_DRAW_MS 毫秒，结束后再显示数据点
-  const TREND_LINE_DRAW_MS = 500
   const DASHBOARD_ACTIVATE_REUSE_MS = 10000
 
   const onlineRate = computed(() => {
@@ -369,34 +366,9 @@
     }
   }
 
-  // 等容器布局出宽高再 init，避免 ECharts "Can't get DOM width or height"。
-  // ResizeObserver 监听尺寸变化，最长等 timeout 毫秒，超时仍为 0 则放弃（返回 false），避免页面隐藏/异常时卡住。
-  const waitForSize = (el: HTMLElement, timeout = 1500): Promise<boolean> => {
-    if (el.clientWidth > 0 && el.clientHeight > 0) return Promise.resolve(true)
-    return new Promise((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | null = null
-      const observer = new ResizeObserver(() => {
-        if (el.clientWidth > 0 && el.clientHeight > 0) {
-          if (timer) clearTimeout(timer)
-          observer.disconnect()
-          resolve(true)
-        }
-      })
-      observer.observe(el)
-      timer = setTimeout(() => {
-        observer.disconnect()
-        resolve(el.clientWidth > 0 && el.clientHeight > 0)
-      }, timeout)
-    })
-  }
-
   const ensureChart = async (target: HTMLElement | undefined, chart: EChartsInstance | null) => {
     if (!target) return null
     if (chart) return chart
-
-    await nextTick()
-    const sized = await waitForSize(target)
-    if (!sized) return null
 
     const echarts = await loadEcharts()
     return echarts.init(target)
@@ -419,14 +391,6 @@
         onlineRate: '#3DBB9A'
       }
 
-      // 切换时间范围会重新画线，先清掉上一次未触发的“显示点”定时器，避免叠加
-      if (symbolRevealTimer) {
-        clearTimeout(symbolRevealTimer)
-        symbolRevealTimer = null
-      }
-
-      // 先按最终尺寸重新测量，再 setOption，让入场动画正常播放（resize 放 setOption 之后会打断动画）
-      trendChart.resize()
       trendChart.setOption({
         color: ['#4A6CF7', '#D66B88', '#3DBB9A'],
         tooltip: { trigger: 'axis' },
@@ -476,8 +440,6 @@
           smooth: true,
           symbol: 'circle',
           symbolSize: 7,
-          showSymbol: false,
-          animationDuration: TREND_LINE_DRAW_MS,
           yAxisIndex: item.unit === '%' ? 1 : 0,
           data: item.data,
           lineStyle: { width: 3, color: metricColorMap[item.metricKey] || '#4A6CF7' },
@@ -493,14 +455,6 @@
               : undefined
         }))
       })
-
-      // 线画完后再淡入数据点（按 series 顺序只更新 showSymbol，不重画曲线）
-      const seriesCount = (trend.series || []).length
-      symbolRevealTimer = setTimeout(() => {
-        trendChart?.setOption({
-          series: Array.from({ length: seriesCount }, () => ({ showSymbol: true }))
-        })
-      }, TREND_LINE_DRAW_MS)
   }
 
   const loadDeviceTypeDistribution = async () => {
@@ -628,22 +582,13 @@
     window.addEventListener('resize', resizeCharts)
   })
 
-  const clearSymbolRevealTimer = () => {
-    if (symbolRevealTimer) {
-      clearTimeout(symbolRevealTimer)
-      symbolRevealTimer = null
-    }
-  }
-
   onDeactivated(() => {
     stopRefreshTimer()
-    clearSymbolRevealTimer()
     window.removeEventListener('resize', resizeCharts)
   })
 
   onUnmounted(() => {
     stopRefreshTimer()
-    clearSymbolRevealTimer()
     window.removeEventListener('resize', resizeCharts)
     trendChart?.dispose()
     trendChart = null

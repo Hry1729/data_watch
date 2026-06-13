@@ -1,6 +1,6 @@
 ﻿<!-- 点位编辑弹窗 -->
 <template>
-  <ElDialog v-model="visible" :title="title" width="520px" :before-close="handleClose">
+  <ElDrawer v-model="visible" :title="title" :size="520" :before-close="handleClose">
     <ElForm ref="formRef" :model="formData" :rules="rules" label-width="100px" class="px-4">
       <ElFormItem label="所属设备" prop="deviceCode">
         <ElTreeSelect
@@ -61,7 +61,7 @@
       <ElButton @click="handleClose">取消</ElButton>
       <ElButton type="primary" @click="handleSubmit" :loading="submitting">确定</ElButton>
     </template>
-  </ElDialog>
+  </ElDrawer>
 </template>
 
 <script setup lang="ts">

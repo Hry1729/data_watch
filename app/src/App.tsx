@@ -16,7 +16,6 @@ import { WriterPage } from "@/pages/WriterPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { agentClient } from "@/lib/agent-client";
 import { Toaster } from "@/components/ui/sonner";
-import { TitleBar } from "@/components/TitleBar";
 
 // ─── 启动检查（Bootstrap 状态 + Agent 连通性）────────────────────────────────
 //
@@ -46,7 +45,7 @@ function AppStartup({ children }: { children: ReactNode }) {
   if (!ready) {
     return (
       <div
-        className="min-h-full flex items-center justify-center bg-background"
+        className="min-h-screen flex items-center justify-center bg-background"
       >
         <p className="text-sm text-muted-foreground/70">正在连接 Agent…</p>
       </div>
@@ -79,7 +78,7 @@ function AgentErrorPage() {
 
   return (
     <div
-      className="min-h-full flex flex-col items-center justify-center gap-6 bg-background"
+      className="min-h-screen flex flex-col items-center justify-center gap-6 bg-background"
     >
       <div className="text-center">
         <p className="text-lg font-semibold text-foreground">无法连接到 Agent</p>
@@ -104,50 +103,45 @@ function AgentErrorPage() {
 export default function App() {
   return (
     <>
-      <div className="flex h-screen flex-col overflow-hidden bg-background">
-        <TitleBar />
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <BrowserRouter>
-            {/* AuthProvider 必须在 BrowserRouter 内，因为内部使用 useNavigate */}
-            <AuthProvider>
-              {/* AppStartup：启动检查，期间显示 loading 屏 */}
-              <AppStartup>
-                <Routes>
-                  {/* 公开路由：无 AppLayout，无 AuthGuard */}
-                  <Route path="/bootstrap" element={<BootstrapPage />} />
-                  <Route
-                    path="/login"
-                    element={
-                      <PublicOnlyRoute>
-                        <LoginPage />
-                      </PublicOnlyRoute>
-                    }
-                  />
-                  <Route path="/error" element={<AgentErrorPage />} />
+    <BrowserRouter>
+      {/* AuthProvider 必须在 BrowserRouter 内，因为内部使用 useNavigate */}
+      <AuthProvider>
+        {/* AppStartup：启动检查，期间显示 loading 屏 */}
+        <AppStartup>
+          <Routes>
+            {/* 公开路由：无 AppLayout，无 AuthGuard */}
+            <Route path="/bootstrap" element={<BootstrapPage />} />
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute>
+                  <LoginPage />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route path="/error" element={<AgentErrorPage />} />
 
-                  {/* 受保护路由：未登录时 AuthGuard 跳 /login */}
-                  <Route
-                    element={
-                      <AuthGuard>
-                        <AppLayout />
-                      </AuthGuard>
-                    }
-                  >
-                    <Route index element={<OverviewPage />} />
-                    <Route path="/collector" element={<CollectorPage />} />
-                    <Route path="/writer" element={<WriterPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                  </Route>
+            {/* 受保护路由：未登录时 AuthGuard 跳 /login */}
+            <Route
+              element={
+                <AuthGuard>
+                  <AppLayout />
+                </AuthGuard>
+              }
+            >
+              <Route index             element={<OverviewPage />} />
+              <Route path="/collector" element={<CollectorPage />} />
+              <Route path="/writer"    element={<WriterPage />} />
+              <Route path="/settings"  element={<SettingsPage />} />
+            </Route>
 
-                  {/* 未匹配路由跳登录页 */}
-                  <Route path="*" element={<Navigate to="/login" replace />} />
-                </Routes>
-              </AppStartup>
-            </AuthProvider>
-          </BrowserRouter>
-        </div>
-      </div>
-      <Toaster richColors position="top-right" />
+            {/* 未匹配路由跳登录页 */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </AppStartup>
+      </AuthProvider>
+    </BrowserRouter>
+    <Toaster richColors position="top-right" />
     </>
   );
 }

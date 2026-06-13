@@ -1,9 +1,9 @@
 <!-- 点位详情抽屉 -->
 <template>
-  <ElDialog
+  <ElDrawer
     v-model="visible"
     title="点位详情"
-    width="400px"
+    :size="400"
   >
     <ElDescriptions :column="1" border class="px-4">
       <ElDescriptionsItem label="所属设备">
@@ -43,7 +43,7 @@
     <template #footer>
       <ElButton @click="visible = false">关闭</ElButton>
     </template>
-  </ElDialog>
+  </ElDrawer>
 </template>
 
 <script setup lang="ts">

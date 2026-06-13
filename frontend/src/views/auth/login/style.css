@@ -1,47 +1,18 @@
 @reference '@styles/core/tailwind.css';
 
-/* 授权页右栏容器：三页共用，居中承托登录卡，压在全屏深色背景之上 */
-.auth-right-panel {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-}
-
-/* 宽屏（左栏可见）时，卡片整体左移一点；移动端保持对称居中 */
-@media only screen and (width >= 1181px) {
-  .auth-right-panel {
-    padding-right: 180px;
-  }
-}
-
-/* 卡片外层包裹：入场动画 + 尺寸约束（去固定高度，改自适应防裁切） */
+/* 授权页右侧区域 */
 .auth-right-wrap {
-  @apply w-[440px] max-w-full
+  @apply absolute inset-0 w-[440px] h-[650px] py-[5px] m-auto overflow-hidden
+    max-sm:px-7 max-sm:w-full
     animate-[slideInRight_0.6s_cubic-bezier(0.25,0.46,0.45,0.94)_forwards]
     max-md:animate-none;
 
-  max-height: calc(100vh - 48px);
-  overflow-y: auto;
-
-  /* 玻璃登录卡 */
   .form {
-    @apply py-[40px];
-
-    box-sizing: border-box;
-    padding-inline: 38px;
-    background: rgb(255 255 255 / 55%);
-    -webkit-backdrop-filter: blur(18px);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgb(255 255 255 / 60%);
-    border-radius: 22px;
-    box-shadow: 0 4px 20px rgb(40 60 120 / 10%);
+    @apply h-full py-[40px];
   }
 
   .title {
-    @apply text-g-900 text-4xl font-semibold max-md:text-3xl;
+    @apply text-g-900 text-4xl font-semibold max-md:text-3xl max-sm:pt-10;
   }
 
   .sub-title {
@@ -49,31 +20,8 @@
   }
 
   .custom-height {
-    @apply !h-[44px];
+    @apply !h-[40px];
   }
-}
-
-.dark .auth-right-wrap .form {
-  background: rgb(18 26 44 / 55%);
-  border-color: rgb(110 140 220 / 16%);
-  box-shadow:
-    0 20px 60px rgb(0 0 0 / 45%),
-    inset 0 1px 0 rgb(255 255 255 / 5%);
-}
-
-/* 主按钮：纯色，浅色淡蓝、暗色深蓝（仅作用于授权页卡片内） */
-.auth-right-wrap .form .el-button--primary {
-  background: #5b93f3;
-  border: none;
-  transition: filter 0.3s ease;
-}
-
-.auth-right-wrap .form .el-button--primary:hover {
-  filter: brightness(1.08);
-}
-
-.dark .auth-right-wrap .form .el-button--primary {
-  background: #1f4f9c;
 }
 
 /* 滑入动画 */

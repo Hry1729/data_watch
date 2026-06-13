@@ -118,7 +118,7 @@ export function BootstrapPage() {
   return (
     // 全屏居中，无任何主导航（FR-015）
     <div
-      className="min-h-full flex flex-col items-center justify-center px-6 py-12 bg-background"
+      className="min-h-screen flex flex-col items-center justify-center px-6 py-12 bg-background"
     >
       {/* 页面标题 */}
       <div className="w-full max-w-2xl mb-6">

@@ -186,7 +186,7 @@
     </ElCard>
 
     <!-- 设备选择器抽屉 -->
-    <ElDialog v-model="deviceSelectorVisible" title="选择设备" width="400px">
+    <ElDrawer v-model="deviceSelectorVisible" title="选择设备" direction="rtl" size="400px">
       <div class="device-selector-content">
         <div class="selector-item">
           <label class="selector-label">设备类型</label>
@@ -240,10 +240,10 @@
         <ElButton @click="deviceSelectorVisible = false">取消</ElButton>
         <ElButton type="primary" :disabled="!selectedDeviceId" @click="confirmDeviceSelection">确认</ElButton>
       </template>
-    </ElDialog>
+    </ElDrawer>
 
     <!-- 点位选择器抽屉 -->
-    <ElDialog v-model="pointSelectorVisible" title="选择监控点位" width="480px">
+    <ElDrawer v-model="pointSelectorVisible" title="选择监控点位" direction="rtl" size="480px">
       <div class="selector-content">
         <div class="selector-item">
           <label class="selector-label">选择设备</label>
@@ -281,7 +281,7 @@
         <ElButton @click="pointSelectorVisible = false">取消</ElButton>
         <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
       </template>
-    </ElDialog>
+    </ElDrawer>
 
     <!-- 图表设置弹窗 -->
     <ElDialog v-model="chartSettingsVisible" title="图表设置" width="400px">

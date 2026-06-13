@@ -109,6 +109,13 @@
       "resetFailed": "重置失败，请刷新页面后重试"
     }
   },
+  "notice": {
+    "title": "通知",
+    "btnRead": "标为已读",
+    "bar": ["通知", "消息", "代办"],
+    "text": ["暂无"],
+    "viewAll": "查看全部"
+  },
   "worktab": {
     "btn": {
       "refresh": "刷新",
@@ -302,7 +309,7 @@
     "deviceMonitor": {
       "title": "设备监控",
       "dashboard": "工作台",
-      "monitor": "设备通讯",
+      "monitor": "设备监控",
       "driver": "驱动管理",
       "device": "设备管理",
       "point": "点位管理",
