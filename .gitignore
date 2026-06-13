@@ -26,6 +26,12 @@ frontend/node_modules/
 .uv-cache/
 .vite/
 
+# AI 工具本地状态
+.claude/
+.agent_context/
+.multica/
+.opencode/
+
 # 日志
 backend/logs/
 collector/logs/
