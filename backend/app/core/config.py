@@ -72,6 +72,7 @@ class Settings:
     tdengine_password: str
     tdengine_database: str
     tdengine_use_ssl: bool
+    tdengine_log_dir: str
     perspective_enabled: bool
     perspective_ws_path: str
     perspective_max_clients: int
@@ -146,6 +147,7 @@ def get_settings() -> Settings:
         tdengine_database=str(read_setting("TDENGINE_DATABASE", tdengine_defaults.get("database", "device_data"))),
         tdengine_use_ssl=str(read_setting("TDENGINE_USE_SSL", tdengine_defaults.get("use_ssl", False))).lower()
         in {"1", "true", "yes"},
+        tdengine_log_dir=str(read_setting("TDENGINE_LOG_DIR", "")),
         perspective_enabled=str(read_setting("PERSPECTIVE_ENABLED", True)).lower() in {"1", "true", "yes"},
         perspective_ws_path=str(read_setting("PERSPECTIVE_WS_PATH", "/ws/perspective")),
         perspective_max_clients=int(read_setting("PERSPECTIVE_MAX_CLIENTS", 200)),

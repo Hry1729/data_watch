@@ -82,6 +82,32 @@ async def log_stats(
         return success_response(data=data)
 
 
+@router.get("/api/device-monitor/log/tdengine/files")
+async def tdengine_log_files(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """列出可查看的 TDengine 服务日志文件（数据库日志页）。"""
+    await require_permissions(credentials, "device_monitor:log:view")
+    from app.services.tdengine_log import list_log_files
+
+    data = await list_log_files()
+    return success_response(data=data)
+
+
+@router.get("/api/device-monitor/log/tdengine/tail")
+async def tdengine_log_tail(
+    file: str,
+    lines: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """读取指定 TDengine 日志文件的最后若干行（数据库日志页）。"""
+    await require_permissions(credentials, "device_monitor:log:view")
+    from app.services.tdengine_log import clamp_lines, tail_log_file
+
+    data = await tail_log_file(file, clamp_lines(lines))
+    return success_response(data=data)
+
+
 @router.get("/api/device-monitor/log/policy")
 async def get_log_policy(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
