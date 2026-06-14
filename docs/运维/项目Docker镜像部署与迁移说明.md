@@ -149,6 +149,8 @@ docker compose -f .\deploy\docker-compose.yml --profile infra up -d redis tdengi
 ```
 
 > compose 托管 TDengine 时会自动挂载 `deploy/taos.cfg`（`logKeepDays 4` / `minimalDataDirGB 50` / `sDebugFlag 131`）。数据保留期 `KEEP` 由建库语句控制（首建即 `KEEP 14d DURATION 1d`）；**若 `device_data` 库已存在**，需手动让 KEEP 生效：`docker exec data-watch-tdengine taos -s "ALTER DATABASE device_data KEEP 14d"`。详见《DataWatch目标机部署手册.md》「TDengine 保留期与磁盘控制」。
+>
+> compose 还把 TDengine `/var/log/taos` 以命名卷 `tdengine_log` 只读挂到 backend 的 `/tdengine-logs`（`backend.env` 的 `TDENGINE_LOG_DIR`），前端「日志监控」页底部「数据库日志」面板即可在线查看 TDengine 服务日志（仅 compose 托管时可用）。
 
 日常改前后端代码时不要执行 `--profile infra`，也不要使用 `docker compose down -v`，否则可能删除数据库数据卷。
 

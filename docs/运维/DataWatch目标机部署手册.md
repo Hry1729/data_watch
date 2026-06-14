@@ -557,8 +557,10 @@ docker compose -f .\docker-compose.yml --profile infra up -d
 
 `docker-compose.yml` 已把 TDengine 的 `/var/log/taos` 以命名卷 `tdengine_log` 挂出，并只读挂到 backend 的 `/tdengine-logs`（由 `backend.env` 的 `TDENGINE_LOG_DIR` 指向），供前端「数据库日志」页在线查看 TDengine 服务日志。
 
+- **入口位置**：前端「日志监控」页**底部**的"数据库日志（TDengine 服务日志）"面板，沿用 `device_monitor:log:view` 权限（能看系统日志的角色即可看）。支持选文件、设行数（默认 300、上限 2000）、手动/自动（5s）刷新；轮转 `.gz` 与超大文件（>5MB 扫描上限）会提示仅显示最近部分。
 - **仅 compose 托管 TDengine 时可用**。现场自管/远程 TDengine（不同主机）时 backend 读不到其日志文件，该页会优雅提示「当前部署未启用」。
 - ⚠️ **命名卷会遮挡旧容器层日志**：给已有 TDengine 容器新增该卷并重建后，`/var/log/taos` 指向新的空卷，旧容器内的历史日志将不可见。生产上从新部署后开始查看即可；若需保留旧日志，先 `docker cp` 备份。
+- **上线冒烟**：① `docker exec data-watch-backend ls /tdengine-logs` 能看到 taosdlog 文件；② 页面文件下拉有项、能 tail 出内容；③ 选 `.gz` 文件提示不可在线查看；④ 自动刷新随新日志滚动；⑤ 故意清空 `TDENGINE_LOG_DIR` 时页面提示「未启用」而非报错。
 
 安装包应完成：
 
