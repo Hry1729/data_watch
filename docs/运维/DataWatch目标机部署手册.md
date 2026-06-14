@@ -202,7 +202,8 @@ collector\dist\data-watch-collector\
 
 ```powershell
 Copy-Item "D:\python\device_alarm\data_watch\collector\dist\data-watch-collector\*" "$ReleaseRoot\collector\" -Recurse -Force
-Copy-Item "D:\python\device_alarm\data_watch\collector\config\settings.toml" "$ReleaseRoot\config-templates\collector-settings.toml" -Force
+# 模板取脱敏版（含密码的 settings.toml 已不入库，仅本地 dev 用）
+Copy-Item "D:\python\device_alarm\data_watch\installer\templates\collector-settings.toml.example" "$ReleaseRoot\config-templates\collector-settings.toml" -Force
 ```
 
 注意：
@@ -243,7 +244,8 @@ writer\dist\data-watch-writer\
 
 ```powershell
 Copy-Item "D:\python\device_alarm\data_watch\writer\dist\data-watch-writer\*" "$ReleaseRoot\writer\" -Recurse -Force
-Copy-Item "D:\python\device_alarm\data_watch\writer\config\settings.toml" "$ReleaseRoot\config-templates\writer-settings.toml" -Force
+# 模板取脱敏版（含密码的 settings.toml 已不入库，仅本地 dev 用）
+Copy-Item "D:\python\device_alarm\data_watch\installer\templates\writer-settings.toml.example" "$ReleaseRoot\config-templates\writer-settings.toml" -Force
 ```
 
 ### 5. 准备 OPC DA proxy sidecar
@@ -602,48 +604,39 @@ Get-Service DataWatchAgent
 Invoke-RestMethod http://127.0.0.1:7070/bootstrap/status
 ```
 
-### 4. 配置 Agent
+### 4. 初始化 Agent（Bootstrap 向导）
 
-编辑：
+**不要手动编辑 `config.toml` 的密码**——密码以 DPAPI 加密存为 `password_enc`，机器+用户绑定，只能经界面录入（自动加密），不可手填、不可跨机复制。`config.toml` 由安装器从模板自动生成（初始 `bootstrap_done=false`、各密码为空），路径在 `C:\ProgramData\DataWatch\config.toml`。
+
+初始化通过桌面 App 完成：
 
 ```text
-C:\ProgramData\DataWatch\config.toml
+1. 打开 Data Watch Console。
+2. bootstrap_done=false 时首屏是【引导页】(不是登录页)：填 MySQL host/port/user/password → 测试连接 → 完成(写入 bootstrap_done=true)。
+3. 进入【登录页】，用账号登录。
+4. 登录后在【设置】页配置 redis / tdengine 连接(bootstrap 只配 MySQL)。
 ```
 
-关键配置：
+> ⚠️ **登录账号不是 Agent 自己存的**，而是查第 2 步那台 **MySQL 的 `sys_user` 表**（由 backend 用 `AUTH_AUTO_BOOTSTRAP` 播种，默认 Super/123456）。所以 bootstrap 填的 MySQL 必须：① 目标机网络可达；② 已被 backend 初始化、`sys_user` 内有账号。否则登录会 **503**（连库失败）或 **401**（账号不存在）。若 bootstrap 填错 MySQL 导致登录不进，见「八、常见故障」的自救步骤。
+
+config.toml 结构参考（`password_enc` 由界面录入后自动写入；进程段 executable/working_dir 由安装根/数据根自动派生，**均不需手填**）：
 
 ```toml
 [agent]
 host = "127.0.0.1"
 port = 7070
 runtime_dir = "C:\\ProgramData\\DataWatch\\runtime"
+jwt_secret = "..."          # 自动生成，勿手填
+bootstrap_done = true
 
-[mysql]
-host = "127.0.0.1"
-port = 3306
-user = "root"
-database = "device_watch"
-password_enc = "..."
+[mysql]                      # 由引导页录入
+host = "..."; port = 3306; user = "root"; database = "device_watch"; password_enc = "..."
 
-[redis]
-host = "127.0.0.1"
-port = 6379
-password_enc = "..."
+[redis]                      # 登录后在「设置」页录入
+host = "..."; port = 6379; password_enc = "..."
 
-[tdengine]
-host = "127.0.0.1"
-port = 6041
-user = "root"
-database = "device_data"
-password_enc = "..."
-
-[collector]
-executable = "C:\\Program Files\\DataWatch\\collector\\data-watch-collector.exe"
-working_dir = "C:\\Program Files\\DataWatch\\collector"
-
-[writer]
-executable = "C:\\Program Files\\DataWatch\\writer\\data-watch-writer.exe"
-working_dir = "C:\\Program Files\\DataWatch\\writer"
+[tdengine]                   # 登录后在「设置」页录入
+host = "..."; port = 6041; user = "root"; database = "device_data"; password_enc = "..."
 
 [opcda]
 server_prog_id = "ZPMC.OPCServer"
@@ -652,9 +645,9 @@ channel = "OPD_Server"
 
 注意：
 
-- 密码字段由 Agent 以 DPAPI 加密后保存为 `password_enc`。
-- redis/mysql/tdengine 的连接信息（host/port/user/database/password）以 Agent 的 `config.toml` 为**唯一来源**：Agent 启动 collector/writer 时解密并经 `DATAWATCH_<DB>_<FIELD>` 环境变量下发覆盖，故**无需也不应**在 collector/writer 的 `settings.toml` 重复填写凭据。
-- `working_dir` 为空时，collector 启动会失败，因为 Agent 无法定位 `config/settings.toml`。
+- 密码以 DPAPI 加密存为 `password_enc`，**机器+用户绑定，不可手填、不可跨机复制**——换机须在该机重新走引导/设置。
+- redis/mysql/tdengine 连接信息以 Agent 的 `config.toml` 为**唯一来源**：Agent 启动 collector/writer 时解密并经 `DATAWATCH_<DB>_<FIELD>` 环境变量下发覆盖，故 collector/writer 的 `settings.toml` **无需也不应**填凭据。
+- `[collector]`/`[writer]` 的 executable/working_dir 由安装根/数据根自动派生，无需配置。
 
 ### 5. 配置 collector
 
@@ -702,11 +695,11 @@ Data Watch Console
 进入 app 后：
 
 ```text
-1. 如首次安装，完成 Bootstrap。
-2. 登录。
-3. 设置数据库连接。
+1. 首次安装：引导页填 MySQL → 测试 → 完成(bootstrap)。
+2. 登录(账号来自该 MySQL 的 sys_user，默认 Super/123456)。
+3. 在【设置】页配置 redis / tdengine 连接。
 4. 测试 Redis / MySQL / TDengine。
-5. 启动 collector。
+5. 启动 collector(Agent 会把三库连接经 env 注入)。
 6. 启动 writer。
 ```
 
@@ -798,7 +791,27 @@ Invoke-RestMethod `
 
 如果 PowerShell 能 200，但 app 失败，优先检查 Backend CORS 是否包含 Tauri WebView origin。
 
-### 3. collector / writer 连不上 MySQL / Redis / TDengine
+### 3. 登录失败（503 / 401），或 bootstrap 填错锁死
+
+Agent 登录**无本地账号**，查 config.toml 里那台 MySQL 的 `sys_user`。先看 `runtime\logs\agent-service.err.log` 区分：
+
+```text
+503 "Agent not initialized"  → bootstrap_done=false，还没走引导 → 打开 App 走引导页
+503 "Database unavailable"   → MySQL 连不上/凭据错 → 核对 [mysql] host/port/user，确认目标机能访问该库
+401 用户名或密码错误          → 该 MySQL 无 sys_user(backend 未播种该库)或账号错 → 用 backend 初始化过的库与账号
+```
+
+若 bootstrap 已完成但填错 MySQL → 既登不进、又因 `bootstrap_done=true` 无法重走引导（`/bootstrap/*` 返回 403）。自救（DPAPI 密码不能手填，须重走引导）：
+
+```powershell
+& "C:\Program Files\DataWatch\tools\nssm.exe" stop DataWatchAgent
+# 用记事本把 config.toml 里 bootstrap_done 改回 false
+notepad C:\ProgramData\DataWatch\config.toml
+& "C:\Program Files\DataWatch\tools\nssm.exe" start DataWatchAgent
+# 重开 App → 引导页 → 填正确 MySQL → 完成 → 登录
+```
+
+### 4. collector / writer 连不上 MySQL / Redis / TDengine
 
 连接凭据由 Agent 从其 `config.toml`（DPAPI 加密）解密后，经 `DATAWATCH_<DB>_<FIELD>` 环境变量注入。排查：
 
@@ -807,7 +820,7 @@ Agent config.toml 的 [mysql]/[redis]/[tdengine] 是否填对、bootstrap 是否
 collector/writer 是否由 Agent 拉起（独立手动启动则不会有注入，需自行设 env 或填本地 settings.toml）
 ```
 
-### 4. proxy 端口 ready 失败
+### 5. proxy 端口 ready 失败
 
 表现：
 
@@ -826,7 +839,7 @@ OpcDaProxyService.exe 是否存在
 .NET Framework 4.8 是否安装
 ```
 
-### 5. proxy ready 但采不到点
+### 6. proxy ready 但采不到点
 
 这通常是 DCOM / OPC 权限问题。
 
@@ -838,7 +851,7 @@ proxy 日志中的 OPCEnum / DCOM / Identity 错误
 dcomcnfg 中服务账户权限
 ```
 
-### 6. 重启 Agent 后端口冲突
+### 7. 重启 Agent 后端口冲突
 
 正常情况下，Agent 会认领仍存活的 `proxy_*.pid`，不会重复拉起。
 
