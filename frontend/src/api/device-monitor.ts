@@ -667,6 +667,37 @@ export function cleanupLogs(params: Api.DeviceMonitor.LogCleanupParams) {
   })
 }
 
+export interface TdengineLogFile {
+  name: string
+  size: number
+  mtime: string
+  compressed: boolean
+  tailSupported: boolean
+  kind: string
+}
+
+/** TDengine 服务日志文件列表（数据库日志页） */
+export function fetchTdengineLogFiles() {
+  return request.get<{ enabled: boolean; reason: string; files: TdengineLogFile[] }>({
+    url: `${BASE_URL}/log/tdengine/files`
+  })
+}
+
+/** 读取指定 TDengine 日志文件的最后若干行（数据库日志页） */
+export function fetchTdengineLogTail(file: string, lines = 300) {
+  return request.get<{
+    enabled: boolean
+    reason: string
+    file: string
+    lines: string[]
+    truncated: boolean
+    maxBytes: number
+  }>({
+    url: `${BASE_URL}/log/tdengine/tail`,
+    params: { file, lines }
+  })
+}
+
 /** 前端日志上报（带限流）
  * @returns accepted 是否接受, remaining 剩余配额, reason 拒绝原因
  */

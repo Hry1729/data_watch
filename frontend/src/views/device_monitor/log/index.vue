@@ -358,6 +358,9 @@
         </ElButton>
       </template>
     </ElDialog>
+
+    <!-- 数据库日志（TDengine 服务日志）查看 -->
+    <DbLogPanel />
   </div>
 </template>
 
@@ -370,6 +373,7 @@ import ArtCountTo from '@/components/core/text-effect/art-count-to/index.vue'
 import ArtRingChart from '@/components/core/charts/art-ring-chart/index.vue'
 import ArtSearchBar from '@/components/core/forms/art-search-bar/index.vue'
 import ArtTable from '@/components/core/tables/art-table/index.vue'
+import DbLogPanel from './db-log-panel.vue'
 import { useTable } from '@/hooks/core/useTable'
 import { fetchLogList, fetchLogStats, toggleLogDebug, cleanupLogs } from '@/api/device-monitor'
 import type { ColumnOption } from '@/types/component'
