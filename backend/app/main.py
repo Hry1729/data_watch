@@ -23,6 +23,7 @@ from app.api.routes.perspective import register_perspective_websocket
 from app.core.config import get_settings
 from app.db.mysql import close_mysql
 from app.db.redis import close_redis
+from app.db.tdengine import close_tdengine
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.log_writer import write_system_log, write_system_log_sync
@@ -489,18 +490,19 @@ class EnhancedASGITurboAPI(TurboAPI):
         call_args.update(dependency_values)
 
         filtered_kwargs = {key: value for key, value in call_args.items() if key in sig.parameters}
-        if inspect.iscoroutinefunction(route.handler):
-            result = await route.handler(**filtered_kwargs)
-        else:
-            result = route.handler(**filtered_kwargs)
-
-        for cleanup in context.get("_cleanups", []):
-            try:
-                next(cleanup)
-            except StopIteration:
-                pass
-            except Exception:
-                pass
+        try:
+            if inspect.iscoroutinefunction(route.handler):
+                result = await route.handler(**filtered_kwargs)
+            else:
+                result = route.handler(**filtered_kwargs)
+        finally:
+            for cleanup in context.get("_cleanups", []):
+                try:
+                    next(cleanup)
+                except StopIteration:
+                    pass
+                except Exception:
+                    pass
 
         return result
 
@@ -709,6 +711,10 @@ async def lifespan(_: TurboAPI):
             source="backend.lifecycle",
             content=f"后端服务关闭: {settings.app_name}",
         )
+
+        # 释放 TDengine SQLAlchemy 连接池。
+        await close_tdengine()
+        logger.info("TDengine connection pool disposed")
 
         # 释放 MySQL 连接池（须在最后一条日志写入之后，避免日志写入时引擎已关闭）
         await close_mysql()

@@ -86,7 +86,7 @@ class MonitorService:
         device_code = str(device["device_code"])
         points = await self._fetch_device_points(device_id_value, group_code)
 
-        redis_map = await self._get_device_latest_from_redis(device_code, group_code)
+        redis_map, redis_connected = await self._get_device_latest_from_redis(device_code, group_code)
         latest_point_map: dict[str, dict[str, Any]] = {}
         if redis_map:
             # redis_map keyed by var_id (str of point_id) -> {"v": ..., "t": ms_epoch, "q": ...}
@@ -131,11 +131,16 @@ class MonitorService:
             "driverName": device["driver_name"] or "",
             "connectStatus": connect_status,
             "lastCollectTime": self._format_datetime(last_collect_time),
+            "redisConnected": redis_connected,
+            "degraded": not redis_connected,
             "data": data,
         }
 
-    async def _get_device_latest_from_redis(self, device_code: str, group_code: str = "g001") -> dict[str, Any]:
-        """Read latest hash from Redis. Returns {} if key doesn't exist."""
+    async def _get_device_latest_from_redis(self, device_code: str, group_code: str = "g001") -> tuple[dict[str, Any], bool]:
+        """Read latest hash from Redis.
+
+        Returns ({}, True) when the key doesn't exist, and ({}, False) when Redis is unavailable.
+        """
         try:
             r = await get_redis_client()
             key = f"rt:latest:{device_code}:{group_code}"
@@ -146,14 +151,14 @@ class MonitorService:
                     result[var_id] = json.loads(json_str)
                 except Exception:
                     pass
-            return result
+            return result, True
         except Exception as exc:
             # 区分“无数据”与“Redis 故障”：故障不能静默吞掉，否则会被前端当成设备离线且无从排障。
             logger.warning(
                 "Redis 读取设备最新值失败 device=%s group=%s: %s",
                 device_code, group_code, exc,
             )
-            return {}
+            return {}, False
 
     async def get_realtime_window(
         self,
@@ -173,9 +178,18 @@ class MonitorService:
         if scan_rate_ms is None:
             scan_rate_ms = await self._fetch_min_scan_rate(device_id_value, group_code)
 
-        r = await get_redis_client()
+        redis_connected = True
         key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
-        raw_frames = await r.lrange(key, 0, limit - 1)
+        try:
+            r = await get_redis_client()
+            raw_frames = await r.lrange(key, 0, limit - 1)
+        except Exception as exc:
+            logger.warning(
+                "Redis 读取实时窗口失败 device=%s group=%s scan_rate_ms=%s: %s",
+                device_code, group_code, scan_rate_ms, exc,
+            )
+            raw_frames = []
+            redis_connected = False
 
         frames: list[dict[str, Any]] = []
         for raw in raw_frames:
@@ -189,6 +203,8 @@ class MonitorService:
             "deviceCode": device_code,
             "groupCode": group_code,
             "scanRateMs": scan_rate_ms,
+            "redisConnected": redis_connected,
+            "degraded": not redis_connected,
             "frames": frames,
         }
 
@@ -356,4 +372,3 @@ class MonitorService:
         if isinstance(value, float) and value.is_integer():
             return int(value)
         return value
-

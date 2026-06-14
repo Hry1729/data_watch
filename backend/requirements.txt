@@ -4,6 +4,7 @@ websockets>=14.0
 SQLAlchemy>=2.0
 aiomysql>=0.2.0
 taospy>=2.8.9
+taos-ws-py
 tzdata
 perspective-python>=3.0.0
 cryptography

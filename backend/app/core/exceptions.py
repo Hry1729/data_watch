@@ -7,9 +7,10 @@ from app.core.log_writer import write_system_log_sync
 
 
 class ApiError(Exception):
-    def __init__(self, code: int, message: str):
+    def __init__(self, code: int, message: str, status_code: int = 200):
         self.code = code
         self.message = message
+        self.status_code = status_code
         super().__init__(message)
 
 
@@ -24,7 +25,7 @@ def register_exception_handlers(app) -> None:
     @app.exception_handler(ApiError)
     async def api_error_handler(_: Request, exc: ApiError):
         return JSONResponse(
-            status_code=200,
+            status_code=exc.status_code,
             content={"code": exc.code, "msg": exc.message, "data": None},
         )
 

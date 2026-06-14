@@ -20,6 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
 from app.core.time_utils import LOCAL_TZ, parse_local_datetime, to_local_naive
 from app.db.tdengine import TDengineClient
+from app.services.health import check_tdengine_health
 from app.services.perspective import get_perspective_session_manager
 from app.services.task_manager import get_export_task_manager
 
@@ -62,6 +63,12 @@ class HistoryService:
         self.session = session
         self.tdengine = tdengine
         self.settings = settings or get_settings()
+
+    async def _raise_if_tdengine_unavailable(self, context: str, device_code: str) -> None:
+        if await check_tdengine_health():
+            return
+        logger.error("[history] TDengine unavailable during %s device=%s", context, device_code)
+        raise ApiError(503, "历史数据源不可用", status_code=503)
 
     async def get_devices(self) -> list[dict[str, Any]]:
         """获取设备列表（带类型和分组信息）"""
@@ -210,6 +217,9 @@ class HistoryService:
 
             point_value_maps[point.var_seq] = value_map
 
+        if total_record_count == 0:
+            await self._raise_if_tdengine_unavailable("query_history", device.device_code)
+
         times = [item[1] for item in sorted(timeline.items(), key=lambda item: item[0])]
         point_payload = [
             {
@@ -268,6 +278,9 @@ class HistoryService:
                 device, point, start_dt, end_dt, calc_interval, agg_func
             )
             series_results.append(rows)
+
+        if not any(series_results):
+            await self._raise_if_tdengine_unavailable("chart_data", device.device_code)
 
         series_payload = []
         for point, rows in zip(points, series_results):
@@ -398,6 +411,9 @@ class HistoryService:
                     device.device_code, point.point_id, exc,
                 )
                 rows = []
+
+        if not rows:
+            await self._raise_if_tdengine_unavailable("raw_data", device.device_code)
 
         results = []
         last_ts_str = None
@@ -631,6 +647,16 @@ class HistoryService:
             ),
             return_exceptions=True
         )
+
+        for point, point_map in zip(points, point_maps, strict=False):
+            if isinstance(point_map, Exception):
+                logger.warning(
+                    "[history] raw matrix bucket query failed device=%s var_seq=%s: %s",
+                    device.device_code, point.var_seq, point_map,
+                )
+
+        if not any(isinstance(point_map, dict) and point_map for point_map in point_maps):
+            await self._raise_if_tdengine_unavailable("raw_matrix", device.device_code)
 
         point_data_maps = {
             point.var_seq: point_map
@@ -901,6 +927,10 @@ class HistoryService:
                     timeline: dict[datetime, dict[int, Any]] = {}
                     for point, rows in zip(points, series_list):
                         if isinstance(rows, Exception):
+                            logger.warning(
+                                "[history] export point series failed device=%s var_seq=%s: %s",
+                                device.device_code, point.var_seq, rows,
+                            )
                             continue
                         for ts, value in rows:
                             ts_dt = self._coerce_datetime(ts)
