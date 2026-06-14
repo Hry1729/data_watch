@@ -17,7 +17,6 @@ import pytest
 
 from app.services.managed_process_runner import ManagedProcessRunner
 from app.services.opcda_detect import (
-    MysqlConsistencyError,
     load_port_mapping,
     save_port_mapping,
 )
@@ -265,9 +264,9 @@ def test_start_proxy_external_occupant_fails_no_drift(runtime_dir):
 # ---------------------------------------------------------------------------
 # T018 — prepare_for_collector_start() 编排（检测→粘性映射→差量起 proxy→闸门）
 #
-# detect / 一致性校验走薄方法（_detect_endpoints / _verify_consistency），单测在
-# 实例上 stub 掉，不连真 MySQL；proxy spawn 仍用 fake_proxy。端口经 port_mapping.json
-# 预置为 _free_port()，避开默认 9090 可能被占。
+# detect 走薄方法（_detect_endpoints），单测在实例上 stub 掉，不连真 MySQL；
+# proxy spawn 仍用 fake_proxy。端口经 port_mapping.json 预置为 _free_port()，
+# 避开默认 9090 可能被占。
 # ---------------------------------------------------------------------------
 
 _DUMMY_MYSQL = {"host": "h", "port": 3306, "database": "db"}
@@ -278,7 +277,7 @@ def _mapping_path(runtime_dir):
 
 
 def _wire_prepare(runtime_dir, endpoints):
-    """接真 runner 的 SidecarManager；detect/一致性 stub，spawn 换 fake_proxy。"""
+    """接真 runner 的 SidecarManager；detect stub，spawn 换 fake_proxy。"""
     runner = ManagedProcessRunner(runtime_dir)
     sm = SidecarManager(
         runtime_dir=runtime_dir,
@@ -290,7 +289,6 @@ def _wire_prepare(runtime_dir, endpoints):
         sys.executable, FAKE_PROXY, "--config", str(config_path)
     ]
     sm._detect_endpoints = lambda: list(endpoints)
-    sm._verify_consistency = lambda: None
     return sm
 
 
@@ -670,27 +668,3 @@ def test_on_collector_stop_stops_all_proxies_and_clears(runtime_dir):
         sm.runner.close_log(f"proxy_{p2}")
 
 
-def test_prepare_consistency_error_does_not_stop_existing_proxies(runtime_dir):
-    # 边界：一致性校验失败先于 _stop_removed → 不停任何 proxy
-    p1, p2 = _free_port(), _free_port()
-    ep1, ep2 = "host-1", "host-2"
-    save_port_mapping(_mapping_path(runtime_dir), {ep1: p1, ep2: p2})
-    sm = _wire_prepare(runtime_dir, [ep1, ep2])
-    sm.prepare_for_collector_start()
-    ep1_pid = sm._proxies[ep1].pid
-    ep2_pid = sm._proxies[ep2].pid
-    try:
-        sm._detect_endpoints = lambda: [ep1]  # ep2 看似被删
-        def _boom():
-            raise MysqlConsistencyError("mismatch")
-        sm._verify_consistency = _boom
-        with pytest.raises(MysqlConsistencyError):
-            sm.prepare_for_collector_start()
-        # 配置不一致 → 不动任何 proxy（ep2 未被停、仍在注册表）
-        assert ep2 in sm._proxies and psutil.pid_exists(ep2_pid)
-        assert ep1 in sm._proxies and psutil.pid_exists(ep1_pid)
-    finally:
-        _kill_tree(ep1_pid)
-        _kill_tree(ep2_pid)
-        sm.runner.close_log(f"proxy_{p1}")
-        sm.runner.close_log(f"proxy_{p2}")

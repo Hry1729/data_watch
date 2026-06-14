@@ -1,0 +1,39 @@
+# writer settings 模板 —— 复制为 settings.toml 后按本地环境填写（settings.toml 已 gitignore）。
+#
+# 连接凭据（redis/mysql/tdengine 的 host/port/user/database/password）在生产由 Agent 经
+# DATAWATCH_<DB>_<FIELD> 环境变量统一下发并覆盖本文件——单一来源 = Agent 的 DPAPI
+# 加密 config.toml。下面的连接值仅作「脱离 Agent 独立运行 writer」时的 dev 回退；
+# 密码请留空或填本地开发库密码，切勿提交真实密码。
+
+[redis]
+# host/port/password 生产由 Agent 注入覆盖；以下为 dev 回退值。
+host = "127.0.0.1"
+port = 6379
+db = 0
+password = ""
+stream_shard_count = 4
+group_name = "writer_cg"
+consumer_name = "writer-1"
+
+[tdengine]
+# host/port/user/database/password 生产由 Agent 注入覆盖；以下为 dev 回退值。
+host = "127.0.0.1"
+port = 6041
+user = "root"
+password = ""
+database = "device_data"
+
+[mysql]
+# host/port/user/database/password 生产由 Agent 注入覆盖；以下为 dev 回退值。
+host = "127.0.0.1"
+port = 3306
+user = "root"
+password = ""
+database = "device_watch"
+
+[writer]
+flush_interval_ms = 500
+batch_count = 200
+max_buffer_rows = 2000
+pending_min_idle_ms = 30000
+pending_max_retry = 5

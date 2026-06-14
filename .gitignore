@@ -50,6 +50,10 @@ agent/config.toml
 # backend/.env、deploy/backend.env 含真实密码与 JWT secret，.env.example 仅作模板
 backend/.env
 deploy/backend.env
+# collector/writer 本地配置：连接凭据由 Agent 经 env 注入，settings.toml 仅作 dev 本地回退；
+# settings.toml.example 作为模板。生产凭据单一来源为 agent/config.toml（DPAPI 加密）。
+collector/config/settings.toml
+writer/config/settings.toml
 
 # 数据导出
 backend/exports/

@@ -75,15 +75,55 @@ def _collector_extra_args(request: Request) -> list[str]:
     return extra_args
 
 
+# env 注入契约：Agent 是连接凭据的唯一来源（DPAPI 加密存于 config.toml），启动
+# collector/writer 前解密并经 DATAWATCH_<DB>_<FIELD> 下发；env 优先级高于各模块
+# settings.toml（后者仅作 dev 本地回退）。launch() 合并而非替换 os.environ，故每个
+# 受管字段都显式写出（缺失写空串）——空串覆盖父进程可能残留的同名变量，避免子进程
+# 误继承旧值；子进程读到空串则回退自身 settings.toml。
+_ENV_PREFIX = {"mysql": "MYSQL", "redis": "REDIS", "tdengine": "TDENGINE"}
+# 各 section 实际拥有的非密码连接字段（redis 无 user/database）。
+_ENV_CONN_FIELDS = {
+    "mysql": ("host", "port", "user", "database"),
+    "redis": ("host", "port"),
+    "tdengine": ("host", "port", "user", "database"),
+}
+
+
+def _db_env(cfg: dict, section: str) -> dict[str, str]:
+    """从一个 DB section 构造下发 env：所有受管字段（连接字段 + 解密后的 password）。
+
+    缺失/None 写空串，使 Agent 成为权威来源（覆盖父进程残留、子进程据空串回退）。
+    """
+    src = cfg.get(section) or {}
+    prefix = _ENV_PREFIX[section]
+    env: dict[str, str] = {}
+    for field in _ENV_CONN_FIELDS[section]:
+        value = src.get(field)
+        env[f"DATAWATCH_{prefix}_{field.upper()}"] = "" if value is None else str(value)
+    env[f"DATAWATCH_{prefix}_PASSWORD"] = dpapi_decrypt(src.get("password_enc", "") or "")
+    return env
+
+
 def _collector_env() -> dict[str, str]:
+    """collector 需要 mysql + redis 连接（注入失败回退空，由 collector 报连接错）。"""
     try:
         cfg = load_config()
-        password = dpapi_decrypt(cfg.get("mysql", {}).get("password_enc", ""))
+        return {**_db_env(cfg, "mysql"), **_db_env(cfg, "redis")}
     except Exception:
         return {}
-    if not password:
+
+
+def _writer_env() -> dict[str, str]:
+    """writer 需要 mysql + redis + tdengine 连接。"""
+    try:
+        cfg = load_config()
+        return {
+            **_db_env(cfg, "mysql"),
+            **_db_env(cfg, "redis"),
+            **_db_env(cfg, "tdengine"),
+        }
+    except Exception:
         return {}
-    return {"DATAWATCH_MYSQL_PASSWORD": password}
 
 
 @router.post("/processes/{name}/start")
@@ -93,9 +133,9 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     if pm.status(name).status == "running":
         raise HTTPException(status_code=409, detail=f"{name} is already running")
 
-    # writer 路径完全不碰 sidecar_manager。
+    # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
     extra_args = _collector_extra_args(request) if name == "collector" else None
-    env = _collector_env() if name == "collector" else None
+    env = _collector_env() if name == "collector" else _writer_env() if name == "writer" else None
 
     try:
         await pm.start(name, extra_args=extra_args, env=env)
@@ -128,7 +168,7 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
     extra_args = _collector_extra_args(request) if name == "collector" else None
-    env = _collector_env() if name == "collector" else None
+    env = _collector_env() if name == "collector" else _writer_env() if name == "writer" else None
 
     try:
         await pm.restart(name, extra_args=extra_args, env=env)

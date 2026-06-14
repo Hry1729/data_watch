@@ -68,11 +68,41 @@ def load_collector_config(path: str) -> CollectorConfig:
     except Exception as exc:
         raise ConfigError(f"Invalid config content: {exc}") from exc
 
-    env_password = os.getenv("DATAWATCH_MYSQL_PASSWORD")
-    if env_password:
-        config.mysql.password = env_password
+    _apply_env_overrides(config)
 
     return config
+
+
+def _override_str(obj: object, attr: str, env_name: str) -> None:
+    value = os.getenv(env_name)
+    if value:
+        setattr(obj, attr, value)
+
+
+def _override_int(obj: object, attr: str, env_name: str) -> None:
+    value = os.getenv(env_name)
+    if not value:
+        return
+    try:
+        setattr(obj, attr, int(value))
+    except ValueError as exc:
+        raise ConfigError(f"{env_name} must be an integer, got {value!r}") from exc
+
+
+def _apply_env_overrides(config: CollectorConfig) -> None:
+    """用 Agent 经 DATAWATCH_<DB>_<FIELD> 下发的连接信息覆盖 settings.toml（env 优先）。
+
+    生产环境凭据单一来源为 Agent 的 DPAPI config.toml；settings.toml 仅作 dev 本地回退
+    与运行参数（log/pool/interface_ingest 等）。collector 不写 TDengine，故无 tdengine 段。
+    """
+    _override_str(config.mysql, "host", "DATAWATCH_MYSQL_HOST")
+    _override_int(config.mysql, "port", "DATAWATCH_MYSQL_PORT")
+    _override_str(config.mysql, "user", "DATAWATCH_MYSQL_USER")
+    _override_str(config.mysql, "database", "DATAWATCH_MYSQL_DATABASE")
+    _override_str(config.mysql, "password", "DATAWATCH_MYSQL_PASSWORD")
+    _override_str(config.redis, "host", "DATAWATCH_REDIS_HOST")
+    _override_int(config.redis, "port", "DATAWATCH_REDIS_PORT")
+    _override_str(config.redis, "password", "DATAWATCH_REDIS_PASSWORD")
 
 
 def load_collector_config_from_env(default_path: str = "config/settings.toml") -> CollectorConfig:

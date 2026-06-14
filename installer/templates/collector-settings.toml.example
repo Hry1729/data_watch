@@ -1,7 +1,7 @@
 # collector settings 模板 —— 安装器复制到 C:\ProgramData\DataWatch\collector\config\settings.toml
-# 密码留空，目标机部署后按实际环境填写。
-# 注意：collector 的 [mysql] 须与 Agent config.toml 的 [mysql] 一致（host/port/database），
-# 否则 OPC DA proxy 编排的一致性校验会拒绝启动。
+# 连接凭据（mysql/redis 的 host/port/user/database/password）由 Agent 经
+# DATAWATCH_<DB>_<FIELD> 环境变量统一注入并覆盖本文件——单一来源 = Agent 的 DPAPI
+# config.toml。本文件只需保留运行参数；密码留空即可，无需也不应在此填写真实凭据。
 
 [runtime]
 log_level = "INFO"

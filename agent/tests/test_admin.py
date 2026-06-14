@@ -136,16 +136,68 @@ async def test_collector_start_passes_runtime_dir_matching_pm(tmp_path):
     assert args[args.index("--runtime-dir") + 1] == pm.runtime_dir
 
 
-async def test_collector_start_injects_mysql_password_env(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.routers.admin.load_config", lambda: {
-        "mysql": {"password_enc": "encrypted"}
-    })
-    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", lambda value: "plain-password")
+def _conn_cfg():
+    """Agent config.toml 的连接段样例（mysql/redis/tdengine 全字段 + 密文）。"""
+    return {
+        "mysql": {"host": "db", "port": 3306, "user": "root",
+                  "database": "device_watch", "password_enc": "m-enc"},
+        "redis": {"host": "rds", "port": 6379, "password_enc": "r-enc"},
+        "tdengine": {"host": "td", "port": 6041, "user": "root",
+                     "database": "device_data", "password_enc": "t-enc"},
+    }
+
+
+def _decrypt_stub(value):
+    return {"m-enc": "mpw", "r-enc": "rpw", "t-enc": "tpw"}.get(value, "")
+
+
+_COLLECTOR_ENV = {
+    "DATAWATCH_MYSQL_HOST": "db", "DATAWATCH_MYSQL_PORT": "3306",
+    "DATAWATCH_MYSQL_USER": "root", "DATAWATCH_MYSQL_DATABASE": "device_watch",
+    "DATAWATCH_MYSQL_PASSWORD": "mpw",
+    "DATAWATCH_REDIS_HOST": "rds", "DATAWATCH_REDIS_PORT": "6379",
+    "DATAWATCH_REDIS_PASSWORD": "rpw",
+}
+
+_WRITER_ENV = {
+    **_COLLECTOR_ENV,
+    "DATAWATCH_TDENGINE_HOST": "td", "DATAWATCH_TDENGINE_PORT": "6041",
+    "DATAWATCH_TDENGINE_USER": "root", "DATAWATCH_TDENGINE_DATABASE": "device_data",
+    "DATAWATCH_TDENGINE_PASSWORD": "tpw",
+}
+
+
+async def test_collector_start_injects_connection_env(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
     pm = FakePM()
     settings = _existing_settings(tmp_path)
     sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
-    assert pm.start_envs == [{"DATAWATCH_MYSQL_PASSWORD": "plain-password"}]
+    assert pm.start_envs == [_COLLECTOR_ENV]
+
+
+async def test_writer_start_injects_connection_env(monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
+    pm = FakePM()
+    await start_process("writer", _req(pm), _user="u")
+    assert pm.start_envs == [_WRITER_ENV]
+
+
+def test_env_emits_empty_strings_for_missing_fields(monkeypatch):
+    # 缺失字段必须以空串显式下发，覆盖父进程可能残留的同名 DATAWATCH_* 变量。
+    from app.routers import admin
+    monkeypatch.setattr(admin, "load_config", lambda: {"mysql": {"host": "db"}})
+    monkeypatch.setattr(admin, "dpapi_decrypt", lambda v: "")
+    env = admin._collector_env()
+    assert env["DATAWATCH_MYSQL_HOST"] == "db"  # 有值照常下发
+    for empty_key in (
+        "DATAWATCH_MYSQL_PORT", "DATAWATCH_MYSQL_USER", "DATAWATCH_MYSQL_DATABASE",
+        "DATAWATCH_MYSQL_PASSWORD", "DATAWATCH_REDIS_HOST", "DATAWATCH_REDIS_PORT",
+        "DATAWATCH_REDIS_PASSWORD",
+    ):
+        assert env[empty_key] == ""
 
 
 async def test_collector_start_uses_empty_env_when_password_decrypt_fails(tmp_path, monkeypatch):
@@ -164,12 +216,15 @@ async def test_collector_start_uses_empty_env_when_password_decrypt_fails(tmp_pa
     assert pm.start_envs == [{}]
 
 
-async def test_writer_does_not_touch_sidecar_manager():
+async def test_writer_does_not_touch_sidecar_manager(monkeypatch):
+    # writer 现在也会收到 Agent 下发的连接 env；此处仅锁定「不访问 sidecar_manager」。
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
     pm = FakePM()
     # 故意不在 state 上放 sidecar_manager：writer 路径若误访问会 AttributeError→测试失败
     await start_process("writer", _req(pm), _user="u")
     assert pm.start_calls == [("writer", None)]
-    assert pm.start_envs == [None]
+    assert pm.start_envs == [_WRITER_ENV]
 
 
 async def test_collector_prepare_error_returns_400_and_no_start(tmp_path):
@@ -230,23 +285,23 @@ async def test_collector_restart_prepares_and_passes_args(tmp_path):
     assert pm.start_calls == []  # restart 走 pm.restart，不是 pm.start
 
 
-async def test_collector_restart_injects_mysql_password_env(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.routers.admin.load_config", lambda: {
-        "mysql": {"password_enc": "encrypted"}
-    })
-    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", lambda value: "plain-password")
+async def test_collector_restart_injects_connection_env(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
     pm = FakePM()
     settings = _existing_settings(tmp_path)
     sm = FakeSM(port_mapping_path=None, settings_path=settings)
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
-    assert pm.restart_envs == [{"DATAWATCH_MYSQL_PASSWORD": "plain-password"}]
+    assert pm.restart_envs == [_COLLECTOR_ENV]
 
 
-async def test_writer_restart_does_not_touch_sidecar_manager():
+async def test_writer_restart_does_not_touch_sidecar_manager(monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
     pm = FakePM()
     await restart_process("writer", _req(pm), _user="u")  # 不放 sidecar_manager
     assert pm.restart_calls == [("writer", None)]
-    assert pm.restart_envs == [None]
+    assert pm.restart_envs == [_WRITER_ENV]
 
 
 async def test_collector_restart_prepare_error_returns_400_and_no_restart(tmp_path):

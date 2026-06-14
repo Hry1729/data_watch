@@ -1,4 +1,7 @@
+import pytest
+
 from core.config_loader import load_collector_config
+from core.exceptions import ConfigError
 
 
 def _write_config(path, password="toml-password"):
@@ -37,3 +40,31 @@ def test_mysql_password_uses_toml_when_env_missing(tmp_path, monkeypatch):
     config = load_collector_config(str(path))
 
     assert config.mysql.password == "toml-password"
+
+
+def test_connection_fields_overridden_by_env(tmp_path, monkeypatch):
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    monkeypatch.setenv("DATAWATCH_MYSQL_HOST", "db-host")
+    monkeypatch.setenv("DATAWATCH_MYSQL_PORT", "3307")
+    monkeypatch.setenv("DATAWATCH_MYSQL_USER", "agentuser")
+    monkeypatch.setenv("DATAWATCH_MYSQL_DATABASE", "dw")
+    monkeypatch.setenv("DATAWATCH_MYSQL_PASSWORD", "mpw")
+    monkeypatch.setenv("DATAWATCH_REDIS_HOST", "rds-host")
+    monkeypatch.setenv("DATAWATCH_REDIS_PORT", "6380")
+    monkeypatch.setenv("DATAWATCH_REDIS_PASSWORD", "rpw")
+
+    config = load_collector_config(str(path))
+
+    assert (config.mysql.host, config.mysql.port, config.mysql.user) == ("db-host", 3307, "agentuser")
+    assert (config.mysql.database, config.mysql.password) == ("dw", "mpw")
+    assert (config.redis.host, config.redis.port, config.redis.password) == ("rds-host", 6380, "rpw")
+
+
+def test_invalid_int_env_raises_config_error(tmp_path, monkeypatch):
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    monkeypatch.setenv("DATAWATCH_MYSQL_PORT", "not-a-number")
+
+    with pytest.raises(ConfigError):
+        load_collector_config(str(path))

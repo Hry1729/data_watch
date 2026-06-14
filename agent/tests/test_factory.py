@@ -1,7 +1,7 @@
 """T020 — factory.build_sidecar_manager 纯函数构建 SidecarManager。
 
 纯函数：只吃 (cfg, runtime_dir)，不依赖 app.state，便于单测。
-约定：collector_settings_path = working_dir/config/settings.toml（同源一致性校验）；
+约定：collector_settings_path = working_dir/config/settings.toml（供 admin 拼 --config）；
 [opcda] 缺省走 ZPMC.OPCServer/OPD_Server，有则覆盖；install_root frozen-aware。
 """
 

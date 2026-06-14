@@ -91,6 +91,38 @@ def _validate_config(config: dict) -> None:
         raise ValueError("missing required config key(s): " + ", ".join(missing))
 
 
+# Agent 经 DATAWATCH_<DB>_<FIELD> 下发解密后的连接信息；env 优先于 settings.toml。
+# 生产凭据单一来源为 Agent 的 DPAPI config.toml；settings.toml 仅作 dev 回退与运行参数。
+_ENV_CONN_FIELDS: dict[str, tuple[str, ...]] = {
+    "mysql": ("host", "port", "user", "database", "password"),
+    "redis": ("host", "port", "password"),
+    "tdengine": ("host", "port", "user", "database", "password"),
+}
+_ENV_INT_FIELDS = {"port"}
+
+
+def _apply_env_overrides(config: dict) -> None:
+    """用 DATAWATCH_<DB>_<FIELD> 覆盖 config 的连接字段（就地修改，env 优先）。"""
+    for section, fields in _ENV_CONN_FIELDS.items():
+        section_data = config.setdefault(section, {})
+        if not isinstance(section_data, dict):
+            continue
+        for field in fields:
+            env_name = f"DATAWATCH_{section.upper()}_{field.upper()}"
+            value = os.environ.get(env_name)
+            if not value:
+                continue
+            if field in _ENV_INT_FIELDS:
+                try:
+                    section_data[field] = int(value)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"{env_name} must be an integer, got {value!r}"
+                    ) from exc
+            else:
+                section_data[field] = value
+
+
 def _discover_stream_scopes(mysql_conn: pymysql.connections.Connection) -> list[tuple[str, str]]:
     """Discover stream device/group scopes from the live MySQL configuration."""
     with mysql_conn.cursor(pymysql.cursors.DictCursor) as cur:
@@ -137,6 +169,7 @@ async def main() -> None:
     with open("config/settings.toml", "rb") as f:
         config = tomllib.load(f)
     try:
+        _apply_env_overrides(config)
         _validate_config(config)
     except ValueError as exc:
         logger.error("Invalid config: %s", exc)

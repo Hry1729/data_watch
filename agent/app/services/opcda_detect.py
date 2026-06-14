@@ -1,16 +1,17 @@
-"""检测 opcda_center 端点 + 粘性端口映射 + MySQL 一致性校验（FR-P01~P05、FR-P13）。
+"""检测 opcda_center 端点 + 粘性端口映射（FR-P01~P05）。
 
 设计要点：
 - 检测用 pymysql + DPAPI 解密（与 health_checker.py 一致），不用 sqlalchemy/aiomysql。
 - 粘性端口：已存在 endpoint 沿用旧端口；新 endpoint 取 max(现有∪历史)+1；stale 端点
   保留在 mapping、端口不回收（FR-P03/P04）。
-- 一致性：Agent MySQL 与 collector settings.toml 的 host/port/database 须一致（FR-P13）。
+
+注：collector 的 MySQL 连接信息现由 Agent 经 env 统一下发（与 Agent 同源），原 FR-P13
+一致性校验已不再需要。
 """
 
 from __future__ import annotations
 
 import json
-import tomllib
 from pathlib import Path
 from typing import Any, List, Mapping
 
@@ -42,10 +43,6 @@ _DETECT_SQL = """
 CONNECT_TIMEOUT_SECONDS = 3
 
 
-class MysqlConsistencyError(Exception):
-    """Agent 与 collector 的 MySQL 配置不一致（FR-P13），拒绝启动 collector。"""
-
-
 def _to_text(value: Any) -> Any:
     """pymysql 在某些编码/字段配置下返回 bytes，统一 decode 成 str。"""
     if isinstance(value, bytes):
@@ -62,13 +59,6 @@ def _normalize_endpoint(endpoint: Any) -> str:
     if ep == "" or ep in ("127.0.0.1", "localhost"):
         return "localhost"
     return ep
-
-
-def _coerce_port(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _decrypt_password(config: Mapping[str, Any]) -> str:
@@ -146,42 +136,3 @@ def save_port_mapping(path: str | Path, mapping: Mapping[str, int]) -> None:
         json.dump(dict(mapping), f, indent=2, ensure_ascii=False)
 
 
-def load_collector_mysql(settings_path: str | Path) -> dict[str, Any]:
-    """读 collector settings.toml 的 [mysql]，取 host/port/database（FR-P13 数据源）。"""
-    with open(Path(settings_path), "rb") as f:
-        data = tomllib.load(f)
-    mysql = data.get("mysql", {})
-    return {
-        "host": mysql.get("host"),
-        "port": mysql.get("port"),
-        "database": mysql.get("database"),
-    }
-
-
-def verify_mysql_consistency(
-    agent_mysql: Mapping[str, Any],
-    collector_mysql: Mapping[str, Any],
-) -> None:
-    """host/port/database 任一不同则抛 MysqlConsistencyError（FR-P13）。"""
-    diffs = []
-    a_host = str(agent_mysql.get("host") or "").strip()
-    c_host = str(collector_mysql.get("host") or "").strip()
-    if a_host != c_host:
-        diffs.append(f"host: agent={a_host!r} collector={c_host!r}")
-
-    a_port = _coerce_port(agent_mysql.get("port"))
-    c_port = _coerce_port(collector_mysql.get("port"))
-    if a_port is None or c_port is None or a_port != c_port:
-        diffs.append(
-            f"port: agent={agent_mysql.get('port')!r} collector={collector_mysql.get('port')!r}"
-        )
-
-    a_db = str(agent_mysql.get("database") or "").strip()
-    c_db = str(collector_mysql.get("database") or "").strip()
-    if a_db != c_db:
-        diffs.append(f"database: agent={a_db!r} collector={c_db!r}")
-
-    if diffs:
-        raise MysqlConsistencyError(
-            "Agent 与 collector 的 MySQL 配置不一致: " + "; ".join(diffs)
-        )

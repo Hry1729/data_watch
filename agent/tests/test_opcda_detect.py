@@ -1,6 +1,6 @@
-"""T007 — opcda_detect 单元测试（检测 / 粘性映射 / 一致性校验 / IO）。
+"""T007 — opcda_detect 单元测试（检测 / 粘性映射 / IO）。
 
-对照 FR-P01/P02（检测+归一）、FR-P03/P04/P05（粘性、stale 不复用、持久化）、FR-P13（一致性）。
+对照 FR-P01/P02（检测+归一）、FR-P03/P04/P05（粘性、stale 不复用、持久化）。
 检测用 monkeypatch 替身 pymysql.connect，不连真库。
 """
 
@@ -136,46 +136,6 @@ def test_load_port_mapping_missing_file_returns_empty(tmp_path):
     assert opcda_detect.load_port_mapping(tmp_path / "nope.json") == {}
 
 
-# ---------------------------------------------------------------------------
-# 一致性校验（FR-P13）
-# ---------------------------------------------------------------------------
-
-_AGENT = {"host": "10.0.0.1", "port": 3306, "database": "device_watch"}
-
-
-def test_consistency_passes_when_same():
-    collector = {"host": "10.0.0.1", "port": 3306, "database": "device_watch"}
-    opcda_detect.verify_mysql_consistency(_AGENT, collector)  # 不抛
-
-
-def test_consistency_rejects_different_host():
-    collector = {"host": "10.0.0.2", "port": 3306, "database": "device_watch"}
-    with pytest.raises(opcda_detect.MysqlConsistencyError):
-        opcda_detect.verify_mysql_consistency(_AGENT, collector)
-
-
-def test_consistency_rejects_different_port():
-    collector = {"host": "10.0.0.1", "port": 3307, "database": "device_watch"}
-    with pytest.raises(opcda_detect.MysqlConsistencyError):
-        opcda_detect.verify_mysql_consistency(_AGENT, collector)
-
-
-def test_consistency_rejects_different_database():
-    collector = {"host": "10.0.0.1", "port": 3306, "database": "other_db"}
-    with pytest.raises(opcda_detect.MysqlConsistencyError):
-        opcda_detect.verify_mysql_consistency(_AGENT, collector)
-
-
-def test_consistency_port_type_insensitive():
-    # "3306" 与 3306 视为同一端口
-    collector = {"host": "10.0.0.1", "port": "3306", "database": "device_watch"}
-    opcda_detect.verify_mysql_consistency(_AGENT, collector)  # 不抛
-
-
-# ---------------------------------------------------------------------------
-# collector settings.toml 读取（FR-P13 数据源）
-# ---------------------------------------------------------------------------
-
 def test_sticky_ignores_history_ports_below_base():
     # 历史端口 < 9090 时，新端点仍须从 9090 起（不漂到 1001）
     result = opcda_detect.assign_sticky_ports(["E1"], {"old": 1000})
@@ -213,23 +173,3 @@ def test_detect_uses_consistent_timeouts(monkeypatch):
     monkeypatch.setattr(opcda_detect.pymysql, "connect", fake_connect)
     opcda_detect.detect_center_endpoints(_MYSQL)
     assert captured["connect_timeout"] == captured["read_timeout"] == captured["write_timeout"]
-
-
-def test_consistency_rejects_invalid_port():
-    collector = {"host": "10.0.0.1", "port": None, "database": "device_watch"}
-    with pytest.raises(opcda_detect.MysqlConsistencyError):
-        opcda_detect.verify_mysql_consistency(_AGENT, collector)
-
-
-def test_load_collector_mysql_reads_section(tmp_path):
-    settings = tmp_path / "settings.toml"
-    settings.write_text(
-        '[mysql]\n'
-        'host = "10.0.0.5"\n'
-        'port = 3306\n'
-        'user = "root"\n'
-        'database = "device_watch"\n',
-        encoding="utf-8",
-    )
-    result = opcda_detect.load_collector_mysql(settings)
-    assert result == {"host": "10.0.0.5", "port": 3306, "database": "device_watch"}

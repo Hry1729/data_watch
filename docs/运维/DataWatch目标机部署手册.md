@@ -653,39 +653,12 @@ channel = "OPD_Server"
 注意：
 
 - 密码字段由 Agent 以 DPAPI 加密后保存为 `password_enc`。
-- Agent 的 `[mysql]` 与 collector `settings.toml` 的 `[mysql]` 必须指向同一个 `host/port/database`，否则 Agent 会拒绝启动 collector。
+- redis/mysql/tdengine 的连接信息（host/port/user/database/password）以 Agent 的 `config.toml` 为**唯一来源**：Agent 启动 collector/writer 时解密并经 `DATAWATCH_<DB>_<FIELD>` 环境变量下发覆盖，故**无需也不应**在 collector/writer 的 `settings.toml` 重复填写凭据。
 - `working_dir` 为空时，collector 启动会失败，因为 Agent 无法定位 `config/settings.toml`。
 
 ### 5. 配置 collector
 
-编辑：
-
-```text
-C:\ProgramData\DataWatch\collector\config\settings.toml
-```
-
-至少确认：
-
-```toml
-[mysql]
-host = "127.0.0.1"
-port = 3306
-user = "root"
-password = "..."
-database = "device_watch"
-
-[redis]
-host = "127.0.0.1"
-port = 6379
-password = ""
-
-[tdengine]
-host = "127.0.0.1"
-port = 6041
-user = "root"
-password = "..."
-database = "device_data"
-```
+连接凭据由 Agent 统一注入（见上节），`collector\config\settings.toml` 只保留**运行参数**（日志、连接池、interface_ingest、Redis 分片/容量等），无需填写 host/port/user/password。其中的连接段仅作脱离 Agent 独立运行 collector 时的 dev 回退，生产由 Agent 的 env 覆盖。模板见 `settings.toml.example`。
 
 OPC DA 中心采集不需要手动启动 proxy。Agent 会：
 
@@ -700,13 +673,7 @@ OPC DA 中心采集不需要手动启动 proxy。Agent 会：
 
 ### 6. 配置 writer
 
-编辑：
-
-```text
-C:\ProgramData\DataWatch\writer\config\settings.toml
-```
-
-确认 writer 能访问 Redis 和 TDengine。
+同 collector：连接凭据由 Agent 注入，`writer\config\settings.toml` 只保留运行参数（[writer] 刷写/批量、Redis group/consumer 等）。模板见 `settings.toml.example`。
 
 writer 没有 OPC DA proxy 编排逻辑，由 Agent 直接启动。
 
@@ -831,16 +798,14 @@ Invoke-RestMethod `
 
 如果 PowerShell 能 200，但 app 失败，优先检查 Backend CORS 是否包含 Tauri WebView origin。
 
-### 3. collector 启动失败：MySQL 配置不一致
+### 3. collector / writer 连不上 MySQL / Redis / TDengine
 
-Agent 会校验：
+连接凭据由 Agent 从其 `config.toml`（DPAPI 加密）解密后，经 `DATAWATCH_<DB>_<FIELD>` 环境变量注入。排查：
 
 ```text
-Agent config.toml [mysql]
-collector settings.toml [mysql]
+Agent config.toml 的 [mysql]/[redis]/[tdengine] 是否填对、bootstrap 是否完成
+collector/writer 是否由 Agent 拉起（独立手动启动则不会有注入，需自行设 env 或填本地 settings.toml）
 ```
-
-两者的 `host/port/database` 必须一致。
 
 ### 4. proxy 端口 ready 失败
 

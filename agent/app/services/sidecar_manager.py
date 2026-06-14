@@ -19,10 +19,8 @@ import psutil
 from app.services.opcda_detect import (
     assign_sticky_ports,
     detect_center_endpoints,
-    load_collector_mysql,
     load_port_mapping,
     save_port_mapping,
-    verify_mysql_consistency,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,8 +100,7 @@ class SidecarManager:
             Path(install_root).resolve() if install_root else _default_install_root()
         )
         self.runner = runner
-        # 仅注入、不在构造里校验：无 OPC DA 场景也不应因配置文件暂缺而失败，
-        # 校验留到 prepare_for_collector_start() 流程内。
+        # _agent_mysql 供端点检测连库；_collector_settings_path 仅供 admin 拼 --config。
         self._agent_mysql = agent_mysql
         self._collector_settings_path = (
             Path(collector_settings_path) if collector_settings_path else None
@@ -117,7 +114,7 @@ class SidecarManager:
 
     @property
     def collector_settings_path(self) -> Path | None:
-        """collector settings.toml 路径——与一致性校验同源，供 admin 拼 --config。"""
+        """collector settings.toml 路径——供 admin 拼 --config。"""
         return self._collector_settings_path
 
     def proxy_log_snapshot(self) -> list[tuple[str, int, str]]:
@@ -291,11 +288,6 @@ class SidecarManager:
         """薄封装，便于单测 stub，不连真 MySQL。"""
         return detect_center_endpoints(self._agent_mysql)
 
-    def _verify_consistency(self) -> None:
-        """Agent 与 collector 的 MySQL 一致性（FR-P13）；薄封装便于单测 stub。"""
-        collector_mysql = load_collector_mysql(self._collector_settings_path)
-        verify_mysql_consistency(self._agent_mysql, collector_mysql)
-
     @staticmethod
     def _instance_alive(inst: ProxyInstance) -> bool:
         """轻量校验：pid 存活且 create_time 一致（防 pid 复用误判）。"""
@@ -350,9 +342,6 @@ class SidecarManager:
         某个新增 proxy 启动失败 → 只回滚**本次新起**的 proxy，保留既有，再抛 ProxyStartError。
         """
         endpoints = self._detect_endpoints()
-        if endpoints:
-            # 有端点才校验；失败先于 _stop_removed → 配置不一致时不动任何 proxy 状态。
-            self._verify_consistency()
         # 差量：停掉不再检测到的端点的 proxy（FR-P16）。mapping 文件仍保留被删端点
         # （sticky，端口不回收，见 assign_sticky）——只停 proxy、不动 mapping 端口。
         self._stop_removed(endpoints)

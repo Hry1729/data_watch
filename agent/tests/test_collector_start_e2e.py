@@ -2,7 +2,7 @@
 
 串起真实 admin.start_process → 真实 SidecarManager.prepare（真 start_proxy 三条件闸门，
 proxy=fake_proxy）→ 真实 ProcessManager.start（collector=dummy_child）。只 stub 无法单元化
-的 MySQL：_detect_endpoints / _verify_consistency。
+的 MySQL：_detect_endpoints。
 
 顺序证据两层：
   ① launch_order == [proxy_{port}, collector]（proxy 先 launch）——两个 runner 共享一个
@@ -84,7 +84,6 @@ def _build(runtime_dir, *, endpoints, argv_file, launch_order, captured):
         collector_settings_path=_SETTINGS,
     )
     sm._detect_endpoints = lambda: list(endpoints)
-    sm._verify_consistency = lambda: None
     sm._build_proxy_cmd = lambda config_path: [
         sys.executable, FAKE_PROXY, "--config", str(config_path)
     ]
