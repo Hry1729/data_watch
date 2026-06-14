@@ -27,6 +27,8 @@ services:
       - tdengine_data:/var/lib/taos
       # 服务端配置：日志保留 + 磁盘安全阀 + 降同步日志噪声（其余项用默认）
       - ./taos.cfg:/etc/taos/taos.cfg
+      # 服务日志卷：供 backend 只读挂载，实现前端「数据库日志」查看页
+      - tdengine_log:/var/log/taos
     restart: unless-stopped
 
   backend:
@@ -44,6 +46,8 @@ services:
     volumes:
       - ../backend/logs:/app/logs
       - ../backend/exports:/app/exports
+      # 只读挂载 TDengine 服务日志卷，供「数据库日志」查看页 tail（需 compose 托管 TDengine）
+      - tdengine_log:/tdengine-logs:ro
     restart: unless-stopped
 
   frontend:
@@ -63,3 +67,4 @@ services:
 volumes:
   redis_data:
   tdengine_data:
+  tdengine_log:

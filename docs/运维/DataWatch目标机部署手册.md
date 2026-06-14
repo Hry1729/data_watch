@@ -553,7 +553,12 @@ docker compose -f .\docker-compose.yml --profile infra up -d
 > ⚠️ `minimalDataDirGB` 触发会**停止写入（采集中断）**，是最后防线、非常规手段。正常应让 KEEP 把磁盘稳定在阈值以下。
 > ⚠️ 14d/4d/50GB 是按估算给的初值；**上线后建议测 1~2 周实际增速再定稿**：`KEEP_天 ≈ 400GB ÷ 实测 GB每天`（用 `du -sh /var/lib/taos` 量增速）。
 
-### 2. 安装 DataWatch Windows 一体包
+#### 前端「数据库日志」查看页的前置条件
+
+`docker-compose.yml` 已把 TDengine 的 `/var/log/taos` 以命名卷 `tdengine_log` 挂出，并只读挂到 backend 的 `/tdengine-logs`（由 `backend.env` 的 `TDENGINE_LOG_DIR` 指向），供前端「数据库日志」页在线查看 TDengine 服务日志。
+
+- **仅 compose 托管 TDengine 时可用**。现场自管/远程 TDengine（不同主机）时 backend 读不到其日志文件，该页会优雅提示「当前部署未启用」。
+- ⚠️ **命名卷会遮挡旧容器层日志**：给已有 TDengine 容器新增该卷并重建后，`/var/log/taos` 指向新的空卷，旧容器内的历史日志将不可见。生产上从新部署后开始查看即可；若需保留旧日志，先 `docker cp` 备份。
 
 安装包应完成：
 
