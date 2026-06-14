@@ -127,9 +127,12 @@ def main() -> int:
         host=args.td_host, port=args.td_port,
     )
 
-    # 确保数据库存在
-    conn.execute(f"CREATE DATABASE IF NOT EXISTS {TD_DATABASE}")
-    print(f"Database {TD_DATABASE}: OK")
+    # 确保数据库存在；KEEP 14 天 + DURATION 1 天（与 writer、deploy/taos.cfg 保持一致）。
+    conn.execute(f"CREATE DATABASE IF NOT EXISTS {TD_DATABASE} KEEP 14d DURATION 1d")
+    # 已存在的库 CREATE IF NOT EXISTS 不改其保留期，显式 ALTER 一次保证 KEEP=14d
+    # （DURATION 建库后不可改，已存在库的 DURATION 维持原值）。
+    conn.execute(f"ALTER DATABASE {TD_DATABASE} KEEP 14d")
+    print(f"Database {TD_DATABASE}: OK (KEEP 14d)")
 
     stable_created = stable_skipped = child_created = child_skipped = 0
 

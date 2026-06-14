@@ -363,6 +363,8 @@ collector 146 passed
 
 ```powershell
 Copy-Item "D:\python\device_alarm\data_watch\deploy\docker-compose.yml" "$ReleaseRoot\deploy\docker-compose.yml" -Force
+# taos.cfg 必须一起拷贝：compose 会把它挂进 TDengine 容器，缺失会导致 tdengine 起不来
+Copy-Item "D:\python\device_alarm\data_watch\deploy\taos.cfg" "$ReleaseRoot\deploy\taos.cfg" -Force
 Copy-Item "D:\python\device_alarm\data_watch\deploy\backend.env.example" "$ReleaseRoot\deploy\backend.env.example" -Force
 Copy-Item "D:\python\device_alarm\data_watch\deploy\python314t.Dockerfile" "$ReleaseRoot\deploy\python314t.Dockerfile" -Force
 Copy-Item "D:\python\device_alarm\data_watch\deploy\nginx.conf" "$ReleaseRoot\deploy\nginx.conf" -Force
@@ -476,6 +478,7 @@ D:\data_watch_release\writer\data-watch-writer.exe 存在
 D:\data_watch_release\sidecars\opcda_proxy_service\bin\OpcDaProxyService.exe 存在
 D:\data_watch_release\config-templates\            有配置模板
 D:\data_watch_release\deploy\docker-compose.yml    存在
+D:\data_watch_release\deploy\taos.cfg              存在（compose 挂载，缺失则 TDengine 起不来）
 D:\data_watch_release\docker-images\               有 data-watch-backend/data-watch-frontend 镜像 tar
 ```
 
@@ -533,6 +536,22 @@ docker compose -f .\docker-compose.yml --profile infra up -d
 ```
 
 日常仅更新前后端时，不要执行 `docker compose down -v`，避免删除数据卷。
+
+#### TDengine 保留期与磁盘控制（部署时务必确认）
+
+目标：305 设备 × 1000 点 × 100ms、仅变化存储、约 500GB 盘下不写爆磁盘。参数：**KEEP 14d / DURATION 1d / logKeepDays 4 / minimalDataDirGB 50 / sDebugFlag 131**。
+
+- **compose 托管 TDengine 时**：`docker-compose.yml` 已把 `deploy/taos.cfg` 挂进容器，自动生效 `logKeepDays 4`（服务日志留 4 天）、`minimalDataDirGB 50`（数据盘剩余 <50GB 停写，最后防线）、`sDebugFlag 131`（同步模块只记 error/warning，避免日志刷屏）。
+- **数据保留期 KEEP**：由建库语句控制。首次建库（writer / `scripts/init_tdengine_v2.py`）已带 `KEEP 14d DURATION 1d`（实际保留约 14~15 天）。**若 `device_data` 库已存在**（之前建过），`CREATE IF NOT EXISTS` 不改其保留期，需手动让 KEEP 生效（DURATION 建库后不可改，沿用原值）：
+
+  ```powershell
+  docker exec data-watch-tdengine taos -s "ALTER DATABASE device_data KEEP 14d"
+  ```
+
+- **现场自管 TDengine（不走 compose）时**：上面这些不会自动应用，需在现场 TDengine 的 `taos.cfg` 自行配 `logKeepDays`/`minimalDataDirGB`/`sDebugFlag` 并重启，且对 `device_data` 执行上面的 `ALTER ... KEEP 14d`。
+
+> ⚠️ `minimalDataDirGB` 触发会**停止写入（采集中断）**，是最后防线、非常规手段。正常应让 KEEP 把磁盘稳定在阈值以下。
+> ⚠️ 14d/4d/50GB 是按估算给的初值；**上线后建议测 1~2 周实际增速再定稿**：`KEEP_天 ≈ 400GB ÷ 实测 GB每天`（用 `du -sh /var/lib/taos` 量增速）。
 
 ### 2. 安装 DataWatch Windows 一体包
 

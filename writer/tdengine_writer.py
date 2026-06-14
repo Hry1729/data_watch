@@ -189,7 +189,10 @@ class TDengineWriter:
     # ------------------------------------------------------------------
 
     async def _ensure_database(self) -> None:
-        sql = f"CREATE DATABASE IF NOT EXISTS {_quote(self._database)}"
+        # 保留期与磁盘预算挂钩：KEEP 14 天 + DURATION 1 天（按天分文件，过期精确到约 14~15 天）。
+        # DURATION 仅首次建库生效、之后不可 ALTER；KEEP 可后续 ALTER。须与
+        # scripts/init_tdengine_v2.py 及 deploy/taos.cfg(logKeepDays/minimalDataDirGB) 保持一致。
+        sql = f"CREATE DATABASE IF NOT EXISTS {_quote(self._database)} KEEP 14d DURATION 1d"
         if not await self._execute(sql):
             raise RuntimeError(f"failed to ensure TDengine database: {self._database}")
 

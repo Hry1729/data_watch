@@ -25,6 +25,8 @@ services:
       - "6062:6060"
     volumes:
       - tdengine_data:/var/lib/taos
+      # 服务端配置：日志保留 + 磁盘安全阀 + 降同步日志噪声（其余项用默认）
+      - ./taos.cfg:/etc/taos/taos.cfg
     restart: unless-stopped
 
   backend:
