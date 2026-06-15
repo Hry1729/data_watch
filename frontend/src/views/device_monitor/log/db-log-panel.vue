@@ -1,10 +1,11 @@
 <!-- 数据库日志（TDengine 服务日志）只读查看面板 -->
 <template>
-  <section class="art-card db-log-panel p-5 mt-4 bg-[var(--default-box-color)]">
+  <section :class="['db-log-panel', embedded ? '' : 'art-card p-5 mt-4 bg-[var(--default-box-color)]']">
     <div class="art-card-header flex justify-between items-center pr-0 mb-3 flex-wrap gap-2">
-      <div class="title">
+      <div v-if="!embedded" class="title">
         <h4 class="text-lg font-medium text-g-900">数据库日志（TDengine 服务日志）</h4>
       </div>
+      <span v-else />
       <div class="flex items-center gap-2 flex-wrap">
         <ElSelect
           v-model="currentFile"
@@ -71,6 +72,8 @@ import {
   fetchTdengineLogTail,
   type TdengineLogFile
 } from '@/api/device-monitor'
+
+defineProps<{ embedded?: boolean }>()
 
 const enabled = ref(true)
 const reason = ref('')

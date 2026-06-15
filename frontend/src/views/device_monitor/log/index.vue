@@ -102,39 +102,56 @@
 
     <!-- 日志列表区 -->
     <div class="log-list-card art-card flex flex-col p-5 bg-[var(--default-box-color)]">
-      <div class="art-card-header flex justify-between items-center pr-0">
-        <div class="title">
-          <h4 class="text-lg font-medium text-g-900">历史日志查询</h4>
+      <div class="art-card-header flex justify-between items-center pr-0 gap-2 flex-wrap">
+        <div class="title flex items-center gap-2 shrink-0">
+          <h4 class="text-lg font-medium text-g-900">{{ logMode === 'system' ? '历史日志查询' : '数据库日志（TDengine 服务日志）' }}</h4>
+          <ElButton plain @click="logMode = logMode === 'system' ? 'db' : 'system'">
+            {{ logMode === 'system' ? '切换到数据库日志' : '切换到系统日志' }}
+          </ElButton>
         </div>
-        <ElSpace>
-          <ElButton type="primary" plain size="small" @click="handleExport">
-            导出日志
-          </ElButton>
-          <ElButton v-roles="'R_SUPER'" type="danger" plain size="small" @click="showCleanupDialog = true">
-            清理日志
-          </ElButton>
+        <div
+          v-if="logMode === 'system'"
+          class="log-actions flex-1 min-w-0 flex items-center justify-end gap-2 flex-wrap"
+        >
+          <ElDatePicker
+            v-model="dateRange"
+            type="datetimerange"
+            range-separator="至"
+            start-placeholder="开始时间"
+            end-placeholder="结束时间"
+            value-format="YYYY-MM-DD HH:mm:ss"
+          />
+          <ElSelect v-model="searchForm.type" placeholder="类型" clearable style="width: 110px">
+            <ElOption v-for="opt in TYPE_OPTIONS" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </ElSelect>
+          <ElInput
+            v-model="searchForm.keyword"
+            placeholder="关键字"
+            clearable
+            style="width: 150px"
+            @keyup.enter="applySearch"
+          />
+          <ElButton type="primary" @click="applySearch">查询</ElButton>
+          <ElButton @click="handleReset">重置</ElButton>
+          <ElBadge :value="advancedCount" :hidden="advancedCount === 0" type="primary">
+            <ElButton @click="showAdvancedDialog = true">高级查询</ElButton>
+          </ElBadge>
+          <ElButton type="primary" plain @click="handleExport">导出日志</ElButton>
+          <ElButton v-roles="'R_SUPER'" type="danger" plain @click="showCleanupDialog = true">清理日志</ElButton>
           <ElButton
             v-roles="'R_SUPER'"
             :type="stats.debugEnabled ? 'warning' : 'default'"
             plain
-            size="small"
             @click="showDebugDialog = true"
           >
             {{ stats.debugEnabled ? 'DEBUG 开启中' : 'DEBUG 开关' }}
           </ElButton>
-        </ElSpace>
+        </div>
       </div>
 
-      <ArtSearchBar
-        v-model="searchForm"
-        :items="searchItems"
-        :span="6"
-        class="log-search mt-4"
-        @search="handleSearch"
-        @reset="handleReset"
-      />
-
+      <template v-if="logMode === 'system'">
       <ArtTable
+        class="mt-4"
         :loading="loading"
         :data="data"
         :columns="columns"
@@ -197,6 +214,8 @@
           </ElButton>
         </template>
       </ArtTable>
+      </template>
+      <DbLogPanel v-else embedded class="mt-4" />
     </div>
 
     <!-- 详情抽屉 -->
@@ -359,8 +378,22 @@
       </template>
     </ElDialog>
 
-    <!-- 数据库日志（TDengine 服务日志）查看 -->
-    <DbLogPanel />
+    <!-- 高级查询弹窗 -->
+    <ElDialog v-model="showAdvancedDialog" title="高级查询" width="680px" align-center :destroy-on-close="false">
+      <ArtSearchBar
+        v-model="searchForm"
+        :items="searchItems"
+        :span="12"
+        :is-expand="true"
+        :show-search="false"
+        :show-reset="false"
+      />
+      <template #footer>
+        <ElButton @click="handleReset">重置</ElButton>
+        <ElButton type="primary" @click="handleAdvancedSearch">查询</ElButton>
+      </template>
+    </ElDialog>
+
   </div>
 </template>
 
@@ -403,6 +436,11 @@ const TYPE_CONFIG: Record<string, { type: 'success' | 'warning' | 'danger' | 'in
   alarm: { type: 'danger', text: '告警' }
 }
 
+const TYPE_OPTIONS = Object.entries(TYPE_CONFIG).map(([value, cfg]) => ({ label: cfg.text, value }))
+
+// 高级查询专属字段（内联快捷筛选未覆盖的），用于计算高级查询按钮角标
+const ADVANCED_KEYS = ['kind', 'level', 'source', 'serviceName', 'deviceCode', 'operatorName'] as const
+
 const stats = ref<LogStats>({
   todayTotal: 0,
   yesterdayTotal: 0,
@@ -439,7 +477,30 @@ const showDetailDrawer = ref(false)
 const currentLog = ref<LogListItem | null>(null)
 const showCleanupDialog = ref(false)
 const showDebugDialog = ref(false)
+const showAdvancedDialog = ref(false)
+const logMode = ref<'system' | 'db'>('system')
 const cleanupLoading = ref(false)
+
+// 内联时间范围控件 ↔ searchForm.startTime/endTime（单一来源）
+const dateRange = computed<[string, string] | null>({
+  get() {
+    const { startTime, endTime } = searchForm.value
+    return startTime && endTime ? [startTime, endTime] : null
+  },
+  set(val) {
+    searchForm.value.startTime = val?.[0] || undefined
+    searchForm.value.endTime = val?.[1] || undefined
+  }
+})
+
+// 高级查询按钮角标：高级专属字段中已填的数量
+const advancedCount = computed(
+  () =>
+    ADVANCED_KEYS.filter((key) => {
+      const value = searchForm.value[key]
+      return value !== undefined && value !== '' && value !== null
+    }).length
+)
 const debugLoading = ref(false)
 
 const cleanupForm = ref({
@@ -524,16 +585,7 @@ const searchItems = computed(() => [
     props: {
       placeholder: '请选择类型',
       clearable: true,
-      options: [
-        { label: '系统', value: 'system' },
-        { label: '认证', value: 'auth' },
-        { label: '操作', value: 'operation' },
-        { label: '采集', value: 'collect' },
-        { label: '存储', value: 'storage' },
-        { label: '前端', value: 'frontend' },
-        { label: '安全', value: 'security' },
-        { label: '告警', value: 'alarm' }
-      ]
+      options: TYPE_OPTIONS
     }
   },
   {
@@ -748,20 +800,29 @@ const initLevelTrendChart = () => {
   })
 }
 
-const handleSearch = (params: LogSearchParams) => {
+// 空字符串/null 视为未填，避免请求携带空筛选条件
+const clean = <T,>(value: T): T | undefined => (value === '' || value === null ? undefined : value)
+
+const applySearch = () => {
+  const f = searchForm.value
   replaceSearchParams({
-    startTime: params.startTime,
-    endTime: params.endTime,
-    level: params.level,
-    type: params.type,
-    kind: params.kind,
-    source: params.source,
-    serviceName: params.serviceName,
-    deviceCode: params.deviceCode,
-    operatorName: params.operatorName,
-    keyword: params.keyword
+    startTime: clean(f.startTime),
+    endTime: clean(f.endTime),
+    level: clean(f.level),
+    type: clean(f.type),
+    kind: clean(f.kind),
+    source: clean(f.source),
+    serviceName: clean(f.serviceName),
+    deviceCode: clean(f.deviceCode),
+    operatorName: clean(f.operatorName),
+    keyword: clean(f.keyword)
   })
   getData()
+}
+
+const handleAdvancedSearch = () => {
+  applySearch()
+  showAdvancedDialog.value = false
 }
 
 const handleReset = async () => {
@@ -802,19 +863,19 @@ const copyLog = () => {
 const filterByTraceId = (traceId: string) => {
   searchForm.value.traceId = traceId
   showDetailDrawer.value = false
-  handleSearch(searchForm.value)
+  applySearch()
 }
 
 const filterByDevice = (deviceCode: string) => {
   searchForm.value.deviceCode = deviceCode
   showDetailDrawer.value = false
-  handleSearch(searchForm.value)
+  applySearch()
 }
 
 const filterByOperator = (operatorName: string) => {
   searchForm.value.operatorName = operatorName
   showDetailDrawer.value = false
-  handleSearch(searchForm.value)
+  applySearch()
 }
 
 const handleExport = () => {
@@ -953,8 +1014,37 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.log-search {
-  margin-bottom: 16px;
+// 头部右侧操作区：清掉 Element Plus 相邻按钮的额外左边距，间距统一交给 gap
+.log-actions {
+  :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
+
+  // datetimerange 宽度由 CSS 变量控制（默认 400px），内联 width 无效，须覆盖变量；
+  // range-editor 自带 flex:1 会在 flex 容器里无视 width 撑大，须 flex:none 关掉伸展
+  :deep(.el-date-editor--datetimerange) {
+    --el-date-editor-width: 400px;
+    flex: none;
+  }
+
+}
+
+// 次要按钮（切换日志/重置/高级查询/DEBUG 关闭态）暗色下 hover 偏弱，
+// 统一 hover 填充实色 primary，与「查询」按钮一致
+.title :deep(.el-button:hover),
+.log-actions :deep(.el-button--default:hover) {
+  color: #fff;
+  background-color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+
+// 暗色模式下 primary/danger 的 plain 按钮边框过暗，比实色按钮显得"小"，提亮边框增强存在感
+:global(html.dark .log-actions .el-button--primary.is-plain) {
+  --el-button-border-color: var(--el-color-primary);
+}
+
+:global(html.dark .log-actions .el-button--danger.is-plain) {
+  --el-button-border-color: var(--el-color-danger);
 }
 
 .time-cell {
