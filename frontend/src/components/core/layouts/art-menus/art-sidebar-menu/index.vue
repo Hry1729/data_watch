@@ -11,7 +11,7 @@
       class="dual-menu-left"
       :style="{ width: dualMenuShowText ? '80px' : '64px', background: getMenuTheme.background }"
     >
-      <ArtLogo class="logo" :size="32" @click="navigateToHome" />
+      <ArtLogo class="logo" :size="32" collapsed @click="navigateToHome" />
 
       <ElScrollbar style="height: calc(100% - 135px)">
         <ul>
@@ -74,8 +74,8 @@
           background: getMenuTheme.background
         }"
       >
-        <!-- logo 已包含文字，收起时显示小尺寸，展开时显示大尺寸 -->
-        <ArtLogo v-if="!isDualMenu" class="logo" :size="menuOpen ? 32 : 28" />
+        <!-- 展开显示含文字宽 logo，收起显示方形小 logo -->
+        <ArtLogo v-if="!isDualMenu" class="logo" :size="menuOpen ? 32 : 30" :collapsed="!menuOpen" />
       </div>
       <ElScrollbar :style="scrollbarStyle">
         <ElMenu
