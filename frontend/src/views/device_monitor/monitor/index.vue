@@ -498,6 +498,8 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* 左右留白：避免最左/最右卡片的呼吸光晕被滚动容器边缘裁剪，并与大卡左缘拉开距离 */
+    padding: 6px 7px;
   }
 
   .grid-loading {
@@ -539,13 +541,13 @@
     border-radius: 9px;
   }
 
-  /* 小卡墙：固定小卡宽度，不被 1fr 拉伸 */
+  /* 小卡墙：GitHub 活动块式小方块，一行尽量多放 */
   .card-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(80px, 96px));
+    grid-template-columns: repeat(auto-fill, minmax(43px, 48px));
     justify-content: start;
-    gap: 16px;
-    padding: 6px 2px;   /* 为 hover 上移/光晕留出空间 */
+    gap: 8px;
+    padding: 4px 2px;   /* 为 hover 上移/光晕留出空间 */
   }
 
   /* ══════════════════════════════════════════
@@ -556,76 +558,93 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 64px;
-    padding: 6px 8px;
+    height: 44px;
+    padding: 3px;
     border: 1px solid var(--card-accent, var(--art-card-border));
-    border-radius: 12px;
+    border-radius: 6px;
     background: var(--card-bg, var(--default-box-color));
     cursor: pointer;
     content-visibility: auto;
-    contain-intrinsic-size: 64px;
+    contain-intrinsic-size: 44px;
     transition: transform 0.18s ease, box-shadow 0.18s ease;
 
     &:hover {
-      transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 4px 14px rgba(31, 45, 61, 0.14);
+      transform: translateY(-2px) scale(1.06);
+      box-shadow: 0 4px 12px rgba(31, 45, 61, 0.18);
       z-index: 1;
     }
 
-    /* ── 状态配色（class 注入 CSS 变量） ── */
+    /* ── 状态配色：GitHub 活动块式实心填充 ── */
     &.status-online {
       --card-accent: #18a47a;
-      --card-bg: rgba(24, 164, 122, 0.08);
+      --card-bg: #18a47a;
+      --card-text: #fff;
     }
     &.status-offline {
       --card-accent: #d44f63;
-      --card-bg: rgba(212, 79, 99, 0.08);
+      --card-bg: #d44f63;
+      --card-text: #fff;
     }
     &.status-unstable {
       --card-accent: #d18b2f;
-      --card-bg: rgba(209, 139, 47, 0.08);
+      --card-bg: #d18b2f;
+      --card-text: #fff;
     }
+    /* 未启用：背景色 + 细边框（亮色模式深色细边，才看得见） */
     &.status-disabled {
-      --card-accent: #c98a00;
-      --card-bg: rgba(224, 160, 48, 0.08);
+      --card-accent: rgba(0, 0, 0, 0.18);
+      --card-bg: var(--default-box-color);
+      --card-text: var(--el-text-color-secondary);
     }
+  }
+
+  /* 未启用块：暗色模式背景同为深色，边框改用浅色才看得见 */
+  :global(html.dark .device-card.status-disabled) {
+    --card-accent: rgba(255, 255, 255, 0.22);
   }
 
   .device-code {
     position: relative;
     z-index: 1;
     font-family: 'Roboto Mono', 'SFMono-Regular', Consolas, monospace;
-    font-size: 16px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1.2;
     text-align: center;
     word-break: break-all;
-    color: var(--card-accent, var(--el-text-color-primary));
-  }
-
-  /* 离线卡脉动到峰值时底色变深，编号用更深的红保证可读 */
-  .device-card.status-offline .device-code {
-    color: #8a1f2c;
+    color: var(--card-text, var(--el-text-color-primary));
   }
 
   /* ── 呼吸灯：仅离线红卡，整卡深红填充 + 光晕，opacity 脉动（走合成层，最轻） ── */
+  /* ── 离线红卡：呼吸 = 内部变亮脉动 + 外圈阴影由小变大再消散（警示） ── */
+  .device-card.status-offline {
+    z-index: 1;                  /* 外圈光晕盖过相邻卡 */
+    content-visibility: visible; /* 避免外圈阴影被裁剪 */
+    animation: offline-halo 2s ease-in-out infinite;
+    animation-delay: var(--breath-delay, 0s);
+  }
+
   .device-card.status-offline::before {
     content: '';
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: rgba(212, 79, 99, 0.4);
-    box-shadow:
-      inset 0 0 0 1px rgba(212, 79, 99, 0.6),
-      0 0 16px 2px rgba(212, 79, 99, 0.5);
+    background: #ff8593;         /* 比底色略亮的红，脉动时整卡轻微变亮 */
     opacity: 0;
     pointer-events: none;
-    animation: card-breathe 4s ease-in-out infinite;
+    animation: offline-glow 2s ease-in-out infinite;
     animation-delay: var(--breath-delay, 0s);
   }
 
-  @keyframes card-breathe {
+  /* 外圈阴影：与内部呼吸同周期同相位，50% 时扩散变深，首尾收回消失 */
+  @keyframes offline-halo {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(178, 40, 56, 0); }
+    50%      { box-shadow: 0 0 6px 2px rgba(178, 40, 56, 0.8); }
+  }
+
+  /* 内部变亮脉动（降亮，与阴影同相位） */
+  @keyframes offline-glow {
     0%, 100% { opacity: 0; }
-    50%      { opacity: 1; }
+    50%      { opacity: 0.32; }
   }
 </style>
