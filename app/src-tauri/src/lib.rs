@@ -7,6 +7,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             http_proxy::agent_request,
+            http_proxy::backend_request,
             tray::show_window,
             tray::hide_to_tray,
         ])

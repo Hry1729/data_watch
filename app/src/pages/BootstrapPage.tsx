@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,109 +7,165 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { agentClient } from "@/lib/agent-client";
+import type { BootstrapTarget } from "@/lib/agent-client";
+import { setBackendBaseUrl } from "@/lib/backend-client";
 import type { AppError } from "@/types";
 
-// ─── 表单默认值 ───────────────────────────────────────────────────────────────
+// ─── 默认值 ───────────────────────────────────────────────────────────────────
 
-const DEFAULT_FORM = {
-  host:     "127.0.0.1",
-  port:     "3306",
-  user:     "root",
-  password: "",
-  database: "device_watch",
+const DEFAULTS = {
+  backend:  { base_url: "http://127.0.0.1:8000" },
+  mysql:    { host: "127.0.0.1", port: "3306", user: "root", password: "", database: "device_watch" },
+  redis:    { host: "127.0.0.1", port: "6379", password: "" },
+  tdengine: { host: "127.0.0.1", port: "6041", user: "root", password: "", database: "device_data" },
 };
-
-// ─── 测试连接状态 ─────────────────────────────────────────────────────────────
 
 type TestStatus = "idle" | "testing" | "success" | "failed";
 
 const STATUS_VARIANT: Record<
   TestStatus,
   "secondary" | "default" | "destructive" | "outline"
-> = {
-  idle:    "secondary",
-  testing: "outline",
-  success: "default",
-  failed:  "destructive",
-};
+> = { idle: "secondary", testing: "outline", success: "default", failed: "destructive" };
+
+// ─── 小组件 ───────────────────────────────────────────────────────────────────
+
+function Field({
+  label,
+  className = "",
+  ...props
+}: { label: string } & React.ComponentProps<typeof Input>) {
+  return (
+    <div className={`space-y-1.5 ${className}`}>
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Input {...props} />
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  status,
+  error,
+  onTest,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  status: TestStatus;
+  error: string | null;
+  onTest: () => void;
+  children: ReactNode;
+}) {
+  const statusLabel =
+    status === "idle"    ? "待测试" :
+    status === "testing" ? "测试中…" :
+    status === "success" ? "连接成功" :
+    (error ?? "连接失败");
+
+  return (
+    <Card
+      style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}
+    >
+      <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
+        <div>
+          <CardTitle className="text-base font-semibold text-foreground">{title}</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+        </div>
+        <Badge variant={STATUS_VARIANT[status]} className="shrink-0">{statusLabel}</Badge>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        {children}
+        <div className="pt-1">
+          <Button variant="outline" size="sm" disabled={status === "testing"} onClick={onTest}>
+            {status === "testing" ? "测试中…" : "测试连接"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 // ─── 页面 ─────────────────────────────────────────────────────────────────────
 
 export function BootstrapPage() {
-  const navigate   = useNavigate();
-  const [form, setForm] = useState(DEFAULT_FORM);
+  const navigate = useNavigate();
 
-  const [testStatus, setTestStatus] = useState<TestStatus>("idle");
-  const [testError,  setTestError]  = useState<string | null>(null);
-  const [finishing,  setFinishing]  = useState(false);
+  const [backend, setBackend]   = useState(DEFAULTS.backend);
+  const [mysql, setMysql]       = useState(DEFAULTS.mysql);
+  const [redis, setRedis]       = useState(DEFAULTS.redis);
+  const [tdengine, setTdengine] = useState(DEFAULTS.tdengine);
 
-  const testPassed = testStatus === "success";
+  const [status, setStatus] = useState<Record<BootstrapTarget, TestStatus>>({
+    backend: "idle", mysql: "idle", redis: "idle", tdengine: "idle",
+  });
+  const [errors, setErrors] = useState<Record<BootstrapTarget, string | null>>({
+    backend: null, mysql: null, redis: null, tdengine: null,
+  });
+  const [finishing, setFinishing] = useState(false);
 
-  // 状态文案（失败时优先显示 API 返回的错误信息）
-  const statusLabel =
-    testStatus === "idle"    ? "等待测试连接" :
-    testStatus === "testing" ? "测试中…" :
-    testStatus === "success" ? "MySQL 连接成功" :
-    (testError ?? "连接失败，请检查配置");
+  const allPassed =
+    status.backend === "success" && status.mysql === "success" &&
+    status.redis === "success" && status.tdengine === "success";
 
-  function handleChange(field: keyof typeof DEFAULT_FORM) {
-    return (e: React.ChangeEvent<HTMLInputElement>) => {
-      setForm((prev) => ({ ...prev, [field]: e.target.value }));
-      // 修改任意字段后重置测试状态，要求重新测试
-      if (testStatus === "success") {
-        setTestStatus("idle");
-        setTestError(null);
-      }
-    };
+  // 改任一字段即把该块测试状态重置，要求重新测试
+  function resetStatus(target: BootstrapTarget) {
+    setStatus((s) => (s[target] === "idle" ? s : { ...s, [target]: "idle" }));
+    setErrors((e) => (e[target] === null ? e : { ...e, [target]: null }));
   }
 
-  // ── 测试连接：PUT config → POST test-connection ─────────────────────────────
-  async function handleTestConnection() {
-    setTestStatus("testing");
-    setTestError(null);
-    try {
-      // Step 1：提交配置到 Agent（密码不经 console，agent-client 内部已脱敏）
-      await agentClient.putBootstrapConfig({
-        host:     form.host,
-        port:     parseInt(form.port, 10) || 3306,
-        user:     form.user,
-        password: form.password,
-        database: form.database,
-      });
-      // Step 2：发起连接测试
-      const result = await agentClient.postBootstrapTestConnection("mysql");
-      if (result.success) {
-        setTestStatus("success");
-      } else {
-        setTestStatus("failed");
-        setTestError(result.message ?? "连接失败，请检查配置");
-      }
-    } catch (err) {
-      const e = err as AppError;
-      if (e?.type === "agent_unreachable") {
-        navigate("/error", { replace: true });
-        return;
-      }
-      setTestStatus("failed");
-      setTestError("连接测试失败，请检查配置");
+  function mysqlPort()    { return parseInt(mysql.port, 10) || 3306; }
+  function redisPort()    { return parseInt(redis.port, 10) || 6379; }
+  function tdenginePort() { return parseInt(tdengine.port, 10) || 6041; }
+
+  function testPayload(target: BootstrapTarget) {
+    switch (target) {
+      case "backend":  return { target, base_url: backend.base_url };
+      case "mysql":    return { target, host: mysql.host, port: mysqlPort(), user: mysql.user, password: mysql.password, database: mysql.database };
+      case "redis":    return { target, host: redis.host, port: redisPort(), password: redis.password };
+      case "tdengine": return { target, host: tdengine.host, port: tdenginePort(), user: tdengine.user, password: tdengine.password, database: tdengine.database };
     }
   }
 
-  // ── 完成初始化：POST finish → GET status 确认 → 跳 /login ──────────────────
+  async function handleTest(target: BootstrapTarget) {
+    setStatus((s) => ({ ...s, [target]: "testing" }));
+    setErrors((e) => ({ ...e, [target]: null }));
+    try {
+      const result = await agentClient.postBootstrapTestConnection(testPayload(target));
+      if (result.success) {
+        setStatus((s) => ({ ...s, [target]: "success" }));
+      } else {
+        setStatus((s) => ({ ...s, [target]: "failed" }));
+        setErrors((e) => ({ ...e, [target]: result.message ?? "连接失败，请检查配置" }));
+      }
+    } catch (err) {
+      const e = err as AppError;
+      if (e?.type === "agent_unreachable") { navigate("/error", { replace: true }); return; }
+      setStatus((s) => ({ ...s, [target]: "failed" }));
+      setErrors((er) => ({ ...er, [target]: "连接测试失败，请检查配置" }));
+    }
+  }
+
   async function handleFinish() {
-    if (!testPassed || finishing) return;
+    if (!allPassed || finishing) return;
     setFinishing(true);
     try {
+      await agentClient.putBootstrapConfig({
+        backend:  { base_url: backend.base_url },
+        mysql:    { host: mysql.host, port: mysqlPort(), user: mysql.user, password: mysql.password, database: mysql.database },
+        redis:    { host: redis.host, port: redisPort(), password: redis.password },
+        tdengine: { host: tdengine.host, port: tdenginePort(), user: tdengine.user, password: tdengine.password, database: tdengine.database },
+      });
       await agentClient.postBootstrapFinish();
       const { in_bootstrap } = await agentClient.getBootstrapStatus();
       if (!in_bootstrap) {
+        setBackendBaseUrl(backend.base_url); // 登录前注入运行期后端地址
         navigate("/login", { replace: true });
       }
     } catch (err) {
       const e = err as AppError;
-      if (e?.type === "agent_unreachable") {
-        navigate("/error", { replace: true });
-      }
+      if (e?.type === "agent_unreachable") navigate("/error", { replace: true });
       // 其他错误：停留页面，用户可重试
     } finally {
       setFinishing(false);
@@ -116,124 +173,101 @@ export function BootstrapPage() {
   }
 
   return (
-    // 全屏居中，无任何主导航（FR-015）
-    <div
-      className="min-h-screen flex flex-col items-center justify-center px-6 py-12 bg-background"
-    >
-      {/* 页面标题 */}
-      <div className="w-full max-w-2xl mb-6">
-        <h1 className="text-2xl font-bold text-foreground">初始化向导</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          首次使用前需要配置 MySQL，Agent 将使用该连接读取系统配置。
-        </p>
-      </div>
+    <div className="h-full overflow-auto bg-background">
+      <div className="mx-auto w-full max-w-3xl px-6 py-8">
+        {/* 标题 */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-foreground">初始化向导</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            首次使用前依次配置以下服务，四项全部测试通过后即可完成初始化。
+          </p>
+        </div>
 
-      {/* 配置卡片 */}
-      <Card
-        className="w-full max-w-2xl"
-        style={{
-          background: "var(--card)",
-          border: "1px solid var(--border)",
-          borderRadius: 12,
-        }}
-      >
-        <CardHeader className="pb-4">
-          <CardTitle className="text-base font-semibold text-foreground">
-            MySQL 配置
-          </CardTitle>
-        </CardHeader>
-
-        <CardContent className="space-y-5">
-          {/* 第一行：主机 / 端口 / 用户 / 密码 */}
-          <div className="grid grid-cols-4 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="bs-host" className="text-xs text-muted-foreground">主机</Label>
-              <Input
-                id="bs-host"
-                value={form.host}
-                onChange={handleChange("host")}
-                placeholder="127.0.0.1"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bs-port" className="text-xs text-muted-foreground">端口</Label>
-              <Input
-                id="bs-port"
-                type="number"
-                min={1}
-                max={65535}
-                value={form.port}
-                onChange={handleChange("port")}
-                placeholder="3306"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bs-user" className="text-xs text-muted-foreground">用户</Label>
-              <Input
-                id="bs-user"
-                value={form.user}
-                onChange={handleChange("user")}
-                placeholder="root"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="bs-password" className="text-xs text-muted-foreground">密码</Label>
-              {/* type="password" 始终掩码，不提供明文切换 */}
-              <Input
-                id="bs-password"
-                type="password"
-                value={form.password}
-                onChange={handleChange("password")}
-                placeholder="••••••"
-                autoComplete="new-password"
-              />
-            </div>
-          </div>
-
-          {/* 第二行：数据库 */}
-          <div className="max-w-xs space-y-1.5">
-            <Label htmlFor="bs-database" className="text-xs text-muted-foreground">数据库</Label>
-            <Input
-              id="bs-database"
-              value={form.database}
-              onChange={handleChange("database")}
-              placeholder="device_watch"
+        <div className="space-y-5">
+          {/* 后端 */}
+          <SectionCard
+            title="后端服务 Backend"
+            subtitle="Console 登录与数据查询所依赖的后端地址"
+            status={status.backend}
+            error={errors.backend}
+            onTest={() => handleTest("backend")}
+          >
+            <Field
+              label="后端地址"
+              value={backend.base_url}
+              onChange={(e) => { setBackend({ base_url: e.target.value }); resetStatus("backend"); }}
+              placeholder="http://127.0.0.1:8000"
             />
-          </div>
+          </SectionCard>
 
-          {/* 操作按钮行 */}
-          <div className="flex items-center justify-between pt-2">
-            <Button
-              variant="outline"
-              disabled={testStatus === "testing"}
-              onClick={handleTestConnection}
-            >
-              {testStatus === "testing" ? "测试中…" : "测试连接"}
-            </Button>
+          {/* MySQL */}
+          <SectionCard
+            title="MySQL"
+            subtitle="系统配置库（device_watch），登录账号来自其 sys_user 表"
+            status={status.mysql}
+            error={errors.mysql}
+            onTest={() => handleTest("mysql")}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="主机" value={mysql.host} onChange={(e) => { setMysql({ ...mysql, host: e.target.value }); resetStatus("mysql"); }} placeholder="127.0.0.1" />
+              <Field label="端口" type="number" min={1} max={65535} value={mysql.port} onChange={(e) => { setMysql({ ...mysql, port: e.target.value }); resetStatus("mysql"); }} placeholder="3306" />
+              <Field label="用户" value={mysql.user} onChange={(e) => { setMysql({ ...mysql, user: e.target.value }); resetStatus("mysql"); }} placeholder="root" />
+              <Field label="密码" type="password" autoComplete="new-password" value={mysql.password} onChange={(e) => { setMysql({ ...mysql, password: e.target.value }); resetStatus("mysql"); }} placeholder="••••••" />
+            </div>
+            <Field className="max-w-xs" label="数据库" value={mysql.database} onChange={(e) => { setMysql({ ...mysql, database: e.target.value }); resetStatus("mysql"); }} placeholder="device_watch" />
+          </SectionCard>
 
-            {/* 完成初始化：仅测试通过后可点击（FR-002） */}
-            <Button
-              disabled={!testPassed || finishing}
-              onClick={handleFinish}
-              style={
-                testPassed && !finishing
-                  ? { background: "var(--brand)", color: "var(--brand-foreground)" }
-                  : undefined
-              }
-            >
-              {finishing ? "初始化中…" : "完成初始化"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          {/* Redis */}
+          <SectionCard
+            title="Redis"
+            subtitle="实时缓冲层，collector / writer 运行所必需"
+            status={status.redis}
+            error={errors.redis}
+            onTest={() => handleTest("redis")}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <Field label="主机" value={redis.host} onChange={(e) => { setRedis({ ...redis, host: e.target.value }); resetStatus("redis"); }} placeholder="127.0.0.1" />
+              <Field label="端口" type="number" min={1} max={65535} value={redis.port} onChange={(e) => { setRedis({ ...redis, port: e.target.value }); resetStatus("redis"); }} placeholder="6379" />
+              <Field label="密码（无则留空）" type="password" autoComplete="new-password" value={redis.password} onChange={(e) => { setRedis({ ...redis, password: e.target.value }); resetStatus("redis"); }} placeholder="••••••" />
+            </div>
+          </SectionCard>
 
-      {/* 状态区域 */}
-      <div className="w-full max-w-2xl mt-4 flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">状态：</span>
-        <Badge variant={STATUS_VARIANT[testStatus]}>{statusLabel}</Badge>
+          {/* TDengine */}
+          <SectionCard
+            title="TDengine"
+            subtitle="时序宽表库（device_data），writer 落库与后端查询所依赖"
+            status={status.tdengine}
+            error={errors.tdengine}
+            onTest={() => handleTest("tdengine")}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="主机" value={tdengine.host} onChange={(e) => { setTdengine({ ...tdengine, host: e.target.value }); resetStatus("tdengine"); }} placeholder="127.0.0.1" />
+              <Field label="端口" type="number" min={1} max={65535} value={tdengine.port} onChange={(e) => { setTdengine({ ...tdengine, port: e.target.value }); resetStatus("tdengine"); }} placeholder="6041" />
+              <Field label="用户" value={tdengine.user} onChange={(e) => { setTdengine({ ...tdengine, user: e.target.value }); resetStatus("tdengine"); }} placeholder="root" />
+              <Field label="密码" type="password" autoComplete="new-password" value={tdengine.password} onChange={(e) => { setTdengine({ ...tdengine, password: e.target.value }); resetStatus("tdengine"); }} placeholder="••••••" />
+            </div>
+            <Field className="max-w-xs" label="数据库" value={tdengine.database} onChange={(e) => { setTdengine({ ...tdengine, database: e.target.value }); resetStatus("tdengine"); }} placeholder="device_data" />
+          </SectionCard>
+        </div>
+
+        {/* 底部操作 */}
+        <div className="mt-8 flex items-center justify-between gap-4 border-t border-border pt-5">
+          <p className="text-sm text-muted-foreground">
+            {allPassed ? "四项连接已全部通过，可完成初始化" : "需四项全部测试通过后才能完成初始化"}
+          </p>
+          <Button
+            className="shrink-0"
+            disabled={!allPassed || finishing}
+            onClick={handleFinish}
+            style={
+              allPassed && !finishing
+                ? { background: "var(--brand)", color: "var(--brand-foreground)" }
+                : undefined
+            }
+          >
+            {finishing ? "完成中…" : "完成初始化"}
+          </Button>
+        </div>
       </div>
     </div>
   );

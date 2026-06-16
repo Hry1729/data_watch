@@ -13,12 +13,42 @@ export function setAgentAuthToken(token: string | null) {
   currentAgentToken = token;
 }
 
+// ─── 引导页载荷类型 ───────────────────────────────────────────────────────────
+
+export type BootstrapTarget = "backend" | "mysql" | "redis" | "tdengine";
+
+export interface BootstrapDbInput {
+  host: string;
+  port: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}
+
+export interface BootstrapConfigPayload {
+  backend?: { base_url: string };
+  mysql?: BootstrapDbInput;
+  redis?: BootstrapDbInput;
+  tdengine?: BootstrapDbInput;
+}
+
+export interface BootstrapTestPayload {
+  target: BootstrapTarget;
+  base_url?: string;
+  host?: string;
+  port?: number;
+  user?: string;
+  password?: string;
+  database?: string;
+}
+
 // ─── 接口 ─────────────────────────────────────────────────────────────────────
 
 export interface AgentClient {
   getBootstrapStatus():    Promise<{ in_bootstrap: boolean }>;
-  putBootstrapConfig(cfg: Omit<DbConfig, "password"> & { password: string }): Promise<void>;
-  postBootstrapTestConnection(target: "mysql"): Promise<{ success: boolean; message?: string }>;
+  getRuntimeConfig():      Promise<{ backend_base_url: string }>;
+  putBootstrapConfig(cfg: BootstrapConfigPayload): Promise<void>;
+  postBootstrapTestConnection(req: BootstrapTestPayload): Promise<{ success: boolean; message?: string }>;
   postBootstrapFinish():   Promise<void>;
   agentLogin(u: string, p: string): Promise<{ token: string }>;
   getViewerStatus():       Promise<{ agent: string }>;
@@ -103,12 +133,15 @@ function makeRealAgent(): AgentClient {
     getBootstrapStatus: () =>
       agentFetch<{ in_bootstrap: boolean }>("GET", "/bootstrap/status"),
 
+    getRuntimeConfig: () =>
+      agentFetch<{ backend_base_url: string }>("GET", "/bootstrap/runtime-config"),
+
     putBootstrapConfig: (cfg) =>
       agentFetch<void>("PUT", "/bootstrap/config", cfg),
 
-    postBootstrapTestConnection: (target) =>
+    postBootstrapTestConnection: (req) =>
       agentFetch<{ success: boolean; message?: string }>(
-        "POST", "/bootstrap/test-connection", { target }
+        "POST", "/bootstrap/test-connection", req
       ),
 
     postBootstrapFinish: () =>
@@ -173,8 +206,9 @@ async function via<T>(fn: (c: AgentClient) => Promise<T>): Promise<T> {
 
 export const agentClient: AgentClient = {
   getBootstrapStatus:          ()        => via((c) => c.getBootstrapStatus()),
+  getRuntimeConfig:            ()        => via((c) => c.getRuntimeConfig()),
   putBootstrapConfig:          (cfg)     => via((c) => c.putBootstrapConfig(cfg)),
-  postBootstrapTestConnection: (target)  => via((c) => c.postBootstrapTestConnection(target)),
+  postBootstrapTestConnection: (req)     => via((c) => c.postBootstrapTestConnection(req)),
   postBootstrapFinish:         ()        => via((c) => c.postBootstrapFinish()),
   agentLogin:                  (u, p)    => via((c) => c.agentLogin(u, p)),
   getViewerStatus:             ()        => via((c) => c.getViewerStatus()),

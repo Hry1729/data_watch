@@ -55,12 +55,17 @@ export const mockAgent: AgentClient = {
     return { in_bootstrap: _inBootstrap };
   },
 
+  async getRuntimeConfig() {
+    await delay();
+    return { backend_base_url: "http://127.0.0.1:8000" };
+  },
+
   async putBootstrapConfig(_cfg) {
     await delay();
     // 接受配置但不做校验（Bootstrap 流程由 page 状态机控制）
   },
 
-  async postBootstrapTestConnection(_target) {
+  async postBootstrapTestConnection(_req) {
     await delay(800);
     return { success: true };
   },

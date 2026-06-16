@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import type {
   AppError,
   CollectorModuleMetrics,
@@ -36,6 +37,16 @@ export interface BackendClient {
   moduleRates(token: string): Promise<ModuleRates>;
 }
 
+// ─── 运行期后端地址 ───────────────────────────────────────────────────────────
+// 不再依赖打包时的 VITE_BACKEND_URL；app 启动时经 Agent /bootstrap/runtime-config
+// 读取后端地址并注入。这样同一安装包可用于不同目标机，无需重新打包。
+
+let _backendBaseUrl = "";
+
+export function setBackendBaseUrl(url: string) {
+  _backendBaseUrl = (url || "").replace(/\/+$/, ""); // 去尾部斜杠，避免双斜杠
+}
+
 // ─── fetch 封装（realBackend 专用）───────────────────────────────────────────
 
 async function backendFetch<T>(
@@ -44,18 +55,24 @@ async function backendFetch<T>(
   body?: object,
   token?: string
 ): Promise<T> {
-  const url = `${import.meta.env.VITE_BACKEND_URL}${path}`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  // backend 登录返回的 token 已带 "Bearer " 前缀，规范化避免出现 "Bearer Bearer ..."
-  if (token) {
-    headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  if (!_backendBaseUrl) {
+    // 地址未就绪（运行期配置尚未注入或引导未完成）
+    throw { type: "network_error", message: "后端地址未配置" } satisfies AppError;
   }
-  let resp: Response;
+  // backend 登录返回的 token 已带 "Bearer " 前缀，规范化避免出现 "Bearer Bearer ..."
+  const authorization = token
+    ? (token.startsWith("Bearer ") ? token : `Bearer ${token}`)
+    : undefined;
+
+  let result: [number, string];
   try {
-    resp = await fetch(url, {
+    // 经 Tauri Rust 转发，桌面 app 不再受浏览器 CORS 限制。
+    result = await invoke<[number, string]>("backend_request", {
+      baseUrl: _backendBaseUrl,
       method,
-      headers,
+      path,
       body: body ? JSON.stringify(body) : undefined,
+      authorization,
     });
   } catch {
     throw {
@@ -63,15 +80,16 @@ async function backendFetch<T>(
       message: "无法连接到后端服务",
     } satisfies AppError;
   }
-  if (resp.status === 401) throw { type: "unauthorized" } satisfies AppError;
-  if (resp.status >= 500)
+  const [status, text] = result;
+  if (status === 401) throw { type: "unauthorized" } satisfies AppError;
+  if (status >= 500)
     throw {
       type: "api_error",
-      status: resp.status,
+      status,
       message: "后端服务异常",
     } satisfies AppError;
 
-  const json = await resp.json();
+  const json = JSON.parse(text);
   return json.data as T; // 后端统一格式：{ code, msg, data }
 }
 
