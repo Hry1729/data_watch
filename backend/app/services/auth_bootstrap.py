@@ -235,7 +235,7 @@ MENU_SEEDS = [
         title_key="menus.system.title",
         icon="ri:user-3-line",
         menu_type="directory",
-        sort=90,
+        sort=20,
         children=[
             MenuSeed(
                 name="User",
