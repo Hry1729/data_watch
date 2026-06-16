@@ -146,6 +146,9 @@ def _default_config() -> dict:
             "database": "device_data",
             "password_enc": "",
         },
+        # 后端地址运行期可配（引导页录入），不再打包进 app 前端；app 启动时经
+        # GET /bootstrap/runtime-config 读取。base_url 无密码，明文存储。
+        "backend": {"base_url": "http://127.0.0.1:8000"},
         "collector": {"executable": "", "args": [], "working_dir": ""},
         "writer": {"executable": "", "args": [], "working_dir": ""},
     }

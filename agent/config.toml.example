@@ -30,5 +30,8 @@ user               = "root"
 database           = "device_data"
 password_enc       = ""            # DPAPI 加密后的 base64
 
+[backend]
+base_url           = "http://127.0.0.1:8000"   # Console 后端地址，引导页录入（无密码，明文存储）
+
 # collector / writer 进程路径由安装根(DATAWATCH_INSTALL_ROOT)与数据根(DATAWATCH_DATA_ROOT)
 # 自动派生，不在 config.toml 中配置。

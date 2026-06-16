@@ -11,16 +11,42 @@ class BootstrapStatusResponse(BaseModel):
     in_bootstrap: bool
 
 
-class BootstrapConfigRequest(BaseModel):
+class RuntimeConfigResponse(BaseModel):
+    """app 启动/登录前读取的运行期配置（无敏感字段）。"""
+    backend_base_url: str
+
+
+# 引导页四块配置：backend(仅 base_url) + mysql/redis/tdengine(连接 + 密码明文，
+# Agent 收到后 DPAPI 加密存 password_enc)。各段可选，便于分块提交。
+class BootstrapBackendIn(BaseModel):
+    base_url: str = Field(min_length=1)
+
+
+class BootstrapDbIn(BaseModel):
     host: str
     port: int = Field(ge=1, le=65535)
-    user: str
-    password: str = Field(min_length=1)
-    database: str
+    user: str | None = None
+    password: str | None = None
+    database: str | None = None
 
 
+class BootstrapConfigRequest(BaseModel):
+    backend: BootstrapBackendIn | None = None
+    mysql: BootstrapDbIn | None = None
+    redis: BootstrapDbIn | None = None
+    tdengine: BootstrapDbIn | None = None
+
+
+# 引导期连通性测试：内联传入待测配置，无需先保存。backend 用 base_url；
+# mysql/redis/tdengine 用 host/port/user/password/database。
 class TestConnectionRequest(BaseModel, extra="forbid"):
-    target: Literal["mysql"]
+    target: Literal["backend", "mysql", "redis", "tdengine"]
+    base_url: str | None = None
+    host: str | None = None
+    port: int | None = None
+    user: str | None = None
+    password: str | None = None
+    database: str | None = None
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

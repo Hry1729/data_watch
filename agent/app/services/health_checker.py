@@ -20,6 +20,21 @@ def _decrypt_password(config: Mapping[str, Any]) -> str:
     return dpapi_decrypt(str(config.get("password_enc") or ""))
 
 
+def check_backend(base_url: str) -> HealthCheckResponse:
+    """探测后端可达性：GET {base_url}/healthz 返回 200 即视为连通。"""
+    url = (base_url or "").rstrip("/")
+    if not url:
+        return HealthCheckResponse(success=False, message="Backend base_url is empty")
+    try:
+        request = urllib.request.Request(url=f"{url}/healthz", method="GET")
+        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+            if response.getcode() == 200:
+                return HealthCheckResponse(success=True)
+            return HealthCheckResponse(success=False, message="Backend health check failed")
+    except Exception:
+        return HealthCheckResponse(success=False, message="Backend health check failed")
+
+
 def check_redis(config: Mapping[str, Any]) -> HealthCheckResponse:
     client = None
     try:
