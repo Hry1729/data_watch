@@ -10,8 +10,9 @@ from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.log_writer import write_system_log
 from app.core.time_utils import now_local
-from app.core.security import create_signed_token, decode_signed_token, verify_password
+from app.core.security import create_signed_token, decode_signed_token, hash_password, verify_password
 from app.models import SysPermission, SysRole, SysRolePermission, SysUser, SysUserRole
+from app.schemas.auth import ChangePasswordPayload
 
 
 class AuthService:
@@ -119,6 +120,38 @@ class AuthService:
             "roles": principal["roles"],
             "buttons": buttons,
         }
+
+    async def change_password(self, authorization: str | None, payload: ChangePasswordPayload) -> bool:
+        principal = await self.resolve_principal(authorization)
+        user = await self._fetch_user_by_id(principal["user_id"])
+        if user is None or user.deleted:
+            raise ApiError(401, "当前登录状态无效")
+
+        if not verify_password(payload.old_password, user.password_hash):
+            await write_system_log(
+                level="WARN",
+                log_type="auth",
+                source="backend.change_password",
+                content=f"修改密码失败: 当前密码错误 [{user.user_name}]",
+                detail={"user_id": user.id, "user_name": user.user_name, "reason": "wrong_old_password"},
+            )
+            raise ApiError(400, "当前密码不正确")
+
+        if verify_password(payload.new_password, user.password_hash):
+            raise ApiError(400, "新密码不能与当前密码相同")
+
+        user.password_hash = hash_password(payload.new_password)
+        user.update_by = user.user_name
+        await self.session.commit()
+
+        await write_system_log(
+            level="INFO",
+            log_type="auth",
+            source="backend.change_password",
+            content=f"修改密码成功: {user.user_name}",
+            detail={"user_id": user.id, "user_name": user.user_name},
+        )
+        return True
 
     async def resolve_principal(self, authorization: str | None) -> dict[str, Any]:
         if authorization is None:

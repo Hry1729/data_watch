@@ -1,12 +1,14 @@
 ﻿from __future__ import annotations
 
+from typing import Any
+
 from turboapi import APIRouter, Depends
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.log_writer import write_system_log
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
-from app.schemas.auth import LoginPayload
+from app.schemas.auth import ChangePasswordPayload, LoginPayload
 from app.services.auth import AuthService
 
 
@@ -80,6 +82,22 @@ async def user_info(
     async with session_factory() as session:
         service = AuthService(session)
         data = await service.get_user_info(_authorization_from_credentials(credentials))
+        return success_response(data=data)
+
+
+@router.post("/api/user/password/change")
+async def change_password(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    change_payload = ChangePasswordPayload.from_dict(payload)
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = AuthService(session)
+        data = await service.change_password(
+            _authorization_from_credentials(credentials),
+            change_payload,
+        )
         return success_response(data=data)
 
 

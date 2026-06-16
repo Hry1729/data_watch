@@ -27,3 +27,14 @@ export function fetchGetUserInfo() {
     // }
   })
 }
+
+/**
+ * 修改当前登录用户的密码
+ * @param data 旧密码与新密码
+ */
+export function fetchChangePassword(data: { oldPassword: string; newPassword: string }) {
+  return request.post<boolean>({
+    url: '/api/user/password/change',
+    data
+  })
+}

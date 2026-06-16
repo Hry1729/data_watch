@@ -81,6 +81,22 @@ class PasswordResetPayload:
 
 
 @dataclass(slots=True)
+class ChangePasswordPayload:
+    old_password: str
+    new_password: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ChangePasswordPayload":
+        old_password = str(payload.get("oldPassword") or payload.get("old_password") or "").strip()
+        new_password = str(payload.get("newPassword") or payload.get("new_password") or "").strip()
+        if not old_password or not new_password:
+            raise ApiError(400, "当前密码与新密码均为必填")
+        if len(new_password) < 6:
+            raise ApiError(400, "新密码长度至少 6 位")
+        return cls(old_password=old_password, new_password=new_password)
+
+
+@dataclass(slots=True)
 class RolePayload:
     role_name: str
     role_code: str

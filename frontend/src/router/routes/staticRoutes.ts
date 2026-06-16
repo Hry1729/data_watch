@@ -43,6 +43,22 @@ export const staticRoutes: AppRouteRecordRaw[] = [
     meta: { title: '403', isHideTab: true }
   },
   {
+    // 个人中心：后端菜单模式下它不是菜单项，需作为常驻路由注册，否则 404。
+    // 用 index/index 作为 layout 外壳，子路由渲染页面，保持 URL 为 /system/user-center。
+    path: '/system/user-center',
+    component: () => import('@views/index/index.vue'),
+    name: 'UserCenterLayout',
+    meta: { title: 'menus.system.userCenter', isHide: true, isHideTab: true },
+    children: [
+      {
+        path: '',
+        name: 'UserCenter',
+        component: () => import('@views/system/user-center/index.vue'),
+        meta: { title: 'menus.system.userCenter', keepAlive: true, isHideTab: true }
+      }
+    ]
+  },
+  {
     path: '/:pathMatch(.*)*',
     // 名字不能叫 Exception404：后端菜单里有同名动态子路由 /exception/404，
     // 动态注册时同名会覆盖并移除本静态 catch-all，登出后无法恢复（详见路由告警排查）。
