@@ -590,17 +590,19 @@
       --card-bg: #d18b2f;
       --card-text: #fff;
     }
-    /* 未启用：背景色 + 细边框（亮色模式深色细边，才看得见） */
+    /* 未启用：浅灰实心块（accent=bg，无可见边框，与在线/离线同机制） */
     &.status-disabled {
-      --card-accent: rgba(0, 0, 0, 0.18);
-      --card-bg: var(--default-box-color);
-      --card-text: var(--el-text-color-secondary);
+      --card-accent: #d4d9e0;
+      --card-bg: #d4d9e0;
+      --card-text: #69707d;
     }
   }
 
-  /* 未启用块：暗色模式背景同为深色，边框改用浅色才看得见 */
+  /* 未启用块：暗色模式用哑光深灰实心，沉下去表示不活跃 */
   :global(html.dark .device-card.status-disabled) {
-    --card-accent: rgba(255, 255, 255, 0.22);
+    --card-accent: #3a414c;
+    --card-bg: #3a414c;
+    --card-text: rgba(255, 255, 255, 0.5);
   }
 
   .device-code {
