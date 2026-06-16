@@ -135,6 +135,8 @@
   import ArtTextScroll from '@/components/core/text-effect/art-text-scroll/index.vue'
   import ArtHBarChart from '@/components/core/charts/art-h-bar-chart/index.vue'
   import ArtRingChart from '@/components/core/charts/art-ring-chart/index.vue'
+  import { useChart } from '@/hooks/core/useChart'
+  import { graphic, type EChartsOption } from '@/plugins/echarts'
   import {
     fetchDashboardDeviceConnectionHealth,
     fetchDashboardDeviceTypeDistribution,
@@ -195,12 +197,11 @@
   const deviceTypeLoading = ref(false)
   const healthLoading = ref(false)
 
-  const trendChartRef = ref<HTMLElement>()
+  const {
+    chartRef: trendChartRef,
+    updateChart: updateTrendChart
+  } = useChart()
 
-  type EChartsInstance = import('echarts').ECharts
-
-  let echartsModulePromise: Promise<typeof import('echarts')> | null = null
-  let trendChart: EChartsInstance | null = null
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   let dashboardLoadingPromise: Promise<void> | null = null
   let lastDashboardLoadedAt = 0
@@ -242,14 +243,6 @@
       { name: '离线', data: offlineData, stack: 'total' }
     ]
   })
-
-  const loadEcharts = () => {
-    if (!echartsModulePromise) {
-      echartsModulePromise = import('echarts')
-    }
-
-    return echartsModulePromise
-  }
 
   const statCards = computed(() => {
     const alertTrendPrefix = systemAlertCompare.value.countDiff > 0 ? '+' : ''
@@ -366,14 +359,6 @@
     }
   }
 
-  const ensureChart = async (target: HTMLElement | undefined, chart: EChartsInstance | null) => {
-    if (!target) return null
-    if (chart) return chart
-
-    const echarts = await loadEcharts()
-    return echarts.init(target)
-  }
-
   const loadTrend = async () => {
     const trend = await fetchDashboardTrend({
         rangeType: trendRangeType.value,
@@ -381,17 +366,14 @@
       })
 
       trendSummary.value = trend.summary
-      trendChart = await ensureChart(trendChartRef.value, trendChart)
-      if (!trendChart) return
 
-      const echarts = await loadEcharts()
       const metricColorMap: Record<string, string> = {
         collectCount: '#4A6CF7',
         alarmCount: '#D66B88',
         onlineRate: '#3DBB9A'
       }
 
-      trendChart.setOption({
+      const trendOptions: EChartsOption = {
         color: ['#4A6CF7', '#D66B88', '#3DBB9A'],
         tooltip: { trigger: 'axis' },
         legend: {
@@ -447,14 +429,16 @@
           areaStyle:
             item.metricKey === 'collectCount'
               ? {
-                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                  color: new graphic.LinearGradient(0, 0, 0, 1, [
                     { offset: 0, color: 'rgba(74, 108, 247, 0.22)' },
                     { offset: 1, color: 'rgba(74, 108, 247, 0.02)' }
                   ])
                 }
               : undefined
         }))
-      })
+      }
+
+      updateTrendChart(trendOptions)
   }
 
   const loadDeviceTypeDistribution = async () => {
@@ -557,10 +541,6 @@
     refreshTimer = null
   }
 
-  const resizeCharts = () => {
-    trendChart?.resize()
-  }
-
   const goToDevice = () => router.push('/device-monitor/device')
 
   // 重置数据状态，用于触发动画效果
@@ -579,19 +559,14 @@
     lastDashboardLoadedAt = 0 // 重置时间戳，确保会加载数据
     void loadDashboard()
     startRefreshTimer()
-    window.addEventListener('resize', resizeCharts)
   })
 
   onDeactivated(() => {
     stopRefreshTimer()
-    window.removeEventListener('resize', resizeCharts)
   })
 
   onUnmounted(() => {
     stopRefreshTimer()
-    window.removeEventListener('resize', resizeCharts)
-    trendChart?.dispose()
-    trendChart = null
   })
 </script>
 
