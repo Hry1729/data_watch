@@ -53,6 +53,18 @@ def normalize_protocol(value: str) -> str:
     return (value or "").strip().lower()
 
 
+def normalize_endpoint(endpoint: str) -> str:
+    """端点归一，须与 collector EndpointPortMapper.get_port 完全一致：
+    空值/回环（127.0.0.1、localhost）统一为 "localhost"，否则去空白。
+
+    两侧 key 不一致会导致代理端口映射错位（check_protocols 用原始字符串建表、
+    get_port 把回环归一成 localhost，回环场景下查不到而另分配端口 → 连不上代理）。
+    """
+    if not endpoint or endpoint in ("127.0.0.1", "localhost"):
+        return "localhost"
+    return endpoint.strip()
+
+
 def load_toml_file(path: str) -> dict:
     """Load TOML without requiring the third-party toml package on Python 3.11+."""
     try:
@@ -131,11 +143,15 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
 
                 if protocol_lower in CENTER_PROTOCOLS:
                     result["has_center"] = True
-                    if endpoint and endpoint not in center_seen:
-                        center_seen.add(endpoint)
-                        result["center_collection"].append(endpoint)
-                        result["port_mapping"][endpoint] = port_counter
-                        port_counter += 1
+                    if endpoint:
+                        # 端点 key 必须与 collector get_port 的归一规则一致，否则
+                        # 回环地址会错位到未监听的端口（见 normalize_endpoint 说明）。
+                        normalized = normalize_endpoint(endpoint)
+                        if normalized not in center_seen:
+                            center_seen.add(normalized)
+                            result["center_collection"].append(normalized)
+                            result["port_mapping"][normalized] = port_counter
+                            port_counter += 1
 
                 elif protocol_lower in SIDECAR_PROTOCOLS:
                     result["has_sidecar"] = True

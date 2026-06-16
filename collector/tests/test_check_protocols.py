@@ -68,3 +68,31 @@ async def test_duplicate_endpoint_within_same_class_still_deduped(monkeypatch):
 
     assert result["center_collection"] == ["172.27.18.221"]
     assert list(result["port_mapping"].keys()) == ["172.27.18.221"]
+
+
+@pytest.mark.asyncio
+async def test_loopback_endpoint_normalized_to_localhost(monkeypatch):
+    """回环端点 127.0.0.1 必须归一为 localhost，与 collector get_port 一致，
+    否则代理端口映射 key 错位导致连不上代理。"""
+    rows = [("DEV_C", "127.0.0.1", "opcda_center")]
+    _patch_db(monkeypatch, rows)
+
+    result = await cp.check_protocols(_MYSQL)
+
+    assert result["center_collection"] == ["localhost"]
+    assert list(result["port_mapping"].keys()) == ["localhost"]
+
+
+@pytest.mark.asyncio
+async def test_loopback_aliases_dedupe_to_single_port(monkeypatch):
+    """127.0.0.1 与 localhost 归一后视为同一端点，只收一次、只分一个端口。"""
+    rows = [
+        ("DEV_C1", "127.0.0.1", "opcda_center"),
+        ("DEV_C2", "localhost", "opcda_center"),
+    ]
+    _patch_db(monkeypatch, rows)
+
+    result = await cp.check_protocols(_MYSQL)
+
+    assert result["center_collection"] == ["localhost"]
+    assert list(result["port_mapping"].keys()) == ["localhost"]
