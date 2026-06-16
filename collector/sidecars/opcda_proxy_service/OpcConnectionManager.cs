@@ -221,7 +221,6 @@ namespace OpcDaProxyService
 
             // 创建临时组读取数据
             GroupContext group = CreateTempGroup(itemIds);
-            System.Threading.Thread.Sleep(1000);
             if (group == null)
             {
                 return results;
@@ -266,7 +265,7 @@ namespace OpcDaProxyService
 
                 try
                 {
-                    int hr = group.SyncIO.Read(OPCDATASOURCE.OPC_DS_CACHE, serverHandles.Length, serverHandles, out statesPtr, out errorsPtr);
+                    int hr = group.SyncIO.Read(OPCDATASOURCE.OPC_DS_DEVICE, serverHandles.Length, serverHandles, out statesPtr, out errorsPtr);
                     if (hr < 0)
                     {
                         throw new COMException("IOPCSyncIO.Read failed", hr);
@@ -287,11 +286,20 @@ namespace OpcDaProxyService
 
                             ushort quality = (ushort)state.wQuality;
                             object value = ConvertJsonValue(state.vDataValue);
-                            Program.Log(
+                            string readMessage =
                                 "Read item=" + readableBindings[i].ItemId +
                                 " error=0x" + itemError.ToString("X8") +
                                 " quality=0x" + quality.ToString("X4") +
-                                " value=" + (value == null ? "<null>" : value.ToString()));
+                                " value=" + (value == null ? "<null>" : value.ToString());
+                            // 质量好（0xC0）→ DEBUG；坏质量始终可见但按点位限流。
+                            if (quality == 0x00C0)
+                            {
+                                Program.LogDebug(readMessage);
+                            }
+                            else
+                            {
+                                Program.LogWarnThrottled(readableBindings[i].ItemId, readMessage);
+                            }
                             result["value"] = value;
                             result["quality"] = quality;
                             result["timestamp"] = FileTimeToIsoString(state.ftTimeStamp, now);
@@ -300,7 +308,8 @@ namespace OpcDaProxyService
                         }
                         else
                         {
-                            Program.LogWarn(
+                            Program.LogWarnThrottled(
+                                readableBindings[i].ItemId,
                                 "Read item=" + readableBindings[i].ItemId +
                                 " error=0x" + itemError.ToString("X8"));
                             result["value"] = null;
@@ -397,11 +406,11 @@ namespace OpcDaProxyService
                     string addMessage = "AddItems item=" + itemIds[i] + " error=0x" + itemError.ToString("X8") + " handle=" + result.hServer;
                     if (itemError >= 0)
                     {
-                        Program.Log(addMessage);
+                        Program.LogDebug(addMessage);
                     }
                     else
                     {
-                        Program.LogWarn(addMessage);
+                        Program.LogWarnThrottled(itemIds[i], addMessage);
                     }
 
                     ItemBinding binding = new ItemBinding();

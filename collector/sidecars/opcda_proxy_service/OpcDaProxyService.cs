@@ -32,6 +32,17 @@ namespace OpcDaProxyService
         // 默认最大并发连接数
         private const int DEFAULT_MAX_CONNECTIONS = 20;
 
+        // 日志分级与读取统计
+        private static bool _debugEnabled;
+        private static int _summaryIntervalSec = 10;
+        private const int WARN_THROTTLE_MS = 5000;  // 同一 key 的 WARN 最多每 5 秒打一次
+        private static long _statCycles;
+        private static long _statItems;
+        private static long _statGood;
+        private static long _statBad;
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _lastWarnTicks =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+
         public static bool IsStopping { get { return _stopping; } }
 
         [STAThread]
@@ -55,8 +66,11 @@ namespace OpcDaProxyService
                 };
 
                 _config = ProxyConfig.Load(configPath);
+                _debugEnabled = ResolveDebugEnabled(_config);
+                _summaryIntervalSec = _config.LogSummaryIntervalSec > 0 ? _config.LogSummaryIntervalSec : 10;
                 Log("Starting OPC DA Proxy Service on port " + _config.ListenPort);
                 Log("Configured OPC servers: " + _config.OpcServers.Count);
+                Log("Log level: " + (_debugEnabled ? "DEBUG" : "INFO") + ", summary interval: " + _summaryIntervalSec + "s");
 
                 StartListener();
 
@@ -110,6 +124,8 @@ namespace OpcDaProxyService
             _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
             _listener.Start();
             Log("Listening on 0.0.0.0:" + _config.ListenPort);
+
+            StartSummaryLogger();
 
             while (!_stopping)
             {
@@ -412,8 +428,26 @@ namespace OpcDaProxyService
                 ? Convert.ToString(payload["vm_host"])
                 : null;
 
-            Log("HandleReadItems begin: count=" + itemIds.Count + ", opc_server=" + opcServer + ", vm_host=" + vmHost + ", first_item=" + itemIds[0]);
+            LogDebug("HandleReadItems begin: count=" + itemIds.Count + ", opc_server=" + opcServer + ", vm_host=" + vmHost + ", first_item=" + itemIds[0]);
             List<Dictionary<string, object>> results = connectionManager.ReadItems(itemIds, opcServer, vmHost);
+
+            // 聚合统计：good = quality 0xC0，其余计 bad（含坏质量/读取失败/加点失败）。
+            int good = 0;
+            int bad = 0;
+            foreach (Dictionary<string, object> r in results)
+            {
+                object q;
+                if (r.TryGetValue("quality", out q) && Convert.ToInt32(q) == 0x00C0)
+                {
+                    good++;
+                }
+                else
+                {
+                    bad++;
+                }
+            }
+            RecordRead(results.Count, good, bad);
+
             if (results.Count > 0)
             {
                 Dictionary<string, object> first = results[0];
@@ -421,9 +455,9 @@ namespace OpcDaProxyService
                 object resultQuality = first.ContainsKey("quality") ? first["quality"] : "<missing>";
                 object resultValue = first.ContainsKey("value") ? first["value"] : "<missing>";
                 object resultError = first.ContainsKey("error") ? first["error"] : "";
-                Log("HandleReadItems first_result: item_id=" + resultItemId + ", quality=" + resultQuality + ", value=" + (resultValue == null ? "<null>" : resultValue.ToString()) + ", error=" + resultError);
+                LogDebug("HandleReadItems first_result: item_id=" + resultItemId + ", quality=" + resultQuality + ", value=" + (resultValue == null ? "<null>" : resultValue.ToString()) + ", error=" + resultError);
             }
-            Log("HandleReadItems end: result_count=" + results.Count);
+            LogDebug("HandleReadItems end: result_count=" + results.Count);
             return IpcResponse.Ok(request.RequestId, results);
         }
 
@@ -440,6 +474,74 @@ namespace OpcDaProxyService
         internal static void LogWarn(string message)
         {
             Console.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture) + " [WARN] " + message);
+        }
+
+        internal static void LogDebug(string message)
+        {
+            if (!_debugEnabled) return;
+            Console.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture) + " [DEBUG] " + message);
+        }
+
+        /// <summary>
+        /// 限流 WARN：同一 key（通常是 item_id）在 WARN_THROTTLE_MS 内最多打印一次，
+        /// 避免某点位持续坏质量/加点失败时刷屏。
+        /// </summary>
+        internal static void LogWarnThrottled(string key, string message)
+        {
+            long now = Environment.TickCount;
+            long last;
+            if (_lastWarnTicks.TryGetValue(key, out last) && unchecked((int)(now - last)) < WARN_THROTTLE_MS)
+            {
+                return;
+            }
+            _lastWarnTicks[key] = now;
+            LogWarn(message);
+        }
+
+        /// <summary>累加一轮读取统计（线程安全）。</summary>
+        internal static void RecordRead(int items, int good, int bad)
+        {
+            Interlocked.Increment(ref _statCycles);
+            Interlocked.Add(ref _statItems, items);
+            Interlocked.Add(ref _statGood, good);
+            Interlocked.Add(ref _statBad, bad);
+        }
+
+        private static bool ResolveDebugEnabled(ProxyConfig config)
+        {
+            // 环境变量 OPCDA_PROXY_LOG_LEVEL 优先于配置文件 logLevel。
+            string level = Environment.GetEnvironmentVariable("OPCDA_PROXY_LOG_LEVEL");
+            if (string.IsNullOrEmpty(level))
+            {
+                level = config.LogLevel;
+            }
+            return string.Equals(level, "DEBUG", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void StartSummaryLogger()
+        {
+            // DEBUG 下逐点已全量打印，无需聚合统计。
+            if (_debugEnabled) return;
+            Thread t = new Thread(SummaryLoop);
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        private static void SummaryLoop()
+        {
+            while (!_stopping)
+            {
+                Thread.Sleep(_summaryIntervalSec * 1000);
+                long cycles = Interlocked.Exchange(ref _statCycles, 0);
+                long items = Interlocked.Exchange(ref _statItems, 0);
+                long good = Interlocked.Exchange(ref _statGood, 0);
+                long bad = Interlocked.Exchange(ref _statBad, 0);
+                if (cycles > 0)
+                {
+                    Log("Read summary (" + _summaryIntervalSec + "s): cycles=" + cycles +
+                        " items=" + items + " good=" + good + " bad=" + bad);
+                }
+            }
         }
     }
 
@@ -530,6 +632,8 @@ namespace OpcDaProxyService
         public int UpdateRateMs { get; set; }
         public int ConnectionTimeoutMs { get; set; }
         public int MaxConnections { get; set; }  // 最大并发连接数
+        public string LogLevel { get; set; }  // INFO（默认，简略）/ DEBUG（逐点全量）
+        public int LogSummaryIntervalSec { get; set; }  // 非 DEBUG 下聚合统计打印间隔（秒）
 
         public static ProxyConfig Load(string path)
         {
@@ -546,6 +650,8 @@ namespace OpcDaProxyService
             config.UpdateRateMs = dict.ContainsKey("updateRateMs") ? Convert.ToInt32(dict["updateRateMs"]) : 500;
             config.ConnectionTimeoutMs = dict.ContainsKey("connectionTimeoutMs") ? Convert.ToInt32(dict["connectionTimeoutMs"]) : 10000;
             config.MaxConnections = dict.ContainsKey("maxConnections") ? Convert.ToInt32(dict["maxConnections"]) : 20;
+            config.LogLevel = dict.ContainsKey("logLevel") ? Convert.ToString(dict["logLevel"]) : "INFO";
+            config.LogSummaryIntervalSec = dict.ContainsKey("logSummaryIntervalSec") ? Convert.ToInt32(dict["logSummaryIntervalSec"]) : 10;
 
             config.OpcServers = new List<OpcServerConfig>();
             ArrayList servers = dict.ContainsKey("opcServers") ? dict["opcServers"] as ArrayList : null;
