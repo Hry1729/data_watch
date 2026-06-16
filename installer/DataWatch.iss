@@ -24,6 +24,10 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#MyAppName}
+; 安装包(Setup.exe)自身图标用 Tauri 的自定义图标，替换 Inno 默认图标
+SetupIconFile={#SrcRoot}\app\src-tauri\icons\icon.ico
+; 「添加/删除程序」卸载项图标用装好的 app.exe(已内嵌同一图标)
+UninstallDisplayIcon={app}\app\app.exe
 
 [Languages]
 Name: "default"; MessagesFile: "compiler:Default.isl"
@@ -148,12 +152,30 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var rc: Integer;
+var rc: Integer; data: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // 停止并删除服务；ProgramData 下的数据/配置保留，不随卸载删除
+    // 先停止并删除服务，释放 ProgramData 下日志/pid/state 等文件占用
     Exec(ExpandConstant('{app}\tools\nssm.exe'), 'stop {#MyServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
     Exec(ExpandConstant('{app}\tools\nssm.exe'), 'remove {#MyServiceName} confirm', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    // 兜底清理受管子进程。正常情况下停 Agent 服务即可；这里 best-effort，忽略返回码。
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM data-watch-collector.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM data-watch-writer.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM OpcDaProxyService.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  end
+  else if CurUninstallStep = usPostUninstall then
+  begin
+    data := ExpandConstant('{commonappdata}\DataWatch');
+    if DirExists(data) then
+    begin
+      if UninstallSilent() or
+         (MsgBox('是否同时删除配置与运行数据？' + #13#10#13#10 +
+                 data + #13#10#13#10 +
+                 '选「是」彻底清理（重装将重新进入初始化向导）；' + #13#10 +
+                 '选「否」保留配置（重装后沿用旧配置）。',
+                 mbConfirmation, MB_YESNO) = IDYES) then
+        DelTree(data, True, True, True);
+    end;
   end;
 end;
