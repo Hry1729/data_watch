@@ -57,6 +57,10 @@ deploy/backend.env
 collector/config/settings.toml
 writer/config/settings.toml
 
+# 运行期状态（Agent/proxy 运行时生成，含环境相关 IP/端口）
+collector/port_mapping.json
+collector/sidecars/opcda_proxy_service/runtime/
+
 # 数据导出
 backend/exports/
 
