@@ -46,6 +46,7 @@ collector/sidecars/*/logs/
 # 临时文件（Claude Code 调试产物）
 .tmp_*
 backend/.tmp_*
+backend/.pip-temp/
 
 # 本地配置（含密码，不进版本库）
 # agent/config.toml 含 jwt_secret + DPAPI 加密密码，有 config.toml.example 作为模板
@@ -61,6 +62,9 @@ writer/config/settings.toml
 # 运行期状态（Agent/proxy 运行时生成，含环境相关 IP/端口）
 collector/port_mapping.json
 collector/sidecars/opcda_proxy_service/runtime/
+
+# sidecar 编译产物（由各自 build.ps1 用 csc.exe 重建，bin/*.json 配置仍跟踪）
+collector/sidecars/*/bin/*.exe
 
 # 数据导出
 backend/exports/

@@ -119,6 +119,8 @@ LastWriteTime : 2026/6/9 13:06:47
 
 版本号取自 `DataWatch.iss` 的 `#define MyAppVersion`，改版本只改 `.iss` 一处，`build.ps1` 自动跟随。
 
+> **sidecar exe 不入库**：各 sidecar 的 `bin\*.exe`（`OpcDaProxyService.exe`、`OpcDaPushService.exe`、`OpcDaProbe.exe`）是 `build.ps1`（csc，net48/x86）现编译的产物，已从版本库移除。一键打包的 `[5/6]` 阶段会自动重建 proxy 的 exe，主线发版无需手工准备。但 `opcda_push_service` / `opcda_sidecar` 是开发/压测工具、安装包不含——**新克隆仓库后若要单独使用，需先 `cd` 进对应目录跑 `.\build.ps1` 编译**（依赖 .NET Framework 4.x Developer Pack 的 `csc.exe`）。
+
 ### 3.2 一次性前置条件
 
 `build.ps1` 不负责安装工具链，首次打包前需在本机准备好：
