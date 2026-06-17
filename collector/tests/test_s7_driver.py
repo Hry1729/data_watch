@@ -70,6 +70,7 @@ class BlockingS7Client(FakeS7Client):
         self.read_started = threading.Event()
         self.release_read = threading.Event()
         self.disconnect_called = threading.Event()
+        self.get_connected_called = threading.Event()
 
     def db_read(self, db_number, start, size):
         self.read_started.set()
@@ -79,6 +80,10 @@ class BlockingS7Client(FakeS7Client):
     def disconnect(self):
         self.disconnect_called.set()
         self.connected = False
+
+    def get_connected(self):
+        self.get_connected_called.set()
+        return self.connected
 
 
 def make_driver(client):
@@ -188,6 +193,32 @@ async def test_disconnect_waits_for_cancelled_read_worker():
     assert client.disconnect_called.is_set()
     assert driver._client is None
     assert driver.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_ping_waits_for_in_flight_read_worker():
+    client = BlockingS7Client()
+    driver = make_driver(client)
+
+    read_task = asyncio.create_task(
+        driver.read([ReadBlock("DB1.DBX0.0", data_type="BOOL")])
+    )
+    for _ in range(100):
+        if client.read_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert client.read_started.is_set()
+
+    ping_task = asyncio.create_task(driver.ping())
+    await asyncio.sleep(0.05)
+    assert not ping_task.done()
+    assert not client.get_connected_called.is_set()
+
+    client.release_read.set()
+    await asyncio.wait_for(read_task, timeout=1)
+
+    assert await asyncio.wait_for(ping_task, timeout=1) is True
+    assert client.get_connected_called.is_set()
 
 
 # ==================== Timer/Counter Tests ====================

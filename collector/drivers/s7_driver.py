@@ -399,18 +399,20 @@ class S7Driver(BaseDriver):
 
     async def ping(self) -> bool:
         """S7健康检查（无副作用，不调用 PLC 运行/停止类方法）。"""
-        if not self._connected or not self._client:
-            return False
-
         try:
-            get_connected = getattr(self._client, "get_connected", None)
-            if callable(get_connected):
-                loop = asyncio.get_event_loop()
-                connected = await loop.run_in_executor(None, get_connected)
-                self._connected = bool(connected)
-                return self._connected
-            return self._connected
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._ping_client)
         except Exception as exc:
             logger.warning("S7 safe ping failed: %s", exc)
             self._connected = False
             return False
+
+    def _ping_client(self) -> bool:
+        """在线程中串行检查连接，避免与读取共同操作同一 socket。"""
+        with self._client_lock:
+            if not self._connected or self._client is None:
+                return False
+            get_connected = getattr(self._client, "get_connected", None)
+            if callable(get_connected):
+                self._connected = bool(get_connected())
+            return self._connected
