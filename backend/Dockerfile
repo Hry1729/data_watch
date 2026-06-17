@@ -1,10 +1,15 @@
+FROM tdengine/tsdb-amd64:3.4.0.9 AS tdengine-client
+
 FROM data-watch-python314t:latest
 
 ENV PYTHONUTF8=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /app
+
+COPY --from=tdengine-client /usr/local/lib/libtaos.so* /usr/local/lib/
 
 COPY requirements.txt ./
 RUN python3.14t -m pip install --no-cache-dir --upgrade pip \
