@@ -8,7 +8,7 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN python3.14t -m pip install --no-cache-dir --upgrade pip \
-  && sed '/^perspective-python/d' requirements.txt > requirements-docker.txt \
+  && sed '/^perspective-python/d;/^taos-ws-py/d' requirements.txt > requirements-docker.txt \
   && python3.14t -m pip install --no-cache-dir -r requirements-docker.txt
 
 COPY . .

@@ -36,6 +36,11 @@ Runtime config:
 - Falls back to `collector/config/settings.toml` for shared defaults
 - TDengine queries currently prefer `taosws` when available and fall back to `taosrest`
 
+Docker build:
+
+- `Dockerfile` strips `perspective-python` and `taos-ws-py` from `requirements.txt` before `pip install`, because neither builds on free-threaded Python 3.14t.
+- `taospy` / `taosrest` remain installed, so inside the image TDengine access automatically uses the REST connector (`taosrest`). This is the same optional-capability degradation as `perspective-python`: functional, just without the `taosws` WebSocket connection pool.
+
 Suggested local run command:
 
 ```powershell
