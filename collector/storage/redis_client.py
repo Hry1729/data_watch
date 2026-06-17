@@ -10,13 +10,14 @@ _pool: redis.ConnectionPool | None = None
 def get_redis(config) -> redis.Redis:
     global _pool
     if _pool is None:
-        _pool = redis.ConnectionPool(
+        _pool = redis.BlockingConnectionPool(
             host=config.redis.host,
             port=config.redis.port,
             db=config.redis.db,
             password=config.redis.password or None,
             decode_responses=True,
-            max_connections=16,
+            max_connections=64,
+            timeout=2,
         )
     return redis.Redis(connection_pool=_pool)
 
