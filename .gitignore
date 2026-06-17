@@ -40,6 +40,7 @@ backend/logs/
 collector/logs/
 writer/logs/
 agent/logs/
+collector/sidecars/*/logs/
 *.log
 
 # 临时文件（Claude Code 调试产物）

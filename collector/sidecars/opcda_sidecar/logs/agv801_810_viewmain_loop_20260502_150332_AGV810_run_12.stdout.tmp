@@ -1,7 +1,0 @@
-OPC DA probe starting
-  server : ZPMC.OPCServer
-  channel: OPD_Server
-  device : AGV810
-  group  : ViewMain
-  csv    : D:\python\故障自动诊断\数据采集与监控\collector\sidecars\opcda_sidecar\..\..\..\data\AGV_OPC\agv\ViewMain.csv
-  rows   : 482
