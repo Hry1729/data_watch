@@ -1,5 +1,8 @@
 """S7驱动测试"""
 
+import asyncio
+import threading
+
 import pytest
 
 from drivers.base import ReadBlock
@@ -59,6 +62,23 @@ class FakeS7Client:
 
     def plc_run(self):
         self.plc_run_called = True
+
+
+class BlockingS7Client(FakeS7Client):
+    def __init__(self):
+        super().__init__()
+        self.read_started = threading.Event()
+        self.release_read = threading.Event()
+        self.disconnect_called = threading.Event()
+
+    def db_read(self, db_number, start, size):
+        self.read_started.set()
+        self.release_read.wait(timeout=2)
+        return super().db_read(db_number, start, size)
+
+    def disconnect(self):
+        self.disconnect_called.set()
+        self.connected = False
 
 
 def make_driver(client):
@@ -136,6 +156,38 @@ async def test_s7_write_is_disabled():
 
     with pytest.raises(Exception, match="read-only"):
         await driver.write([])
+
+
+@pytest.mark.asyncio
+async def test_disconnect_waits_for_cancelled_read_worker():
+    client = BlockingS7Client()
+    driver = make_driver(client)
+
+    read_task = asyncio.create_task(
+        driver.read([ReadBlock("DB1.DBX0.0", data_type="BOOL")])
+    )
+    for _ in range(100):
+        if client.read_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert client.read_started.is_set()
+
+    read_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await read_task
+
+    disconnect_task = asyncio.create_task(driver.disconnect())
+    await asyncio.sleep(0.05)
+    assert not disconnect_task.done()
+    assert driver._client is client
+    assert not client.disconnect_called.is_set()
+
+    client.release_read.set()
+    await asyncio.wait_for(disconnect_task, timeout=1)
+
+    assert client.disconnect_called.is_set()
+    assert driver._client is None
+    assert driver.is_connected is False
 
 
 # ==================== Timer/Counter Tests ====================

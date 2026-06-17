@@ -65,6 +65,9 @@ class Device:
     # GE 合并配置默认值
     GE_MAX_BLOCK_WORDS = 125
     GE_MAX_BLOCK_BITS = 512
+    # S7 DB 合并配置：同 DB 内连续点合并读取，桥接小空洞、限制单块跨度
+    S7_DB_MAX_GAP_BYTES = 64
+    S7_DB_MAX_BLOCK_BYTES = 8192
 
     def __init__(
         self,
@@ -155,6 +158,7 @@ class Device:
         task.result_map = {}
         merge_groups: Dict[str, List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
         timer_counter_groups: Dict[tuple[str, str], List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
+        db_groups: Dict[int, List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
 
         for var in task.variables:
             parsed = self._parse_s7_address(var.address)
@@ -167,6 +171,15 @@ class Device:
                 data_type = (var.data_type or "").upper()
                 start = int(parsed["num"])
                 timer_counter_groups.setdefault((area, data_type), []).append((start, start + 1, var, parsed))
+            elif parsed.get("area") == "DB":
+                size = self._s7_db_variable_byte_size(parsed, var.data_type)
+                if size is None:
+                    # 访问宽度与数据类型不一致（或类型不支持）：不合并，保持单点读，
+                    # 交由驱动按原有校验处理（错配会被驱动如实报错并跳过该点）。
+                    blocks.append(ReadBlock(var.address, count=1, data_type=var.data_type))
+                else:
+                    start = int(parsed["offset"])
+                    db_groups.setdefault(int(parsed["db"]), []).append((start, start + size, var, parsed))
             else:
                 blocks.append(ReadBlock(var.address, count=1, data_type=var.data_type))
 
@@ -226,6 +239,40 @@ class Device:
                 )
                 blocks.append(block)
 
+        for db_number, ranges in sorted(db_groups.items()):
+            ranges.sort(key=lambda item: item[0])
+            current = []
+            current_start = None
+            current_end = None
+
+            for item in ranges:
+                start, end, _, _ = item
+                # 分段条件：与当前段间隔超过 max_gap，或并入后超过单块上限
+                if current and current_start is not None and current_end is not None and (
+                    start - current_end > self.S7_DB_MAX_GAP_BYTES
+                    or end - current_start > self.S7_DB_MAX_BLOCK_BYTES
+                ):
+                    block = self._create_s7_db_byte_block(
+                        db_number, current_start, current_end, current, task.result_map
+                    )
+                    blocks.append(block)
+                    current = []
+                    current_start = None
+                    current_end = None
+
+                if not current:
+                    current_start = start
+                    current_end = end
+                else:
+                    current_end = max(current_end or end, end)
+                current.append(item)
+
+            if current:
+                block = self._create_s7_db_byte_block(
+                    db_number, current_start, current_end, current, task.result_map
+                )
+                blocks.append(block)
+
         task.read_blocks = blocks
         logger.debug(
             f"Device {self.device_id}: prepared {len(blocks)} S7 read blocks from {len(task.variables)} variables"
@@ -281,6 +328,30 @@ class Device:
             }
         return block
 
+    def _create_s7_db_byte_block(
+        self,
+        db_number: int,
+        start: Optional[int],
+        end: Optional[int],
+        items: List[tuple[int, int, Variable, Dict[str, Any]]],
+        result_map: Dict[str, Dict[str, Any]],
+    ):
+        """创建合并后的 DB 字节读取块，并记录变量还原映射。"""
+        from drivers.base import ReadBlock
+
+        if start is None or end is None:
+            raise DeviceConnectionError("Invalid S7 DB merge range")
+        block_address = f"DB{db_number}.DBB{start}"
+        block = ReadBlock(block_address, count=end - start, data_type="BYTE")
+        for item_start, _, var, parsed in items:
+            result_map[var.variable_id] = {
+                "block_address": block_address,
+                "byte_offset": item_start - start,
+                "bit": parsed.get("bit"),
+                "data_type": var.data_type,
+            }
+        return block
+
     @staticmethod
     def _s7_variable_byte_size(parsed: Dict[str, Any], data_type: str) -> int:
         """计算 S7 I/Q/M 变量读取所需字节数。"""
@@ -295,6 +366,23 @@ class Device:
             return 4
         sizes = {"BOOL": 1, "BYTE": 1, "INT": 2, "WORD": 2, "REAL": 4, "FLOAT": 4, "DINT": 4, "DWORD": 4}
         return sizes.get((data_type or "").upper(), 1)
+
+    @staticmethod
+    def _s7_db_variable_byte_size(parsed: Dict[str, Any], data_type: str) -> Optional[int]:
+        """计算 S7 DB 变量读取所需字节数（按 DBX/DBB/DBW/DBD 访问宽度）。
+
+        若访问宽度与数据类型的解码宽度不一致，或数据类型不被还原逻辑支持，返回
+        None，表示该点不应并入合并块（保持单点读，沿用驱动既有校验）。
+        """
+        access = str(parsed.get("access", "")).upper()
+        access_size = {"DBX": 1, "DBB": 1, "DBW": 2, "DBD": 4}.get(access)
+        decode_size = {
+            "BOOL": 1, "BYTE": 1, "INT": 2, "WORD": 2,
+            "REAL": 4, "FLOAT": 4, "DINT": 4, "DWORD": 4,
+        }.get((data_type or "").upper())
+        if access_size is None or decode_size is None or access_size != decode_size:
+            return None
+        return access_size
 
     @staticmethod
     def _ge_word_size(data_type: str) -> int:

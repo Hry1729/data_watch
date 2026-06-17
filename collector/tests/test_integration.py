@@ -59,7 +59,7 @@ async def test_executor_redis_write_failure_keeps_device_online():
     with patch.object(device_manager, "_create_driver") as mock_create:
         mock_driver = AsyncMock()
         mock_driver.connect = AsyncMock()
-        mock_driver.read = AsyncMock(return_value={"DB100.DBW0": 123})
+        mock_driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x7B]})
         mock_driver.is_connected = True
         mock_create.return_value = mock_driver
 

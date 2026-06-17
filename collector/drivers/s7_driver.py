@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import threading
 from typing import Any, Dict, List
 
 from core.exceptions import DeviceConnectionError, ReadError
@@ -37,6 +38,7 @@ class S7Driver(BaseDriver):
     def __init__(self):
         super().__init__()
         self._client = None
+        self._client_lock = threading.Lock()
         self._ip = None
         self._rack = None
         self._slot = None
@@ -67,10 +69,16 @@ class S7Driver(BaseDriver):
 
     async def disconnect(self) -> None:
         """断开S7连接"""
-        if self._client:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._disconnect_client)
+
+    def _disconnect_client(self) -> None:
+        """在线程中等待当前读取结束后断开连接。"""
+        with self._client_lock:
+            if self._client is None:
+                return
             try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._client.disconnect)
+                self._client.disconnect()
             except Exception as e:
                 logger.warning(f"S7 disconnect error: {e}")
             finally:
@@ -102,15 +110,19 @@ class S7Driver(BaseDriver):
 
     def _read_blocks(self, blocks: List[ReadBlock]) -> Dict[str, Any]:
         """在线程中批量读取所有block"""
-        result = {}
-        for block in blocks:
-            try:
-                values = self._read_single_block(block)
-                result[block.address] = values
-            except Exception as e:
-                logger.error(f"S7 read block {block.address} failed: {e}")
-                result[block.address] = None
-        return result
+        with self._client_lock:
+            if self._client is None:
+                raise ReadError("S7 driver not connected")
+
+            result = {}
+            for block in blocks:
+                try:
+                    values = self._read_single_block(block)
+                    result[block.address] = values
+                except Exception as e:
+                    logger.error(f"S7 read block {block.address} failed: {e}")
+                    result[block.address] = None
+            return result
 
     def _read_single_block(self, block: ReadBlock) -> List[Any]:
         """读取单个地址块"""

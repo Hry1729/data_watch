@@ -86,7 +86,7 @@ async def test_executor_redis_all_writes_succeed_no_error():
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 100})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x64]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
@@ -110,7 +110,7 @@ async def test_executor_redis_stream_failure_does_not_refresh_latest():
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 100})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x64]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
@@ -136,7 +136,7 @@ async def test_executor_redis_latest_failure_counted_as_error():
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 100})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x64]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
@@ -165,7 +165,7 @@ async def test_executor_redis_multi_group_partial_failure_counted():
     config = _make_multi_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 1, "DB100.DBW2": 2})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x01, 0x00, 0x02]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
@@ -196,7 +196,7 @@ async def test_executor_stream_uses_group_config_version_per_group():
     config = _make_multi_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 1, "DB100.DBW2": 2})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x01, 0x00, 0x02]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
@@ -220,7 +220,7 @@ async def test_executor_redis_latest_called_after_window_and_stream():
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
-    _connect_with_read(device_manager, {"DB100.DBW0": 100})
+    _connect_with_read(device_manager, {"DB100.DBB0": [0x00, 0x64]})
     await device_manager.connect_all()
 
     redis_writer = MagicMock()

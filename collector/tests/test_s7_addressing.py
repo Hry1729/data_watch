@@ -6,7 +6,8 @@ from drivers.s7_driver import S7Driver
 from collector.executor import TaskExecutor
 
 
-def test_device_build_scan_tasks_preserves_standard_db_addresses():
+def test_device_build_scan_tasks_does_not_merge_across_db_numbers():
+    """不同 DB 号是独立内存区，绝不跨 DB 合并；每个 DB 各成自己的 BYTE 块。"""
     device = Device(
         device_id="qc100",
         device_type="QC",
@@ -21,15 +22,33 @@ def test_device_build_scan_tasks_preserves_standard_db_addresses():
     device.build_scan_tasks()
 
     assert len(device.scan_tasks) == 1
-    assert [block.address for block in device.scan_tasks[0].read_blocks] == [
-        "DB1.DBX0.0",
-        "DB100.DBB10",
-        "DB50.DBW20",
-        "DB30.DBD100",
+    # 按 DB 号排序：1, 30, 50, 100；每个 DB 单点也合成 DBB BYTE 块
+    assert [
+        (block.address, block.count, block.data_type)
+        for block in device.scan_tasks[0].read_blocks
+    ] == [
+        ("DB1.DBB0", 1, "BYTE"),
+        ("DB30.DBB100", 4, "BYTE"),
+        ("DB50.DBB20", 2, "BYTE"),
+        ("DB100.DBB10", 1, "BYTE"),
     ]
+    result_map = device.scan_tasks[0].result_map
+    assert result_map["1"] == {
+        "block_address": "DB1.DBB0",
+        "byte_offset": 0,
+        "bit": 0,
+        "data_type": "BOOL",
+    }
+    assert result_map["4"] == {
+        "block_address": "DB30.DBB100",
+        "byte_offset": 0,
+        "bit": None,
+        "data_type": "REAL",
+    }
 
 
-def test_device_build_scan_tasks_preserves_percent_prefixed_db_addresses():
+def test_device_build_scan_tasks_merges_contiguous_db_points():
+    """同 DB 内连续点合并成一个 BYTE 块；超过 max_gap 的空洞断成新块。"""
     device = Device(
         device_id="qc100",
         device_type="QC",
@@ -44,13 +63,98 @@ def test_device_build_scan_tasks_preserves_percent_prefixed_db_addresses():
 
     device.build_scan_tasks()
 
-    assert [block.address for block in device.scan_tasks[0].read_blocks] == [
-        "%DB1702.DBW0",
-        "%DB1702.DBB2",
-        "%DB1702.DBB3",
-        "%DB1702.DBD4",
-        "%DB1702.DBX440.6",
+    scan_task = device.scan_tasks[0]
+    # 0..8 连续合一块；440 与前段相隔 432 字节(>64)，断成独立块
+    assert [
+        (block.address, block.count, block.data_type) for block in scan_task.read_blocks
+    ] == [
+        ("DB1702.DBB0", 8, "BYTE"),
+        ("DB1702.DBB440", 1, "BYTE"),
     ]
+    assert scan_task.result_map["1"] == {
+        "block_address": "DB1702.DBB0",
+        "byte_offset": 0,
+        "bit": None,
+        "data_type": "INT",
+    }
+    assert scan_task.result_map["4"] == {
+        "block_address": "DB1702.DBB0",
+        "byte_offset": 4,
+        "bit": None,
+        "data_type": "REAL",
+    }
+    assert scan_task.result_map["5"] == {
+        "block_address": "DB1702.DBB440",
+        "byte_offset": 0,
+        "bit": 6,
+        "data_type": "BOOL",
+    }
+
+
+def test_device_build_scan_tasks_merges_contiguous_real_array():
+    """典型场景：DB1702 内一片连续 REAL 数组合并为单块，块数从 N 降到 1。"""
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1", "rack": 0, "slot": 1},
+    )
+    for i in range(50):
+        device.add_variable(
+            Variable(variable_id=str(i), address=f"%DB1702.DBD{i * 4}", data_type="REAL")
+        )
+
+    device.build_scan_tasks()
+
+    blocks = device.scan_tasks[0].read_blocks
+    assert len(blocks) == 1
+    assert (blocks[0].address, blocks[0].count, blocks[0].data_type) == (
+        "DB1702.DBB0",
+        200,
+        "BYTE",
+    )
+    assert device.scan_tasks[0].result_map["49"]["byte_offset"] == 196
+
+
+def test_device_keeps_width_mismatched_db_point_standalone():
+    """访问宽度与数据类型不一致的 DB 点不并入合并块，保持单点读交驱动校验。"""
+    device = Device(
+        device_id="qc100",
+        device_type="QC",
+        protocol="s7",
+        connection_config={"ip": "127.0.0.1", "rack": 0, "slot": 1},
+    )
+    # DBW(2字节) 配 REAL(4字节) 属错配；DBD(4字节) 配 REAL 正常会被合并
+    device.add_variable(Variable(variable_id="bad", address="DB1.DBW0", data_type="REAL"))
+    device.add_variable(Variable(variable_id="ok", address="DB1.DBD4", data_type="REAL"))
+
+    device.build_scan_tasks()
+
+    addrs = [(b.address, b.count, b.data_type) for b in device.scan_tasks[0].read_blocks]
+    # 错配点保持原始地址单点读；正常点合并为 BYTE 块
+    assert ("DB1.DBW0", 1, "REAL") in addrs
+    assert ("DB1.DBB4", 4, "BYTE") in addrs
+    assert "bad" not in device.scan_tasks[0].result_map
+    assert device.scan_tasks[0].result_map["ok"]["block_address"] == "DB1.DBB4"
+
+
+def test_executor_extracts_db_values_from_merged_block():
+    """合并块的字节经 executor 还原，结果与单点读取一致。"""
+    # DBB0..7: INT(123) @0, BYTE @2, BYTE @3, REAL(10.0) @4
+    raw = [0x00, 0x7B, 0x12, 0x34, 0x41, 0x20, 0x00, 0x00]
+
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw, {"byte_offset": 0, "bit": None, "data_type": "INT"}
+    ) == 123
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw, {"byte_offset": 2, "bit": None, "data_type": "BYTE"}
+    ) == 0x12
+    assert TaskExecutor._extract_mapped_s7_value(
+        raw, {"byte_offset": 4, "bit": None, "data_type": "REAL"}
+    ) == pytest.approx(10.0)
+    assert TaskExecutor._extract_mapped_s7_value(
+        [0b01000000], {"byte_offset": 0, "bit": 6, "data_type": "BOOL"}
+    ) is True
 
 
 def test_device_build_scan_tasks_merges_contiguous_s7_area_bytes():
