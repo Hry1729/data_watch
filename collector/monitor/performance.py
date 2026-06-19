@@ -6,7 +6,9 @@ import ctypes
 import gc
 import math
 import os
+import sys
 import threading
+import time
 from typing import Any
 
 
@@ -102,6 +104,11 @@ class PerformanceMetrics:
         self._counters: dict[str, int] = {}
         self._gauges: dict[str, int | float] = {}
         self._lock = threading.Lock()
+        self._runtime_wall = time.perf_counter()
+        self._runtime_cpu = time.process_time()
+        self._runtime_allocated_blocks = _get_allocated_blocks()
+        self._gc_started_at: dict[int, float] = {}
+        self._gc_tracking = False
 
     def record_timing(self, name: str, value_ms: float) -> None:
         with self._lock:
@@ -120,10 +127,26 @@ class PerformanceMetrics:
             self._gauges[name] = value
 
     def snapshot(self) -> dict[str, Any]:
+        now = time.perf_counter()
+        process_time = time.process_time()
+        allocated_blocks = _get_allocated_blocks()
         with self._lock:
             timings = dict(self._timings)
             counters = dict(self._counters)
             gauges = dict(self._gauges)
+            elapsed = max(now - self._runtime_wall, 1e-9)
+            process_cpu_percent = max(
+                0.0,
+                (process_time - self._runtime_cpu) / elapsed * 100.0,
+            )
+            allocated_blocks_delta_per_second = None
+            if allocated_blocks is not None and self._runtime_allocated_blocks is not None:
+                allocated_blocks_delta_per_second = (
+                    allocated_blocks - self._runtime_allocated_blocks
+                ) / elapsed
+            self._runtime_wall = now
+            self._runtime_cpu = process_time
+            self._runtime_allocated_blocks = allocated_blocks
 
         return {
             "timings": {name: metric.snapshot() for name, metric in timings.items()},
@@ -131,10 +154,59 @@ class PerformanceMetrics:
             "gauges": gauges,
             "runtime": {
                 "rss_bytes": _get_rss_bytes(),
+                "process_cpu_percent": round(process_cpu_percent, 3),
+                "thread_count": threading.active_count(),
+                "allocated_blocks": allocated_blocks,
+                "allocated_blocks_delta_per_second": (
+                    round(allocated_blocks_delta_per_second, 3)
+                    if allocated_blocks_delta_per_second is not None
+                    else None
+                ),
                 "gc_counts": list(gc.get_count()),
                 "gc_collections": [entry["collections"] for entry in gc.get_stats()],
             },
         }
+
+    def enable_gc_pause_tracking(self) -> None:
+        with self._lock:
+            if self._gc_tracking:
+                return
+            self._gc_tracking = True
+        gc.callbacks.append(self._on_gc)
+
+    def close(self) -> None:
+        with self._lock:
+            if not self._gc_tracking:
+                return
+            self._gc_tracking = False
+            self._gc_started_at.clear()
+        try:
+            gc.callbacks.remove(self._on_gc)
+        except ValueError:
+            pass
+
+    def _on_gc(self, phase: str, info: dict[str, Any]) -> None:
+        generation = int(info.get("generation", -1))
+        if phase == "start":
+            with self._lock:
+                if self._gc_tracking:
+                    self._gc_started_at[generation] = time.perf_counter()
+            return
+        if phase != "stop":
+            return
+
+        with self._lock:
+            started_at = self._gc_started_at.pop(generation, None)
+            tracking = self._gc_tracking
+        if tracking and started_at is not None:
+            self.record_timing("gc_pause_ms", (time.perf_counter() - started_at) * 1000)
+            self.increment("gc_collection_count")
+            self.increment(f"gc_generation_{generation}_count")
+
+
+def _get_allocated_blocks() -> int | None:
+    getter = getattr(sys, "getallocatedblocks", None)
+    return int(getter()) if getter is not None else None
 
 
 def _get_rss_bytes() -> int | None:

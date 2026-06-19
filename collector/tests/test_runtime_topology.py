@@ -14,6 +14,7 @@ import pytest
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from device.device import DeviceStatus
 from device.manager import DeviceManager
+from monitor.performance import PerformanceMetrics
 
 
 def _empty_manager() -> DeviceManager:
@@ -70,6 +71,44 @@ async def test_remove_device_cancels_reconnect_and_disconnects():
     assert "DEL_PLC" not in manager._reconnect_tasks
     assert "DEL_PLC" not in manager.devices
     assert "DEL_PLC" not in manager._circuit_breakers
+
+
+@pytest.mark.asyncio
+async def test_reconnect_metrics_track_lifecycle():
+    metrics = PerformanceMetrics()
+    manager = DeviceManager(
+        CollectorConfig(devices=[], variables=[]),
+        metrics=metrics,
+    )
+    manager.register_devices()
+    device = manager.add_device(
+        DeviceConfig("RECONNECT_PLC", "QC", "s7", "192.168.1.52", port=102, slot=1),
+        [],
+    )
+    device.status = DeviceStatus.ERROR
+    manager._reconnect_interval = 0
+
+    attempts = 0
+
+    async def connect(_device, use_circuit_breaker=True):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ConnectionError("temporary failure")
+        _device.status = DeviceStatus.ONLINE
+        return True
+
+    manager.connect_device = connect
+    await manager.schedule_reconnect(device)
+    await manager._reconnect_tasks[device.device_id]
+
+    snapshot = metrics.snapshot()
+    assert snapshot["counters"]["reconnect_scheduled_count"] == 1
+    assert snapshot["counters"]["reconnect_attempt_count"] == 2
+    assert snapshot["counters"]["reconnect_success_count"] == 1
+    assert snapshot["counters"]["reconnect_failure_count"] == 1
+    assert snapshot["gauges"]["reconnect_active"] == 0
+    assert snapshot["gauges"]["reconnect_peak_active"] == 1
 
 
 @pytest.mark.asyncio

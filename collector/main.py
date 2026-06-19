@@ -103,7 +103,10 @@ class CollectorApp:
             else None
         )
         self.device_manager = DeviceManager(
-            config, status_reporter=status_reporter, port_mapping_file=port_mapping_file
+            config,
+            status_reporter=status_reporter,
+            port_mapping_file=port_mapping_file,
+            metrics=self.performance_metrics,
         )
         self.scheduler = TaskScheduler(metrics=self.performance_metrics)
         redis_client = get_redis(config)
@@ -136,6 +139,7 @@ class CollectorApp:
             )
     async def start(self) -> None:
         """启动采集服务"""
+        self.performance_metrics.enable_gc_pause_tracking()
         logger.info("Collector starting...")
         if self.system_logger is not None:
             await self.system_logger.start()
@@ -275,6 +279,7 @@ class CollectorApp:
             "Performance snapshot: %s",
             json.dumps(self.performance_metrics.snapshot(), separators=(",", ":")),
         )
+        self.performance_metrics.close()
         logger.info("Collector stopped")
         if self.system_logger is not None:
             self.system_logger.emit(

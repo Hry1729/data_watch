@@ -1,3 +1,4 @@
+import gc
 from concurrent.futures import ThreadPoolExecutor
 
 from monitor.performance import PerformanceMetrics, TimingHistogram
@@ -39,3 +40,23 @@ def test_performance_metrics_are_thread_safe_and_include_runtime_snapshot():
     assert snapshot["gauges"]["queue_depth"] == 7
     assert len(snapshot["runtime"]["gc_counts"]) == 3
     assert snapshot["runtime"]["rss_bytes"] is None or snapshot["runtime"]["rss_bytes"] > 0
+    assert snapshot["runtime"]["process_cpu_percent"] >= 0
+    assert snapshot["runtime"]["thread_count"] >= 1
+    assert "allocated_blocks_delta_per_second" in snapshot["runtime"]
+
+
+def test_gc_pause_tracking_can_be_enabled_and_closed():
+    metrics = PerformanceMetrics()
+
+    metrics.enable_gc_pause_tracking()
+    assert metrics._on_gc in gc.callbacks
+
+    metrics._on_gc("start", {"generation": 0})
+    metrics._on_gc("stop", {"generation": 0})
+    snapshot = metrics.snapshot()
+
+    assert snapshot["timings"]["gc_pause_ms"]["count"] == 1
+    assert snapshot["counters"]["gc_collection_count"] >= 1
+
+    metrics.close()
+    assert metrics._on_gc not in gc.callbacks

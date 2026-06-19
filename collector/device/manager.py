@@ -15,6 +15,7 @@ from device.device import Device, DeviceStatus, Variable
 
 if TYPE_CHECKING:
     from drivers.base import BaseDriver
+    from monitor.performance import PerformanceMetrics
 
 logger = get_logger("device_manager")
 
@@ -26,6 +27,14 @@ EXTERNAL_PUSH_PROTOCOLS = {"http_push", "opcda_sidecar"}
 
 # 中心采集协议（通过代理进程远程采集）
 CENTER_COLLECTION_PROTOCOLS = {"opcda_center"}
+
+
+class _NullMetrics:
+    def increment(self, _name: str, _amount: int = 1) -> None:
+        pass
+
+    def set_gauge(self, _name: str, _value: int | float) -> None:
+        pass
 
 
 def is_external_push_protocol(protocol: str) -> bool:
@@ -242,6 +251,7 @@ class DeviceManager:
         config: CollectorConfig,
         status_reporter: Optional[Callable[[str, int, str, str], Awaitable[None]]] = None,
         port_mapping_file: Optional[str] = None,
+        metrics: Optional["PerformanceMetrics"] = None,
     ):
         self.config = config
         self._status_reporter = status_reporter
@@ -253,6 +263,14 @@ class DeviceManager:
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         # 重连任务
         self._reconnect_tasks: Dict[str, asyncio.Task] = {}
+        self._metrics = metrics or _NullMetrics()
+        self._metrics.increment("reconnect_scheduled_count", 0)
+        self._metrics.increment("reconnect_attempt_count", 0)
+        self._metrics.increment("reconnect_success_count", 0)
+        self._metrics.increment("reconnect_failure_count", 0)
+        self._metrics.set_gauge("reconnect_active", 0)
+        self._metrics.set_gauge("reconnect_peak_active", 0)
+        self._reconnect_peak_active = 0
         # 最大重试次数
         self._max_retries = 3
         # 重连间隔（秒）
@@ -754,22 +772,32 @@ class DeviceManager:
                 while device.status != DeviceStatus.ONLINE:
                     await asyncio.sleep(self._reconnect_interval)
                     try:
+                        self._metrics.increment("reconnect_attempt_count")
                         logger.info("Attempting reconnect for device %s", device.device_id)
                         await self.connect_device(device, use_circuit_breaker=False)
                         if device.status == DeviceStatus.ONLINE:
+                            self._metrics.increment("reconnect_success_count")
                             logger.info("Device %s reconnected successfully", device.device_id)
                             await self._report_device_status(device, 1, "reconnected", "connect")
                             break
+                        self._metrics.increment("reconnect_failure_count")
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
+                        self._metrics.increment("reconnect_failure_count")
                         logger.error("Device %s reconnect failed: %s", device.device_id, e)
                         await self._report_device_status(device, 2, f"reconnect failed: {e}", "timeout")
             finally:
                 self._reconnect_tasks.pop(device.device_id, None)
+                self._metrics.set_gauge("reconnect_active", len(self._reconnect_tasks))
 
         # 启动重连任务
         self._reconnect_tasks[device.device_id] = asyncio.create_task(reconnect_task())
+        self._metrics.increment("reconnect_scheduled_count")
+        active = len(self._reconnect_tasks)
+        self._reconnect_peak_active = max(self._reconnect_peak_active, active)
+        self._metrics.set_gauge("reconnect_active", active)
+        self._metrics.set_gauge("reconnect_peak_active", self._reconnect_peak_active)
         logger.info("Scheduled reconnect for device %s in %ss", device.device_id, self._reconnect_interval)
 
     async def mark_device_error(self, device: Device, message: str, event_type: str = "timeout") -> None:

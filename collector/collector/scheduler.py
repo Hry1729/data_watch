@@ -43,7 +43,13 @@ class TaskScheduler:
         self._execute_func: Optional[Callable] = None
         self._metrics = metrics or PerformanceMetrics()
         self._metrics.increment("deadline_miss_count", 0)
+        self._metrics.set_gauge("max_consecutive_deadline_misses", 0)
+        self._metrics.set_gauge("inflight_jobs", 0)
+        self._metrics.set_gauge("peak_inflight_jobs", 0)
         self._deadline_miss_ratio = deadline_miss_ratio
+        self._max_consecutive_deadline_misses = 0
+        self._active_executions = 0
+        self._peak_active_executions = 0
         self._clock = time.monotonic
         self._sleep = asyncio.sleep
 
@@ -95,6 +101,7 @@ class TaskScheduler:
         logger.info("Task %s loop started, interval=%ss", task.task_name, interval)
         previous_start: Optional[float] = None
         planned_start: Optional[float] = None
+        consecutive_deadline_misses = 0
 
         while self._running:
             start = self._clock()
@@ -105,9 +112,30 @@ class TaskScheduler:
                 self._metrics.record_timing("deadline_lag_ms", deadline_lag_ms)
                 if deadline_lag_ms > interval * 1000 * self._deadline_miss_ratio:
                     self._metrics.increment("deadline_miss_count")
+                    consecutive_deadline_misses += 1
+                    self._max_consecutive_deadline_misses = max(
+                        self._max_consecutive_deadline_misses,
+                        consecutive_deadline_misses,
+                    )
+                    self._metrics.set_gauge(
+                        "max_consecutive_deadline_misses",
+                        self._max_consecutive_deadline_misses,
+                    )
+                else:
+                    consecutive_deadline_misses = 0
             previous_start = start
             planned_start = start + interval
 
+            self._active_executions += 1
+            self._peak_active_executions = max(
+                self._peak_active_executions,
+                self._active_executions,
+            )
+            self._metrics.set_gauge("inflight_jobs", self._active_executions)
+            self._metrics.set_gauge(
+                "peak_inflight_jobs",
+                self._peak_active_executions,
+            )
             try:
                 await execute_func(task)
                 task.error_count = 0
@@ -119,6 +147,9 @@ class TaskScheduler:
                     task.error_count,
                     e,
                 )
+            finally:
+                self._active_executions -= 1
+                self._metrics.set_gauge("inflight_jobs", self._active_executions)
 
             elapsed = self._clock() - start
             self._metrics.record_timing("execution_ms", elapsed * 1000)

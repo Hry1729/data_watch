@@ -38,6 +38,9 @@ async def test_scheduler_records_execution_period_lag_and_deadline_miss():
     assert snapshot["timings"]["start_to_start_ms"]["count"] == 2
     assert snapshot["timings"]["deadline_lag_ms"]["count"] == 2
     assert snapshot["counters"]["deadline_miss_count"] == 1
+    assert snapshot["gauges"]["max_consecutive_deadline_misses"] == 1
+    assert snapshot["gauges"]["inflight_jobs"] == 0
+    assert snapshot["gauges"]["peak_inflight_jobs"] == 1
 
 
 def test_scheduler_exposes_task_count_gauge():
