@@ -150,6 +150,31 @@ def test_generate_proxy_config_rejects_invalid_port(tmp_path):
             sm.generate_proxy_config(bad, "10.0.0.1")
 
 
+def test_detect_endpoints_reads_latest_mysql_config(monkeypatch):
+    # Agent 服务启动时 SidecarManager 可能拿到模板快照；bootstrap 后必须读最新 config.toml。
+    stale = {"host": "old", "port": 3306, "database": "device_watch", "password_enc": ""}
+    fresh = {"host": "new", "port": 3306, "database": "device_watch", "password_enc": "enc"}
+    seen = {}
+
+    monkeypatch.setattr(
+        "app.services.sidecar_manager.load_config",
+        lambda: {"mysql": fresh},
+    )
+    def fake_detect(mysql):
+        seen["mysql"] = mysql
+        return ["endpoint-a"]
+
+    monkeypatch.setattr(
+        "app.services.sidecar_manager.detect_center_endpoints",
+        fake_detect,
+    )
+
+    sm = SidecarManager(agent_mysql=stale)
+
+    assert sm._detect_endpoints() == ["endpoint-a"]
+    assert seen["mysql"] == fresh
+
+
 # ---------------------------------------------------------------------------
 # T014-spawn + T015 — start_proxy 端口闸门三条件（矩阵：ready / never-listen / 外部占用）
 #

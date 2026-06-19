@@ -16,6 +16,7 @@ from typing import Any, Mapping
 
 import psutil
 
+from app.core.config import load_config
 from app.services.opcda_detect import (
     assign_sticky_ports,
     detect_center_endpoints,
@@ -100,7 +101,8 @@ class SidecarManager:
             Path(install_root).resolve() if install_root else _default_install_root()
         )
         self.runner = runner
-        # _agent_mysql 供端点检测连库；_collector_settings_path 仅供 admin 拼 --config。
+        # _agent_mysql 保留为构造期配置快照；端点检测实际每次读取最新 config.toml。
+        # _collector_settings_path 仅供 admin 拼 --config。
         self._agent_mysql = agent_mysql
         self._collector_settings_path = (
             Path(collector_settings_path) if collector_settings_path else None
@@ -285,8 +287,8 @@ class SidecarManager:
         return self._opcda_dir() / "port_mapping.json"
 
     def _detect_endpoints(self) -> list[str]:
-        """薄封装，便于单测 stub，不连真 MySQL。"""
-        return detect_center_endpoints(self._agent_mysql)
+        """启动 collector 前读取最新 Agent MySQL 配置，避免 bootstrap 后仍用旧快照。"""
+        return detect_center_endpoints(load_config().get("mysql", {}))
 
     @staticmethod
     def _instance_alive(inst: ProxyInstance) -> bool:
