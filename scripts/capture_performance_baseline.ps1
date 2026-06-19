@@ -60,6 +60,22 @@ $ComposeVersion = Invoke-NativeText { docker compose version }
 $OsInfo = Get-CimInstance Win32_OperatingSystem
 $CpuInfo = @(Get-CimInstance Win32_Processor)
 $ComputerInfo = Get-CimInstance Win32_ComputerSystem
+$BinaryArtifacts = @()
+foreach ($RelativePath in @(
+    "agent\data-watch-agent.exe",
+    "collector\data-watch-collector.exe",
+    "writer\data-watch-writer.exe",
+    "app\app.exe"
+)) {
+    $BinaryPath = Join-Path $RepoRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $BinaryPath)) { continue }
+    $Item = Get-Item -LiteralPath $BinaryPath
+    $BinaryArtifacts += [ordered]@{
+        path = $RelativePath
+        file_version = $Item.VersionInfo.FileVersion
+        sha256 = (Get-FileHash -LiteralPath $BinaryPath -Algorithm SHA256).Hash
+    }
+}
 
 $Manifest = [ordered]@{
     schema_version = 1
@@ -94,6 +110,7 @@ $Manifest = [ordered]@{
     }
     docker_version = $DockerVersion
     docker_compose_version = $ComposeVersion
+    binary_artifacts = $BinaryArtifacts
 }
 $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDir "manifest.json") -Encoding utf8
 

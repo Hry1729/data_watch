@@ -42,8 +42,9 @@ Source: "{#SrcRoot}\collector\dist\data-watch-collector\*"; DestDir: "{app}\coll
 Source: "{#SrcRoot}\writer\dist\data-watch-writer\*"; DestDir: "{app}\writer"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; ── OPC DA proxy sidecar (仅 bin/，需目标机 .NET Framework 4.8) ──
 Source: "{#SrcRoot}\collector\sidecars\opcda_proxy_service\bin\*"; DestDir: "{app}\sidecars\opcda_proxy_service\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
-; ── 工具：NSSM 服务包装器 ──
+; ── 工具：NSSM 服务包装器 + 性能基线采集 ──
 Source: "{#SrcRoot}\installer\win64\nssm.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#SrcRoot}\scripts\capture_performance_baseline.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion
 ; ── 配置模板(脱敏；config.toml.example 直接取自 agent，settings 取自 installer\templates 的脱敏版) ──
 Source: "{#SrcRoot}\agent\config.toml.example"; DestDir: "{app}\templates"; DestName: "config.toml.example"; Flags: ignoreversion
 Source: "{#SrcRoot}\installer\templates\collector-settings.toml.example"; DestDir: "{app}\templates"; Flags: ignoreversion
