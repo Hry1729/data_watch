@@ -20,6 +20,7 @@ from typing import Callable, Coroutine, Dict, List, Optional
 
 from core.logger import get_logger
 from collector.task import CollectTask
+from monitor.performance import PerformanceMetrics
 
 logger = get_logger("scheduler")
 
@@ -30,16 +31,26 @@ class TaskScheduler:
     按周期循环触发采集任务
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        metrics: Optional[PerformanceMetrics] = None,
+        deadline_miss_ratio: float = 0.1,
+    ):
         self.tasks: Dict[str, CollectTask] = {}
         self._running = False
         self._loop_tasks: List[asyncio.Task] = []
         self._device_loop_tasks: Dict[str, List[asyncio.Task]] = {}
         self._execute_func: Optional[Callable] = None
+        self._metrics = metrics or PerformanceMetrics()
+        self._metrics.increment("deadline_miss_count", 0)
+        self._deadline_miss_ratio = deadline_miss_ratio
+        self._clock = time.monotonic
+        self._sleep = asyncio.sleep
 
     def add_task(self, task: CollectTask) -> None:
         """添加采集任务"""
         self.tasks[task.task_name] = task
+        self._metrics.set_gauge("scheduler_task_count", len(self.tasks))
         logger.debug("Added task: %s", task)
 
     def add_tasks(self, tasks: List[CollectTask]) -> None:
@@ -64,6 +75,7 @@ class TaskScheduler:
             self._loop_tasks.append(loop_task)
             device_id = task.device.device_id
             self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
+        self._metrics.set_gauge("scheduler_active_loops", len(self._loop_tasks))
 
     async def _run_loop(
         self, task: CollectTask, execute_func: Callable
@@ -81,9 +93,21 @@ class TaskScheduler:
         """
         interval = task.scan_rate
         logger.info("Task %s loop started, interval=%ss", task.task_name, interval)
+        previous_start: Optional[float] = None
+        planned_start: Optional[float] = None
 
         while self._running:
-            start = time.monotonic()
+            start = self._clock()
+            if previous_start is not None and planned_start is not None:
+                start_to_start_ms = (start - previous_start) * 1000
+                deadline_lag_ms = max(0.0, (start - planned_start) * 1000)
+                self._metrics.record_timing("start_to_start_ms", start_to_start_ms)
+                self._metrics.record_timing("deadline_lag_ms", deadline_lag_ms)
+                if deadline_lag_ms > interval * 1000 * self._deadline_miss_ratio:
+                    self._metrics.increment("deadline_miss_count")
+            previous_start = start
+            planned_start = start + interval
+
             try:
                 await execute_func(task)
                 task.error_count = 0
@@ -96,13 +120,15 @@ class TaskScheduler:
                     e,
                 )
 
-            elapsed = time.monotonic() - start
+            elapsed = self._clock() - start
+            self._metrics.record_timing("execution_ms", elapsed * 1000)
+            self._metrics.increment("scheduler_executions")
 
             # 仅当执行时间小于间隔时才等待
             # 执行时间 >= 间隔时立即进入下一轮（不额外等待）
             if elapsed < interval:
                 sleep_time = interval - elapsed
-                await asyncio.sleep(sleep_time)
+                await self._sleep(sleep_time)
             # else: 执行超时，立即进入下一轮
 
         logger.info("Task %s loop stopped", task.task_name)
@@ -137,6 +163,9 @@ class TaskScheduler:
             self._loop_tasks.append(loop_task)
             self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
 
+        self._metrics.set_gauge("scheduler_task_count", len(self.tasks))
+        self._metrics.set_gauge("scheduler_active_loops", len(self._loop_tasks))
+
         logger.info(
             "Device %s reloaded: %d new collect tasks", device_id, len(new_tasks)
         )
@@ -151,4 +180,9 @@ class TaskScheduler:
             except asyncio.CancelledError:
                 pass
         self._loop_tasks.clear()
+        self._metrics.set_gauge("scheduler_active_loops", 0)
         logger.info("Scheduler stopped")
+
+    @property
+    def stats(self):
+        return self._metrics.snapshot()
