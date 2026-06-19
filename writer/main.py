@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import argparse
+import json
 import logging
 import os
 import sys
@@ -36,6 +37,7 @@ import redis
 
 from consumer import StreamConsumer
 from mysql_mapper import MysqlMapper
+from performance import WriterPerformanceMetrics
 from tdengine_writer import TDengineWriter
 from system_log import SystemLogWriter
 
@@ -264,7 +266,15 @@ async def main() -> None:
         sys.exit(1)
 
     mapper = MysqlMapper(mysql_conn)
-    consumer = StreamConsumer(config, mapper, writer, r, syslog=syslog)
+    performance_metrics = WriterPerformanceMetrics()
+    consumer = StreamConsumer(
+        config,
+        mapper,
+        writer,
+        r,
+        syslog=syslog,
+        metrics=performance_metrics,
+    )
 
     # Build the full set of stream keys:
     #   rt:stream:{device_type}:{group_code}:{shard_no}
@@ -303,6 +313,10 @@ async def main() -> None:
             content="writer stopped",
         )
         syslog.stop()
+        logger.info(
+            "[performance] %s",
+            json.dumps(performance_metrics.snapshot(), separators=(",", ":")),
+        )
         await writer.close()
         mysql_conn.close()
         r.close()

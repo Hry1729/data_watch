@@ -29,6 +29,7 @@ import redis
 
 from dlq import push_dlq
 from mysql_mapper import MysqlMapper
+from performance import WriterPerformanceMetrics
 from tdengine_writer import TDengineWriter
 
 logger = logging.getLogger("writer.consumer")
@@ -64,12 +65,17 @@ class StreamConsumer:
         writer: TDengineWriter,
         r: redis.Redis,
         syslog=None,
+        metrics: WriterPerformanceMetrics | None = None,
+        performance_log_interval_s: float = 60.0,
     ) -> None:
         self._config = config
         self._mapper = mapper
         self._writer = writer
         self._r = r
         self._syslog = syslog
+        self._metrics = metrics or WriterPerformanceMetrics()
+        self._performance_log_interval_s = performance_log_interval_s
+        self._last_performance_log = time.monotonic()
 
         w = config["writer"]
         rc = config["redis"]
@@ -208,6 +214,8 @@ class StreamConsumer:
                                 content="flush recovered",
                             )
                     self._consecutive_flush_fail = 0
+
+            self._log_performance_if_due()
 
     # ------------------------------------------------------------------
     # Pending message recovery
@@ -486,6 +494,7 @@ class StreamConsumer:
                 delivery_count=delivery_count,
             )
         )
+        self._metrics.set_buffer_rows(len(self._buffer))
 
     # ------------------------------------------------------------------
     # Flush
@@ -496,6 +505,8 @@ class StreamConsumer:
             self._last_flush = time.monotonic()
             return
 
+        flush_started = time.perf_counter()
+        flush_rows = len(self._buffer)
         by_table: dict[str, list[_BufferedRow]] = {}
         for row in self._buffer:
             by_table.setdefault(row.child_table, []).append(row)
@@ -512,7 +523,21 @@ class StreamConsumer:
                 }
                 for row in buffered_rows
             ]
-            ok = await self._writer.write_batch(rows)
+            batch_started = time.perf_counter()
+            try:
+                ok = await self._writer.write_batch(rows)
+            except Exception:
+                self._metrics.record_write_batch(
+                    (time.perf_counter() - batch_started) * 1000,
+                    len(rows),
+                    False,
+                )
+                raise
+            self._metrics.record_write_batch(
+                (time.perf_counter() - batch_started) * 1000,
+                len(rows),
+                ok,
+            )
             if ok:
                 self._ack_rows(buffered_rows)
             else:
@@ -524,7 +549,22 @@ class StreamConsumer:
                 failed_rows.extend(buffered_rows)
 
         self._buffer = failed_rows
+        self._metrics.set_buffer_rows(len(self._buffer))
+        self._metrics.record_flush(
+            (time.perf_counter() - flush_started) * 1000,
+            flush_rows,
+        )
         self._last_flush = time.monotonic()
+
+    def _log_performance_if_due(self) -> None:
+        now = time.monotonic()
+        if now - self._last_performance_log < self._performance_log_interval_s:
+            return
+        logger.info(
+            "[performance] %s",
+            json.dumps(self._metrics.snapshot(), separators=(",", ":")),
+        )
+        self._last_performance_log = now
 
     def _ack_rows(self, rows: list[_BufferedRow]) -> None:
         """XACK rows, grouped by stream_key."""
