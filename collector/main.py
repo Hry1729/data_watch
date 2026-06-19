@@ -14,6 +14,7 @@
 import argparse
 from pathlib import Path
 import asyncio
+import json
 import os
 import signal
 import time
@@ -39,6 +40,7 @@ from storage.redis_client import get_redis, close_pool
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
+from monitor.performance import PerformanceMetrics
 
 logger = get_logger("main")
 
@@ -85,9 +87,11 @@ class CollectorApp:
         self._shutdown = asyncio.Event()
         self._health_task = None
         self._reload_task = None
+        self._performance_task = None
         self._closed = False
 
         # 初始化组件
+        self.performance_metrics = PerformanceMetrics()
         self.system_logger = (
             SystemLogWriter(config_db_manager)
             if config_db_manager is not None
@@ -101,13 +105,18 @@ class CollectorApp:
         self.device_manager = DeviceManager(
             config, status_reporter=status_reporter, port_mapping_file=port_mapping_file
         )
-        self.scheduler = TaskScheduler()
+        self.scheduler = TaskScheduler(metrics=self.performance_metrics)
         redis_client = get_redis(config)
-        self.redis_writer = RedisWriter(redis_client, config)
+        self.redis_writer = RedisWriter(
+            redis_client,
+            config,
+            metrics=self.performance_metrics,
+        )
         self.executor = TaskExecutor(
             device_manager=self.device_manager,
             system_logger=self.system_logger,
             redis_writer=self.redis_writer,
+            metrics=self.performance_metrics,
         )
         self.health_checker = HealthChecker(self.device_manager, interval=30)
 
@@ -187,6 +196,8 @@ class CollectorApp:
         if self.config_db_manager is not None:
             self._reload_task = asyncio.create_task(self._config_reload_loop())
 
+        self._performance_task = asyncio.create_task(self._performance_log_loop())
+
         # 打印启动信息
         logger.info("Collector started successfully")
         self._log_status()
@@ -232,6 +243,14 @@ class CollectorApp:
                 pass
             self._reload_task = None
 
+        if self._performance_task is not None:
+            self._performance_task.cancel()
+            try:
+                await self._performance_task
+            except asyncio.CancelledError:
+                pass
+            self._performance_task = None
+
         if self._health_task is not None:
             self._health_task.cancel()
 
@@ -252,6 +271,10 @@ class CollectorApp:
         close_pool()
 
         self._log_status()
+        logger.info(
+            "Performance snapshot: %s",
+            json.dumps(self.performance_metrics.snapshot(), separators=(",", ":")),
+        )
         logger.info("Collector stopped")
         if self.system_logger is not None:
             self.system_logger.emit(
@@ -268,6 +291,22 @@ class CollectorApp:
         if self.config_db_manager is not None:
             await self.config_db_manager.close()
             self.config_db_manager = None
+
+    async def _performance_log_loop(self, interval_seconds: float = 60.0) -> None:
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._shutdown.wait(),
+                    timeout=interval_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.info(
+                    "Performance snapshot: %s",
+                    json.dumps(
+                        self.performance_metrics.snapshot(),
+                        separators=(",", ":"),
+                    ),
+                )
 
     def _log_status(self) -> None:
         """打印当前状态"""

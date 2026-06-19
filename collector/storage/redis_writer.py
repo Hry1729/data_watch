@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import json
+import time
 import zlib
 
 import redis
 
+from monitor.performance import PerformanceMetrics
+
 
 class RedisWriter:
-    def __init__(self, r: redis.Redis, config) -> None:
+    def __init__(
+        self,
+        r: redis.Redis,
+        config,
+        metrics: PerformanceMetrics | None = None,
+    ) -> None:
         self.r = r
         self.shard_count: int = config.redis.stream_shard_count
         self._maxlen: int = config.redis.stream_maxlen
+        self._metrics = metrics or PerformanceMetrics()
+        self._clock = time.perf_counter
 
     def write_latest(
         self,
@@ -22,11 +32,20 @@ class RedisWriter:
     ) -> None:
         """写 latest Hash。fields: {var_id: {"v": str, "t": int, "q": int}}"""
         key = f"rt:latest:{device_code}:{group_code}"
-        mapping = {
-            str(k): json.dumps(v, separators=(",", ":"))
-            for k, v in fields.items()
-        }
-        self.r.hset(key, mapping=mapping)
+        started = self._clock()
+        try:
+            mapping = {
+                str(k): json.dumps(v, separators=(",", ":"))
+                for k, v in fields.items()
+            }
+        finally:
+            self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
+
+        started = self._clock()
+        try:
+            self.r.hset(key, mapping=mapping)
+        finally:
+            self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
         # 不设 TTL，由设备管理操作显式清理
 
     def write_window(
@@ -38,10 +57,20 @@ class RedisWriter:
     ) -> None:
         """写 window List，保留最近 10 帧。frame: 完整帧 JSON 对象"""
         key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
+        started = self._clock()
+        try:
+            encoded_frame = json.dumps(frame, separators=(",", ":"))
+        finally:
+            self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
+
+        started = self._clock()
         pipe = self.r.pipeline(transaction=False)
-        pipe.lpush(key, json.dumps(frame, separators=(",", ":")))
-        pipe.ltrim(key, 0, 9)
-        pipe.execute()
+        try:
+            pipe.lpush(key, encoded_frame)
+            pipe.ltrim(key, 0, 9)
+            pipe.execute()
+        finally:
+            self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
 
     def write_stream(
         self,
@@ -58,17 +87,27 @@ class RedisWriter:
         # 会导致 collector 重启后同设备落到不同 shard。crc32 进程间稳定。
         shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
         stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
-        self.r.xadd(
-            stream_key,
-            {
-                "device_code": device_code,
-                "device_type": device_type,
-                "group_code": group_code,
-                "scan_rate": str(scan_rate_ms),
-                "ts": str(ts),
-                "config_version": str(config_version),
-                "values": json.dumps(values, separators=(",", ":")),
-            },
-            maxlen=self._maxlen,
-            approximate=True,
-        )
+        started = self._clock()
+        try:
+            encoded_values = json.dumps(values, separators=(",", ":"))
+        finally:
+            self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
+
+        started = self._clock()
+        try:
+            self.r.xadd(
+                stream_key,
+                {
+                    "device_code": device_code,
+                    "device_type": device_type,
+                    "group_code": group_code,
+                    "scan_rate": str(scan_rate_ms),
+                    "ts": str(ts),
+                    "config_version": str(config_version),
+                    "values": encoded_values,
+                },
+                maxlen=self._maxlen,
+                approximate=True,
+            )
+        finally:
+            self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)

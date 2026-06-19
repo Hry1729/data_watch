@@ -101,6 +101,10 @@ async def test_executor_redis_all_writes_succeed_no_error():
     assert redis_writer.write_latest.call_count == 1
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 0
+    timings = executor.stats["performance"]["timings"]
+    assert timings["read_ms"]["count"] == 1
+    assert timings["parse_ms"]["count"] == 1
+    assert timings["redis_ms"]["count"] == 1
     await device_manager.disconnect_all()
 
 

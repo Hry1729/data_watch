@@ -23,6 +23,7 @@ from core.logger import get_logger
 from collector.task import CollectTask
 from data_queue.types import DataPoint
 from device.manager import DeviceManager
+from monitor.performance import PerformanceMetrics
 
 if TYPE_CHECKING:
     from storage.redis_writer import RedisWriter
@@ -45,6 +46,7 @@ class TaskExecutor:
         system_logger: Optional[Any] = None,
         summary_interval_seconds: float = 60.0,
         redis_writer: Optional["RedisWriter"] = None,
+        metrics: Optional[PerformanceMetrics] = None,
     ):
         # collector 主链路只写 Redis；缺少 redis_writer 会静默丢数据，故快速失败。
         if redis_writer is None:
@@ -52,6 +54,8 @@ class TaskExecutor:
         self.device_manager = device_manager
         self._system_logger = system_logger
         self._redis_writer = redis_writer
+        self._metrics = metrics or PerformanceMetrics()
+        self._clock = time.perf_counter
         self._summary_interval_seconds = summary_interval_seconds
         self._summary_started_at = time.time()
         self._summary_tasks = 0
@@ -89,7 +93,7 @@ class TaskExecutor:
             return
 
         # 批量读取（读失败：标记设备异常并向调度器抛出）
-        start = time.time()
+        start = self._clock()
         try:
             result = await device.driver.read(scan_task.read_blocks)
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
@@ -97,30 +101,39 @@ class TaskExecutor:
         except Exception as e:
             self._total_errors += 1
             logger.error("Task %s read failed: %s", task.task_name, e)
-            elapsed_ms = (time.time() - start) * 1000
+            elapsed_ms = (self._clock() - start) * 1000
+            self._metrics.record_timing("read_ms", elapsed_ms)
+            self._metrics.increment("read_error_count")
             self._emit_read_failure(task, e, elapsed_ms)
             self._record_read_summary(task, 0, elapsed_ms, error=True)
             if self.device_manager:
                 await self.device_manager.mark_device_error(device, f"read failed: {e}", "timeout")
             raise
 
-        elapsed = time.time() - start
+        elapsed = self._clock() - start
+        self._metrics.record_timing("read_ms", elapsed * 1000)
+        self._metrics.increment("read_success_count")
         self._total_reads += 1
 
         # 解析结果
+        parse_start = self._clock()
         points = self._parse_result(device.device_id, scan_task, result)
+        self._metrics.record_timing("parse_ms", (self._clock() - parse_start) * 1000)
+        self._metrics.increment("points_parsed", len(points))
 
         # 写入 Redis（写失败：读已成功，设备保持 ONLINE，但如实计为错误，不谎报成功）
         # 注意：await 会让本任务等待 Redis 写完，写入耗时会计入该任务的采集周期；
         # 写操作仍在线程池执行，不阻塞事件循环线程。
         if points:
             loop = asyncio.get_running_loop()
+            redis_start = self._clock()
             try:
                 await loop.run_in_executor(
                     None, self._write_to_redis, device, scan_task, points
                 )
             except Exception as exc:
                 self._total_errors += 1
+                self._metrics.increment("redis_write_error_count")
                 logger.error(
                     "Redis write failed after successful read for task %s device %s: %s",
                     task.task_name,
@@ -129,6 +142,10 @@ class TaskExecutor:
                 )
                 self._record_read_summary(task, len(points), elapsed * 1000, error=True)
                 return
+            finally:
+                self._metrics.record_timing(
+                    "redis_ms", (self._clock() - redis_start) * 1000
+                )
 
         logger.debug(
             "Task %s: read %s points in %.1fms",
@@ -473,4 +490,5 @@ class TaskExecutor:
         return {
             "total_reads": self._total_reads,
             "total_errors": self._total_errors,
+            "performance": self._metrics.snapshot(),
         }

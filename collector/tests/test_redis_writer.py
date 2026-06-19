@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from storage.redis_writer import RedisWriter
+from monitor.performance import PerformanceMetrics
 
 
 def _make_config(shard_count: int = 4, maxlen: int = 500000) -> SimpleNamespace:
@@ -116,3 +117,16 @@ class TestWriteStream:
         kwargs = mock_redis.xadd.call_args[1]
         assert kwargs["maxlen"] == 200000
         assert kwargs["approximate"] is True
+
+
+def test_writer_records_json_and_redis_io_timings(mock_redis):
+    metrics = PerformanceMetrics()
+    writer = RedisWriter(mock_redis, _make_config(), metrics=metrics)
+
+    writer.write_latest("qc100", "g001", {"1": {"v": "3.14", "t": 1000, "q": 1}})
+    writer.write_window("qc100", "g001", 100, {"ts": 1000, "values": {"1": "3.14"}})
+    writer.write_stream("qc100", "qc", "g001", 100, 1000, 1, {"1": "3.14"})
+
+    timings = metrics.snapshot()["timings"]
+    assert timings["json_ms"]["count"] == 3
+    assert timings["redis_io_ms"]["count"] == 3
