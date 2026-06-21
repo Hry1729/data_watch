@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import time
 import zlib
 
+import msgspec
 import redis
 
 from monitor.performance import PerformanceMetrics
@@ -35,7 +35,7 @@ class RedisWriter:
         started = self._clock()
         try:
             mapping = {
-                str(k): json.dumps(v, separators=(",", ":"))
+                str(k): msgspec.json.encode(v)
                 for k, v in fields.items()
             }
         finally:
@@ -59,7 +59,7 @@ class RedisWriter:
         key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
         started = self._clock()
         try:
-            encoded_frame = json.dumps(frame, separators=(",", ":"))
+            encoded_frame = msgspec.json.encode(frame)
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
 
@@ -89,7 +89,7 @@ class RedisWriter:
         stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
         started = self._clock()
         try:
-            encoded_values = json.dumps(values, separators=(",", ":"))
+            encoded_values = msgspec.json.encode(values)
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
 

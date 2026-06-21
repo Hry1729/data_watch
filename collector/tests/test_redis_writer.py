@@ -48,6 +48,7 @@ class TestWriteLatest:
         fields = {"42": {"v": "1.5", "t": 12345, "q": 1}}
         writer.write_latest("qc100", "g001", fields)
         mapping = mock_redis.hset.call_args[1]["mapping"]
+        assert isinstance(mapping["42"], bytes)
         parsed = json.loads(mapping["42"])
         assert parsed == {"v": "1.5", "t": 12345, "q": 1}
 
@@ -67,6 +68,9 @@ class TestWriteWindow:
         writer.write_window("qc100", "g001", 100, {"ts": 1000, "values": {}})
         pipe = mock_redis.pipeline.return_value
         assert pipe.lpush.called
+        encoded_frame = pipe.lpush.call_args[0][1]
+        assert isinstance(encoded_frame, bytes)
+        assert json.loads(encoded_frame) == {"ts": 1000, "values": {}}
         assert pipe.ltrim.called
         pipe.execute.assert_called_once()
 
@@ -108,6 +112,7 @@ class TestWriteStream:
         assert entry["device_type"] == "qc"
         assert entry["group_code"] == "g001"
         assert entry["config_version"] == "2"
+        assert isinstance(entry["values"], bytes)
         parsed_values = json.loads(entry["values"])
         assert parsed_values == {"5": "9.9"}
 
