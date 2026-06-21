@@ -246,6 +246,18 @@ class TaskExecutor:
             lambda: self._write_to_redis(task.device, task.scan_task, points),
         )
 
+    @staticmethod
+    def _format_point_value(value: Any) -> str:
+        """点值转字符串供 Redis/写库使用。
+
+        bool 必须先于数值判断（Python 中 bool 是 int 子类）：str(True)="True"
+        会让 writer 的 float() 解析失败、兜底成 0（bool 点全部入库为 0）；统一转成
+        "1"/"0"，与其它数值串一致、可被 float() 正常解析。
+        """
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        return str(value)
+
     def _write_to_redis(self, device, scan_task, points: List[DataPoint]) -> None:
         """将采集结果写入 Redis（latest / window / stream）。在线程池中调用，不阻塞事件循环。"""
         try:
@@ -278,7 +290,7 @@ class TaskExecutor:
                 # latest Hash：所有点位
                 fields = {
                     var_id: {
-                        "v": str(point.value),
+                        "v": self._format_point_value(point.value),
                         "t": self._timestamp_to_millis(point.timestamp),
                         "q": int(getattr(point, "quality", 0)),
                     }
@@ -295,7 +307,7 @@ class TaskExecutor:
                     "ts": ts_ms,
                     "scan_rate": scan_rate_ms,
                     "values": {
-                        var_id: str(point.value)
+                        var_id: self._format_point_value(point.value)
                         for var_id, (point, _, _) in var_data.items()
                     },
                 }
@@ -303,7 +315,7 @@ class TaskExecutor:
 
                 # stream：过滤 STRING 类型
                 stream_values = {
-                    var_id: str(point.value)
+                    var_id: self._format_point_value(point.value)
                     for var_id, (point, dt, is_storage) in var_data.items()
                     if is_storage and dt != "STRING"
                 }

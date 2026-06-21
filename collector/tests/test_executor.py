@@ -435,6 +435,20 @@ async def test_executor_redis_multi_group_partial_failure_counted():
     await device_manager.disconnect_all()
 
 
+def test_format_point_value_bool_serialized_as_numeric_string():
+    """bool 必须先于数值判断：str(True)="True" 会让 writer 的 float() 兜底成 0。
+
+    bool 是 int 子类，若按 str() 处理整批 bool 点都会入库成 0；统一转 "1"/"0"，
+    与其它数值串一致、可被 float() 正常解析。
+    """
+    assert TaskExecutor._format_point_value(True) == "1"
+    assert TaskExecutor._format_point_value(False) == "0"
+    # 非 bool 仍走 str()，保持原行为
+    assert TaskExecutor._format_point_value(100) == "100"
+    assert TaskExecutor._format_point_value(1.5) == "1.5"
+    assert TaskExecutor._format_point_value("ok") == "ok"
+
+
 @pytest.mark.asyncio
 async def test_executor_stream_uses_group_config_version_per_group():
     """多 group 设备写 stream 时，各组使用自己的 device_point_group.config_version。"""
