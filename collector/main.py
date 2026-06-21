@@ -45,6 +45,9 @@ from monitor.performance import PerformanceMetrics
 
 logger = get_logger("main")
 
+# 停机 drain 各有界池的最长等待秒数；超时则放弃等待并记录未完成 job 数（§7.9-5）。
+SHUTDOWN_DRAIN_TIMEOUT = 10.0
+
 
 def _resolve_runtime_dir(arg_value: str | None) -> Path:
     if arg_value:
@@ -298,10 +301,22 @@ class CollectorApp:
 
         if self.ingest_server is not None:
             await self.ingest_server.stop()
-        await self.executor.shutdown()
+        unfinished_jobs = await self.executor.shutdown(timeout=SHUTDOWN_DRAIN_TIMEOUT)
         await self.device_manager.disconnect_all()
         # 读池在驱动 disconnect 之后再关：disconnect 自身也走该池。
-        await asyncio.to_thread(self.plc_read_executor.shutdown, wait=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self.plc_read_executor.shutdown, wait=True),
+                timeout=SHUTDOWN_DRAIN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            read_unfinished = self.plc_read_executor.pending
+            self.plc_read_executor.shutdown(wait=False, cancel_futures=True)
+            unfinished_jobs += read_unfinished
+        if unfinished_jobs:
+            logger.warning(
+                "Shutdown drain timed out with %d unfinished job(s)", unfinished_jobs
+            )
         close_pool()
 
         self._log_status()

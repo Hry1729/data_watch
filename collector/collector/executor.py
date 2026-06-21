@@ -209,13 +209,18 @@ class TaskExecutor:
         )
         self._record_read_summary(task, len(points), elapsed * 1000)
 
-    async def shutdown(self) -> None:
+    async def shutdown(self, timeout: Optional[float] = None) -> int:
+        """关闭 parse/redis 有界池，返回两池未完成 job 数之和（§7.9-5）。"""
         executors = []
         for executor in (self._parse_executor, self._redis_executor):
             if executor is not None and executor not in executors:
                 executors.append(executor)
-        if executors:
-            await asyncio.gather(*(executor.shutdown() for executor in executors))
+        if not executors:
+            return 0
+        counts = await asyncio.gather(
+            *(executor.shutdown(timeout) for executor in executors)
+        )
+        return sum(counts)
 
     def _warn_executor_saturated(
         self,

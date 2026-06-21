@@ -144,12 +144,29 @@ class BoundedExecutor:
         future.add_done_callback(lambda _future: self._release_slot())
         return await asyncio.shield(future)
 
-    async def shutdown(self) -> None:
+    async def shutdown(self, timeout: Optional[float] = None) -> int:
+        """优雅关闭并返回未完成 job 数（0 表示已完全 drain）。
+
+        timeout 为 None 时无限等待 drain（原行为）；给定 timeout 时最多等待该秒数，
+        超时则放弃等待、取消尚未开始的任务并返回当前未完成数（§7.9-5）。
+        """
         if self._closed:
-            return
+            return 0
         self._closed = True
-        await self._drained.wait()
+        if timeout is None:
+            await self._drained.wait()
+            await asyncio.to_thread(self._executor.shutdown, wait=True)
+            return 0
+        try:
+            await asyncio.wait_for(self._drained.wait(), timeout)
+        except asyncio.TimeoutError:
+            unfinished = self._pending
+            await asyncio.to_thread(
+                self._executor.shutdown, wait=False, cancel_futures=True
+            )
+            return unfinished
         await asyncio.to_thread(self._executor.shutdown, wait=True)
+        return 0
 
     def _release_slot(self) -> None:
         self._pending -= 1

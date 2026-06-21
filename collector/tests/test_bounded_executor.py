@@ -72,6 +72,37 @@ async def test_shutdown_waits_for_submitted_work() -> None:
     assert executor.pending == 0
 
 
+@pytest.mark.asyncio
+async def test_shutdown_timeout_reports_unfinished_jobs() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    executor = BoundedExecutor(name="drain-timeout", max_workers=1, max_pending=1)
+
+    def blocking_work() -> str:
+        started.set()
+        release.wait(timeout=5)
+        return "done"
+
+    work = asyncio.create_task(executor.run(blocking_work))
+    await asyncio.to_thread(started.wait, 2)
+
+    # job 仍在执行 → drain 超时，返回未完成数而非永久挂起
+    unfinished = await executor.shutdown(timeout=0.1)
+    assert unfinished == 1
+
+    # 放行阻塞 job，确认已提交的工作仍正常收束、无线程泄漏
+    release.set()
+    assert await asyncio.wait_for(work, timeout=2) == "done"
+    assert executor.pending == 0
+
+
+@pytest.mark.asyncio
+async def test_shutdown_returns_zero_when_drained() -> None:
+    executor = BoundedExecutor(name="drain-clean", max_workers=1, max_pending=1)
+    assert await executor.run(lambda: "x") == "x"
+    assert await executor.shutdown(timeout=1.0) == 0
+
+
 def test_thread_pool_rejects_submit_beyond_capacity() -> None:
     started = threading.Event()
     release = threading.Event()
