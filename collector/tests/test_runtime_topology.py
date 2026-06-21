@@ -144,7 +144,14 @@ async def test_reconnect_metrics_track_lifecycle():
         [],
     )
     device.status = DeviceStatus.ERROR
-    manager._reconnect_interval = 0
+    manager._reconnect_interval = 1
+    manager._reconnect_jitter_ratio = 0
+    delays = []
+
+    async def fake_sleep(delay):
+        delays.append(delay)
+
+    manager._sleep = fake_sleep
 
     attempts = 0
 
@@ -167,6 +174,20 @@ async def test_reconnect_metrics_track_lifecycle():
     assert snapshot["counters"]["reconnect_failure_count"] == 1
     assert snapshot["gauges"]["reconnect_active"] == 0
     assert snapshot["gauges"]["reconnect_peak_active"] == 1
+    assert delays == [1, 2]
+
+
+def test_reconnect_delay_adds_jitter_and_respects_cap():
+    manager = _empty_manager()
+    manager._reconnect_interval = 30
+    manager._reconnect_max_interval = 300
+    manager._reconnect_jitter_ratio = 0.2
+    manager._random = MagicMock()
+    manager._random.uniform.side_effect = lambda _low, high: high
+
+    assert manager._next_reconnect_delay(0) == 36
+    assert manager._next_reconnect_delay(1) == 72
+    assert manager._next_reconnect_delay(10) == 300
 
 
 @pytest.mark.asyncio

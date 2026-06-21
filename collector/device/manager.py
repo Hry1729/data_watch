@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import random
 import socket
 import threading
 import time
@@ -279,6 +280,10 @@ class DeviceManager:
         self._max_retries = 3
         # 重连间隔（秒）
         self._reconnect_interval = 30
+        self._reconnect_max_interval = 300
+        self._reconnect_jitter_ratio = 0.2
+        self._random = random.Random()
+        self._sleep = asyncio.sleep
         self._connect_semaphore = asyncio.Semaphore(10)
         # VM endpoint 到代理端口的映射器
         self._port_mapper: Optional[EndpointPortMapper] = None
@@ -850,9 +855,10 @@ class DeviceManager:
             return
 
         async def reconnect_task():
+            attempt = 0
             try:
                 while device.status != DeviceStatus.ONLINE:
-                    await asyncio.sleep(self._reconnect_interval)
+                    await self._sleep(self._next_reconnect_delay(attempt))
                     try:
                         self._metrics.increment("reconnect_attempt_count")
                         logger.info("Attempting reconnect for device %s", device.device_id)
@@ -863,10 +869,12 @@ class DeviceManager:
                             await self._report_device_status(device, 1, "reconnected", "connect")
                             break
                         self._metrics.increment("reconnect_failure_count")
+                        attempt += 1
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
                         self._metrics.increment("reconnect_failure_count")
+                        attempt += 1
                         logger.error("Device %s reconnect failed: %s", device.device_id, e)
                         await self._report_device_status(device, 2, f"reconnect failed: {e}", "timeout")
             finally:
@@ -881,6 +889,15 @@ class DeviceManager:
         self._metrics.set_gauge("reconnect_active", active)
         self._metrics.set_gauge("reconnect_peak_active", self._reconnect_peak_active)
         logger.info("Scheduled reconnect for device %s in %ss", device.device_id, self._reconnect_interval)
+
+    def _next_reconnect_delay(self, attempt: int) -> float:
+        base_delay = min(
+            self._reconnect_max_interval,
+            self._reconnect_interval * (2 ** max(0, attempt)),
+        )
+        jitter_room = max(0.0, self._reconnect_max_interval - base_delay)
+        jitter_cap = min(base_delay * self._reconnect_jitter_ratio, jitter_room)
+        return base_delay + self._random.uniform(0.0, jitter_cap)
 
     async def mark_device_error(self, device: Device, message: str, event_type: str = "timeout") -> None:
         """标记设备异常并调度重连。"""
