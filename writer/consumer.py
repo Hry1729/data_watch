@@ -8,7 +8,7 @@ Processing pipeline per entry:
     1. Parse fields
     2. Get GroupMapping from MysqlMapper (cached by config_version)
     3. Translate var_id→td_column_name and accumulate into buffer
-    4. On flush: write_batch → XACK on success; skip XACK on failure
+    4. On flush: write_multi_table (chunked) → XACK rows of successful chunks
     5. Entries exceeding pending_max_retry → DLQ + XACK
 
 Pending (unacked) message recovery:
@@ -506,47 +506,42 @@ class StreamConsumer:
             return
 
         flush_started = time.perf_counter()
-        flush_rows = len(self._buffer)
-        by_table: dict[str, list[_BufferedRow]] = {}
-        for row in self._buffer:
-            by_table.setdefault(row.child_table, []).append(row)
+        buffered = self._buffer
+        flush_rows = len(buffered)
+        rows = [
+            {
+                "child_table": row.child_table,
+                "stable": row.stable,
+                "device_code": row.device_code,
+                "ts": row.ts,
+                "columns": row.columns,
+            }
+            for row in buffered
+        ]
+
+        try:
+            # 跨子表分块写：305 子表不再串行落库，而是 ~3MB 分块的多表 INSERT。
+            chunk_results = await self._writer.write_multi_table(rows)
+        except Exception:
+            # 整体异常（罕见：_execute 已自吞连接错返回 False）。如实计失败、
+            # 整批留 buffer，并向上抛交 run_loop 退避处理。
+            self._metrics.record_write_batch(
+                (time.perf_counter() - flush_started) * 1000, flush_rows, False
+            )
+            raise
 
         failed_rows: list[_BufferedRow] = []
-        for child_table, buffered_rows in by_table.items():
-            rows = [
-                {
-                    "child_table": row.child_table,
-                    "stable": row.stable,
-                    "device_code": row.device_code,
-                    "ts": row.ts,
-                    "columns": row.columns,
-                }
-                for row in buffered_rows
-            ]
-            batch_started = time.perf_counter()
-            try:
-                ok = await self._writer.write_batch(rows)
-            except Exception:
-                self._metrics.record_write_batch(
-                    (time.perf_counter() - batch_started) * 1000,
-                    len(rows),
-                    False,
-                )
-                raise
-            self._metrics.record_write_batch(
-                (time.perf_counter() - batch_started) * 1000,
-                len(rows),
-                ok,
-            )
+        for indices, ok, elapsed_ms in chunk_results:
+            chunk_rows = [buffered[i] for i in indices]
+            self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), ok)
             if ok:
-                self._ack_rows(buffered_rows)
+                self._ack_rows(chunk_rows)
             else:
                 logger.error(
-                    "[consumer] write_batch failed for table %s (%d rows) — not acking, will retry",
-                    child_table,
-                    len(buffered_rows),
+                    "[consumer] multi-table chunk failed (%d rows) — not acking, will retry",
+                    len(chunk_rows),
                 )
-                failed_rows.extend(buffered_rows)
+                failed_rows.extend(chunk_rows)
 
         self._buffer = failed_rows
         self._metrics.set_buffer_rows(len(self._buffer))

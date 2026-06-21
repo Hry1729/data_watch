@@ -27,7 +27,8 @@ async def test_flush_records_batch_latency_rows_and_buffer_depth():
     metrics = WriterPerformanceMetrics()
     redis_client = MagicMock()
     writer = MagicMock()
-    writer.write_batch = AsyncMock(return_value=True)
+    # 两行同子表 → 一个 chunk：返回 (覆盖的行下标, 成功, 耗时ms)
+    writer.write_multi_table = AsyncMock(return_value=[([0, 1], True, 1.5)])
     consumer = StreamConsumer(
         _config(),
         MagicMock(),

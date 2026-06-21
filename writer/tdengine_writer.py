@@ -3,8 +3,9 @@
 Connects via WebSocket (taos-ws-py / taosws) matching the approach used in
 collector/storage/tdengine.py.
 
-write_batch() executes a single INSERT for one child_table. The caller is
-responsible for grouping rows by child_table before invoking (see consumer._flush).
+write_multi_table() packs rows across many child tables into chunked multi-table
+INSERT statements bounded by MAX_SQL_BYTES, returning per-chunk success so the
+caller (consumer._flush) can ACK landed rows and retry the rest.
 
 Row dict schema:
     {
@@ -37,6 +38,10 @@ _CONNECTION_ERROR_KEYWORDS = (
 )
 
 _KNOWN_TAG_COLUMNS = {"device_code"}
+
+# 单条 INSERT 的 SQL 字节上限。实测 TDengine 3.4.0.9 硬上限 ≈4 MiB（超出报
+# 0x0219 SQL statement too long），取 ~3MB 留余量（scripts/experiment_tdengine_multitable.py）。
+MAX_SQL_BYTES = 3 * 1024 * 1024
 
 
 def _is_connection_error(exc: Exception) -> bool:
@@ -330,73 +335,141 @@ class TDengineWriter:
     # Write
     # ------------------------------------------------------------------
 
-    async def write_batch(self, rows: list[dict]) -> bool:
-        """Write a list of rows that all belong to a single child_table.
+    async def write_multi_table(
+        self, rows: list[dict]
+    ) -> list[tuple[list[int], bool, float]]:
+        """Write rows across many child tables as chunked multi-table INSERTs.
 
-        Caller MUST group rows by child_table before calling (see consumer._flush).
-        Returns True on success, False if the INSERT failed.
+        rows[i] = {child_table, stable, device_code, ts, columns}. Rows of any
+        number of child tables (and stables) are packed into single INSERT
+        statements bounded by MAX_SQL_BYTES, since one TDengine statement can
+        cover thousands of subtables but is capped at ~4 MiB of SQL.
+
+        Returns one (row_indices, ok, elapsed_ms) tuple per executed chunk, where
+        row_indices are indices into the input list. ok is chunk-level (a chunk
+        is committed as one INSERT); the caller ACKs rows of successful chunks and
+        retries the rest. Per §7.6 a chunk failure does not yet isolate the bad
+        subtable — that is the binary-search degrade step.
         """
         if not rows:
-            return True
+            return []
+
         async with self._lock:
-            return await self._write_table_rows(rows[0]["child_table"], rows)
+            # Ensure columns per stable (union across all rows of that stable),
+            # so the INSERT never references a column the stable lacks.
+            cols_by_stable: dict[str, list[str]] = {}
+            seen_by_stable: dict[str, set[str]] = {}
+            for row in rows:
+                stable = row["stable"]
+                seen = seen_by_stable.setdefault(stable, set())
+                cols = cols_by_stable.setdefault(stable, [])
+                for col in row["columns"]:
+                    if col not in seen:
+                        seen.add(col)
+                        cols.append(col)
+            for stable, cols in cols_by_stable.items():
+                await self._ensure_columns(stable, cols)
 
-    async def _write_table_rows(self, child_table: str, rows: list[dict]) -> bool:
-        """Build and execute one INSERT for all rows of a single child_table.
+            results: list[tuple[list[int], bool, float]] = []
+            for indices, sql in self._iter_chunks(rows):
+                started = time.perf_counter()
+                ok = await self._execute(sql)
+                results.append((indices, ok, (time.perf_counter() - started) * 1000))
+            return results
 
-        Uses USING syntax so TDengine auto-creates the child table if it does
-        not yet exist.
+    @staticmethod
+    def _format_value(raw: object) -> str:
+        if raw is None:
+            return "NULL"
+        try:
+            return repr(float(raw))
+        except (TypeError, ValueError):
+            return "NULL"
 
-        SQL form:
-            INSERT INTO `device_data`.`qc100`
-            USING `device_data`.`sdqc` TAGS ('qc100')
-            (`ts`, `qc1`, `qc3`)
-            VALUES (1716000000000, 1.0, 2.0)
-            (1716000000500, 1.1, 2.1)
-        """
-        if not rows:
-            return True
-
-        first = rows[0]
-        stable = first["stable"]
-        device_code = first["device_code"]
-
-        # Collect the union of column names across all rows in this group
+    @staticmethod
+    def _union_cols(rows: list[dict], idxs: list[int]) -> list[str]:
         all_cols: list[str] = []
-        seen_cols: set[str] = set()
-        for row in rows:
-            for col in row["columns"]:
-                if col not in seen_cols:
-                    seen_cols.add(col)
+        seen: set[str] = set()
+        for i in idxs:
+            for col in rows[i]["columns"]:
+                if col not in seen:
+                    seen.add(col)
                     all_cols.append(col)
+        return all_cols
 
-        await self._ensure_columns(stable, all_cols)
-
+    def _subtable_header(self, row: dict, all_cols: list[str]) -> str:
         db = _quote(self._database)
-        tbl = _quote(child_table)
-        stbl = _quote(stable)
-        tag_val = device_code.replace("'", "''")
+        tbl = _quote(row["child_table"])
+        stbl = _quote(row["stable"])
+        tag_val = str(row["device_code"]).replace("'", "''")
         col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
+        return f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') ({col_list}) VALUES "
 
-        value_clauses: list[str] = []
-        for row in rows:
-            ts = int(row["ts"])
-            col_vals = row["columns"]
-            vals: list[str] = [str(ts)]
-            for col in all_cols:
-                raw = col_vals.get(col)
-                if raw is None:
-                    vals.append("NULL")
-                else:
-                    try:
-                        vals.append(repr(float(raw)))
-                    except (TypeError, ValueError):
-                        vals.append("NULL")
-            value_clauses.append(f"({', '.join(vals)})")
+    def _value_clause(self, row: dict, all_cols: list[str]) -> str:
+        col_vals = row["columns"]
+        vals = [str(int(row["ts"]))]
+        for col in all_cols:
+            vals.append(self._format_value(col_vals.get(col)))
+        return "(" + ", ".join(vals) + ")"
 
-        sql = (
-            f"INSERT INTO {db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') "
-            f"({col_list}) VALUES "
-            + " ".join(value_clauses)
-        )
-        return await self._execute(sql)
+    def _subtable_fragment(self, rows: list[dict], idxs: list[int], all_cols: list[str]) -> str:
+        header = self._subtable_header(rows[idxs[0]], all_cols)
+        return header + " ".join(self._value_clause(rows[i], all_cols) for i in idxs)
+
+    def _split_subtable(self, rows: list[dict], idxs: list[int], all_cols: list[str]):
+        """Split one child table's rows so each fragment stays under MAX_SQL_BYTES.
+
+        Measures header + per-row clause bytes incrementally to avoid O(n^2).
+        A single row clause that alone exceeds the cap is still emitted on its own
+        (cannot be split further); TDengine would reject it, surfacing as failure.
+        """
+        header_bytes = len(self._subtable_header(rows[idxs[0]], all_cols).encode("utf-8"))
+        cur: list[int] = []
+        cur_bytes = header_bytes
+        for i in idxs:
+            clause_bytes = len(self._value_clause(rows[i], all_cols).encode("utf-8"))
+            add = clause_bytes + (1 if cur else 0)  # space separator between value clauses
+            if cur and cur_bytes + add > MAX_SQL_BYTES:
+                yield cur
+                cur = [i]
+                cur_bytes = header_bytes + clause_bytes
+            else:
+                cur.append(i)
+                cur_bytes += add
+        if cur:
+            yield cur
+
+    def _iter_chunks(self, rows: list[dict]):
+        """Yield (row_indices, sql) chunks, each a multi-table INSERT <= MAX_SQL_BYTES."""
+        prefix = "INSERT INTO "
+        prefix_bytes = len(prefix.encode("utf-8"))
+
+        # Group row indices by child table, preserving first-seen order.
+        by_table: dict[str, list[int]] = {}
+        for i, row in enumerate(rows):
+            by_table.setdefault(row["child_table"], []).append(i)
+
+        # Build per-subtable fragments (splitting oversized subtables by rows).
+        fragments: list[tuple[str, list[int], int]] = []
+        for idxs in by_table.values():
+            all_cols = self._union_cols(rows, idxs)
+            for frag_idxs in self._split_subtable(rows, idxs, all_cols):
+                frag = self._subtable_fragment(rows, frag_idxs, all_cols)
+                fragments.append((frag, frag_idxs, len(frag.encode("utf-8"))))
+
+        # Next-fit pack fragments into chunks.
+        cur_frags: list[str] = []
+        cur_idxs: list[int] = []
+        cur_bytes = prefix_bytes
+        for frag, frag_idxs, frag_bytes in fragments:
+            sep = 1 if cur_frags else 0
+            if cur_frags and cur_bytes + sep + frag_bytes > MAX_SQL_BYTES:
+                yield cur_idxs, prefix + " ".join(cur_frags)
+                cur_frags = []
+                cur_idxs = []
+                cur_bytes = prefix_bytes
+            cur_frags.append(frag)
+            cur_idxs.extend(frag_idxs)
+            cur_bytes += (1 if len(cur_frags) > 1 else 0) + frag_bytes
+        if cur_frags:
+            yield cur_idxs, prefix + " ".join(cur_frags)
