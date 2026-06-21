@@ -46,13 +46,6 @@ function Invoke-NativeText {
     }
 }
 
-function Get-PropertyValue {
-    param($InputObject, [string]$Name)
-    $Property = $InputObject.PSObject.Properties[$Name]
-    if ($null -eq $Property) { return $null }
-    return $Property.Value
-}
-
 $GitCommit = Invoke-NativeText { git -C $RepoRoot rev-parse HEAD }
 $GitStatus = Invoke-NativeText { git -C $RepoRoot status --short }
 $DockerVersion = Invoke-NativeText { docker version --format "{{json .}}" }
@@ -141,17 +134,20 @@ while ((Get-Date) -lt $Deadline) {
 
     $ProcessRows = foreach ($Name in $ProcessNames) {
         foreach ($Process in @(Get-Process -Name $Name -ErrorAction SilentlyContinue)) {
+            $ProcessCim = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction SilentlyContinue
             [pscustomobject]@{
                 timestamp = $Now
                 name = $Process.ProcessName
                 pid = $Process.Id
-                cpu_seconds = $Process.CPU
+                cpu_seconds = if ($null -ne $ProcessCim) {
+                    ([double]$ProcessCim.KernelModeTime + [double]$ProcessCim.UserModeTime) / 10000000
+                } else { $null }
                 working_set_bytes = $Process.WorkingSet64
                 private_memory_bytes = $Process.PrivateMemorySize64
                 thread_count = $Process.Threads.Count
                 handle_count = $Process.HandleCount
-                io_read_bytes = Get-PropertyValue $Process "IOReadBytes"
-                io_write_bytes = Get-PropertyValue $Process "IOWriteBytes"
+                io_read_bytes = if ($null -ne $ProcessCim) { [uint64]$ProcessCim.ReadTransferCount } else { $null }
+                io_write_bytes = if ($null -ne $ProcessCim) { [uint64]$ProcessCim.WriteTransferCount } else { $null }
             }
         }
     }
