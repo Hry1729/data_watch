@@ -137,6 +137,38 @@ async def test_executor_drops_result_when_generation_changes_during_read():
 
 
 @pytest.mark.asyncio
+async def test_executor_drops_result_when_generation_changes_during_parse():
+    config = _make_single_group_config("EXE_PARSE_STALE")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_PARSE_STALE"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x64]})
+    device.driver = driver
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
+    original_parse = executor._parse_result
+
+    def parse_then_invalidate(*args, **kwargs):
+        points = original_parse(*args, **kwargs)
+        device_manager.invalidate_device(device.device_id)
+        return points
+
+    executor._parse_result = MagicMock(side_effect=parse_then_invalidate)
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+    assert executor.stats["performance"]["counters"]["stale_generation_drop_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_executor_redis_stream_failure_does_not_refresh_latest():
     """stream 失败 → 错误如实计为一次，write_latest 未被调用（latest 不被假装推进）。"""
     config = _make_single_group_config()
