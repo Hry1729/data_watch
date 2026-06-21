@@ -84,11 +84,23 @@ foreach ($t in $pyTargets) {
     Write-Host "`n=== [$($t.N)/6] $($t.Dir): PyInstaller ===" -ForegroundColor Cyan
     $dir = Join-Path $RepoRoot $t.Dir
     $pyi = Join-Path $dir '.venv-pack\Scripts\pyinstaller.exe'
+    $python = Join-Path $dir '.venv-pack\Scripts\python.exe'
     if (-not (Test-Path $pyi)) { throw "缺少打包环境: $($t.Dir)\.venv-pack（见部署手册 §四）" }
+    if (-not (Test-Path $python)) { throw "缺少打包解释器: $($t.Dir)\.venv-pack\Scripts\python.exe" }
     Push-Location $dir
     try {
+        if ($t.Dir -eq 'collector') {
+            & $python -m pip install --disable-pip-version-check -r requirements.txt
+            Assert-LastExit 'collector pack requirements'
+        }
         & $pyi $t.Spec --noconfirm; Assert-LastExit "pyinstaller $($t.Spec)"
     } finally { Pop-Location }
+    if ($t.Dir -eq 'collector') {
+        $msgspecDir = Join-Path $dir 'dist\data-watch-collector\_internal\msgspec'
+        if (-not (Test-Path $msgspecDir)) {
+            throw 'collector 打包产物缺少 msgspec，拒绝继续生成安装包'
+        }
+    }
 }
 
 # ── [5/6] opcda proxy: build.ps1（依赖相对路径，须在 proxy 目录内运行）──
