@@ -54,6 +54,27 @@ def test_scheduler_exposes_task_count_gauge():
     assert metrics.snapshot()["gauges"]["scheduler_task_count"] == 1
 
 
+def test_scheduler_phase_is_stable_and_bounded_by_period():
+    scheduler = TaskScheduler()
+    task_a = SimpleNamespace(
+        task_name="device-a_0.1s",
+        scan_rate=0.1,
+        device=SimpleNamespace(device_id="device-a"),
+    )
+    task_b = SimpleNamespace(
+        task_name="device-b_0.1s",
+        scan_rate=0.1,
+        device=SimpleNamespace(device_id="device-b"),
+    )
+
+    phase_a = scheduler._initial_phase_seconds(task_a)
+
+    assert phase_a == scheduler._initial_phase_seconds(task_a)
+    assert 0 <= phase_a < task_a.scan_rate
+    assert 0 <= scheduler._initial_phase_seconds(task_b) < task_b.scan_rate
+    assert phase_a != scheduler._initial_phase_seconds(task_b)
+
+
 def test_device_gate_serializes_and_rotates_skipped_tasks():
     scheduler = TaskScheduler()
     device = SimpleNamespace(device_id="d1")

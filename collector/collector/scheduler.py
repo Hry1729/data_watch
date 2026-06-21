@@ -16,6 +16,7 @@
 
 import asyncio
 import time
+import zlib
 from collections import deque
 from typing import Callable, Coroutine, Deque, Dict, List, Optional, Set
 
@@ -91,6 +92,22 @@ class TaskScheduler:
         self._inflight_devices.discard(device_id)
         self._device_waiters.pop(device_id, None)
 
+    @staticmethod
+    def _initial_phase_seconds(task: CollectTask) -> float:
+        period_us = max(1, int(task.scan_rate * 1_000_000))
+        device_id = TaskScheduler._task_device_id(task)
+        phase_us = zlib.crc32(device_id.encode("utf-8")) % period_us
+        return phase_us / 1_000_000
+
+    async def _run_phased_loop(
+        self, task: CollectTask, execute_func: Callable
+    ) -> None:
+        phase = self._initial_phase_seconds(task)
+        if phase > 0:
+            await self._sleep(phase)
+        if self._running:
+            await self._run_loop(task, execute_func)
+
     def add_task(self, task: CollectTask) -> None:
         """添加采集任务"""
         self.tasks[task.task_name] = task
@@ -114,7 +131,7 @@ class TaskScheduler:
 
         # 为每个任务创建独立的循环
         for task in self.tasks.values():
-            coro = self._run_loop(task, execute_func)
+            coro = self._run_phased_loop(task, execute_func)
             loop_task = asyncio.create_task(coro)
             self._loop_tasks.append(loop_task)
             device_id = task.device.device_id
@@ -247,7 +264,7 @@ class TaskScheduler:
             return
         for task in new_tasks:
             self.tasks[task.task_name] = task
-            coro = self._run_loop(task, self._execute_func)
+            coro = self._run_phased_loop(task, self._execute_func)
             loop_task = asyncio.create_task(coro)
             self._loop_tasks.append(loop_task)
             self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
