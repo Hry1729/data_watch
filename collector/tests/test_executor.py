@@ -263,6 +263,93 @@ async def test_executor_rejects_cycle_when_parse_executor_is_saturated():
 
 
 @pytest.mark.asyncio
+async def test_executor_runs_redis_on_injected_worker_executor():
+    config = _make_single_group_config("EXE_REDIS_WORKER")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_REDIS_WORKER"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x64]})
+    device.driver = driver
+
+    redis_threads = []
+    redis_writer = MagicMock()
+    redis_writer.write_window.side_effect = lambda *_args: redis_threads.append(
+        threading.get_ident()
+    )
+    redis_executor = BoundedExecutor(
+        name="redis-test",
+        max_workers=1,
+        max_pending=2,
+    )
+    executor = TaskExecutor(
+        device_manager=device_manager,
+        redis_writer=redis_writer,
+        redis_executor=redis_executor,
+    )
+    event_loop_thread = threading.get_ident()
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+    await executor.shutdown()
+
+    assert redis_threads
+    assert redis_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_cycle_when_redis_executor_is_saturated():
+    config = _make_single_group_config("EXE_REDIS_FULL")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_REDIS_FULL"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x64]})
+    device.driver = driver
+
+    started = threading.Event()
+    release = threading.Event()
+    metrics = PerformanceMetrics()
+    redis_executor = BoundedExecutor(
+        name="redis",
+        max_workers=1,
+        max_pending=1,
+        metrics=metrics,
+    )
+
+    def occupy_executor():
+        started.set()
+        release.wait(timeout=5)
+
+    blocker = asyncio.create_task(redis_executor.run(occupy_executor))
+    await asyncio.to_thread(started.wait, 2)
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(
+        device_manager=device_manager,
+        redis_writer=redis_writer,
+        metrics=metrics,
+        redis_executor=redis_executor,
+    )
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+    release.set()
+    await blocker
+    await executor.shutdown()
+
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+    assert executor.stats["total_errors"] == 1
+    assert metrics.snapshot()["counters"]["redis_executor_reject_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_executor_redis_stream_failure_does_not_refresh_latest():
     """stream 失败 → 错误如实计为一次，write_latest 未被调用（latest 不被假装推进）。"""
     config = _make_single_group_config()

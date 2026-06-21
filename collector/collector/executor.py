@@ -49,6 +49,7 @@ class TaskExecutor:
         redis_writer: Optional["RedisWriter"] = None,
         metrics: Optional[PerformanceMetrics] = None,
         parse_executor: Optional[BoundedExecutor] = None,
+        redis_executor: Optional[BoundedExecutor] = None,
     ):
         # collector 主链路只写 Redis；缺少 redis_writer 会静默丢数据，故快速失败。
         if redis_writer is None:
@@ -58,6 +59,7 @@ class TaskExecutor:
         self._redis_writer = redis_writer
         self._metrics = metrics or PerformanceMetrics()
         self._parse_executor = parse_executor
+        self._redis_executor = redis_executor
         self._metrics.increment("stale_generation_drop_count", 0)
         self._clock = time.perf_counter
         self._summary_interval_seconds = summary_interval_seconds
@@ -156,15 +158,25 @@ class TaskExecutor:
         # 注意：await 会让本任务等待 Redis 写完，写入耗时会计入该任务的采集周期；
         # 写操作仍在线程池执行，不阻塞事件循环线程。
         if points:
-            loop = asyncio.get_running_loop()
             redis_start = self._clock()
             try:
-                written = await loop.run_in_executor(
-                    None, self._write_if_current, task, points
-                )
+                if self._redis_executor is None:
+                    loop = asyncio.get_running_loop()
+                    written = await loop.run_in_executor(
+                        None, self._write_if_current, task, points
+                    )
+                else:
+                    written = await self._redis_executor.run(
+                        self._write_if_current, task, points
+                    )
                 if not written:
                     self._record_stale_generation_drop()
                     return
+            except ExecutorSaturatedError as exc:
+                self._total_errors += 1
+                self._warn_executor_saturated("redis", task, exc)
+                self._record_read_summary(task, len(points), elapsed * 1000, error=True)
+                return
             except Exception as exc:
                 self._total_errors += 1
                 self._metrics.increment("redis_write_error_count")
@@ -190,8 +202,12 @@ class TaskExecutor:
         self._record_read_summary(task, len(points), elapsed * 1000)
 
     async def shutdown(self) -> None:
-        if self._parse_executor is not None:
-            await self._parse_executor.shutdown()
+        executors = []
+        for executor in (self._parse_executor, self._redis_executor):
+            if executor is not None and executor not in executors:
+                executors.append(executor)
+        if executors:
+            await asyncio.gather(*(executor.shutdown() for executor in executors))
 
     def _warn_executor_saturated(
         self,

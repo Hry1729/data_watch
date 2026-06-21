@@ -123,12 +123,19 @@ class CollectorApp:
             max_pending=parse_workers * 2,
             metrics=self.performance_metrics,
         )
+        self.redis_executor = BoundedExecutor(
+            name="redis",
+            max_workers=16,
+            max_pending=64,
+            metrics=self.performance_metrics,
+        )
         self.executor = TaskExecutor(
             device_manager=self.device_manager,
             system_logger=self.system_logger,
             redis_writer=self.redis_writer,
             metrics=self.performance_metrics,
             parse_executor=self.parse_executor,
+            redis_executor=self.redis_executor,
         )
         self.health_checker = HealthChecker(self.device_manager, interval=30)
 
