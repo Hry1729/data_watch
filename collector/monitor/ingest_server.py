@@ -13,6 +13,7 @@ from data_queue.types import DataPoint
 
 if TYPE_CHECKING:
     from core.opcda_mapper import OpcDaTagMapper
+    from device.manager import DeviceManager
     from storage.redis_writer import RedisWriter
 
 logger = get_logger("ingest_server")
@@ -159,6 +160,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         redis_writer: Optional["RedisWriter"] = None,
         realtime_config: Optional[Any] = None,
+        device_manager: Optional["DeviceManager"] = None,
     ):
         super().__init__(server_address, request_handler)
         self.ingest_path = ingest_path
@@ -168,11 +170,13 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         self.opcda_ingest_path = opcda_ingest_path
         self.max_body_bytes = max_body_bytes
         self.redis_writer = redis_writer
+        self.device_manager = device_manager
         # 元数据快照在 asyncio 主线程（热重载）写、在 HTTP 工作线程读，
         # 用锁保证读取时拿到 device_meta / variable_meta 一致的一对。
         self._metadata_lock = threading.Lock()
         self._device_meta: Dict[str, Any] = {}
         self._variable_meta: Dict[str, Any] = {}
+        self._device_generations: Dict[str, int] = {}
         self.update_metadata(
             getattr(realtime_config, "devices", []),
             getattr(realtime_config, "variables", []),
@@ -195,9 +199,16 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             str(getattr(variable, "variable_id", "")): variable
             for variable in (variables or [])
         }
+        new_device_generations: Dict[str, int] = {}
+        if self.device_manager is not None:
+            for device_id in new_device_meta:
+                generation = self.device_manager.current_generation(device_id)
+                if generation is not None:
+                    new_device_generations[device_id] = generation
         with self._metadata_lock:
             self._device_meta = new_device_meta
             self._variable_meta = new_variable_meta
+            self._device_generations = new_device_generations
 
     def write_points_to_redis(self, points: List[DataPoint]) -> Tuple[int, List[str]]:
         """写入 Redis latest/window/stream，返回 accepted 和错误列表。"""
@@ -208,9 +219,10 @@ class _IngestHTTPServer(ThreadingHTTPServer):
         with self._metadata_lock:
             variable_meta = self._variable_meta
             device_meta = self._device_meta
+            device_generations = self._device_generations
 
-        by_latest: Dict[Tuple[str, str, int], Dict[str, Dict[str, Any]]] = {}
-        by_frame: Dict[Tuple[str, str, str, int, int], Dict[str, Any]] = {}
+        by_latest: Dict[Tuple[str, str, int, Optional[int]], Dict[str, Dict[str, Any]]] = {}
+        by_frame: Dict[Tuple[str, str, str, int, int, Optional[int]], Dict[str, Any]] = {}
         accepted = 0
         errors: List[str] = []
 
@@ -241,6 +253,10 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             ts_ms = _timestamp_to_millis(point.timestamp)
             device_code = getattr(device, "device_id", device_id)
             device_type = str(getattr(device, "device_type", "")).lower()
+            generation = device_generations.get(device_code)
+            if self.device_manager is not None and generation is None:
+                errors.append(f"points[{idx}]: device is inactive: {device_code}")
+                continue
             # C2：stream/frame 的 config_version 必须与 writer 对账列同源。writer
             # （mysql_mapper）用 device_point_group.config_version，故这里用变量的
             # group_config_version（与 executor 路径 035a532 一致），不用 device 表的
@@ -252,13 +268,22 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             # latest 聚合键必须包含 scan_rate_ms：同一 (device, group) 不同 scan_rate 的
             # 帧各自独立落库，latest 字段也要与 frame 对齐，否则任一帧失败时其它帧的
             # 变量会先于失败帧进 latest，客户端据此误判已落库。
-            by_latest.setdefault((device_code, group_code, scan_rate_ms), {})[str(point.variable_id)] = {
+            by_latest.setdefault(
+                (device_code, group_code, scan_rate_ms, generation), {}
+            )[str(point.variable_id)] = {
                 "v": value_text,
                 "t": ts_ms,
                 "q": quality,
             }
 
-            frame_key = (device_code, device_type, group_code, scan_rate_ms, config_version)
+            frame_key = (
+                device_code,
+                device_type,
+                group_code,
+                scan_rate_ms,
+                config_version,
+                generation,
+            )
             frame = by_frame.setdefault(frame_key, {"ts": ts_ms, "values": {}, "stream_values": {}})
             frame["ts"] = max(frame["ts"], ts_ms)
             frame["values"][str(point.variable_id)] = value_text
@@ -267,7 +292,14 @@ class _IngestHTTPServer(ThreadingHTTPServer):
 
             accepted += 1
 
-        for (device_code, device_type, group_code, scan_rate_ms, config_version), frame_data in by_frame.items():
+        for (
+            device_code,
+            device_type,
+            group_code,
+            scan_rate_ms,
+            config_version,
+            generation,
+        ), frame_data in by_frame.items():
             frame = {
                 "device_code": device_code,
                 "group_code": group_code,
@@ -277,39 +309,49 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             }
             frame_label = f"{device_code}/{group_code}/{scan_rate_ms}ms"
 
-            # 写顺序：window -> stream -> latest。latest 必须最后写，
-            # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
-            try:
-                self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
-            except Exception as exc:
-                errors.append(f"redis write_window failed for {frame_label}: {exc}")
-                logger.error("redis write_window failed for %s: %s", frame_label, exc)
-                continue
-
-            if frame_data["stream_values"]:
+            def write_frame() -> None:
+                # 写顺序：window -> stream -> latest。latest 必须最后写，
+                # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
                 try:
-                    self.redis_writer.write_stream(
-                        device_code,
-                        device_type,
-                        group_code,
-                        scan_rate_ms,
-                        frame_data["ts"],
-                        config_version,
-                        frame_data["stream_values"],
-                    )
+                    self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
                 except Exception as exc:
-                    errors.append(f"redis write_stream failed for {frame_label}: {exc}")
-                    logger.error("redis write_stream failed for %s: %s", frame_label, exc)
-                    continue
+                    errors.append(f"redis write_window failed for {frame_label}: {exc}")
+                    logger.error("redis write_window failed for %s: %s", frame_label, exc)
+                    return
 
-            latest_fields = by_latest.get((device_code, group_code, scan_rate_ms))
-            if latest_fields is None:
-                continue
-            try:
-                self.redis_writer.write_latest(device_code, group_code, latest_fields)
-            except Exception as exc:
-                errors.append(f"redis write_latest failed for {frame_label}: {exc}")
-                logger.error("redis write_latest failed for %s: %s", frame_label, exc)
+                if frame_data["stream_values"]:
+                    try:
+                        self.redis_writer.write_stream(
+                            device_code,
+                            device_type,
+                            group_code,
+                            scan_rate_ms,
+                            frame_data["ts"],
+                            config_version,
+                            frame_data["stream_values"],
+                        )
+                    except Exception as exc:
+                        errors.append(f"redis write_stream failed for {frame_label}: {exc}")
+                        logger.error("redis write_stream failed for %s: %s", frame_label, exc)
+                        return
+
+                latest_fields = by_latest.get(
+                    (device_code, group_code, scan_rate_ms, generation)
+                )
+                if latest_fields is None:
+                    return
+                try:
+                    self.redis_writer.write_latest(device_code, group_code, latest_fields)
+                except Exception as exc:
+                    errors.append(f"redis write_latest failed for {frame_label}: {exc}")
+                    logger.error("redis write_latest failed for %s: %s", frame_label, exc)
+
+            if self.device_manager is None:
+                write_frame()
+            elif generation is None or not self.device_manager.run_if_current_generation(
+                device_code, generation, write_frame
+            ):
+                errors.append(f"stale generation rejected for {frame_label}")
 
         return accepted, errors
 
@@ -624,6 +666,7 @@ class InterfaceIngestServer:
         opcda_mapper: Optional["OpcDaTagMapper"] = None,
         redis_writer: Optional["RedisWriter"] = None,
         realtime_config: Optional[Any] = None,
+        device_manager: Optional["DeviceManager"] = None,
     ) -> None:
         """启动接口服务（后台线程）"""
         if self._server is not None:
@@ -643,6 +686,7 @@ class InterfaceIngestServer:
             max_body_bytes=self.max_body_bytes,
             redis_writer=redis_writer,
             realtime_config=realtime_config,
+            device_manager=device_manager,
         )
 
         self._thread = threading.Thread(

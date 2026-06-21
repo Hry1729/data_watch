@@ -531,3 +531,69 @@ def test_ingest_stream_uses_group_config_version_not_device_version():
     redis_writer.write_stream.assert_called_once()
     # write_stream 第 6 个位置参数（index 5）是 config_version
     assert redis_writer.write_stream.call_args.args[5] == 7
+
+
+def test_ingest_rejects_frame_from_stale_metadata_generation():
+    class GenerationGate:
+        def __init__(self):
+            self.generation = 1
+
+        def current_generation(self, _device_id):
+            return self.generation
+
+        def run_if_current_generation(self, _device_id, generation, action):
+            if generation != self.generation:
+                return False
+            action()
+            return True
+
+    redis_writer = MagicMock()
+    gate = GenerationGate()
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="30041800",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Tag30041800",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            )
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+        device_manager=gate,
+    )
+
+    # metadata 快照仍属于 generation=1，但设备已热更新到 generation=2。
+    gate.generation = 2
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "30041800", 12.5, quality=4)
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 1
+    assert len(errors) == 1
+    assert "stale generation" in errors[0]
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()

@@ -191,6 +191,7 @@ class CollectorApp:
                 opcda_mapper=self.opcda_mapper,
                 redis_writer=self.redis_writer,
                 realtime_config=self.config,
+                device_manager=self.device_manager,
             )
 
         # 6. 启动健康检查

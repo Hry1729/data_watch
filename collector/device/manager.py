@@ -328,6 +328,15 @@ class DeviceManager:
                 and self._device_generations.get(device_id) == generation
             )
 
+    def current_generation(self, device_id: str) -> Optional[int]:
+        """返回活跃设备当前代次；未注册或 tombstone 设备返回 None。"""
+        lock = self._generation_lock_for(device_id)
+        with lock:
+            device = self.devices.get(device_id)
+            if device is None or not device.active:
+                return None
+            return self._device_generations.get(device_id)
+
     def run_if_current_generation(
         self,
         device_id: str,
