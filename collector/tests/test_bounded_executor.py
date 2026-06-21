@@ -5,7 +5,11 @@ import threading
 
 import pytest
 
-from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
+from collector.bounded_executor import (
+    BoundedExecutor,
+    BoundedThreadPoolExecutor,
+    ExecutorSaturatedError,
+)
 from monitor.performance import PerformanceMetrics
 
 
@@ -66,3 +70,29 @@ async def test_shutdown_waits_for_submitted_work() -> None:
     await work
     await shutdown
     assert executor.pending == 0
+
+
+def test_thread_pool_rejects_submit_beyond_capacity() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    executor = BoundedThreadPoolExecutor(
+        name="io-test",
+        max_workers=1,
+        max_pending=1,
+    )
+
+    def blocking_work() -> str:
+        started.set()
+        release.wait(timeout=5)
+        return "done"
+
+    first = executor.submit(blocking_work)
+    assert started.wait(timeout=2)
+
+    with pytest.raises(ExecutorSaturatedError):
+        executor.submit(lambda: "must not run")
+
+    release.set()
+    assert first.result(timeout=2) == "done"
+    assert executor.submit(lambda: "next").result(timeout=2) == "next"
+    executor.shutdown(wait=True)

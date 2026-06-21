@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Optional, TypeVar
 
 from monitor.performance import PerformanceMetrics
@@ -14,6 +15,74 @@ T = TypeVar("T")
 
 class ExecutorSaturatedError(RuntimeError):
     """执行器容量已满，新任务未被提交。"""
+
+
+class BoundedThreadPoolExecutor(ThreadPoolExecutor):
+    """供 loop.run_in_executor 使用的非阻塞有界线程池。"""
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        max_workers: int,
+        max_pending: int,
+        metrics: Optional[PerformanceMetrics] = None,
+    ) -> None:
+        if max_workers <= 0 or max_pending <= 0:
+            raise ValueError("max_workers and max_pending must be positive")
+        super().__init__(
+            max_workers=max_workers,
+            thread_name_prefix=f"collector-{name}",
+        )
+        self.name = name
+        self.max_pending = max_pending
+        self._metrics = metrics
+        self._slots = threading.BoundedSemaphore(max_pending)
+        self._pending_lock = threading.Lock()
+        self._pending = 0
+        self._peak_pending = 0
+        self._set_gauge("pending", 0)
+        self._set_gauge("peak_pending", 0)
+        self._increment("reject_count", 0)
+
+    @property
+    def pending(self) -> int:
+        with self._pending_lock:
+            return self._pending
+
+    def submit(self, fn: Callable[..., T], /, *args: Any, **kwargs: Any) -> Future[T]:
+        if not self._slots.acquire(blocking=False):
+            self._increment("reject_count")
+            raise ExecutorSaturatedError(
+                f"{self.name} executor capacity reached: {self.max_pending}"
+            )
+
+        with self._pending_lock:
+            self._pending += 1
+            self._peak_pending = max(self._peak_pending, self._pending)
+            self._set_gauge("pending", self._pending)
+            self._set_gauge("peak_pending", self._peak_pending)
+        try:
+            future = super().submit(fn, *args, **kwargs)
+        except Exception:
+            self._release_slot()
+            raise
+        future.add_done_callback(lambda _future: self._release_slot())
+        return future
+
+    def _release_slot(self) -> None:
+        with self._pending_lock:
+            self._pending -= 1
+            self._set_gauge("pending", self._pending)
+        self._slots.release()
+
+    def _increment(self, suffix: str, amount: int = 1) -> None:
+        if self._metrics is not None:
+            self._metrics.increment(f"{self.name}_executor_{suffix}", amount)
+
+    def _set_gauge(self, suffix: str, value: int) -> None:
+        if self._metrics is not None:
+            self._metrics.set_gauge(f"{self.name}_executor_{suffix}", value)
 
 
 class BoundedExecutor:
