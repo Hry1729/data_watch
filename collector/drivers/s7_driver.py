@@ -35,8 +35,10 @@ class S7Driver(BaseDriver):
         re.IGNORECASE,
     )
 
-    def __init__(self):
+    def __init__(self, read_executor=None):
         super().__init__()
+        # 专用 PLC 读线程池（§7.3）；None 时回退默认 executor，保持原行为与测试兼容。
+        self._read_executor = read_executor
         self._client = None
         self._client_lock = threading.Lock()
         self._ip = None
@@ -60,7 +62,7 @@ class S7Driver(BaseDriver):
             # snap7 是阻塞调用，用线程池执行
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
-                None, self._client.connect, self._ip, self._rack, self._slot, port
+                self._read_executor, self._client.connect, self._ip, self._rack, self._slot, port
             )
             # PDU 安全钳位：纯 Python snap7 的 PDU 协商可能未生效（pdu_length 停在默认 480），
             # 对 S7-300/400（PDU 240）会按 462B 拆读 → 超出其 PDU → 读报 Invalid address(0x05)。
@@ -79,7 +81,7 @@ class S7Driver(BaseDriver):
     async def disconnect(self) -> None:
         """断开S7连接"""
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, self._disconnect_client)
+        await loop.run_in_executor(self._read_executor, self._disconnect_client)
 
     def _disconnect_client(self) -> None:
         """在线程中等待当前读取结束后断开连接。"""
@@ -115,7 +117,7 @@ class S7Driver(BaseDriver):
         # 同一个 PLC client 串行读取，避免多周期任务并发访问同一连接。
         async with self._read_lock:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._read_blocks, blocks)
+            return await loop.run_in_executor(self._read_executor, self._read_blocks, blocks)
 
     def _read_blocks(self, blocks: List[ReadBlock]) -> Dict[str, Any]:
         """在线程中批量读取所有block"""
@@ -410,7 +412,7 @@ class S7Driver(BaseDriver):
         """S7健康检查（无副作用，不调用 PLC 运行/停止类方法）。"""
         try:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._ping_client)
+            return await loop.run_in_executor(self._read_executor, self._ping_client)
         except Exception as exc:
             logger.warning("S7 safe ping failed: %s", exc)
             self._connected = False

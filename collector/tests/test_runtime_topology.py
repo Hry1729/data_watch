@@ -25,6 +25,17 @@ def _empty_manager() -> DeviceManager:
     return manager
 
 
+def test_create_driver_injects_read_executor():
+    """_create_driver 把 read_executor 下发给 S7/GE 阻塞型驱动（§7.3）。"""
+    sentinel = object()
+    manager = DeviceManager(
+        CollectorConfig(devices=[], variables=[]),
+        read_executor=sentinel,
+    )
+    assert manager._create_driver("s7")._read_executor is sentinel
+    assert manager._create_driver("ge_srtp")._read_executor is sentinel
+
+
 @pytest.mark.asyncio
 async def test_add_device_normal_plc_connects_and_builds_tasks():
     """场景1：新增普通 PLC 设备 —— 注册、连接、生成采集任务。"""

@@ -26,8 +26,10 @@ class GESRTPDriver(BaseDriver):
     # GE 地址正则：匹配 %(R|AI|AQ|I|Q|M)<num>
     _GE_ADDRESS_RE = re.compile(r"^%(R|AI|AQ|I|Q|M)(\d+)$", re.IGNORECASE)
 
-    def __init__(self):
+    def __init__(self, read_executor=None):
         super().__init__()
+        # 专用 PLC 读线程池（§7.3）；None 时回退默认 executor，保持原行为与测试兼容。
+        self._read_executor = read_executor
         self._driver = None
 
     async def connect(self, config: Dict[str, Any]) -> None:
@@ -42,7 +44,7 @@ class GESRTPDriver(BaseDriver):
         self._driver = GE_SRTP_Driver(host=host, port=port, slot=slot)
         try:
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._driver.connect)
+            await loop.run_in_executor(self._read_executor, self._driver.connect)
             self._connected = True
             logger.info(f"GE SRTP connected to {host}:{port} slot={slot}")
         except Exception as e:
@@ -53,7 +55,7 @@ class GESRTPDriver(BaseDriver):
         if self._driver:
             try:
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._driver.disconnect)
+                await loop.run_in_executor(self._read_executor, self._driver.disconnect)
             except Exception as e:
                 logger.warning(f"GE SRTP disconnect error: {e}")
             finally:
@@ -76,7 +78,7 @@ class GESRTPDriver(BaseDriver):
             for block in blocks:
                 try:
                     values = await loop.run_in_executor(
-                        None, self._read_block, block
+                        self._read_executor, self._read_block, block
                     )
                     result[block.address] = values
                 except Exception as e:

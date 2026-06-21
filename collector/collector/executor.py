@@ -109,6 +109,14 @@ class TaskExecutor:
             result = await device.driver.read(scan_task.read_blocks)
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
                 raise ReadError(f"All read blocks failed for task {task.task_name}")
+        except ExecutorSaturatedError as exc:
+            # 读池满是背压、不是设备故障：计 reject 跳过本周期，不标设备错误、
+            # 不触发重连（§7.9-5 避免重连风暴），也不向调度器抛出。read_ms 不记录，
+            # 以免近零的拒绝样本污染真实读耗时分位；reject 数由 plc_read_executor_reject_count 反映。
+            self._total_errors += 1
+            self._warn_executor_saturated("plc_read", task, exc)
+            self._record_read_summary(task, 0, (self._clock() - start) * 1000, error=True)
+            return
         except Exception as e:
             if not self._task_is_current(task):
                 self._metrics.record_timing("read_ms", (self._clock() - start) * 1000)

@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from collector.executor import TaskExecutor
-from collector.bounded_executor import BoundedExecutor
+from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from device.manager import DeviceManager
@@ -433,6 +433,45 @@ async def test_executor_redis_multi_group_partial_failure_counted():
     assert executor.stats["total_errors"] == 1
     assert device.status.value == "online"
     await device_manager.disconnect_all()
+
+
+@pytest.mark.asyncio
+async def test_executor_read_saturation_is_backpressure_not_device_error():
+    """读池满（driver.read 抛 ExecutorSaturatedError）按背压跳过本周期。
+
+    池满是背压、不是设备故障：不标设备错误、不触发重连（§7.9-5 避免重连风暴）、
+    不向调度器抛出，且不计入 read_error_count（区别于真实读失败）。
+    """
+    config = _make_single_group_config("EXE_READ_SAT")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_READ_SAT"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(
+        side_effect=ExecutorSaturatedError("plc_read executor capacity reached: 1")
+    )
+    device.driver = driver
+
+    device_manager.mark_device_error = AsyncMock()
+    device_manager.schedule_reconnect = AsyncMock()
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    # 不得向调度器抛出
+    await executor.execute(task)
+
+    device_manager.mark_device_error.assert_not_called()
+    device_manager.schedule_reconnect.assert_not_called()
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+    assert executor.stats["total_errors"] == 1
+    counters = executor.stats["performance"]["counters"]
+    assert counters.get("read_error_count", 0) == 0
+    assert counters.get("read_success_count", 0) == 0
 
 
 def test_format_point_value_bool_serialized_as_numeric_string():

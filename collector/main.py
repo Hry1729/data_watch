@@ -33,7 +33,7 @@ from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
 from device.manager import DeviceManager, is_center_collection_protocol
-from collector.bounded_executor import BoundedExecutor
+from collector.bounded_executor import BoundedExecutor, BoundedThreadPoolExecutor
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
@@ -103,11 +103,21 @@ class CollectorApp:
             if self.config_db_manager is not None
             else None
         )
+        # 专用 PLC 读线程池（§7.3）：snap7/GE 阻塞读不再与 Redis 写抢默认池。
+        # 容量按设备数派生（单设备单 in-flight，正常不该拒绝），后续按 §8 压测再调。
+        read_devices = len(config.devices)
+        self.plc_read_executor = BoundedThreadPoolExecutor(
+            name="plc_read",
+            max_workers=min(64, max(16, read_devices)),
+            max_pending=read_devices + 64,
+            metrics=self.performance_metrics,
+        )
         self.device_manager = DeviceManager(
             config,
             status_reporter=status_reporter,
             port_mapping_file=port_mapping_file,
             metrics=self.performance_metrics,
+            read_executor=self.plc_read_executor,
         )
         self.scheduler = TaskScheduler(metrics=self.performance_metrics)
         redis_client = get_redis(config)
@@ -290,6 +300,8 @@ class CollectorApp:
             await self.ingest_server.stop()
         await self.executor.shutdown()
         await self.device_manager.disconnect_all()
+        # 读池在驱动 disconnect 之后再关：disconnect 自身也走该池。
+        await asyncio.to_thread(self.plc_read_executor.shutdown, wait=True)
         close_pool()
 
         self._log_status()

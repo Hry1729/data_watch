@@ -254,8 +254,11 @@ class DeviceManager:
         status_reporter: Optional[Callable[[str, int, str, str], Awaitable[None]]] = None,
         port_mapping_file: Optional[str] = None,
         metrics: Optional["PerformanceMetrics"] = None,
+        read_executor=None,
     ):
         self.config = config
+        # 专用 PLC 读线程池（§7.3），注入给阻塞型 PLC 驱动；None 时驱动回退默认 executor。
+        self._read_executor = read_executor
         self._status_reporter = status_reporter
         # 显式权威端口映射文件（Agent 生成）；None 时沿用动态分配（dev 期 run.bat 链路）。
         self._port_mapping_file = port_mapping_file
@@ -791,10 +794,10 @@ class DeviceManager:
         name = protocol.lower()
         if name == "s7":
             from drivers.s7_driver import S7Driver
-            return S7Driver()
+            return S7Driver(read_executor=self._read_executor)
         if name == "ge_srtp":
             from drivers.ge_srtp_driver import GESRTPDriver
-            return GESRTPDriver()
+            return GESRTPDriver(read_executor=self._read_executor)
         if name in ("opc", "opcua", "opc_ua"):
             from drivers.opcua_driver import OPCUADriver
             return OPCUADriver()
