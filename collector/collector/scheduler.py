@@ -16,7 +16,8 @@
 
 import asyncio
 import time
-from typing import Callable, Coroutine, Dict, List, Optional
+from collections import deque
+from typing import Callable, Coroutine, Deque, Dict, List, Optional, Set
 
 from core.logger import get_logger
 from collector.task import CollectTask
@@ -43,6 +44,7 @@ class TaskScheduler:
         self._execute_func: Optional[Callable] = None
         self._metrics = metrics or PerformanceMetrics()
         self._metrics.increment("deadline_miss_count", 0)
+        self._metrics.increment("device_inflight_skip_count", 0)
         self._metrics.set_gauge("max_consecutive_deadline_misses", 0)
         self._metrics.set_gauge("inflight_jobs", 0)
         self._metrics.set_gauge("peak_inflight_jobs", 0)
@@ -50,8 +52,44 @@ class TaskScheduler:
         self._max_consecutive_deadline_misses = 0
         self._active_executions = 0
         self._peak_active_executions = 0
+        self._inflight_devices: Set[str] = set()
+        self._device_waiters: Dict[str, Deque[str]] = {}
         self._clock = time.monotonic
         self._sleep = asyncio.sleep
+
+    @staticmethod
+    def _task_device_id(task: CollectTask) -> str:
+        device = getattr(task, "device", None)
+        return getattr(device, "device_id", task.task_name)
+
+    def _try_begin_device_execution(self, task: CollectTask) -> bool:
+        device_id = self._task_device_id(task)
+        task_name = task.task_name
+        waiters = self._device_waiters.setdefault(device_id, deque())
+
+        if device_id in self._inflight_devices:
+            if task_name not in waiters:
+                waiters.append(task_name)
+            return False
+
+        if waiters:
+            if waiters[0] != task_name:
+                if task_name not in waiters:
+                    waiters.append(task_name)
+                return False
+            waiters.popleft()
+
+        if not waiters:
+            self._device_waiters.pop(device_id, None)
+        self._inflight_devices.add(device_id)
+        return True
+
+    def _finish_device_execution(self, task: CollectTask) -> None:
+        self._inflight_devices.discard(self._task_device_id(task))
+
+    def _clear_device_execution_state(self, device_id: str) -> None:
+        self._inflight_devices.discard(device_id)
+        self._device_waiters.pop(device_id, None)
 
     def add_task(self, task: CollectTask) -> None:
         """添加采集任务"""
@@ -126,6 +164,23 @@ class TaskScheduler:
             previous_start = start
             planned_start = start + interval
 
+            if not self._try_begin_device_execution(task):
+                self._metrics.increment("device_inflight_skip_count")
+                self._metrics.increment("deadline_miss_count")
+                consecutive_deadline_misses += 1
+                self._max_consecutive_deadline_misses = max(
+                    self._max_consecutive_deadline_misses,
+                    consecutive_deadline_misses,
+                )
+                self._metrics.set_gauge(
+                    "max_consecutive_deadline_misses",
+                    self._max_consecutive_deadline_misses,
+                )
+                elapsed = self._clock() - start
+                if elapsed < interval:
+                    await self._sleep(interval - elapsed)
+                continue
+
             self._active_executions += 1
             self._peak_active_executions = max(
                 self._peak_active_executions,
@@ -148,6 +203,7 @@ class TaskScheduler:
                     e,
                 )
             finally:
+                self._finish_device_execution(task)
                 self._active_executions -= 1
                 self._metrics.set_gauge("inflight_jobs", self._active_executions)
 
@@ -178,6 +234,8 @@ class TaskScheduler:
             # 同步从扁平任务表移除，避免频繁热重载累积已取消任务引用
             if loop_task in self._loop_tasks:
                 self._loop_tasks.remove(loop_task)
+
+        self._clear_device_execution_state(device_id)
 
         # 移除旧 CollectTask 记录
         old_names = [n for n, ct in self.tasks.items() if ct.device.device_id == device_id]

@@ -52,3 +52,55 @@ def test_scheduler_exposes_task_count_gauge():
     )
 
     assert metrics.snapshot()["gauges"]["scheduler_task_count"] == 1
+
+
+def test_device_gate_serializes_and_rotates_skipped_tasks():
+    scheduler = TaskScheduler()
+    device = SimpleNamespace(device_id="d1")
+    fast = SimpleNamespace(task_name="d1-fast", device=device)
+    slow = SimpleNamespace(task_name="d1-slow", device=device)
+
+    assert scheduler._try_begin_device_execution(fast) is True
+    assert scheduler._try_begin_device_execution(slow) is False
+    scheduler._finish_device_execution(fast)
+
+    # slow 已经因 fast 忙而跳过，下一轮必须优先 slow，不能让 fast 永久抢占。
+    assert scheduler._try_begin_device_execution(fast) is False
+    assert scheduler._try_begin_device_execution(slow) is True
+    scheduler._finish_device_execution(slow)
+
+    assert scheduler._try_begin_device_execution(fast) is True
+    scheduler._finish_device_execution(fast)
+
+
+@pytest.mark.asyncio
+async def test_busy_device_cycle_is_skipped_without_execution():
+    metrics = PerformanceMetrics()
+    scheduler = TaskScheduler(metrics=metrics)
+    device = SimpleNamespace(device_id="d1")
+    blocker = SimpleNamespace(task_name="d1-blocker", device=device)
+    skipped = SimpleNamespace(
+        scan_rate=0.1,
+        task_name="d1-skipped",
+        error_count=0,
+        device=device,
+    )
+    executions = 0
+
+    async def execute(_task):
+        nonlocal executions
+        executions += 1
+
+    async def stop_after_skip(_seconds):
+        scheduler._running = False
+
+    assert scheduler._try_begin_device_execution(blocker) is True
+    scheduler._sleep = stop_after_skip
+    scheduler._running = True
+    await scheduler._run_loop(skipped, execute)
+    scheduler._finish_device_execution(blocker)
+
+    snapshot = metrics.snapshot()
+    assert executions == 0
+    assert snapshot["counters"]["device_inflight_skip_count"] == 1
+    assert snapshot["counters"]["deadline_miss_count"] == 1
