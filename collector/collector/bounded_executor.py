@@ -1,0 +1,98 @@
+"""有界线程执行器：限制已提交但尚未完成的工作数量。"""
+
+from __future__ import annotations
+
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Optional, TypeVar
+
+from monitor.performance import PerformanceMetrics
+
+
+T = TypeVar("T")
+
+
+class ExecutorSaturatedError(RuntimeError):
+    """执行器容量已满，新任务未被提交。"""
+
+
+class BoundedExecutor:
+    def __init__(
+        self,
+        *,
+        name: str,
+        max_workers: int,
+        max_pending: int,
+        metrics: Optional[PerformanceMetrics] = None,
+    ) -> None:
+        if max_workers <= 0 or max_pending <= 0:
+            raise ValueError("max_workers and max_pending must be positive")
+
+        self.name = name
+        self.max_pending = max_pending
+        self._metrics = metrics
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix=f"collector-{name}",
+        )
+        self._slots = asyncio.Semaphore(max_pending)
+        self._drained = asyncio.Event()
+        self._drained.set()
+        self._pending = 0
+        self._peak_pending = 0
+        self._closed = False
+        self._set_gauge("pending", 0)
+        self._set_gauge("peak_pending", 0)
+        self._increment("reject_count", 0)
+
+    @property
+    def pending(self) -> int:
+        return self._pending
+
+    async def run(self, func: Callable[..., T], *args: Any) -> T:
+        if self._closed:
+            raise RuntimeError(f"{self.name} executor is closed")
+        if self._slots.locked():
+            self._increment("reject_count")
+            raise ExecutorSaturatedError(
+                f"{self.name} executor capacity reached: {self.max_pending}"
+            )
+
+        await self._slots.acquire()
+        self._pending += 1
+        self._peak_pending = max(self._peak_pending, self._pending)
+        self._drained.clear()
+        self._set_gauge("pending", self._pending)
+        self._set_gauge("peak_pending", self._peak_pending)
+
+        loop = asyncio.get_running_loop()
+        try:
+            future = loop.run_in_executor(self._executor, func, *args)
+        except Exception:
+            self._release_slot()
+            raise
+
+        future.add_done_callback(lambda _future: self._release_slot())
+        return await asyncio.shield(future)
+
+    async def shutdown(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._drained.wait()
+        await asyncio.to_thread(self._executor.shutdown, wait=True)
+
+    def _release_slot(self) -> None:
+        self._pending -= 1
+        self._slots.release()
+        self._set_gauge("pending", self._pending)
+        if self._pending == 0:
+            self._drained.set()
+
+    def _increment(self, suffix: str, amount: int = 1) -> None:
+        if self._metrics is not None:
+            self._metrics.increment(f"{self.name}_executor_{suffix}", amount)
+
+    def _set_gauge(self, suffix: str, value: int) -> None:
+        if self._metrics is not None:
+            self._metrics.set_gauge(f"{self.name}_executor_{suffix}", value)
