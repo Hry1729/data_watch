@@ -62,8 +62,17 @@ class S7Driver(BaseDriver):
             await loop.run_in_executor(
                 None, self._client.connect, self._ip, self._rack, self._slot, port
             )
+            # PDU 安全钳位：纯 Python snap7 的 PDU 协商可能未生效（pdu_length 停在默认 480），
+            # 对 S7-300/400（PDU 240）会按 462B 拆读 → 超出其 PDU → 读报 Invalid address(0x05)。
+            # 钳到 S7 通用安全值 240，保证混型号现场可读；同时打出真实协商值便于确诊。
+            negotiated_pdu = getattr(self._client, "pdu_length", None)
+            if isinstance(negotiated_pdu, int) and negotiated_pdu > 240:
+                self._client.pdu_length = 240
             self._connected = True
-            logger.info(f"S7 connected to {self._ip}:{port} rack={self._rack} slot={self._slot}")
+            logger.info(
+                f"S7 connected to {self._ip}:{port} rack={self._rack} slot={self._slot} "
+                f"pdu_negotiated={negotiated_pdu} pdu_effective={getattr(self._client, 'pdu_length', None)}"
+            )
         except Exception as e:
             raise DeviceConnectionError(f"S7 connect failed: {e}") from e
 
