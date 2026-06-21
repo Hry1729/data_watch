@@ -311,9 +311,9 @@ class TaskExecutor:
                 }
                 ts_ms = max(field["t"] for field in fields.values())
 
-                # 写顺序：window -> stream -> latest。latest 必须最后写，
-                # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
-                # window List：所有点位
+                # 写顺序：window+stream（合并一个 pipeline）-> latest。latest 必须最后写，
+                # 否则 window/stream 失败时 latest 已被刷新，客户端据此误判批次已落库。
+                # window frame：所有点位
                 frame = {
                     "device_code": device_code,
                     "group_code": group_code,
@@ -324,19 +324,17 @@ class TaskExecutor:
                         for var_id, (point, _, _) in var_data.items()
                     },
                 }
-                self._redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
-
                 # stream：过滤 STRING 类型
                 stream_values = {
                     var_id: self._format_point_value(point.value)
                     for var_id, (point, dt, is_storage) in var_data.items()
                     if is_storage and dt != "STRING"
                 }
-                if stream_values:
-                    self._redis_writer.write_stream(
-                        device_code, device_type, group_code, scan_rate_ms,
-                        ts_ms, group_versions[group_code], stream_values,
-                    )
+                # window+stream 合并一次往返（§7.5）；任一失败抛出 → 跳过 latest。
+                self._redis_writer.write_window_stream(
+                    device_code, device_type, group_code, scan_rate_ms,
+                    ts_ms, group_versions[group_code], frame, stream_values,
+                )
 
                 self._redis_writer.write_latest(device_code, group_code, fields)
         except Exception as exc:

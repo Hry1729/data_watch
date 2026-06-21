@@ -100,8 +100,7 @@ async def test_executor_redis_all_writes_succeed_no_error():
 
     await executor.execute(task)
 
-    assert redis_writer.write_window.call_count == 1
-    assert redis_writer.write_stream.call_count == 1
+    assert redis_writer.write_window_stream.call_count == 1
     assert redis_writer.write_latest.call_count == 1
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 0
@@ -134,8 +133,7 @@ async def test_executor_drops_result_when_generation_changes_during_read():
 
     await executor.execute(task)
 
-    redis_writer.write_window.assert_not_called()
-    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["performance"]["counters"]["stale_generation_drop_count"] == 1
 
@@ -166,8 +164,7 @@ async def test_executor_drops_result_when_generation_changes_during_parse():
 
     await executor.execute(task)
 
-    redis_writer.write_window.assert_not_called()
-    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["performance"]["counters"]["stale_generation_drop_count"] == 1
 
@@ -255,8 +252,7 @@ async def test_executor_rejects_cycle_when_parse_executor_is_saturated():
     await blocker
     await executor.shutdown()
 
-    redis_writer.write_window.assert_not_called()
-    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["total_errors"] == 1
     assert metrics.snapshot()["counters"]["parse_executor_reject_count"] == 1
@@ -276,7 +272,7 @@ async def test_executor_runs_redis_on_injected_worker_executor():
 
     redis_threads = []
     redis_writer = MagicMock()
-    redis_writer.write_window.side_effect = lambda *_args: redis_threads.append(
+    redis_writer.write_window_stream.side_effect = lambda *_args: redis_threads.append(
         threading.get_ident()
     )
     redis_executor = BoundedExecutor(
@@ -342,8 +338,7 @@ async def test_executor_rejects_cycle_when_redis_executor_is_saturated():
     await blocker
     await executor.shutdown()
 
-    redis_writer.write_window.assert_not_called()
-    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["total_errors"] == 1
     assert metrics.snapshot()["counters"]["redis_executor_reject_count"] == 1
@@ -351,7 +346,7 @@ async def test_executor_rejects_cycle_when_redis_executor_is_saturated():
 
 @pytest.mark.asyncio
 async def test_executor_redis_stream_failure_does_not_refresh_latest():
-    """stream 失败 → 错误如实计为一次，write_latest 未被调用（latest 不被假装推进）。"""
+    """window+stream 失败 → 错误如实计为一次，write_latest 未被调用（latest 不被假装推进）。"""
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
@@ -359,15 +354,14 @@ async def test_executor_redis_stream_failure_does_not_refresh_latest():
     await device_manager.connect_all()
 
     redis_writer = MagicMock()
-    redis_writer.write_stream.side_effect = RuntimeError("stream write failed")
+    redis_writer.write_window_stream.side_effect = RuntimeError("window+stream write failed")
     executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
     device = device_manager.devices["EXE001"]
     task = CollectTask(device=device, scan_task=device.scan_tasks[0])
 
     await executor.execute(task)
 
-    redis_writer.write_window.assert_called_once()
-    redis_writer.write_stream.assert_called_once()
+    redis_writer.write_window_stream.assert_called_once()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 1
@@ -392,8 +386,7 @@ async def test_executor_redis_latest_failure_counted_as_error():
 
     await executor.execute(task)
 
-    redis_writer.write_window.assert_called_once()
-    redis_writer.write_stream.assert_called_once()
+    redis_writer.write_window_stream.assert_called_once()
     redis_writer.write_latest.assert_called_once()
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 1
@@ -403,9 +396,9 @@ async def test_executor_redis_latest_failure_counted_as_error():
 
 @pytest.mark.asyncio
 async def test_executor_redis_multi_group_partial_failure_counted():
-    """多 group 场景：group1 全部成功、group2 的 stream 失败 → 错误计为一次。
+    """多 group 场景：group1 全部成功、group2 的 window+stream 失败 → 错误计为一次。
 
-    每 group 的 window/stream/latest 都会按 group 各自调用一次。
+    每 group 的 window+stream / latest 都会按 group 各自调用一次。
     """
     config = _make_multi_group_config()
     device_manager = DeviceManager(config)
@@ -415,20 +408,19 @@ async def test_executor_redis_multi_group_partial_failure_counted():
 
     redis_writer = MagicMock()
 
-    def _stream_side_effect(*args, **kwargs):
+    def _group_side_effect(*args, **kwargs):
         if args[2] == "g002":
-            raise RuntimeError("group2 stream failed")
+            raise RuntimeError("group2 window+stream failed")
         return None
 
-    redis_writer.write_stream.side_effect = _stream_side_effect
+    redis_writer.write_window_stream.side_effect = _group_side_effect
     executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
     device = device_manager.devices["EXE_MG"]
     task = CollectTask(device=device, scan_task=device.scan_tasks[0])
 
     await executor.execute(task)
 
-    assert redis_writer.write_window.call_count == 2
-    assert redis_writer.write_stream.call_count == 2
+    assert redis_writer.write_window_stream.call_count == 2
     assert executor.stats["total_reads"] == 1
     assert executor.stats["total_errors"] == 1
     assert device.status.value == "online"
@@ -466,7 +458,7 @@ async def test_executor_read_saturation_is_backpressure_not_device_error():
 
     device_manager.mark_device_error.assert_not_called()
     device_manager.schedule_reconnect.assert_not_called()
-    redis_writer.write_window.assert_not_called()
+    redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["total_errors"] == 1
     counters = executor.stats["performance"]["counters"]
@@ -506,7 +498,7 @@ async def test_executor_stream_uses_group_config_version_per_group():
 
     stream_versions = {
         call.args[2]: call.args[5]
-        for call in redis_writer.write_stream.call_args_list
+        for call in redis_writer.write_window_stream.call_args_list
     }
     assert stream_versions == {"g001": 11, "g002": 22}
     await device_manager.disconnect_all()
@@ -514,7 +506,7 @@ async def test_executor_stream_uses_group_config_version_per_group():
 
 @pytest.mark.asyncio
 async def test_executor_redis_latest_called_after_window_and_stream():
-    """回归：write_latest 必须在 write_window 与 write_stream 之后被调用。"""
+    """回归：write_latest 必须在 write_window_stream 之后被调用。"""
     config = _make_single_group_config()
     device_manager = DeviceManager(config)
     device_manager.register_devices()
@@ -523,8 +515,7 @@ async def test_executor_redis_latest_called_after_window_and_stream():
 
     redis_writer = MagicMock()
     parent = MagicMock()
-    parent.attach_mock(redis_writer.write_window, "write_window")
-    parent.attach_mock(redis_writer.write_stream, "write_stream")
+    parent.attach_mock(redis_writer.write_window_stream, "write_window_stream")
     parent.attach_mock(redis_writer.write_latest, "write_latest")
 
     executor = TaskExecutor(device_manager=device_manager, redis_writer=redis_writer)
@@ -534,6 +525,5 @@ async def test_executor_redis_latest_called_after_window_and_stream():
     await executor.execute(task)
 
     method_names = [c[0] for c in parent.mock_calls]
-    assert method_names.index("write_latest") > method_names.index("write_window")
-    assert method_names.index("write_latest") > method_names.index("write_stream")
+    assert method_names.index("write_latest") > method_names.index("write_window_stream")
     await device_manager.disconnect_all()

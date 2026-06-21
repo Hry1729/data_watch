@@ -124,6 +124,49 @@ class TestWriteStream:
         assert kwargs["approximate"] is True
 
 
+# ---------------------------------------------------------------------------
+# write_window_stream（§7.5：window+stream 合并一个 pipeline）
+# ---------------------------------------------------------------------------
+
+class TestWriteWindowStream:
+    def test_window_and_stream_in_single_pipeline(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config(shard_count=4))
+        shard_no = zlib.crc32(b"qc100") % 4
+        writer.write_window_stream(
+            "qc100", "qc", "g001", 100, 1000, 2, {"ts": 1000}, {"1": "3.14"}
+        )
+        pipe = mock_redis.pipeline.return_value
+        # 一个 pipeline、一次 execute 完成 window+stream（每设备往返 3→2 的关键）
+        mock_redis.pipeline.assert_called_once()
+        pipe.execute.assert_called_once()
+        assert pipe.lpush.call_args[0][0] == "rt:window:qc100:g001:100"
+        assert pipe.ltrim.called
+        assert pipe.xadd.call_args[0][0] == f"rt:stream:qc:g001:{shard_no}"
+        # latest 不在本方法内（latest-last 由调用方保证）
+        mock_redis.hset.assert_not_called()
+
+    def test_empty_stream_values_writes_window_only(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        writer.write_window_stream("qc100", "qc", "g001", 100, 1000, 1, {"ts": 1000}, {})
+        pipe = mock_redis.pipeline.return_value
+        assert pipe.lpush.called
+        assert pipe.ltrim.called
+        pipe.xadd.assert_not_called()
+        pipe.execute.assert_called_once()
+
+    def test_xadd_entry_fields_and_maxlen(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config(maxlen=200000))
+        writer.write_window_stream(
+            "qc100", "qc", "g001", 100, 1700000000000, 7, {"ts": 1}, {"5": "9.9"}
+        )
+        pipe = mock_redis.pipeline.return_value
+        entry = pipe.xadd.call_args[0][1]
+        assert entry["config_version"] == "7"
+        assert json.loads(entry["values"]) == {"5": "9.9"}
+        assert pipe.xadd.call_args[1]["maxlen"] == 200000
+        assert pipe.xadd.call_args[1]["approximate"] is True
+
+
 def test_writer_records_json_and_redis_io_timings(mock_redis):
     metrics = PerformanceMetrics()
     writer = RedisWriter(mock_redis, _make_config(), metrics=metrics)

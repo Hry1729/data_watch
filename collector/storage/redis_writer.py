@@ -111,3 +111,55 @@ class RedisWriter:
             )
         finally:
             self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
+
+    def write_window_stream(
+        self,
+        device_code: str,
+        device_type: str,
+        group_code: str,
+        scan_rate_ms: int,
+        ts: int,
+        config_version: int,
+        frame: dict,
+        stream_values: dict[str, str],
+    ) -> None:
+        """window + stream 合并进一个 pipeline（§7.5：每设备每周期往返 3→2）。
+
+        stream_values 为空时只写 window。任一命令失败时 execute() 抛出，调用方据此
+        跳过 latest，保住 latest-last 不变式。非事务 pipeline，语义与原先两次独立写一致。
+        """
+        window_key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
+        started = self._clock()
+        try:
+            encoded_frame = msgspec.json.encode(frame)
+            encoded_values = (
+                msgspec.json.encode(stream_values) if stream_values else None
+            )
+        finally:
+            self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
+
+        started = self._clock()
+        pipe = self.r.pipeline(transaction=False)
+        try:
+            pipe.lpush(window_key, encoded_frame)
+            pipe.ltrim(window_key, 0, 9)
+            if encoded_values is not None:
+                shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
+                stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
+                pipe.xadd(
+                    stream_key,
+                    {
+                        "device_code": device_code,
+                        "device_type": device_type,
+                        "group_code": group_code,
+                        "scan_rate": str(scan_rate_ms),
+                        "ts": str(ts),
+                        "config_version": str(config_version),
+                        "values": encoded_values,
+                    },
+                    maxlen=self._maxlen,
+                    approximate=True,
+                )
+            pipe.execute()
+        finally:
+            self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
