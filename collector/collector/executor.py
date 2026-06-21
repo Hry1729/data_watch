@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from core.exceptions import ReadError
 from core.logger import get_logger
+from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from data_queue.types import DataPoint
 from device.manager import DeviceManager
@@ -47,6 +48,7 @@ class TaskExecutor:
         summary_interval_seconds: float = 60.0,
         redis_writer: Optional["RedisWriter"] = None,
         metrics: Optional[PerformanceMetrics] = None,
+        parse_executor: Optional[BoundedExecutor] = None,
     ):
         # collector 主链路只写 Redis；缺少 redis_writer 会静默丢数据，故快速失败。
         if redis_writer is None:
@@ -55,6 +57,7 @@ class TaskExecutor:
         self._system_logger = system_logger
         self._redis_writer = redis_writer
         self._metrics = metrics or PerformanceMetrics()
+        self._parse_executor = parse_executor
         self._metrics.increment("stale_generation_drop_count", 0)
         self._clock = time.perf_counter
         self._summary_interval_seconds = summary_interval_seconds
@@ -67,6 +70,7 @@ class TaskExecutor:
         self._total_errors = 0
         # 日志抑制：记录每个设备上次 "not connected" 警告的时间
         self._device_warn_last_time: Dict[str, float] = {}
+        self._executor_warn_last_time: Dict[str, float] = {}
 
     async def execute(self, task: CollectTask) -> None:
         """
@@ -130,8 +134,22 @@ class TaskExecutor:
 
         # 解析结果
         parse_start = self._clock()
-        points = self._parse_result(device.device_id, scan_task, result)
-        self._metrics.record_timing("parse_ms", (self._clock() - parse_start) * 1000)
+        try:
+            if self._parse_executor is None:
+                points = self._parse_result(device.device_id, scan_task, result)
+            else:
+                points = await self._parse_executor.run(
+                    self._parse_result, device.device_id, scan_task, result
+                )
+        except ExecutorSaturatedError as exc:
+            self._total_errors += 1
+            self._warn_executor_saturated("parse", task, exc)
+            self._record_read_summary(task, 0, elapsed * 1000, error=True)
+            return
+        finally:
+            self._metrics.record_timing(
+                "parse_ms", (self._clock() - parse_start) * 1000
+            )
         self._metrics.increment("points_parsed", len(points))
 
         # 写入 Redis（写失败：读已成功，设备保持 ONLINE，但如实计为错误，不谎报成功）
@@ -170,6 +188,27 @@ class TaskExecutor:
             elapsed * 1000,
         )
         self._record_read_summary(task, len(points), elapsed * 1000)
+
+    async def shutdown(self) -> None:
+        if self._parse_executor is not None:
+            await self._parse_executor.shutdown()
+
+    def _warn_executor_saturated(
+        self,
+        stage: str,
+        task: CollectTask,
+        error: ExecutorSaturatedError,
+    ) -> None:
+        now = time.time()
+        if now - self._executor_warn_last_time.get(stage, 0) < LOG_SUPPRESS_INTERVAL:
+            return
+        self._executor_warn_last_time[stage] = now
+        logger.warning(
+            "%s executor saturated; dropping cycle task=%s: %s",
+            stage,
+            task.task_name,
+            error,
+        )
 
     def _task_is_current(self, task: CollectTask) -> bool:
         if self.device_manager is None:

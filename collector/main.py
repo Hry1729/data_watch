@@ -33,6 +33,7 @@ from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
 from device.manager import DeviceManager, is_center_collection_protocol
+from collector.bounded_executor import BoundedExecutor
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
@@ -115,11 +116,19 @@ class CollectorApp:
             config,
             metrics=self.performance_metrics,
         )
+        parse_workers = max(2, min(32, os.cpu_count() or 4))
+        self.parse_executor = BoundedExecutor(
+            name="parse",
+            max_workers=parse_workers,
+            max_pending=parse_workers * 2,
+            metrics=self.performance_metrics,
+        )
         self.executor = TaskExecutor(
             device_manager=self.device_manager,
             system_logger=self.system_logger,
             redis_writer=self.redis_writer,
             metrics=self.performance_metrics,
+            parse_executor=self.parse_executor,
         )
         self.health_checker = HealthChecker(self.device_manager, interval=30)
 
@@ -272,6 +281,7 @@ class CollectorApp:
 
         if self.ingest_server is not None:
             await self.ingest_server.stop()
+        await self.executor.shutdown()
         await self.device_manager.disconnect_all()
         close_pool()
 

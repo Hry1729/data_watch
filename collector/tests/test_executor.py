@@ -16,14 +16,18 @@ P1-2：executor._write_to_redis 内 window/stream/latest 三段写入非原子�
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from collector.executor import TaskExecutor
+from collector.bounded_executor import BoundedExecutor
 from collector.task import CollectTask
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from device.manager import DeviceManager
+from monitor.performance import PerformanceMetrics
 
 
 def _make_single_group_config(device_id: str = "EXE001") -> CollectorConfig:
@@ -166,6 +170,96 @@ async def test_executor_drops_result_when_generation_changes_during_parse():
     redis_writer.write_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["performance"]["counters"]["stale_generation_drop_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_parse_on_injected_worker_executor():
+    config = _make_single_group_config("EXE_PARSE_WORKER")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_PARSE_WORKER"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x64]})
+    device.driver = driver
+
+    parse_executor = BoundedExecutor(
+        name="parse-test",
+        max_workers=1,
+        max_pending=2,
+    )
+    executor = TaskExecutor(
+        device_manager=device_manager,
+        redis_writer=MagicMock(),
+        parse_executor=parse_executor,
+    )
+    event_loop_thread = threading.get_ident()
+    parse_threads = []
+    original_parse = executor._parse_result
+
+    def record_parse_thread(*args, **kwargs):
+        parse_threads.append(threading.get_ident())
+        return original_parse(*args, **kwargs)
+
+    executor._parse_result = MagicMock(side_effect=record_parse_thread)
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+    await executor.shutdown()
+
+    assert parse_threads
+    assert parse_threads[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
+async def test_executor_rejects_cycle_when_parse_executor_is_saturated():
+    config = _make_single_group_config("EXE_PARSE_FULL")
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_PARSE_FULL"]
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"DB100.DBB0": [0x00, 0x64]})
+    device.driver = driver
+
+    started = threading.Event()
+    release = threading.Event()
+    metrics = PerformanceMetrics()
+    parse_executor = BoundedExecutor(
+        name="parse",
+        max_workers=1,
+        max_pending=1,
+        metrics=metrics,
+    )
+
+    def occupy_executor():
+        started.set()
+        release.wait(timeout=5)
+
+    blocker = asyncio.create_task(parse_executor.run(occupy_executor))
+    await asyncio.to_thread(started.wait, 2)
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(
+        device_manager=device_manager,
+        redis_writer=redis_writer,
+        metrics=metrics,
+        parse_executor=parse_executor,
+    )
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+
+    await executor.execute(task)
+    release.set()
+    await blocker
+    await executor.shutdown()
+
+    redis_writer.write_window.assert_not_called()
+    redis_writer.write_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+    assert executor.stats["total_errors"] == 1
+    assert metrics.snapshot()["counters"]["parse_executor_reject_count"] == 1
 
 
 @pytest.mark.asyncio
