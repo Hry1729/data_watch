@@ -52,6 +52,15 @@ Source: "{#SrcRoot}\installer\templates\writer-settings.toml.example"; DestDir: 
 ; ── WebView2 evergreen 引导安装器(装到 {tmp}，装完即删；离线机可替换为 ~127MB standalone 同名文件) ──
 Source: "{#SrcRoot}\installer\webview2\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
+[InstallDelete]
+; 覆盖升级时先清掉旧 onedir 产物，避免已从新版本移除的 _internal 文件残留。
+; ProgramData 配置与运行数据不在 {app} 下，不受影响。
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\agent"
+Type: filesandordirs; Name: "{app}\collector"
+Type: filesandordirs; Name: "{app}\writer"
+Type: filesandordirs; Name: "{app}\sidecars"
+
 [Dirs]
 ; 可写数据根(DATAWATCH_DATA_ROOT)；config.toml / settings.toml / runtime 全落这里
 Name: "{commonappdata}\DataWatch"
@@ -98,6 +107,24 @@ begin
   if not Exec(ExpandConstant('{app}\tools\nssm.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, rc) then
     rc := -1;
   Result := rc;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var rc: Integer; OldNssm: String;
+begin
+  Result := '';
+  OldNssm := ExpandConstant('{app}\tools\nssm.exe');
+
+  // 覆盖文件前先停旧 Agent，防止 agent/collector/writer/proxy 占用安装目录。
+  if FileExists(OldNssm) then
+    Exec(OldNssm, 'stop {#MyServiceName}', '', SW_HIDE, ewWaitUntilTerminated, rc);
+
+  // app.exe 由 Inno Restart Manager 按目标文件路径关闭，避免误杀其他同名程序。
+  // 这里只兜底结束 DataWatch 专用受管进程；未运行时 taskkill 非零返回属于正常情况。
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM data-watch-agent.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM data-watch-collector.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM data-watch-writer.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM OpcDaProxyService.exe /T', '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
 procedure NssmRequired(StepName, Params: String);
