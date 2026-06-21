@@ -21,8 +21,10 @@ class CollectTask:
     task_name: str = ""
     last_run: float = 0.0
     error_count: int = 0
+    generation: int = field(init=False)
 
     def __post_init__(self):
+        self.generation = self.device.generation
         if not self.task_name:
             self.task_name = (
                 f"{self.device.device_id}_{self.scan_task.scan_rate}s"

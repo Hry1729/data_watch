@@ -149,6 +149,7 @@ def test_rebuild_device_variables_rolls_back_on_setup_failure(collector_config):
     device = manager.devices["TEST001"]
     old_variables = device.variables
     old_scan_tasks = device.scan_tasks
+    old_generation = device.generation
 
     with patch.object(manager, "_setup_scan_tasks", side_effect=RuntimeError("boom")):
         with pytest.raises(RuntimeError, match="boom"):
@@ -169,6 +170,33 @@ def test_rebuild_device_variables_rolls_back_on_setup_failure(collector_config):
 
     assert device.variables is old_variables
     assert device.scan_tasks is old_scan_tasks
+    assert device.generation == old_generation
+
+
+def test_rebuild_device_variables_advances_generation_on_success(collector_config):
+    manager = DeviceManager(collector_config)
+    manager.register_devices()
+    device = manager.devices["TEST001"]
+    old_generation = device.generation
+
+    rebuilt = manager.rebuild_device_variables(
+        "TEST001",
+        [
+            VariableConfig(
+                variable_id="new_var",
+                device_id="TEST001",
+                address="DB100.DBW2",
+                data_type="INT",
+                scan_rate=1,
+                is_storage=True,
+                var_seq=2,
+            )
+        ],
+    )
+
+    assert rebuilt is device
+    assert device.generation == old_generation + 1
+    assert manager.is_current_generation(device.device_id, device.generation)
 
 
 # ---------------------------------------------------------------------------

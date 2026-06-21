@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import socket
+import threading
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TYPE_CHECKING
 
@@ -259,6 +260,9 @@ class DeviceManager:
         self._port_mapping_file = port_mapping_file
         self.devices: Dict[str, Device] = {}
         self._lock = asyncio.Lock()
+        self._generation_registry_lock = threading.Lock()
+        self._generation_locks: Dict[str, threading.RLock] = {}
+        self._device_generations: Dict[str, int] = {}
         # 设备连接熔断器
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         # 重连任务
@@ -278,6 +282,71 @@ class DeviceManager:
         self._connect_semaphore = asyncio.Semaphore(10)
         # VM endpoint 到代理端口的映射器
         self._port_mapper: Optional[EndpointPortMapper] = None
+
+    def _generation_lock_for(self, device_id: str) -> threading.RLock:
+        with self._generation_registry_lock:
+            return self._generation_locks.setdefault(device_id, threading.RLock())
+
+    def _activate_device(self, device: Device) -> None:
+        lock = self._generation_lock_for(device.device_id)
+        with lock:
+            generation = self._device_generations.get(device.device_id, 0) + 1
+            self._device_generations[device.device_id] = generation
+            device.generation = generation
+            device.active = True
+            self.devices[device.device_id] = device
+
+    def _advance_device_generation(self, device: Device) -> None:
+        lock = self._generation_lock_for(device.device_id)
+        with lock:
+            generation = self._device_generations.get(device.device_id, 0) + 1
+            self._device_generations[device.device_id] = generation
+            device.generation = generation
+            device.active = True
+
+    def invalidate_device(self, device_id: str) -> int:
+        """先将设备置为 tombstone，使旧任务无法再写 Redis。"""
+        lock = self._generation_lock_for(device_id)
+        with lock:
+            device = self.devices.get(device_id)
+            if device is None or not device.active:
+                return self._device_generations.get(device_id, 0)
+            generation = self._device_generations.get(device_id, 0) + 1
+            self._device_generations[device_id] = generation
+            device.generation = generation
+            device.active = False
+            return generation
+
+    def is_current_generation(self, device_id: str, generation: int) -> bool:
+        lock = self._generation_lock_for(device_id)
+        with lock:
+            device = self.devices.get(device_id)
+            return bool(
+                device is not None
+                and device.active
+                and device.generation == generation
+                and self._device_generations.get(device_id) == generation
+            )
+
+    def run_if_current_generation(
+        self,
+        device_id: str,
+        generation: int,
+        action: Callable[[], None],
+    ) -> bool:
+        """在同设备 generation 锁内验证并执行，阻止 invalidate 与写入交错。"""
+        lock = self._generation_lock_for(device_id)
+        with lock:
+            device = self.devices.get(device_id)
+            if not (
+                device is not None
+                and device.active
+                and device.generation == generation
+                and self._device_generations.get(device_id) == generation
+            ):
+                return False
+            action()
+            return True
 
     def register_devices(self) -> None:
         """根据配置注册所有设备"""
@@ -348,7 +417,9 @@ class DeviceManager:
             else:
                 device.build_scan_tasks()
 
-        self.devices = device_map
+        self.devices = {}
+        for device in device_map.values():
+            self._activate_device(device)
 
         # 输出端口映射信息
         if self._port_mapper.get_mapping():
@@ -427,7 +498,7 @@ class DeviceManager:
         for variable in self._build_variables(var_cfgs):
             device.add_variable(variable)
         self._setup_scan_tasks(device)
-        self.devices[dev_cfg.device_id] = device
+        self._activate_device(device)
         logger.info(
             "Runtime add_device %s protocol=%s vars=%d tasks=%d",
             device.device_id,
@@ -455,6 +526,7 @@ class DeviceManager:
             device.variables = prev_variables
             device.scan_tasks = prev_scan_tasks
             raise
+        self._advance_device_generation(device)
         return device
 
     async def remove_device(self, device_id: str) -> None:
@@ -466,6 +538,7 @@ class DeviceManager:
         device = self.devices.get(device_id)
         if device is None:
             return
+        self.invalidate_device(device_id)
 
         # 1) 取消重连任务，避免刚下线又被拉起
         reconnect_task = self._reconnect_tasks.pop(device_id, None)

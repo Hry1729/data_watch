@@ -84,6 +84,8 @@ class Device:
         self.connection_config = connection_config
         self.device_pk = device_pk  # MySQL device.id
         self.config_version = config_version
+        self.generation: int = 0
+        self.active: bool = False
         self.status = DeviceStatus.OFFLINE
         self.variables: List[Variable] = []
         self.scan_tasks: List[ScanTask] = []

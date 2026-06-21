@@ -7,6 +7,8 @@
 4. 新增 center 设备：调用端口映射、生成任务，不要求真实代理进程。
 """
 
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,6 +73,62 @@ async def test_remove_device_cancels_reconnect_and_disconnects():
     assert "DEL_PLC" not in manager._reconnect_tasks
     assert "DEL_PLC" not in manager.devices
     assert "DEL_PLC" not in manager._circuit_breakers
+
+
+@pytest.mark.asyncio
+async def test_device_generation_invalidates_old_tasks_and_is_monotonic():
+    manager = _empty_manager()
+    dev_cfg = DeviceConfig("GEN_PLC", "QC", "s7", "192.168.1.61", port=102, slot=1)
+    var_cfgs = [VariableConfig("v1", "GEN_PLC", "DB100.DBW0", "INT", 1, True, 1)]
+
+    first = manager.add_device(dev_cfg, var_cfgs)
+    first_generation = first.generation
+    assert manager.is_current_generation("GEN_PLC", first_generation)
+
+    manager.invalidate_device("GEN_PLC")
+    assert not manager.is_current_generation("GEN_PLC", first_generation)
+    await manager.remove_device("GEN_PLC")
+
+    second = manager.add_device(dev_cfg, var_cfgs)
+    assert second.generation > first_generation
+    assert manager.is_current_generation("GEN_PLC", second.generation)
+
+
+def test_invalidate_waits_for_current_generation_action():
+    manager = _empty_manager()
+    device = manager.add_device(
+        DeviceConfig("LOCK_PLC", "QC", "s7", "192.168.1.62", port=102, slot=1),
+        [],
+    )
+    action_started = threading.Event()
+    release_action = threading.Event()
+    invalidated = threading.Event()
+
+    def action():
+        action_started.set()
+        assert release_action.wait(timeout=2)
+
+    writer = threading.Thread(
+        target=manager.run_if_current_generation,
+        args=(device.device_id, device.generation, action),
+    )
+    writer.start()
+    assert action_started.wait(timeout=2)
+
+    def invalidate():
+        manager.invalidate_device(device.device_id)
+        invalidated.set()
+
+    invalidator = threading.Thread(target=invalidate)
+    invalidator.start()
+    time.sleep(0.05)
+    assert not invalidated.is_set()
+
+    release_action.set()
+    writer.join(timeout=2)
+    invalidator.join(timeout=2)
+    assert invalidated.is_set()
+    assert not manager.is_current_generation(device.device_id, device.generation)
 
 
 @pytest.mark.asyncio

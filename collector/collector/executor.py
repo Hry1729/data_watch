@@ -55,6 +55,7 @@ class TaskExecutor:
         self._system_logger = system_logger
         self._redis_writer = redis_writer
         self._metrics = metrics or PerformanceMetrics()
+        self._metrics.increment("stale_generation_drop_count", 0)
         self._clock = time.perf_counter
         self._summary_interval_seconds = summary_interval_seconds
         self._summary_started_at = time.time()
@@ -76,6 +77,10 @@ class TaskExecutor:
         """
         device = task.device
         scan_task = task.scan_task
+
+        if not self._task_is_current(task):
+            self._record_stale_generation_drop()
+            return
 
         if not device.driver or not device.driver.is_connected:
             # 日志抑制：同一设备在 LOG_SUPPRESS_INTERVAL 秒内只输出一次警告
@@ -99,6 +104,10 @@ class TaskExecutor:
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
                 raise ReadError(f"All read blocks failed for task {task.task_name}")
         except Exception as e:
+            if not self._task_is_current(task):
+                self._metrics.record_timing("read_ms", (self._clock() - start) * 1000)
+                self._record_stale_generation_drop()
+                return
             self._total_errors += 1
             logger.error("Task %s read failed: %s", task.task_name, e)
             elapsed_ms = (self._clock() - start) * 1000
@@ -115,6 +124,10 @@ class TaskExecutor:
         self._metrics.increment("read_success_count")
         self._total_reads += 1
 
+        if not self._task_is_current(task):
+            self._record_stale_generation_drop()
+            return
+
         # 解析结果
         parse_start = self._clock()
         points = self._parse_result(device.device_id, scan_task, result)
@@ -128,9 +141,12 @@ class TaskExecutor:
             loop = asyncio.get_running_loop()
             redis_start = self._clock()
             try:
-                await loop.run_in_executor(
-                    None, self._write_to_redis, device, scan_task, points
+                written = await loop.run_in_executor(
+                    None, self._write_if_current, task, points
                 )
+                if not written:
+                    self._record_stale_generation_drop()
+                    return
             except Exception as exc:
                 self._total_errors += 1
                 self._metrics.increment("redis_write_error_count")
@@ -154,6 +170,26 @@ class TaskExecutor:
             elapsed * 1000,
         )
         self._record_read_summary(task, len(points), elapsed * 1000)
+
+    def _task_is_current(self, task: CollectTask) -> bool:
+        if self.device_manager is None:
+            return True
+        return self.device_manager.is_current_generation(
+            task.device.device_id, task.generation
+        )
+
+    def _record_stale_generation_drop(self) -> None:
+        self._metrics.increment("stale_generation_drop_count")
+
+    def _write_if_current(self, task: CollectTask, points: List[DataPoint]) -> bool:
+        if self.device_manager is None:
+            self._write_to_redis(task.device, task.scan_task, points)
+            return True
+        return self.device_manager.run_if_current_generation(
+            task.device.device_id,
+            task.generation,
+            lambda: self._write_to_redis(task.device, task.scan_task, points),
+        )
 
     def _write_to_redis(self, device, scan_task, points: List[DataPoint]) -> None:
         """将采集结果写入 Redis（latest / window / stream）。在线程池中调用，不阻塞事件循环。"""
