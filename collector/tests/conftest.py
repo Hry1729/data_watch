@@ -11,6 +11,13 @@ from device.manager import DeviceManager
 from drivers.base import BaseDriver
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "integration: requires a real MySQL database and explicit RUN_DB_INTEGRATION=1",
+    )
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """创建事件循环"""
