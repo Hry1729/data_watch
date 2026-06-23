@@ -1,7 +1,5 @@
 """ConfigDB scan_rate normalization tests."""
 
-from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -40,40 +38,31 @@ def test_device_signature_device_fields_ignore_config_version():
 @pytest.mark.asyncio
 async def test_get_device_config_versions_returns_device_signatures():
     rows = [
-        SimpleNamespace(
-            device_code="PLC001",
-            variable_config_version=7,
-            endpoint="10.0.0.1",
-            protocol_id=3,
-            rack=0,
-            slot=2,
-            scan_cycle=500,
-        ),
-        SimpleNamespace(
-            device_code="PLC002",
-            variable_config_version=None,
-            endpoint=None,
-            protocol_id=None,
-            rack=None,
-            slot=None,
-            scan_cycle=None,
-        ),
+        {
+            "device_code": "PLC001",
+            "variable_config_version": 7,
+            "endpoint": "10.0.0.1",
+            "protocol_id": 3,
+            "rack": 0,
+            "slot": 2,
+            "scan_cycle": 500,
+        },
+        {
+            "device_code": "PLC002",
+            "variable_config_version": None,
+            "endpoint": None,
+            "protocol_id": None,
+            "rack": None,
+            "slot": None,
+            "scan_cycle": None,
+        },
     ]
 
-    class _Result:
-        def all(self):
-            return rows
-
-    class _Session:
-        async def execute(self, _stmt):
-            return _Result()
-
-    @asynccontextmanager
-    async def _session():
-        yield _Session()
+    async def _fetchall(_sql, _params=()):
+        return rows
 
     manager = ConfigDBManager.__new__(ConfigDBManager)
-    manager.get_session = _session
+    manager._fetchall = _fetchall
 
     versions = await manager.get_device_config_versions()
 
@@ -88,62 +77,74 @@ async def test_get_device_config_versions_returns_device_signatures():
 
 def _make_manager_with_rows(variable_rows):
     device_rows = [
-        SimpleNamespace(
-            id=1,
-            device_code="AGV801",
-            endpoint="127.0.0.1:8090",
-            rack=0,
-            slot=1,
-            scan_cycle=1000,
-            protocol_id=1,
-            type_id=1,
-            variable_config_version=1,
-            protocol="opcda_sidecar",
-            port=8090,
-            server=None,
-            type_code="AGV",
-        )
+        {
+            "id": 1,
+            "device_code": "AGV801",
+            "endpoint": "127.0.0.1:8090",
+            "rack": 0,
+            "slot": 1,
+            "scan_cycle": 1000,
+            "protocol_id": 1,
+            "type_id": 1,
+            "variable_config_version": 1,
+            "protocol": "opcda_sidecar",
+            "port": 8090,
+            "server": None,
+            "type_code": "AGV",
+        }
     ]
     results = [device_rows, variable_rows]
 
-    class _Result:
-        def __init__(self, rows):
-            self._rows = rows
+    class _Conn:
+        async def begin(self):
+            return None
 
-        def all(self):
-            return self._rows
+        async def commit(self):
+            return None
 
-    class _Session:
-        def __init__(self):
-            self._calls = 0
+        async def rollback(self):
+            return None
 
-        async def execute(self, _stmt):
-            result = _Result(results[self._calls])
-            self._calls += 1
-            return result
+    class _Acquire:
+        async def __aenter__(self):
+            return _Conn()
 
-    @asynccontextmanager
-    async def _session():
-        yield _Session()
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class _Pool:
+        def acquire(self):
+            return _Acquire()
 
     manager = ConfigDBManager.__new__(ConfigDBManager)
-    manager.get_session = _session
+    manager._calls = 0
+
+    async def _ensure_pool():
+        return _Pool()
+
+    async def _fetchall_on_conn(_conn, _sql, _params=()):
+        rows = results[manager._calls]
+        manager._calls += 1
+        return rows
+
+    manager._ensure_pool = _ensure_pool
+    manager._fetchall_on_conn = _fetchall_on_conn
     return manager
 
 
 def _variable_row(var_id, td_column_name, is_storage=1):
-    return SimpleNamespace(
-        id=var_id,
-        device_id=1,
-        var_seq=var_id,
-        var_type="REAL",
-        var_address=f"OPD_Server.AGV801.ViewMain.Tag{var_id}",
-        scan_rate=100,
-        is_storage=is_storage,
-        td_column_name=td_column_name,
-        group_code="g001",
-        config_version=1,
-    )
+    return {
+        "id": var_id,
+        "device_id": 1,
+        "var_seq": var_id,
+        "var_type": "REAL",
+        "var_address": f"OPD_Server.AGV801.ViewMain.Tag{var_id}",
+        "scan_rate": 100,
+        "is_storage": is_storage,
+        "td_column_name": td_column_name,
+        "group_code": "g001",
+        "config_version": 1,
+    }
 
 
 @pytest.mark.asyncio

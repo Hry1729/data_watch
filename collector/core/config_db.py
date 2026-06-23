@@ -3,80 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
-from contextlib import asynccontextmanager
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
-from sqlalchemy import JSON, Text, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Mapped, declarative_base, mapped_column
+import aiomysql
 
 from core.config import CollectorConfig, DeviceConfig, MySQLConfig, VariableConfig
 from core.exceptions import ConfigError
 from core.logger import get_logger
 
 logger = get_logger("config_db")
-
-Base = declarative_base()
-
-
-class DBCommProtocol(Base):
-    __tablename__ = "comm_protocol"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    protocol: Mapped[str] = mapped_column()
-    port: Mapped[Optional[int]] = mapped_column(nullable=True)
-    server: Mapped[Optional[str]] = mapped_column(nullable=True)  # OPC DA ProgID 等
-
-
-class DBDevice(Base):
-    __tablename__ = "device"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    device_code: Mapped[str] = mapped_column()
-    device_name: Mapped[Optional[str]] = mapped_column(nullable=True)
-    enable: Mapped[Optional[int]] = mapped_column(nullable=True)
-    status: Mapped[int] = mapped_column()
-    protocol_id: Mapped[int] = mapped_column()
-    type_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    endpoint: Mapped[str] = mapped_column()
-    rack: Mapped[int] = mapped_column()
-    slot: Mapped[int] = mapped_column()
-    scan_cycle: Mapped[int] = mapped_column(default=1000)
-    update_time: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-    variable_config_version: Mapped[Optional[int]] = mapped_column(nullable=True)
-
-
-class DBDeviceVariable(Base):
-    __tablename__ = "device_variable"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    device_id: Mapped[int] = mapped_column()
-    point_group_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    var_seq: Mapped[int] = mapped_column()
-    var_name: Mapped[Optional[str]] = mapped_column(nullable=True)
-    io_type: Mapped[Optional[str]] = mapped_column(nullable=True)
-    var_type: Mapped[str] = mapped_column()
-    var_address: Mapped[str] = mapped_column()
-    scan_rate: Mapped[Optional[int]] = mapped_column(nullable=True)
-    is_alarm: Mapped[Optional[int]] = mapped_column(nullable=True)
-    is_storage: Mapped[int] = mapped_column()
-    td_column_name: Mapped[Optional[str]] = mapped_column(nullable=True)
-    enable: Mapped[Optional[int]] = mapped_column(nullable=True)
-    deleted: Mapped[Optional[int]] = mapped_column(nullable=True)
-
-
-class DBDevicePointGroup(Base):
-    __tablename__ = "device_point_group"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    device_id: Mapped[int] = mapped_column()
-    group_code: Mapped[str] = mapped_column()
-    config_version: Mapped[Optional[int]] = mapped_column(nullable=True)
 
 
 class DeviceSignature(NamedTuple):
@@ -93,61 +34,16 @@ class DeviceSignature(NamedTuple):
         return self[1:] != other[1:]
 
 
-class DBDeviceType(Base):
-    __tablename__ = "device_type"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    type_code: Mapped[Optional[str]] = mapped_column(nullable=True)
-    type_name: Mapped[Optional[str]] = mapped_column(nullable=True)
-
-
-class DBPLCConnectionLog(Base):
-    __tablename__ = "plc_connection_log"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    device_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    event_type: Mapped[Optional[str]] = mapped_column(nullable=True)
-    status: Mapped[Optional[int]] = mapped_column(nullable=True)
-    # 注意：数据库字段名为 messsage（有拼写错误），此处映射保持一致
-    # 待数据库迁移后可改为 message
-    messsage: Mapped[Optional[str]] = mapped_column(nullable=True)
-    create_time: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-
-
-class DBSystemLog(Base):
-    __tablename__ = "system_log"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    log_time: Mapped[datetime] = mapped_column()
-    level: Mapped[str] = mapped_column()
-    log_type: Mapped[str] = mapped_column()
-    source: Mapped[str] = mapped_column()
-    device_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    device_code: Mapped[str] = mapped_column(default="")
-    point_id: Mapped[Optional[int]] = mapped_column(nullable=True)
-    host_name: Mapped[str] = mapped_column(default="")
-    service_name: Mapped[str] = mapped_column(default="")
-    content: Mapped[str] = mapped_column()
-    detail_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    trace_id: Mapped[str] = mapped_column(default="")
-    exception_stack: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    elapsed_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
-    create_time: Mapped[datetime] = mapped_column(default=datetime.now)
-
-
-class DBLogRetentionPolicy(Base):
-    __tablename__ = "log_retention_policy"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    debug_db_enabled: Mapped[int] = mapped_column(default=0)
-    debug_enabled_until: Mapped[Optional[datetime]] = mapped_column(nullable=True)
-
-
 @dataclass
 class DatabaseConfig:
     """数据库连接配置"""
 
-    url: str = "mysql+aiomysql://root:password@127.0.0.1:3306/device_watch?charset=utf8mb4"
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = "root"
+    password: str = "password"
+    database: str = "device_watch"
+    charset: str = "utf8mb4"
     pool_size: int = 10
     max_overflow: int = 20
     pool_timeout: int = 30
@@ -157,7 +53,12 @@ class DatabaseConfig:
     @classmethod
     def from_mysql_config(cls, mysql: MySQLConfig, echo: bool = False) -> "DatabaseConfig":
         return cls(
-            url=mysql.to_sqlalchemy_url(async_mode=True),
+            host=mysql.host,
+            port=mysql.port,
+            user=mysql.user,
+            password=mysql.password,
+            database=mysql.database,
+            charset=mysql.charset,
             pool_size=mysql.pool_size,
             max_overflow=mysql.max_overflow,
             pool_timeout=mysql.pool_timeout,
@@ -171,35 +72,90 @@ class ConfigDBManager:
 
     def __init__(self, db_config: DatabaseConfig):
         self.db_config = db_config
-        self.engine = create_async_engine(
-            db_config.url,
-            pool_size=db_config.pool_size,
-            max_overflow=db_config.max_overflow,
-            pool_timeout=db_config.pool_timeout,
-            pool_recycle=db_config.pool_recycle,
-            echo=db_config.echo,
-        )
-        self.SessionLocal = async_sessionmaker(self.engine, expire_on_commit=False, class_=AsyncSession)
+        self._pool: Optional[aiomysql.Pool] = None
+        self._pool_lock = asyncio.Lock()
 
         self._config_cache: Dict[str, Any] = {}
         self._cache_lock = threading.RLock()
         self._watch_task: Optional[asyncio.Task] = None
         self._config_changed_callbacks: List[Callable[[CollectorConfig], None]] = []
 
-    @asynccontextmanager
-    async def get_session(self):
-        async with self.SessionLocal() as session:
-            try:
-                yield session
-            except Exception:
-                await session.rollback()
-                raise
-            finally:
-                await session.close()
+    async def _ensure_pool(self) -> aiomysql.Pool:
+        pool = self._pool
+        if pool is not None:
+            return pool
+
+        async with self._pool_lock:
+            if self._pool is None:
+                self._pool = await aiomysql.create_pool(
+                    host=self.db_config.host,
+                    port=int(self.db_config.port),
+                    user=self.db_config.user,
+                    password=self.db_config.password,
+                    db=self.db_config.database,
+                    charset=self.db_config.charset,
+                    minsize=0,
+                    maxsize=max(1, int(self.db_config.pool_size or 1) + int(self.db_config.max_overflow or 0)),
+                    pool_recycle=int(self.db_config.pool_recycle or -1),
+                    connect_timeout=float(self.db_config.pool_timeout or 30),
+                    autocommit=True,
+                )
+            return self._pool
 
     async def close(self) -> None:
         """释放数据库连接池。"""
-        await self.engine.dispose()
+        pool = self._pool
+        if pool is None:
+            return
+        self._pool = None
+        pool.close()
+        await pool.wait_closed()
+
+    async def _fetchall_on_conn(
+        self,
+        conn: aiomysql.Connection,
+        sql: str,
+        params: Sequence[Any] = (),
+    ) -> List[Dict[str, Any]]:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute(sql, tuple(params))
+            rows = await cursor.fetchall()
+            return list(rows)
+
+    async def _fetchone_on_conn(
+        self,
+        conn: aiomysql.Connection,
+        sql: str,
+        params: Sequence[Any] = (),
+    ) -> Optional[Dict[str, Any]]:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute(sql, tuple(params))
+            row = await cursor.fetchone()
+            return dict(row) if row is not None else None
+
+    async def _execute_on_conn(
+        self,
+        conn: aiomysql.Connection,
+        sql: str,
+        params: Sequence[Any] = (),
+    ) -> int:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            return await cursor.execute(sql, tuple(params))
+
+    async def _fetchall(self, sql: str, params: Sequence[Any] = ()) -> List[Dict[str, Any]]:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            return await self._fetchall_on_conn(conn, sql, params)
+
+    async def _fetchone(self, sql: str, params: Sequence[Any] = ()) -> Optional[Dict[str, Any]]:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            return await self._fetchone_on_conn(conn, sql, params)
+
+    async def _execute(self, sql: str, params: Sequence[Any] = ()) -> int:
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            return await self._execute_on_conn(conn, sql, params)
 
     @staticmethod
     def _normalize_protocol(protocol_name: Optional[str], comm_type: Optional[str] = None) -> str:
@@ -270,86 +226,93 @@ class ConfigDBManager:
 
     async def load_devices_and_variables(self) -> Tuple[List[DeviceConfig], List[VariableConfig]]:
         """从 MySQL 的 device/device_variable/comm_protocol/device_type 读取配置。"""
-        async with self.get_session() as session:
-            device_rows = (
-                await session.execute(
-                    select(
-                        DBDevice.id,
-                        DBDevice.device_code,
-                        DBDevice.endpoint,
-                        DBDevice.rack,
-                        DBDevice.slot,
-                        DBDevice.scan_cycle,
-                        DBDevice.protocol_id,
-                        DBDevice.type_id,
-                        DBDevice.variable_config_version,
-                        DBCommProtocol.protocol,
-                        DBCommProtocol.port,
-                        DBCommProtocol.server,
-                        DBDeviceType.type_code,
-                    )
-                    .outerjoin(DBCommProtocol, DBDevice.protocol_id == DBCommProtocol.id)
-                    .outerjoin(DBDeviceType, DBDevice.type_id == DBDeviceType.id)
-                    .where(DBDevice.enable == 1)
-                    .order_by(DBDevice.device_code)
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            await conn.begin()
+            try:
+                device_rows = await self._fetchall_on_conn(
+                    conn,
+                    """
+                    SELECT
+                        d.id AS id,
+                        d.device_code AS device_code,
+                        d.endpoint AS endpoint,
+                        d.rack AS rack,
+                        d.slot AS slot,
+                        d.scan_cycle AS scan_cycle,
+                        d.protocol_id AS protocol_id,
+                        d.type_id AS type_id,
+                        d.variable_config_version AS variable_config_version,
+                        cp.protocol AS protocol,
+                        cp.port AS port,
+                        cp.server AS server,
+                        dt.type_code AS type_code
+                    FROM device AS d
+                    LEFT JOIN comm_protocol AS cp ON d.protocol_id = cp.id
+                    LEFT JOIN device_type AS dt ON d.type_id = dt.id
+                    WHERE d.enable = 1
+                    ORDER BY d.device_code
+                    """,
                 )
-            ).all()
 
-            if not device_rows:
-                logger.warning(
-                    "No enabled devices found in MySQL table `device` (enable=1); collector will start in idle mode."
+                if not device_rows:
+                    await conn.commit()
+                    logger.warning(
+                        "No enabled devices found in MySQL table `device` (enable=1); collector will start in idle mode."
+                    )
+                    return [], []
+
+                variable_rows = await self._fetchall_on_conn(
+                    conn,
+                    """
+                    SELECT
+                        v.id AS id,
+                        v.device_id AS device_id,
+                        v.var_seq AS var_seq,
+                        v.var_type AS var_type,
+                        v.var_address AS var_address,
+                        v.scan_rate AS scan_rate,
+                        v.is_storage AS is_storage,
+                        v.td_column_name AS td_column_name,
+                        g.group_code AS group_code,
+                        g.config_version AS config_version
+                    FROM device_variable AS v
+                    LEFT JOIN device_point_group AS g ON v.point_group_id = g.id
+                    WHERE v.enable = 1 AND v.deleted = 0
+                    ORDER BY v.device_id, v.id
+                    """,
                 )
-                return [], []
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
             devices: List[DeviceConfig] = []
             by_device_pk: Dict[int, DeviceConfig] = {}
 
             for row in device_rows:
-                protocol = self._normalize_protocol(row.protocol)
-                default_port = int(row.port or self._default_port_for_protocol(protocol))
-                ip, port = self._parse_endpoint(row.endpoint, default_port)
-                scan_rate = self._normalize_scan_rate(row.scan_cycle, default_seconds=1)
-                device_type = (row.type_code or "UNKNOWN").strip() if row.type_code else "UNKNOWN"
+                protocol = self._normalize_protocol(row["protocol"])
+                default_port = int(row["port"] or self._default_port_for_protocol(protocol))
+                ip, port = self._parse_endpoint(row["endpoint"], default_port)
+                scan_rate = self._normalize_scan_rate(row["scan_cycle"], default_seconds=1)
+                device_type = (row["type_code"] or "UNKNOWN").strip() if row["type_code"] else "UNKNOWN"
 
                 device_cfg = DeviceConfig(
-                    device_id=row.device_code,
+                    device_id=row["device_code"],
                     device_type=device_type,
                     protocol=protocol,
                     ip=ip,
-                    endpoint=row.endpoint or "",
+                    endpoint=row["endpoint"] or "",
                     port=port,
-                    rack=int(row.rack or 0),
-                    slot=int(row.slot or 1),
+                    rack=int(row["rack"] or 0),
+                    slot=int(row["slot"] or 1),
                     scan_rate=scan_rate,
-                    device_pk=int(row.id),
-                    opc_server=row.server,
-                    config_version=int(row.variable_config_version or 1),
+                    device_pk=int(row["id"]),
+                    opc_server=row["server"],
+                    config_version=int(row["variable_config_version"] or 1),
                 )
                 devices.append(device_cfg)
-                by_device_pk[int(row.id)] = device_cfg
-
-            variable_rows = (
-                await session.execute(
-                    select(
-                        DBDeviceVariable.id,
-                        DBDeviceVariable.device_id,
-                        DBDeviceVariable.var_seq,
-                        DBDeviceVariable.var_type,
-                        DBDeviceVariable.var_address,
-                        DBDeviceVariable.scan_rate,
-                        DBDeviceVariable.is_storage,
-                        DBDeviceVariable.td_column_name,
-                        DBDevicePointGroup.group_code,
-                        DBDevicePointGroup.config_version,
-                    )
-                    .outerjoin(
-                        DBDevicePointGroup,
-                        DBDeviceVariable.point_group_id == DBDevicePointGroup.id,
-                    )
-                    .where(DBDeviceVariable.enable == 1, DBDeviceVariable.deleted == 0)
-                    .order_by(DBDeviceVariable.device_id, DBDeviceVariable.id)
-                )
-            ).all()
+                by_device_pk[int(row["id"])] = device_cfg
 
             variables: List[VariableConfig] = []
             # C5：is_storage=1 但缺 td_column_name 的点位，writer 侧会静默跳过/丢值
@@ -357,16 +320,16 @@ class ConfigDBManager:
             # 循环后打一条聚合告警，让缺列配置在采集启动时就可见。
             missing_td_column: List[str] = []
             for row in variable_rows:
-                device_cfg = by_device_pk.get(int(row.device_id))
+                device_cfg = by_device_pk.get(int(row["device_id"]))
                 if device_cfg is None:
                     continue
 
                 scan_rate = self._normalize_scan_rate(
-                    row.scan_rate,
+                    row["scan_rate"],
                     default_seconds=device_cfg.scan_rate,
                 )
-                variable_id = str(row.id)
-                var_seq = int(row.var_seq or 0)
+                variable_id = str(row["id"])
+                var_seq = int(row["var_seq"] or 0)
                 if var_seq <= 0:
                     raise ConfigError(f"Variable {variable_id} missing canonical var_seq")
 
@@ -374,16 +337,16 @@ class ConfigDBManager:
                     VariableConfig(
                         variable_id=variable_id,
                         device_id=device_cfg.device_id,
-                        address=row.var_address,
-                        data_type=(row.var_type or "INT").upper(),
+                        address=row["var_address"],
+                        data_type=(row["var_type"] or "INT").upper(),
                         scan_rate=scan_rate,
-                        is_storage=bool(row.is_storage),
+                        is_storage=bool(row["is_storage"]),
                         var_seq=var_seq,
-                        group_code=str(row.group_code or "g001"),
-                        group_config_version=int(row.config_version or 1),
+                        group_code=str(row["group_code"] or "g001"),
+                        group_config_version=int(row["config_version"] or 1),
                     )
                 )
-                if bool(row.is_storage) and not row.td_column_name:
+                if bool(row["is_storage"]) and not row["td_column_name"]:
                     missing_td_column.append(f"{device_cfg.device_id}/{variable_id}")
 
             if missing_td_column:
@@ -428,11 +391,10 @@ class ConfigDBManager:
 
     async def get_device_status(self) -> Dict[str, int]:
         """统计在线/离线设备。"""
-        async with self.get_session() as session:
-            status_rows = (await session.execute(select(DBDevice.status))).scalars().all()
-            online = sum(1 for s in status_rows if s == 1)
-            total = len(status_rows)
-            return {"online": online, "offline": total - online, "total": total}
+        status_rows = await self._fetchall("SELECT status AS status FROM device")
+        online = sum(1 for row in status_rows if row["status"] == 1)
+        total = len(status_rows)
+        return {"online": online, "offline": total - online, "total": total}
 
     @staticmethod
     def _clip_text(value: Any, max_length: int) -> str:
@@ -452,17 +414,22 @@ class ConfigDBManager:
 
     async def _is_debug_db_enabled(self) -> bool:
         try:
-            async with self.get_session() as session:
-                policy = (
-                    await session.execute(
-                        select(DBLogRetentionPolicy).where(DBLogRetentionPolicy.id == 1)
-                    )
-                ).scalar_one_or_none()
-                if policy is None or not int(policy.debug_db_enabled or 0):
-                    return False
-                if policy.debug_enabled_until is None:
-                    return True
-                return policy.debug_enabled_until > datetime.now()
+            policy = await self._fetchone(
+                """
+                SELECT
+                    debug_db_enabled AS debug_db_enabled,
+                    debug_enabled_until AS debug_enabled_until
+                FROM log_retention_policy
+                WHERE id = %s
+                LIMIT 1
+                """,
+                (1,),
+            )
+            if policy is None or not int(policy["debug_db_enabled"] or 0):
+                return False
+            if policy["debug_enabled_until"] is None:
+                return True
+            return policy["debug_enabled_until"] > datetime.now()
         except Exception as exc:
             logger.debug("Failed to read DEBUG log policy: %s", exc)
             return False
@@ -490,27 +457,35 @@ class ConfigDBManager:
             return False
 
         try:
-            async with self.get_session() as session:
-                session.add(
-                    DBSystemLog(
-                        log_time=datetime.now(),
-                        level=normalized_level,
-                        log_type=self._clip_text(log_type or "system", 16),
-                        source=self._clip_text(source or "collector", 64),
-                        device_id=device_id,
-                        device_code=self._clip_text(device_code, 64),
-                        point_id=point_id,
-                        host_name=self._clip_text(host_name or socket.gethostname(), 64),
-                        service_name=self._clip_text(service_name or "collector", 64),
-                        content=self._clip_text(content, 500),
-                        detail_json=detail_json or None,
-                        trace_id=self._clip_text(trace_id, 64),
-                        exception_stack=exception_stack,
-                        elapsed_ms=elapsed_ms,
-                        create_time=datetime.now(),
-                    )
+            now = datetime.now()
+            detail_text = json.dumps(detail_json, ensure_ascii=False) if detail_json else None
+            await self._execute(
+                """
+                INSERT INTO system_log (
+                    log_time, level, log_type, source, device_id, device_code, point_id,
+                    host_name, service_name, content, detail_json, trace_id,
+                    exception_stack, elapsed_ms, create_time
                 )
-                await session.commit()
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    now,
+                    normalized_level,
+                    self._clip_text(log_type or "system", 16),
+                    self._clip_text(source or "collector", 64),
+                    device_id,
+                    self._clip_text(device_code, 64),
+                    point_id,
+                    self._clip_text(host_name or socket.gethostname(), 64),
+                    self._clip_text(service_name or "collector", 64),
+                    self._clip_text(content, 500),
+                    detail_text,
+                    self._clip_text(trace_id, 64),
+                    exception_stack,
+                    elapsed_ms,
+                    now,
+                ),
+            )
             return True
         except Exception as exc:
             logger.warning("Failed to write system_log level=%s source=%s: %s", normalized_level, source, exc)
@@ -538,39 +513,53 @@ class ConfigDBManager:
     ) -> None:
         """更新设备状态，并记录连接历史与统一系统日志。"""
         system_log_payload: Optional[Dict[str, Any]] = None
-        async with self.get_session() as session:
-            device_row = (
-                await session.execute(select(DBDevice).where(DBDevice.device_code == device_code))
-            ).scalar_one_or_none()
-            if device_row is None:
-                logger.warning("Device not found when updating status: %s", device_code)
-                return
+        pool = await self._ensure_pool()
+        async with pool.acquire() as conn:
+            await conn.begin()
+            try:
+                device_row = await self._fetchone_on_conn(
+                    conn,
+                    """
+                    SELECT id AS id, device_code AS device_code
+                    FROM device
+                    WHERE device_code = %s
+                    LIMIT 1
+                    """,
+                    (device_code,),
+                )
+                if device_row is None:
+                    await conn.rollback()
+                    logger.warning("Device not found when updating status: %s", device_code)
+                    return
 
-            now = datetime.now()
-            await session.execute(
-                update(DBDevice)
-                .where(DBDevice.id == device_row.id)
-                .values(status=status, update_time=now)
-            )
-
-            log_row = DBPLCConnectionLog(
-                device_id=device_row.id,
-                event_type=event_type,
-                status=status,
-                messsage=message,
-                create_time=now,
-            )
-            session.add(log_row)
-            await session.commit()
+                now = datetime.now()
+                await self._execute_on_conn(
+                    conn,
+                    "UPDATE device SET status = %s, update_time = %s WHERE id = %s",
+                    (status, now, device_row["id"]),
+                )
+                # 注意：数据库字段名为 messsage（有拼写错误），此处保持一致
+                await self._execute_on_conn(
+                    conn,
+                    """
+                    INSERT INTO plc_connection_log (device_id, event_type, status, messsage, create_time)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (device_row["id"], event_type, status, message, now),
+                )
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
             level = self._device_status_system_log_level(status, event_type, message)
             system_log_payload = {
                 "level": level,
                 "log_type": "collect",
                 "source": "collector.device",
-                "device_id": int(device_row.id),
-                "device_code": device_row.device_code,
-                "content": f"Device {device_row.device_code} {event_type}: {message or status}",
+                "device_id": int(device_row["id"]),
+                "device_code": device_row["device_code"],
+                "content": f"Device {device_row['device_code']} {event_type}: {message or status}",
                 "detail_json": {
                     "event_type": event_type,
                     "status": status,
@@ -583,68 +572,67 @@ class ConfigDBManager:
 
     async def get_device_config_versions(self) -> Dict[str, DeviceSignature]:
         """返回所有启用设备的 {device_code: DeviceSignature}。"""
-        async with self.get_session() as session:
-            rows = (await session.execute(
-                select(
-                    DBDevice.device_code,
-                    DBDevice.variable_config_version,
-                    DBDevice.endpoint,
-                    DBDevice.protocol_id,
-                    DBDevice.rack,
-                    DBDevice.slot,
-                    DBDevice.scan_cycle,
-                )
-                .where(DBDevice.enable == 1)
-            )).all()
-            return {
-                row.device_code: DeviceSignature(
-                    config_version=int(row.variable_config_version or 1),
-                    endpoint=str(row.endpoint or ""),
-                    protocol_id=int(row.protocol_id or 0),
-                    rack=int(row.rack or 0),
-                    slot=int(row.slot or 1),
-                    scan_cycle=int(row.scan_cycle or 1000),
-                )
-                for row in rows
-            }
+        rows = await self._fetchall(
+            """
+            SELECT
+                device_code AS device_code,
+                variable_config_version AS variable_config_version,
+                endpoint AS endpoint,
+                protocol_id AS protocol_id,
+                rack AS rack,
+                slot AS slot,
+                scan_cycle AS scan_cycle
+            FROM device
+            WHERE enable = 1
+            """
+        )
+        return {
+            row["device_code"]: DeviceSignature(
+                config_version=int(row["variable_config_version"] or 1),
+                endpoint=str(row["endpoint"] or ""),
+                protocol_id=int(row["protocol_id"] or 0),
+                rack=int(row["rack"] or 0),
+                slot=int(row["slot"] or 1),
+                scan_cycle=int(row["scan_cycle"] or 1000),
+            )
+            for row in rows
+        }
 
     async def load_variables_for_device(
         self, device_pk: int, device_cfg: "DeviceConfig"
     ) -> List[VariableConfig]:
         """重新加载单台设备的变量配置。"""
-        async with self.get_session() as session:
-            rows = (await session.execute(
-                select(
-                    DBDeviceVariable.id,
-                    DBDeviceVariable.var_seq,
-                    DBDeviceVariable.var_type,
-                    DBDeviceVariable.var_address,
-                    DBDeviceVariable.scan_rate,
-                    DBDeviceVariable.is_storage,
-                    DBDevicePointGroup.group_code,
-                )
-                .outerjoin(DBDevicePointGroup, DBDeviceVariable.point_group_id == DBDevicePointGroup.id)
-                .where(
-                    DBDeviceVariable.device_id == device_pk,
-                    DBDeviceVariable.enable == 1,
-                    DBDeviceVariable.deleted == 0,
-                )
-                .order_by(DBDeviceVariable.id)
-            )).all()
-            variables = []
-            for row in rows:
-                scan_rate = self._normalize_scan_rate(row.scan_rate, device_cfg.scan_rate)
-                variables.append(VariableConfig(
-                    variable_id=str(row.id),
-                    device_id=device_cfg.device_id,
-                    address=row.var_address,
-                    data_type=(row.var_type or "INT").upper(),
-                    scan_rate=scan_rate,
-                    is_storage=bool(row.is_storage),
-                    var_seq=int(row.var_seq or 0),
-                    group_code=str(row.group_code or "g001"),
-                ))
-            return variables
+        rows = await self._fetchall(
+            """
+            SELECT
+                v.id AS id,
+                v.var_seq AS var_seq,
+                v.var_type AS var_type,
+                v.var_address AS var_address,
+                v.scan_rate AS scan_rate,
+                v.is_storage AS is_storage,
+                g.group_code AS group_code
+            FROM device_variable AS v
+            LEFT JOIN device_point_group AS g ON v.point_group_id = g.id
+            WHERE v.device_id = %s AND v.enable = 1 AND v.deleted = 0
+            ORDER BY v.id
+            """,
+            (device_pk,),
+        )
+        variables = []
+        for row in rows:
+            scan_rate = self._normalize_scan_rate(row["scan_rate"], device_cfg.scan_rate)
+            variables.append(VariableConfig(
+                variable_id=str(row["id"]),
+                device_id=device_cfg.device_id,
+                address=row["var_address"],
+                data_type=(row["var_type"] or "INT").upper(),
+                scan_rate=scan_rate,
+                is_storage=bool(row["is_storage"]),
+                var_seq=int(row["var_seq"] or 0),
+                group_code=str(row["group_code"] or "g001"),
+            ))
+        return variables
 
 
 _config_manager: Optional[ConfigDBManager] = None
