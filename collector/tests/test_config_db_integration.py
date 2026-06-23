@@ -13,6 +13,12 @@ Default test runs skip this file. To execute:
 These tests pin the real SQL contract after migrating ConfigDBManager from
 SQLAlchemy to aiomysql: aliases, LEFT JOINs, JSON columns, the misspelled
 plc_connection_log.messsage column, and explicit transactions.
+
+Caution: run against a test/staging database or with the collector stopped.
+update_device_status writes a system_log row and the cleanup deletes recent
+collector.device rows matching "integration_test"; if a live collector is
+writing logs for the same device in the same window, those rows could be
+deleted too. Do not run against a busy production database.
 """
 
 from __future__ import annotations
