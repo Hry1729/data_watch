@@ -15,24 +15,47 @@ class _FakeSession:
     async def __aexit__(self, *exc):
         return False
 
+    def cursor(self):
+        return self
+
     async def execute(self, _stmt):
+        return None
+
+    async def fetchall(self):
         return self._rows
 
 
-class _FakeEngine:
-    async def dispose(self):
-        pass
+class _Acquire:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def __aenter__(self):
+        return _FakeSession(self._rows)
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakePool:
+    def __init__(self, rows):
+        self._rows = rows
+        self.closed = False
+
+    def acquire(self):
+        return _Acquire(self._rows)
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        return None
 
 
 def _patch_db(monkeypatch, rows):
-    monkeypatch.setattr(
-        "sqlalchemy.ext.asyncio.create_async_engine", lambda *a, **k: _FakeEngine()
-    )
-    monkeypatch.setattr(
-        "sqlalchemy.ext.asyncio.async_sessionmaker",
-        lambda *a, **k: (lambda: _FakeSession(rows)),
-    )
-    monkeypatch.setattr("sqlalchemy.text", lambda q: q)
+    async def _create_pool(*_args, **_kwargs):
+        return _FakePool(rows)
+
+    monkeypatch.setattr("aiomysql.create_pool", _create_pool)
 
 
 _MYSQL = {"user": "u", "password": "p", "host": "h", "port": 3306, "database": "d"}

@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from urllib.parse import quote_plus
 
 
 @dataclass
@@ -18,16 +17,6 @@ class MySQLConfig:
     max_overflow: int = 20
     pool_timeout: int = 30
     pool_recycle: int = 3600
-
-    def to_sqlalchemy_url(self, async_mode: bool = True) -> str:
-        """构造 SQLAlchemy DSN（密码安全转义）。"""
-        driver = "mysql+aiomysql" if async_mode else "mysql+pymysql"
-        user_enc = quote_plus(self.user)
-        password_enc = quote_plus(self.password)
-        return (
-            f"{driver}://{user_enc}:{password_enc}"
-            f"@{self.host}:{self.port}/{self.database}?charset={self.charset}"
-        )
 
 
 @dataclass

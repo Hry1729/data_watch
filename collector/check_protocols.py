@@ -99,37 +99,37 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
     }
 
     try:
-        from sqlalchemy import text
-        from sqlalchemy.engine import URL
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        import aiomysql
     except Exception as e:
         print(f"[WARN] Failed to import DB dependencies for protocol check: {e}", file=sys.stderr)
         return result
 
-    # Build the DSN through SQLAlchemy so special chars in the password are safe.
-    dsn = URL.create(
-        "mysql+aiomysql",
-        username=mysql_config["user"],
-        password=mysql_config["password"],
-        host=mysql_config["host"],
-        port=int(mysql_config["port"]),
-        database=mysql_config["database"],
-        query={"charset": "utf8mb4"},
-    )
-
-    engine = create_async_engine(dsn, pool_pre_ping=True)
-    async_session = async_sessionmaker(engine, expire_on_commit=False)
+    pool = None
 
     try:
-        async with async_session() as session:
-            rows = await session.execute(
-                text("""
+        pool = await aiomysql.create_pool(
+            host=mysql_config["host"],
+            port=int(mysql_config["port"]),
+            user=mysql_config["user"],
+            password=mysql_config["password"],
+            db=mysql_config["database"],
+            charset="utf8mb4",
+            minsize=0,
+            maxsize=1,
+            autocommit=True,
+            connect_timeout=5,
+        )
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
                     SELECT d.device_code, d.endpoint, cp.protocol
                     FROM device d
                     JOIN comm_protocol cp ON d.protocol_id = cp.id
                     WHERE d.enable = 1
-                """)
-            )
+                    """
+                )
+                rows = await cursor.fetchall()
 
             # center / sidecar 各自独立去重：同一 endpoint 若两类协议都配置，
             # 用单集合会让先处理的一类把它加入 seen，另一类被静默漏掉（A方-10）。
@@ -164,7 +164,9 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
         # 返回空结果，让用户手动启动
         return result
     finally:
-        await engine.dispose()
+        if pool is not None:
+            pool.close()
+            await pool.wait_closed()
 
     return result
 

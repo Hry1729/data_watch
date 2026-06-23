@@ -3,7 +3,6 @@
 # - `cryptography` is required by PyMySQL/aiomysql when MySQL uses caching_sha2_password / sha256_password
 
 python-snap7>=3.0.0
-SQLAlchemy>=2.0
 aiomysql>=0.2.0
 PyMySQL>=1.1.0
 cryptography>=46.0.0
