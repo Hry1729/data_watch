@@ -4,6 +4,7 @@ import pytest
 
 from consumer import StreamConsumer, _BufferedRow
 from performance import WriterPerformanceMetrics
+from tdengine_writer import LANDED
 
 
 def _config() -> dict:
@@ -27,8 +28,8 @@ async def test_flush_records_batch_latency_rows_and_buffer_depth():
     metrics = WriterPerformanceMetrics()
     redis_client = MagicMock()
     writer = MagicMock()
-    # 两行同子表 → 一个 chunk：返回 (覆盖的行下标, 成功, 耗时ms)
-    writer.write_multi_table = AsyncMock(return_value=[([0, 1], True, 1.5)])
+    # 两行同子表 → 一个 chunk：返回 (覆盖的行下标, 状态, 耗时ms)
+    writer.write_multi_table = AsyncMock(return_value=[([0, 1], LANDED, 1.5)])
     consumer = StreamConsumer(
         _config(),
         MagicMock(),

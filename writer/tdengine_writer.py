@@ -43,11 +43,45 @@ _KNOWN_TAG_COLUMNS = {"device_code"}
 # 0x0219 SQL statement too long），取 ~3MB 留余量（scripts/experiment_tdengine_multitable.py）。
 MAX_SQL_BYTES = 3 * 1024 * 1024
 
+# write_multi_table 的行级结果状态（§7.6 二分降级）：
+#   LANDED   已确认落库 → 调用方 XACK
+#   BAD_DATA 明确坏数据，二分到单行仍失败 → 调用方进 DLQ
+#   RETRY    连接错/未知错/二分超限 → 调用方留 buffer 重试（绝不进 DLQ）
+LANDED = "landed"
+BAD_DATA = "bad_data"
+RETRY = "retry"
+
+# 明确的"坏数据 / SQL"错误才二分，且只认 TDengine 的具体错误码：解析期坏值整条
+# 拒绝(0x0216)、运行期逐行错如越界 ts(0x060b)、SQL 过长(0x0219)。**故意不匹配
+# "invalid"/"out of range"/"syntax" 等英文词**——它们也出现在 0x80000112(配置越界)、
+# 0x80000115~11E(协议/版本错) 等瞬时/非数据错误里，会把它们误判成坏数据送进 DLQ，
+# 违背硬约束①。未命中（未知错误）一律 RETRY，绝不送 DLQ；真坏行最终经 delivery_count
+# 超限走 _handle_entry 的 DLQ 兜底。
+_DATA_ERROR_KEYWORDS = (
+    "0x0216", "0x060b", "0x0219",
+)
+
+# 二分递归深度上限（防病态输入无限二分）。半切每层至少减半，正常 ceil(log2(行数))
+# 即触底到单行；24 层覆盖 ~1600 万行，超限的极端块整体 RETRY 兜底、不强判坏行。
+_MAX_BISECT_DEPTH = 24
+
 
 def _is_connection_error(exc: Exception) -> bool:
     """Heuristic: does this exception indicate a dropped/unhealthy connection?"""
     msg = str(exc).lower()
     return any(kw in msg for kw in _CONNECTION_ERROR_KEYWORDS)
+
+
+def _is_data_error(exc: Exception | None) -> bool:
+    """White-list: is this a *definite* bad-data / over-long-SQL error?
+
+    Only these are eligible for binary-search isolation. Anything else (including
+    None / connection errors) is treated as transient and retried, never DLQ'd.
+    """
+    if exc is None:
+        return False
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _DATA_ERROR_KEYWORDS)
 
 
 class TDengineWriter:
@@ -115,16 +149,23 @@ class TDengineWriter:
     # Query helpers (run blocking taosws calls in executor)
     # ------------------------------------------------------------------
 
-    async def _execute(self, sql: str) -> bool:
+    async def _execute_ex(self, sql: str) -> tuple[bool, Exception | None]:
+        """Execute SQL, returning (ok, exception).
+
+        Unlike _execute (bool), this surfaces the failure so the write path can
+        classify it (connection vs bad-data vs unknown) and decide whether to
+        retry the whole chunk or binary-search to isolate bad rows. Connection
+        errors still trigger reconnect here, in one place.
+        """
         if self._conn is None:
             logger.error("[tdengine] not connected, cannot execute SQL")
             if self._config is not None and not self._reconnecting:
                 await self._try_reconnect()
-            return False
+            return False, None
         loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(None, lambda: self._conn.execute(sql))
-            return True
+            return True, None
         except Exception as exc:
             logger.error("[tdengine] execute failed: %s | SQL: %.200s", exc, sql)
             if (
@@ -133,7 +174,11 @@ class TDengineWriter:
                 and _is_connection_error(exc)
             ):
                 await self._try_reconnect()
-            return False
+            return False, exc
+
+    async def _execute(self, sql: str) -> bool:
+        ok, _ = await self._execute_ex(sql)
+        return ok
 
     async def _query(self, sql: str) -> list[Any]:
         if self._conn is None:
@@ -337,7 +382,7 @@ class TDengineWriter:
 
     async def write_multi_table(
         self, rows: list[dict]
-    ) -> list[tuple[list[int], bool, float]]:
+    ) -> list[tuple[list[int], str, float]]:
         """Write rows across many child tables as chunked multi-table INSERTs.
 
         rows[i] = {child_table, stable, device_code, ts, columns}. Rows of any
@@ -345,11 +390,13 @@ class TDengineWriter:
         statements bounded by MAX_SQL_BYTES, since one TDengine statement can
         cover thousands of subtables but is capped at ~4 MiB of SQL.
 
-        Returns one (row_indices, ok, elapsed_ms) tuple per executed chunk, where
-        row_indices are indices into the input list. ok is chunk-level (a chunk
-        is committed as one INSERT); the caller ACKs rows of successful chunks and
-        retries the rest. Per §7.6 a chunk failure does not yet isolate the bad
-        subtable — that is the binary-search degrade step.
+        Returns (row_indices, status, elapsed_ms) outcome groups covering every
+        input row exactly once. status ∈ {LANDED, BAD_DATA, RETRY} (§7.6):
+        a chunk that commits → one LANDED group; a chunk that fails on a definite
+        data/SQL error is binary-searched so good rows still land (LANDED) and only
+        rows that fail alone are BAD_DATA; connection/unknown errors mark the whole
+        chunk RETRY without bisecting (never DLQ'd). The caller ACKs LANDED, pushes
+        BAD_DATA to the DLQ, and keeps RETRY buffered.
         """
         if not rows:
             return []
@@ -370,12 +417,70 @@ class TDengineWriter:
             for stable, cols in cols_by_stable.items():
                 await self._ensure_columns(stable, cols)
 
-            results: list[tuple[list[int], bool, float]] = []
+            results: list[tuple[list[int], str, float]] = []
             for indices, sql in self._iter_chunks(rows):
-                started = time.perf_counter()
-                ok = await self._execute(sql)
-                results.append((indices, ok, (time.perf_counter() - started) * 1000))
+                results.extend(await self._write_chunk(rows, indices, sql))
             return results
+
+    async def _write_chunk(
+        self,
+        rows: list[dict],
+        indices: list[int],
+        sql: str | None = None,
+        depth: int = 0,
+    ) -> list[tuple[list[int], str, float]]:
+        """Execute one chunk; on a data error, binary-search to isolate bad rows.
+
+        Returns (indices, status, elapsed_ms) outcome groups. Recursion halves the
+        index set each level, so it terminates at single rows (ceil(log2 n) deep);
+        _MAX_BISECT_DEPTH is a safety valve for pathological inputs.
+        """
+        if not indices:
+            return []
+        if sql is None:
+            sql = self._build_chunk_sql(rows, indices)
+
+        started = time.perf_counter()
+        ok, exc = await self._execute_ex(sql)
+        elapsed = (time.perf_counter() - started) * 1000
+
+        if ok:
+            return [(indices, LANDED, elapsed)]
+
+        # 连接错(含未连接 exc=None) / 未知错误 → 整块重试，绝不二分进 DLQ。
+        if exc is None or _is_connection_error(exc) or not _is_data_error(exc):
+            return [(indices, RETRY, elapsed)]
+
+        # 明确的数据 / SQL 错误：单行仍失败才判坏；否则二分隔离。
+        if len(indices) == 1:
+            return [(indices, BAD_DATA, elapsed)]
+        if depth >= _MAX_BISECT_DEPTH:
+            logger.error(
+                "[tdengine] bisect depth limit reached (%d rows), retrying instead of DLQ",
+                len(indices),
+            )
+            return [(indices, RETRY, elapsed)]
+
+        mid = len(indices) // 2
+        left = await self._write_chunk(rows, indices[:mid], None, depth + 1)
+        right = await self._write_chunk(rows, indices[mid:], None, depth + 1)
+        return left + right
+
+    def _build_chunk_sql(self, rows: list[dict], indices: list[int]) -> str:
+        """Build one multi-table INSERT covering exactly `indices` (for bisection).
+
+        Groups indices by child table and unions columns per table, mirroring
+        _iter_chunks but without the byte-budget packing (a bisected half is
+        already smaller than the chunk that failed).
+        """
+        by_table: dict[str, list[int]] = {}
+        for i in indices:
+            by_table.setdefault(rows[i]["child_table"], []).append(i)
+        fragments = [
+            self._subtable_fragment(rows, idxs, self._union_cols(rows, idxs))
+            for idxs in by_table.values()
+        ]
+        return "INSERT INTO " + " ".join(fragments)
 
     @staticmethod
     def _format_value(raw: object) -> str:

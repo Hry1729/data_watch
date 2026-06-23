@@ -30,7 +30,7 @@ import redis
 from dlq import push_dlq
 from mysql_mapper import MysqlMapper
 from performance import WriterPerformanceMetrics
-from tdengine_writer import TDengineWriter
+from tdengine_writer import BAD_DATA, LANDED, TDengineWriter
 
 logger = logging.getLogger("writer.consumer")
 
@@ -50,6 +50,7 @@ class _BufferedRow:
     stable: str
     ts: int
     columns: dict[str, float]
+    entry_data: dict = field(default_factory=dict)  # 原始 stream 字段，BAD_DATA 进 DLQ 时需要
     delivery_count: int = 1
 
 
@@ -491,6 +492,7 @@ class StreamConsumer:
                 stable=mapping.stable,
                 ts=ts,
                 columns=columns,
+                entry_data=dict(entry_data),
                 delivery_count=delivery_count,
             )
         )
@@ -530,19 +532,30 @@ class StreamConsumer:
             )
             raise
 
+        # 按行级状态分流（§7.6 二分降级）：LANDED 与「成功进 DLQ 的坏行」才 ACK；
+        # RETRY 与「DLQ 推送失败的坏行」留 buffer 重试，绝不丢数据（硬约束②）。
+        to_ack: list[_BufferedRow] = []
         failed_rows: list[_BufferedRow] = []
-        for indices, ok, elapsed_ms in chunk_results:
+        for indices, status, elapsed_ms in chunk_results:
             chunk_rows = [buffered[i] for i in indices]
-            self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), ok)
-            if ok:
-                self._ack_rows(chunk_rows)
-            else:
+            self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), status == LANDED)
+            if status == LANDED:
+                to_ack.extend(chunk_rows)
+            elif status == BAD_DATA:
+                for row in chunk_rows:
+                    if self._push_row_to_dlq(row):
+                        to_ack.append(row)
+                    else:
+                        failed_rows.append(row)
+            else:  # RETRY：连接错/未知错/二分超限 —— 不 ACK、不进 DLQ
                 logger.error(
-                    "[consumer] multi-table chunk failed (%d rows) — not acking, will retry",
+                    "[consumer] multi-table chunk retryable (%d rows) — not acking, will retry",
                     len(chunk_rows),
                 )
                 failed_rows.extend(chunk_rows)
 
+        if to_ack:
+            self._ack_rows(to_ack)
         self._buffer = failed_rows
         self._metrics.set_buffer_rows(len(self._buffer))
         self._metrics.record_flush(
@@ -560,6 +573,55 @@ class StreamConsumer:
             json.dumps(self._metrics.snapshot(), separators=(",", ":")),
         )
         self._last_performance_log = now
+
+    def _push_row_to_dlq(self, row: _BufferedRow) -> bool:
+        """Push a binary-search-isolated bad row to the DLQ. Returns True if stored.
+
+        调用方只在返回 True 时 ACK；False 时该行留 buffer 重试（硬约束②：DLQ
+        成功才 ACK，推送失败不丢数据）。syslog 与 exceeded-max-retry 路径同口径限流。
+        """
+        moved = push_dlq(
+            self._r,
+            device_type=row.device_type or "unknown",
+            group_code=row.group_code or "unknown",
+            entry_id=row.entry_id,
+            stream_key=row.stream_key,
+            data=row.entry_data,
+            retry_count=row.delivery_count,
+            last_error="bad data isolated by binary-search degrade",
+        )
+        if moved:
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_dlq_moved_log is None or now - self._last_dlq_moved_log >= 60.0:
+                    self._last_dlq_moved_log = now
+                    self._syslog.emit(
+                        level="ERROR",
+                        log_type="storage",
+                        source="writer.dlq",
+                        content=(
+                            f"bad-data entry {row.entry_id} moved to DLQ: "
+                            f"{row.device_type or 'unknown'}/{row.group_code or 'unknown'}"
+                        ),
+                    )
+        else:
+            logger.error(
+                "[consumer] DLQ push failed for bad-data entry %s, keeping buffered", row.entry_id
+            )
+            if self._syslog is not None:
+                now = time.monotonic()
+                if self._last_dlq_failed_log is None or now - self._last_dlq_failed_log >= 60.0:
+                    self._last_dlq_failed_log = now
+                    self._syslog.emit(
+                        level="ERROR",
+                        log_type="storage",
+                        source="writer.dlq",
+                        content=(
+                            f"DLQ push failed for bad-data entry {row.entry_id}: "
+                            f"{row.device_type or 'unknown'}/{row.group_code or 'unknown'}"
+                        ),
+                    )
+        return moved
 
     def _ack_rows(self, rows: list[_BufferedRow]) -> None:
         """XACK rows, grouped by stream_key."""
