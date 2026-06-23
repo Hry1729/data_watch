@@ -1,17 +1,25 @@
-# Collector runtime dependencies
-# Notes:
-# - `cryptography` is required by PyMySQL/aiomysql when MySQL uses caching_sha2_password / sha256_password
+# Collector runtime dependencies — 版本已锁定 (==)
+#
+# 以下为实测在 free-threaded CPython 3.14t (Py_GIL_DISABLED) 下可用、且 import 不重开
+# GIL 的版本（2026-06-23 冻结打包验证通过）。升级任一项前，须确认新版本仍发布 cp314t
+# (free-threaded) wheel，否则 PyInstaller 打包会退化为运行时重开 GIL 或 import 崩溃。
+#
+# - C 扩展（cp314t wheel 是关键）：cryptography / cffi / msgspec
+# - 纯 Python（锁定仅为可复现）：python-snap7(ctypes) / aiomysql / PyMySQL / redis
+# - cryptography：MySQL 用 caching_sha2_password / sha256_password 时被 PyMySQL/aiomysql 需要
+# - cffi：cryptography 的间接依赖，显式锁定以确保拿到 cp314t free-threaded wheel
 
-python-snap7>=3.0.0
-aiomysql>=0.2.0
-PyMySQL>=1.1.0
-cryptography>=46.0.0
-msgspec>=0.21.1
-redis>=5.0.0
+python-snap7==3.0.0
+aiomysql==0.3.2
+PyMySQL==1.2.0
+cryptography==49.0.0
+cffi==2.0.0
+msgspec==0.21.1
+redis==8.0.0
 
 # Optional protocol driver
 # asyncua>=1.1.5
 
-# Test dependencies
+# Test dependencies（仅本地测试用，不进打包产物，故保持范围而非锁定）
 pytest>=8.0
 pytest-asyncio>=0.23
