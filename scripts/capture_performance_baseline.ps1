@@ -108,7 +108,7 @@ $Manifest = [ordered]@{
 $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDir "manifest.json") -Encoding utf8
 
 $PythonCandidates = @(
-    (Join-Path $RepoRoot "collector\.venv\Scripts\python.exe"),
+    (Join-Path $RepoRoot "collector\.venv-pack\Scripts\python.exe"),
     (Join-Path $RepoRoot "writer\.venv-pack\Scripts\python.exe")
 )
 foreach ($Python in $PythonCandidates) {

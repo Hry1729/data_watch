@@ -112,7 +112,7 @@ class Device:
             task = ScanTask(scan_rate=rate, variables=variables)
             self._build_read_blocks(task)
             self.scan_tasks.append(task)
-            logger.debug(
+            logger.info(
                 f"Device {self.device_id}: scan task rate={rate}s, "
                 f"blocks={len(task.read_blocks)}, vars={len(variables)}"
             )
@@ -153,7 +153,7 @@ class Device:
         )
 
     def _build_s7_read_blocks(self, task: ScanTask) -> None:
-        """构建 S7 读取块；只合并 I/Q/M 连续字节，DB 地址保持原样。"""
+        """构建 S7 读取块；按区域分别合并连续读取：I/Q/M 连续字节、Timer/Counter、DB 同号连续字节。"""
         from drivers.base import ReadBlock
 
         blocks = []

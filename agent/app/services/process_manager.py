@@ -21,6 +21,9 @@ _STOP_TIMEOUT_DEFAULT = 10.0
 _STOP_POLL_INTERVAL = 0.5
 # 监控循环节奏：兼做崩溃检测与 CPU 采样（FR-A09 要求 CPU 每 2s 采一次）
 _HEALTH_CHECK_INTERVAL = 2.0
+# CPU 占用归一化：psutil.Process.cpu_percent 是单核基准（满 N 核=N×100%），
+# 除以逻辑核数换算为占整机的百分比（0-100%），与任务管理器的总占用口径一致。
+_LOGICAL_CPUS = max(1, psutil.cpu_count() or 1)
 
 
 @dataclass(frozen=True)
@@ -334,7 +337,7 @@ class ProcessManager:
                 return
             self._cpu_procs[name] = proc
         try:
-            self._cpu_cache[name] = round(proc.cpu_percent(interval=None), 2)
+            self._cpu_cache[name] = round(proc.cpu_percent(interval=None) / _LOGICAL_CPUS, 2)
         except psutil.Error:
             self._cpu_procs.pop(name, None)
             self._cpu_cache[name] = 0.0

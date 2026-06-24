@@ -2,7 +2,7 @@
 
 本目录收录开发/压测阶段使用的辅助脚本，不属于生产代码。
 
-运行环境：`collector/.venv`（`pip install -r collector/requirements.txt`）
+运行环境：`collector/.venv-pack`（`pip install -r collector/requirements.txt`）
 
 ---
 
@@ -14,13 +14,13 @@
 cd D:\python\device_alarm\data_watch
 
 # 仅写 latest/window（验证前端实时显示）
-collector\.venv\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py"
+collector\.venv-pack\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py"
 
 # 同时写 Stream（验证 writer → TDengine 链路）
-collector\.venv\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py" --enable-stream
+collector\.venv-pack\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py" --enable-stream
 
 # 持续运行直到手动停止
-collector\.venv\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py" --enable-stream --duration-seconds 0
+collector\.venv-pack\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.py" --enable-stream --duration-seconds 0
 ```
 
 **依赖**：MySQL 和 Redis 必须运行，配置自动读取 `writer/config/settings.toml`。
@@ -39,7 +39,7 @@ collector\.venv\Scripts\python.exe "docs\运维\测试脚本\redis_mock_writer.p
 
 ```powershell
 cd D:\python\device_alarm\data_watch
-collector\.venv\Scripts\python.exe docs\运维\测试脚本\tdengine_write_benchmark.py --help
+collector\.venv-pack\Scripts\python.exe docs\运维\测试脚本\tdengine_write_benchmark.py --help
 ```
 
 ---

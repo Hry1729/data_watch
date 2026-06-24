@@ -41,7 +41,7 @@
 
 ### 环境要求
 
-- Python 3.8+
+- Python 3.14 free-threaded（3.14t 自由线程版；collector 运行时与打包均基于此）
 - MySQL 8.0+（用于设备配置管理）
 - Redis 5.0+（实时缓冲与待入库 Stream）
 - .NET Framework / MSBuild（仅 AGV OPC DA sidecar 需要，且必须 x86 编译）
@@ -49,16 +49,16 @@
 ### 安装依赖
 
 ```bash
-# 创建虚拟环境（首次）
-python -m venv .venv
+# 创建虚拟环境（首次，需 free-threaded CPython 3.14t 解释器）
+python3.14t -m venv .venv-pack
 
 # 激活虚拟环境
 # Windows CMD:
-.venv\Scripts\activate.bat
+.venv-pack\Scripts\activate.bat
 # Windows PowerShell:
-.venv\Scripts\Activate.ps1
+.venv-pack\Scripts\Activate.ps1
 # Linux/Mac:
-source .venv/bin/activate
+source .venv-pack/bin/activate
 
 # 安装依赖
 pip install -r requirements.txt
@@ -132,13 +132,13 @@ set COLLECTOR_CONFIG=D:\python\device_alarm\data_watch\collector\config\settings
 项目也提供了联调模板配置 `config/settings.fake_bootstrap.toml`（已启用 `enable_fake_bootstrap=true`），
 可在 MySQL 未就绪阶段临时用于打通 collector 采集与 Redis 写入链路验证。
 
-> 如果项目目录从中文路径迁移到 `D:\python\device_alarm\data_watch`，建议重建 `collector\.venv`。Windows venv 启动器可能仍保存旧路径，`run.bat` 会尝试回退到系统 Python，但回退解释器必须已经安装采集模块依赖。
+> 如果项目目录从中文路径迁移到 `D:\python\device_alarm\data_watch`，建议重建 `collector\.venv-pack`。Windows venv 启动器可能仍保存旧路径，`run.bat` 会尝试回退到系统 Python，但回退解释器必须已经安装采集模块依赖。
 
 ### 启动服务
 
 ```bash
 # 确保已激活虚拟环境
-.venv\Scripts\activate.bat
+.venv-pack\Scripts\activate.bat
 
 # 启动 collector
 python main.py
@@ -173,7 +173,7 @@ cd collector/sidecars/opcda_proxy_service
 
 # 2. 启动 collector
 cd ../../..
-.venv\Scripts\activate.bat
+.venv-pack\Scripts\activate.bat
 python main.py
 ```
 

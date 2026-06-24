@@ -360,6 +360,7 @@ class TaskExecutor:
         """解析读取结果为DataPoint列表"""
         points = []
         now = datetime.now()
+        s7_block_cache = {}  # block_addr -> bytearray，同一合并块只转一次
 
         for variable in scan_task.variables:
             result_map = getattr(scan_task, "result_map", {})
@@ -375,7 +376,14 @@ class TaskExecutor:
                 if protocol == "ge_srtp":
                     value = self._extract_mapped_ge_value(raw_values, mapped)
                 else:
-                    value = self._extract_mapped_s7_value(raw_values, mapped)
+                    # 块级缓存：同一合并块只转一次 bytearray，避免每变量重建整块（O(N²)→O(N)）
+                    prepared = None
+                    if "value_offset" not in mapped:
+                        prepared = s7_block_cache.get(block_addr)
+                        if prepared is None:
+                            prepared = self._to_s7_bytearray(raw_values)
+                            s7_block_cache[block_addr] = prepared
+                    value = self._extract_mapped_s7_value(raw_values, mapped, prepared)
 
                 points.append(DataPoint(
                     device_id=device_id,
@@ -406,13 +414,24 @@ class TaskExecutor:
         return points
 
     @staticmethod
-    def _extract_mapped_s7_value(raw_values: Any, mapping: Dict[str, Any]) -> Any:
-        """从合并后的 S7 I/Q/M BYTE 块或 Timer/Counter 块中还原单个变量值。"""
+    def _to_s7_bytearray(raw_values: Any) -> bytearray:
+        """把合并块原始值转为 bytearray（已是 bytes/bytearray 则原样返回）。"""
+        if isinstance(raw_values, (bytes, bytearray)):
+            return raw_values
         values = raw_values if isinstance(raw_values, list) else [raw_values]
+        return bytearray(int(v) & 0xFF for v in values)
+
+    @staticmethod
+    def _extract_mapped_s7_value(raw_values: Any, mapping: Dict[str, Any], prepared: Any = None) -> Any:
+        """从合并后的 S7 I/Q/M BYTE 块或 Timer/Counter 块中还原单个变量值。
+
+        prepared: 调用方可传入按块预转换的 bytearray，避免每个变量重建整块（O(N²)→O(N)）。
+        """
         if "value_offset" in mapping:
+            values = raw_values if isinstance(raw_values, list) else [raw_values]
             return values[int(mapping.get("value_offset", 0))]
 
-        raw = bytearray(int(value) & 0xFF for value in values)
+        raw = prepared if prepared is not None else TaskExecutor._to_s7_bytearray(raw_values)
         offset = int(mapping.get("byte_offset", 0))
         bit = mapping.get("bit")
         data_type = str(mapping.get("data_type", "BYTE")).upper()

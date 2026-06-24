@@ -13,17 +13,17 @@ set "OPCDA_SIDECAR_COUNT=0"
 
 REM Prefer the project venv, but fall back when the venv launcher cannot run
 REM from this path.
-if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -V >nul 2>&1
+if exist ".venv-pack\Scripts\python.exe" (
+    ".venv-pack\Scripts\python.exe" -V >nul 2>&1
     if not errorlevel 1 (
-        set "PYTHON_EXE=.venv\Scripts\python.exe"
+        set "PYTHON_EXE=.venv-pack\Scripts\python.exe"
     ) else (
-        echo [WARN] .venv Python is not runnable from this path.
+        echo [WARN] .venv-pack Python is not runnable from this path.
         echo [WARN] This usually happens when the path contains non-ASCII characters.
         echo [WARN] Please recreate venv in an ASCII-only path:
         echo [WARN]   1. Move collector folder to a path without Chinese characters
-        echo [WARN]   2. Run: python -m venv .venv
-        echo [WARN]   3. Run: .venv\Scripts\pip install -r requirements.txt
+        echo [WARN]   2. Run: python3.14t -m venv .venv-pack
+        echo [WARN]   3. Run: .venv-pack\Scripts\pip install -r requirements.txt
         echo [WARN] Falling back to system Python.
     )
 )
@@ -39,7 +39,7 @@ if not defined PYTHON_EXE (
 )
 
 if not defined PYTHON_EXE (
-    echo [ERROR] Python runtime not found. Please create .venv or install python3.14t.exe.
+    echo [ERROR] Python runtime not found. Please create .venv-pack or install python3.14t.exe.
     exit /b 1
 )
 

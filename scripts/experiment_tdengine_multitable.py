@@ -11,7 +11,7 @@
 实验库默认结束时 DROP（--keep 保留以便人工核查）。
 
 运行（开发机已起名为 tdengine 的容器，6041 暴露；密码改用真实值或环境注入，勿入库）：
-    collector/.venv/Scripts/python.exe scripts/experiment_tdengine_multitable.py ^
+    collector/.venv-pack/Scripts/python.exe scripts/experiment_tdengine_multitable.py ^
         --host 127.0.0.1 --port 6041 --user root --password <TDENGINE_PASSWORD> ^
         --output D:\\data_watch_release\\tdengine-experiments
 """

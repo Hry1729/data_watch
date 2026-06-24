@@ -321,7 +321,7 @@ def test_parse_counter_bcd():
     assert S7Driver._parse_counter_bcd(data, "COUNTER") == 0
 
 
-# ==================== PDU 钳位 Tests ====================
+# ==================== PDU 协商值保留 Tests ====================
 
 class FakePduClient:
     """模拟 connect 后 pdu_length 停在协商值的 snap7 client。"""
@@ -335,19 +335,19 @@ class FakePduClient:
 
 
 @pytest.mark.asyncio
-async def test_connect_clamps_pdu_above_240():
-    """协商 PDU>240（如默认 480）时钳到 240，避免 S7-300/400 按超长 PDU 拆读失败。"""
+async def test_connect_keeps_negotiated_pdu_above_240():
+    """协商 PDU>240（如 480）时保留不改写，大块读可借高 PDU 减少分帧往返。"""
     fake = FakePduClient(pdu_length=480)
     with patch("snap7.client.Client", return_value=fake):
         driver = S7Driver()
         await driver.connect({"ip": "127.0.0.1", "rack": 0, "slot": 1})
-    assert fake.pdu_length == 240
+    assert fake.pdu_length == 480
     assert driver.is_connected is True
 
 
 @pytest.mark.asyncio
-async def test_connect_keeps_pdu_at_or_below_240():
-    """协商 PDU<=240 时保持不动，不影响已正确协商的设备。"""
+async def test_connect_keeps_negotiated_pdu_at_240():
+    """协商 PDU=240 时同样保留协商值不改写。"""
     fake = FakePduClient(pdu_length=240)
     with patch("snap7.client.Client", return_value=fake):
         driver = S7Driver()
