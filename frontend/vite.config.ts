@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, searchForWorkspaceRoot } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -34,7 +34,12 @@ export default ({ mode }: { mode: string }) => {
           ws: true
         }
       },
-      host: true
+      host: true,
+      fs: {
+        // 允许读取仓库根的 docs/（「项目文档」原文位于 frontend 之外）
+        // searchForWorkspaceRoot 复刻 Vite 默认 allow，保持 pnpm 依赖解析不变
+        allow: [searchForWorkspaceRoot(root), resolvePath('..')]
+      }
     },
     // 路径别名
     resolve: {

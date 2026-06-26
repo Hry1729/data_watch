@@ -14,6 +14,7 @@ import { fetchGetMenuList } from '@/api/system-manage'
 import { asyncRoutes } from '../routes/asyncRoutes'
 import { RoutesAlias } from '../routesAlias'
 import { formatMenuTitle } from '@/utils'
+import { buildProjectDocsMenu } from '@/views/project-docs/docs.menu'
 
 export class MenuProcessor {
   /**
@@ -28,6 +29,9 @@ export class MenuProcessor {
     } else {
       menuList = await this.processBackendMenu()
     }
+
+    // 注入前端管理的「项目文档」菜单（不依赖后端 sys_menu，对所有登录用户可见）
+    menuList = [...menuList, buildProjectDocsMenu()]
 
     // 在规范化路径之前，验证原始路径配置
     this.validateMenuPaths(menuList)
