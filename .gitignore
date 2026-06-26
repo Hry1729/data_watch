@@ -22,6 +22,9 @@ frontend/dist/
 deploy/*.zip
 deploy/images/*.tar
 
+# 文档归档（旧文档，仅本地留存，不进版本库）
+docs/_archive/
+
 # 前端
 frontend/node_modules/
 

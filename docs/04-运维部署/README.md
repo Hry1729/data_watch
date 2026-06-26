@@ -1,0 +1,517 @@
+# 运维部署
+
+> 本文覆盖平台的运行环境、开发启动、中心镜像部署、边缘机一体安装包、发版打包、离线镜像、升级回滚与验收。问题排查已拆到 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
+>
+> 部署形态分两侧：**中心侧**（backend + frontend + Redis + TDengine + 可外置 MySQL，支持镜像部署）与 **边缘机**（agent + collector + writer + app + OPC DA proxy，Windows 一体安装包）。
+
+---
+
+## 1. 部署形态总览
+
+```text
+中心侧（Docker / 现场已有服务）：
+  MySQL        业务配置库 device_watch（可外置，不一定由 compose 托管）
+  Redis        实时缓冲层 latest/window/stream/dlq
+  TDengine     时序历史库 device_data
+  backend      Python 3.14t + uvicorn 镜像
+  frontend     Nginx 静态资源 + /api 与 WS 反向代理镜像
+
+边缘侧（Windows 一体安装包）：
+  Data Watch Console app   Tauri 桌面端
+  DataWatch Agent          Windows 服务，127.0.0.1:7070
+  collector                采集进程
+  writer                   入库进程
+  OPC DA proxy             .NET Framework 4.8 / x86 sidecar
+```
+
+采集模块涉及 OPC DA、DCOM、PLC 网络和现场驱动环境，**不放进 Docker**；中心业务服务与 Web 前端支持镜像部署。
+
+---
+
+## 2. 运行环境
+
+| 组件 | 运行时 / 依赖 |
+|------|---------------|
+| backend | free-threaded Python 3.14t，uvicorn，`backend/.env` 或 `deploy/backend.env` |
+| frontend | Node 22 构建，nginx 1.27-alpine 运行 |
+| collector / writer | free-threaded Python 3.14t，PyInstaller 打包 exe，Windows 边缘机运行 |
+| agent | Python/FastAPI 打包 exe，NSSM Windows 服务 |
+| app | Tauri + React + Rust + WebView2 |
+| OPC DA proxy | .NET Framework 4.8 / x86，Windows COM/DCOM |
+| 数据面 | MySQL、Redis、TDengine 3.4.0.9 |
+| 打包环境 | 各模块 `.venv-pack`，Inno Setup 6，Node/pnpm，Rust，Docker |
+
+---
+
+## 3. 本地开发启动
+
+### 3.1 backend + frontend
+
+项目根目录：
+
+```powershell
+.\start-dev.ps1
+.\start-dev.ps1 -Force
+```
+
+该脚本只启动：
+
+| 服务 | 地址 |
+|------|------|
+| backend | `http://127.0.0.1:8000` |
+| frontend dev server | `http://127.0.0.1:5173` |
+
+它不会启动 agent、collector、writer、app。
+
+### 3.2 collector / writer
+
+本地源码调试可用各自 `.venv-pack` 运行。生产/边缘部署应由 agent 启动，不要手工起同名进程，避免重复消费 Redis 或重复写 TDengine。
+
+collector 支持配置预检：
+
+```powershell
+cd D:\python\device_alarm\data_watch\collector
+.\.venv-pack\Scripts\python.exe main.py --dry-run
+```
+
+writer 会从 MySQL 动态发现 `(device_type, group_code)`，不再维护固定 `device_types/group_codes/stable_names`。
+
+### 3.3 app / agent
+
+开发 app 的顺序：
+
+```text
+backend(:8000) -> agent(:7070) -> app pnpm tauri dev
+```
+
+app 登录需要 agent token 与 backend token 都可获取。backend CORS 开发白名单需包含 Tauri dev 源 `http://localhost:1420` / `http://127.0.0.1:1420`。
+
+---
+
+## 4. 中心镜像部署
+
+### 4.1 当前镜像与 compose 文件
+
+| 文件 | 作用 |
+|------|------|
+| `deploy/python314t.Dockerfile` | 构建 `data-watch-python314t:latest` 基础镜像，编译 Python 3.14.4 `--disable-gil` |
+| `backend/Dockerfile` | 构建 `data-watch-backend:latest`，复制 TDengine `libtaos.so`，运行 uvicorn |
+| `frontend/Dockerfile` | Node 22 构建 Vite，nginx 托管静态文件 |
+| `deploy/docker-compose.yml` | 定义 redis、tdengine、backend、frontend 服务 |
+| `deploy/nginx.conf` | frontend 容器内 nginx，反代 `/api/` 与 WebSocket |
+| `deploy/backend.env.example` | backend 容器环境变量模板 |
+| `deploy/taos.cfg` | TDengine 服务配置 |
+| `deploy/images/*.tar` / `deploy/data-watch-images.zip` | 离线镜像包 |
+
+`deploy/docker-compose.yml` 当前服务：
+
+| 服务 | 镜像 | 端口 | 说明 |
+|------|------|------|------|
+| redis | `redis:latest` | `6379:6379` | profile `infra`，可选由 compose 托管 |
+| tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，挂载 `taos.cfg` 与日志卷 |
+| backend | `data-watch-backend:latest` | `8000:8000` | 读取 `deploy/backend.env` |
+| frontend | `data-watch-frontend:latest` | `8080:80` | nginx 静态资源 + API/WS 代理 |
+
+默认 `docker compose up -d` 只启动 backend/frontend；Redis/TDengine 在 `infra` profile 中，只有现场需要 compose 托管它们时才启用。MySQL 当前不在 compose 中，需使用宿主机或外部 MySQL。
+
+### 4.2 构建镜像
+
+第一次或 Python 基础镜像变化时：
+
+```powershell
+cd D:\python\device_alarm\data_watch
+docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
+```
+
+构建 backend/frontend：
+
+```powershell
+docker compose -f .\deploy\docker-compose.yml build backend frontend
+```
+
+backend 镜像要点：
+
+- 基于 `data-watch-python314t:latest`；
+- 从 TDengine 镜像复制 `libtaos.so`；
+- Docker 构建中排除 `perspective-python` 与 `taos-ws-py`；
+- 以 `python3.14t -m uvicorn main:app --host 0.0.0.0 --port 8000` 启动。
+
+frontend 镜像要点：
+
+- Node 22 alpine 构建；
+- pnpm 安装依赖并 `pnpm build`；
+- nginx 运行静态资源；
+- 使用 `deploy/nginx.conf` 反代 API 和 WebSocket。
+
+### 4.3 配置 backend.env
+
+部署前复制模板：
+
+```powershell
+cd D:\data_watch_release\deploy
+Copy-Item .\backend.env.example .\backend.env
+notepad .\backend.env
+```
+
+关键字段使用占位示例：
+
+```env
+PYTHONUTF8=1
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+BACKEND_LOG_LEVEL=INFO
+BACKEND_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420
+
+MYSQL_HOST=host.docker.internal
+MYSQL_PORT=3306
+MYSQL_USER=<mysql-user>
+MYSQL_PASSWORD=<mysql-password>
+MYSQL_DATABASE=device_watch
+
+TDENGINE_HOST=host.docker.internal
+TDENGINE_PORT=6041
+TDENGINE_USER=<tdengine-user>
+TDENGINE_PASSWORD=<tdengine-password>
+TDENGINE_DATABASE=device_data
+TDENGINE_LOG_DIR=/tdengine-logs
+
+REDIS_HOST=host.docker.internal
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=
+
+AUTH_SECRET_KEY=<generate-a-strong-random-secret>
+PERSPECTIVE_ENABLED=true
+```
+
+说明：
+
+- MySQL 可为宿主机、外部服务器或其他容器；compose 当前不托管 MySQL。
+- 若 Redis/TDengine 由 compose `infra` 托管，可把 host 改为服务名 `redis` / `tdengine`。
+- `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值。
+- `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
+
+### 4.4 启动中心服务
+
+只启动 backend/frontend：
+
+```powershell
+cd D:\data_watch_release\deploy
+docker compose -f .\docker-compose.yml up -d
+```
+
+需要 compose 托管 Redis/TDengine 时：
+
+```powershell
+docker compose -f .\docker-compose.yml --profile infra up -d redis tdengine
+```
+
+查看：
+
+```powershell
+docker compose -f .\docker-compose.yml ps
+docker logs -f data-watch-backend
+docker logs -f data-watch-frontend
+```
+
+访问：
+
+```text
+Web 前端: http://127.0.0.1:8080
+后端 API: http://127.0.0.1:8080/api/...   # 经 nginx
+后端直连: http://127.0.0.1:8000
+```
+
+### 4.5 nginx 代理规则
+
+frontend 容器内 nginx 负责：
+
+- `/api/` → `http://backend:8000/api/`；
+- `/api/device-monitor/ws/` → backend WebSocket，并保留 Upgrade/Connection；
+- `/healthz` → backend healthz；
+- 其他路径回退 `index.html`，支持前端路由刷新。
+
+---
+
+## 5. 离线镜像交付
+
+开发机导出：
+
+```powershell
+$ReleaseRoot = "D:\data_watch_release"
+New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
+
+docker save data-watch-python314t:latest -o "$ReleaseRoot\docker-images\data-watch-python314t_latest.tar"
+docker save data-watch-backend:latest    -o "$ReleaseRoot\docker-images\data-watch-backend_latest.tar"
+docker save data-watch-frontend:latest   -o "$ReleaseRoot\docker-images\data-watch-frontend_latest.tar"
+```
+
+现场无 Redis/TDengine 时额外导出：
+
+```powershell
+docker pull redis:latest
+docker pull tdengine/tsdb-amd64:3.4.0.9
+docker save redis:latest                -o "$ReleaseRoot\docker-images\redis_latest.tar"
+docker save tdengine/tsdb-amd64:3.4.0.9 -o "$ReleaseRoot\docker-images\tdengine_3.4.0.9.tar"
+```
+
+目标机导入：
+
+```powershell
+cd D:\data_watch_release\docker-images
+docker load -i .\data-watch-python314t_latest.tar
+docker load -i .\data-watch-backend_latest.tar
+docker load -i .\data-watch-frontend_latest.tar
+# 可选：docker load -i .\redis_latest.tar
+# 可选：docker load -i .\tdengine_3.4.0.9.tar
+docker images
+```
+
+发布目录建议：
+
+```text
+D:\data_watch_release\
+├─ DataWatch-Setup-<版本>.exe
+├─ docker-images\
+│  ├─ data-watch-python314t_latest.tar
+│  ├─ data-watch-backend_latest.tar
+│  ├─ data-watch-frontend_latest.tar
+│  └─ redis_latest.tar / tdengine_3.4.0.9.tar（可选）
+└─ deploy\
+   ├─ docker-compose.yml
+   ├─ taos.cfg
+   ├─ backend.env.example
+   ├─ backend.env
+   ├─ python314t.Dockerfile
+   └─ nginx.conf
+```
+
+镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据。
+
+---
+
+## 6. 数据库初始化责任
+
+| 库 | 谁初始化 | 内容 | 部署要求 |
+|----|----------|------|----------|
+| MySQL `device_watch` | backend | SQLAlchemy 建表，播种超管、菜单、权限 | backend 必须先成功连接一次目标库 |
+| TDengine `device_data` | writer | `CREATE DATABASE IF NOT EXISTS`，按需建 stable/child/columns | 可空库，writer 首次写入自建 |
+| Redis | 无 schema | latest/window/stream/dlq 运行时产生 | 只需服务可用 |
+
+注意：collector/writer 不负责初始化 MySQL。目标库为空且 backend 未初始化时，app 登录会失败，collector 也读不到设备拓扑。
+
+---
+
+## 7. 边缘机部署（一体安装包）
+
+### 7.1 安装包内容
+
+Windows 一体安装包包含：app、agent、collector、writer、OPC DA proxy、NSSM、WebView2 安装器和配置模板。
+
+### 7.2 双根目录
+
+```text
+C:\Program Files\DataWatch\          # DATAWATCH_INSTALL_ROOT，只读安装根
+  app\
+  agent\
+  collector\
+  writer\
+  sidecars\opcda_proxy_service\bin\
+  tools\nssm.exe
+  templates\
+
+C:\ProgramData\DataWatch\            # DATAWATCH_DATA_ROOT，可写数据根
+  config.toml
+  collector\config\settings.toml
+  writer\config\settings.toml
+  runtime\
+    logs\
+    pids\
+    opcda_proxy\
+```
+
+安装器/NSSM 注入：
+
+```text
+DATAWATCH_INSTALL_ROOT
+DATAWATCH_DATA_ROOT
+```
+
+agent、collector、writer 的实际路径由双根动态派生，不在 config.toml 固定绝对路径。
+
+### 7.3 bootstrap
+
+首次打开 app：
+
+```text
+1. app 连接 agent /bootstrap/status。
+2. bootstrap_done=false -> 进入引导页。
+3. 填写 MySQL、Redis、TDengine、backend 地址等连接信息。
+4. agent 用 DPAPI 保存密码到 config.toml。
+5. /bootstrap/test-connection 验证连通。
+6. /bootstrap/finish 标记完成。
+7. 登录并进入运维页面。
+```
+
+密码不要手工写入 config.toml；DPAPI 密文不可跨机器复制。
+
+### 7.4 collector / writer 启停
+
+```text
+app -> agent admin API -> ProcessManager -> collector/writer exe
+```
+
+agent 启动子进程时：
+
+- 解密 DB 密码；
+- 注入 `DATAWATCH_<DB>_<FIELD>`；
+- 设置工作目录；
+- 拼接 `--config`、`--runtime-dir`、`--port-mapping` 等运行参数；
+- stdout/stderr 写入 runtime logs；
+- PID 文件包含 pid + create_time。
+
+停止时先写 `runtime/<name>.shutdown_flag`，超时后才强杀。
+
+### 7.5 OPC DA proxy 验收
+
+有 OPC DA center 设备时，agent 启动 collector 前必须：
+
+1. 从 MySQL 检测 `opcda_center` endpoint；
+2. 启动或认领对应 proxy；
+3. 生成 `runtime\opcda_proxy\port_mapping.json`；
+4. 检查端口可连、进程归属正确、proxy 存活；
+5. 再启动 collector。
+
+现场验收不能只看 proxy 进程和端口，要确认服务账户具备 DCOM/OPCEnum/OPC Server 权限，并真实读到点位。
+
+---
+
+## 8. 发版打包
+
+### 8.1 Windows 一体包
+
+```powershell
+cd D:\python\device_alarm\data_watch
+pwsh -File installer\build.ps1
+pwsh -File installer\build.ps1 -Iscc "D:\path\to\ISCC.exe"
+```
+
+`installer\build.ps1` 六步：
+
+| 阶段 | 动作 | 产物 |
+|------|------|------|
+| 1 | app：`pnpm tauri build` | Tauri app exe/resources |
+| 2 | agent：PyInstaller | `agent\dist\data-watch-agent\` |
+| 3 | collector：PyInstaller | `collector\dist\data-watch-collector\` |
+| 4 | writer：PyInstaller | `writer\dist\data-watch-writer\` |
+| 5 | OPC DA proxy：.NET 4.8 x86 build | `OpcDaProxyService.exe` |
+| 6 | Inno ISCC | `installer\Output\DataWatch-Setup-<版本>.exe` |
+
+### 8.2 Docker 镜像
+
+`installer\build.ps1` 不构建 Docker 镜像。镜像构建与导出走第 4、5 节。
+
+---
+
+## 9. 更新与回滚
+
+### 9.1 更新 backend/frontend 镜像
+
+```powershell
+cd D:\data_watch_release\deploy
+docker compose -f .\docker-compose.yml up -d --build backend frontend
+```
+
+离线目标机：开发机重新 `docker save` → 拷贝 tar → 目标机 `docker load` → `up -d`。
+
+修改 `backend.env` 后无需 rebuild，但要重建容器使环境变量生效：
+
+```powershell
+docker compose -f .\docker-compose.yml up -d --force-recreate backend
+```
+
+### 9.2 更新 Windows 一体包
+
+1. 开发机重新打包 `installer\build.ps1`；
+2. 拷贝新的 `DataWatch-Setup-<版本>.exe` 到目标机；
+3. 管理员运行安装器覆盖安装；
+4. ProgramData 现场配置保留；
+5. 检查 `Get-Service DataWatchAgent` 与 `/bootstrap/status`。
+
+### 9.3 回滚
+
+| 对象 | 回滚方式 |
+|------|----------|
+| backend/frontend | 保留上一版镜像 tar，`docker load` 后 `docker compose up -d` 指向旧 tag 或重新打 latest |
+| backend.env | 恢复备份 env，`up -d --force-recreate backend` |
+| Windows 一体包 | 重新运行上一版安装器；ProgramData 配置默认保留 |
+| 数据库 | MySQL/TDengine 需依赖部署前备份；镜像回滚不回滚数据 |
+
+不要使用 `docker compose down -v`，`-v` 会删除 compose 管理的数据卷，可能丢 Redis/TDengine 数据。
+
+---
+
+## 10. 端口表
+
+| 端口 | 组件 | 说明 |
+|------|------|------|
+| 7070 | agent | 本机 `127.0.0.1`，app 调用 |
+| 8000 | backend | backend 直连端口 |
+| 8080 | frontend nginx | Web 入口，反代 `/api` 与 WS |
+| 5173 | frontend dev | Vite 开发服务 |
+| 1420 | app dev | Tauri dev WebView origin |
+| 6379 | Redis | 实时缓存/Stream |
+| 6030 | TDengine native | TDengine 原生端口 |
+| 6041 | TDengine taosAdapter | backend/writer 常用 HTTP/WebSocket 端口 |
+| 6043 | TDengine | 组件端口 |
+| 6062->6060 | TDengine | compose 映射端口 |
+
+---
+
+## 11. 数据迁移与备份
+
+镜像包不包含业务数据。迁移时分别处理：
+
+| 数据 | 迁移方式 |
+|------|----------|
+| MySQL `device_watch` | mysqldump / 恢复，包含用户、菜单、设备点位配置 |
+| TDengine `device_data` | TDengine 官方导出/数据目录/volume 迁移 |
+| Redis | 实时缓存通常不迁移；如果 Stream 中还有未落库数据，先停采集并等 writer 消费完成 |
+| ProgramData | 边缘配置和日志；DPAPI 密文不可跨机解密，迁移后需重新配置密码 |
+
+---
+
+## 12. 验收清单
+
+### 中心镜像部署
+
+- `docker compose ps` 中 backend/frontend running；
+- 访问 `http://127.0.0.1:8080` 正常；
+- `/api/auth/login` 可达；
+- WebSocket 经 8080 可连接；
+- backend 能连 MySQL/Redis/TDengine；
+- TDengine 日志页在 compose 托管 TDengine 时可用，外部 TDengine 时优雅提示不可用。
+
+### 边缘部署
+
+- 桌面有 Data Watch Console；
+- `DataWatchAgent` 服务 running；
+- app 能进入 bootstrap 或登录页；
+- bootstrap 测 MySQL/Redis/TDengine 成功；
+- app 可启动/停止 collector 和 writer；
+- collector 有实时数据；
+- writer 消费 Redis Stream 并写入 TDengine；
+- OPC DA 场景下 proxy 自动启动且真实点位刷新；
+- 日志、模块状态、速率趋势可查看。
+
+---
+
+## 相关文档
+
+- [问题排查](问题排查.md)
+- [系统架构总览](../01-总体设计/系统架构总览.md)
+- [架构决策记录](../01-总体设计/架构决策记录.md)
+- [agent 边缘进程编排与凭据](../02-模块设计/agent/边缘进程编排与凭据.md)
+- [app 控制台页面与双数据源](../02-模块设计/app/控制台页面与双数据源.md)
+- [API 契约](../03-数据与契约/契约/API契约.md)
+- [WebSocket 协议](../03-数据与契约/契约/WebSocket协议.md)
