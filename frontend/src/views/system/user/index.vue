@@ -50,6 +50,7 @@
   import UserDialog from './modules/user-dialog.vue'
   import { ElButton, ElTag, ElMessageBox, ElImage } from 'element-plus'
   import { DialogType } from '@/types'
+  import defaultAvatar from '@imgs/user/avatar/avatar.png'
 
   defineOptions({ name: 'User' })
 
@@ -90,8 +91,8 @@
     )
   }
 
-  // 默认头像
-  const DEFAULT_AVATAR = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+  // 默认头像（本地资源，避免外网图加载失败导致头像空白）
+  const DEFAULT_AVATAR = defaultAvatar
 
   const {
     columns,
