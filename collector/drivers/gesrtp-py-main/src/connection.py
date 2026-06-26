@@ -85,6 +85,9 @@ class SRTPConnection:
             # Create TCP socket
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(self.timeout)
+            # 关 Nagle：SRTP 是小报文请求/响应型协议，Nagle + 延迟 ACK 可能给每次往返
+            # 叠加几十毫秒停顿，高频采集下放大严重。关掉让小包立即发出。
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
             # Connect to PLC
             logger.info(f"Connecting to PLC at {self.host}:{self.port}...")
@@ -186,7 +189,9 @@ class SRTPConnection:
         try:
             logger.debug(f"Sending {len(request_data)} bytes to PLC")
             self.sock.sendall(request_data)
-            logger.debug(f"Sent packet: {request_data[:56].hex()}")
+            # .hex() 是热点：实参恒被求值，故用 isEnabledFor 守卫，DEBUG 关时不计算
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Sent packet: {request_data[:56].hex()}")
 
         except socket.timeout as e:
             raise exceptions.TimeoutError("Timeout sending request") from e
@@ -213,6 +218,29 @@ class SRTPConnection:
 
         return self._receive_data(expected_size)
 
+    def _recv_exact(self, n: int) -> bytes:
+        """循环读取直到收满 n 字节。
+
+        TCP 是字节流，单次 recv 可能返回少于请求的字节数（高并发/跨网络时尤甚）。
+        SRTP 报文头固定 56 字节、数据段长度由头部 byte4 指明，长度均已知，
+        因此必须读满；否则半包会导致下游解析错位或失败。
+
+        recv 返回空 bytes 表示对端已关闭连接，抛 ConnectionError。
+        socket.timeout / socket.error 不在此捕获，交由调用方 _receive_data 统一转换。
+        """
+        chunks = []
+        remaining = n
+        while remaining > 0:
+            chunk = self.sock.recv(remaining)
+            if not chunk:
+                self.is_connected = False
+                raise exceptions.ConnectionError(
+                    f"Connection closed by PLC (received {n - remaining}/{n} bytes)"
+                )
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
     def _receive_data(self, max_bytes: int) -> bytes:
         """
         Internal method to receive data from socket.
@@ -234,23 +262,25 @@ class SRTPConnection:
             ConnectionError: If receive fails
         """
         try:
-            # First, receive the 56-byte header
-            header = self.sock.recv(56)
+            # First, receive the 56-byte header (循环读满，防 TCP 半包)
+            header = self._recv_exact(56)
 
             if not header:
                 self.is_connected = False
                 raise exceptions.ConnectionError("Connection closed by PLC")
 
             logger.debug(f"Received header: {len(header)} bytes")
-            logger.debug(f"Response header: {header.hex()}")
+            # .hex() 是热点：实参恒被求值，故用 isEnabledFor 守卫，DEBUG 关时不计算
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Response header: {header.hex()}")
 
             # Check byte 4 for payload length indicator
             payload_length = header[4] if len(header) > 4 else 0
 
             if payload_length > 0:
-                # Receive the payload in a second packet
+                # Receive the payload in a second packet (循环读满，防 TCP 半包)
                 logger.debug(f"Expecting {payload_length} bytes of payload")
-                payload = self.sock.recv(payload_length)
+                payload = self._recv_exact(payload_length)
                 logger.debug(f"Received payload: {len(payload)} bytes")
 
                 # Combine header and payload

@@ -250,11 +250,17 @@ class SRTPPacket:
 
         # Check message type
         if packet.message_type == protocol.MessageType.ERROR:
-            # Extract error code if available in payload
-            error_code = data[56] if len(data) > 56 else 0
+            # NACK 状态码在 56 字节头内：byte42=主状态码、byte43=次状态码（SRTP/SNP 文档）。
+            # 旧实现读 data[56]（头之后）；NACK 响应通常只有 56 字节，该字节不存在而恒为 0x00，
+            # 会吞掉真实错误码。此处直接读头内 byte42/43，并在异常信息中原样带上主/次码，
+            # 即使 error_code_to_exception 的分类表不准，现场也能拿到真实状态码。
+            # 上方已校验 len(data) >= HEADER_SIZE(56)，故 data[42]/data[43] 必然存在。
+            main_status = data[42]
+            sub_status = data[43]
             raise exceptions.error_code_to_exception(
-                error_code,
-                f"PLC returned error (NACK): 0x{error_code:02X}"
+                main_status,
+                f"PLC returned error (NACK): main_status=0x{main_status:02X} "
+                f"sub_status=0x{sub_status:02X}"
             )
 
         # Accept both ACK (0xD4) and ACK_WITH_DATA (0x94) as successful responses
@@ -312,7 +318,9 @@ class SRTPPacket:
         word_count = len(self.payload) // 2
         values = struct.unpack(f'<{word_count}h', self.payload)
 
-        logger.debug(f"Extracted {word_count} word values: {values}")
+        # {values} 会把整列(最多125个)转字符串，是热点：用 isEnabledFor 守卫，DEBUG 关时不计算
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Extracted {word_count} word values: {values}")
 
         return list(values)
 
