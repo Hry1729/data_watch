@@ -49,7 +49,7 @@
   import { computed, ref, watch, nextTick, onMounted } from 'vue'
   import { useRoute, useRouter } from 'vue-router'
   import { renderMarkdown } from '../useMarkdown'
-  import { getDocBySlug, getDocContent, getSlugByFile } from '../docs.config'
+  import { getDocBySlug, getDocContent, getDocImageUrl, getSlugByFile } from '../docs.config'
   // 复用项目自带的 one-dark-pro 代码主题（仅在阅读文档时加载）
   import '@styles/custom/one-dark-pro.scss'
 
@@ -63,7 +63,10 @@
   const doc = computed(() => getDocBySlug(slug.value))
   const rendered = computed(() => {
     if (!doc.value) return { html: '', toc: [] as ReturnType<typeof renderMarkdown>['toc'] }
-    return renderMarkdown(getDocContent(doc.value.file))
+    return renderMarkdown(getDocContent(doc.value.file), {
+      file: doc.value.file,
+      resolveImage: getDocImageUrl
+    })
   })
 
   // mermaid 按需加载：仅当文档含图时才拉取并渲染成 SVG

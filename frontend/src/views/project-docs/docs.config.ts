@@ -350,6 +350,37 @@ export function getDocCover(slug: string, categoryKey?: string): string | undefi
 }
 
 /* ------------------------------------------------------------------ *
+ * 文档正文图片：构建期把 docs/ 下的图片以 ?url 资产打包，
+ * 渲染时据此把 markdown 的相对图片路径重写成打包后的 URL（见 useMarkdown）。
+ * 不打包则图片不进 dist/，web 文档页里 <img> 会裂。markdown 原文与图片位置不变，
+ * 故 GitHub/IDE 预览仍走相对路径，不受影响。
+ * ------------------------------------------------------------------ */
+const docImageModules = import.meta.glob(
+  ['../../../../docs/**/*.{png,jpg,jpeg,webp,gif,svg}', '!../../../../docs/**/_archive/**'],
+  {
+    eager: true,
+    query: '?url',
+    import: 'default'
+  }
+) as Record<string, string>
+
+/** 相对 docs/ 的图片路径（如 'images/xiaohu-xxx.png'）→ 打包后 URL */
+const imageUrlByPath: Record<string, string> = {}
+for (const [absKey, url] of Object.entries(docImageModules)) {
+  const marker = '/docs/'
+  const idx = absKey.indexOf(marker)
+  if (idx === -1) continue
+  const rel = absKey.slice(idx + marker.length)
+  if (rel.includes('_archive/')) continue
+  imageUrlByPath[rel] = url
+}
+
+/** 取文档图片打包 URL（键为相对 docs/ 根的路径，找不到返回 undefined） */
+export function getDocImageUrl(relToDocsRoot: string): string | undefined {
+  return imageUrlByPath[relToDocsRoot]
+}
+
+/* ------------------------------------------------------------------ *
  * 查询辅助
  * ------------------------------------------------------------------ */
 

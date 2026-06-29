@@ -19,6 +19,26 @@ export interface RenderResult {
   toc: TocItem[]
 }
 
+export interface RenderOptions {
+  /** 当前文档相对 docs/ 的路径，用于解析正文图片的相对路径 */
+  file?: string
+  /** 相对 docs/ 根的图片路径 → 打包后 URL（来自 docs.config.getDocImageUrl） */
+  resolveImage?: (relToDocsRoot: string) => string | undefined
+}
+
+/** 把文档内相对路径（相对当前 .md 文件）解析为相对 docs/ 根的路径 */
+function resolveDocRelative(currentFile: string, href: string): string | null {
+  const clean = href.split('#')[0].split('?')[0]
+  if (!clean) return null
+  const stack = clean.startsWith('/') ? [] : currentFile.split('/').slice(0, -1)
+  for (const part of clean.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') stack.pop()
+    else stack.push(part)
+  }
+  return stack.join('/')
+}
+
 const md = new MarkdownIt({
   html: true,
   linkify: true,
@@ -40,7 +60,7 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 }
 
 /** 渲染 markdown 原文 → { html, toc } */
-export function renderMarkdown(src: string): RenderResult {
+export function renderMarkdown(src: string, opts?: RenderOptions): RenderResult {
   const toc: TocItem[] = []
   const tokens = md.parse(src ?? '', {})
 
@@ -55,6 +75,22 @@ export function renderMarkdown(src: string): RenderResult {
     const id = `doc-h-${headingIndex++}`
     t.attrSet('id', id)
     toc.push({ level: t.tag === 'h2' ? 2 : 3, text, id })
+  }
+
+  // 把正文相对图片路径重写成 Vite 打包后的 URL，否则 SPA 路由下 <img> 会裂。
+  // 跳过绝对/外链/data: 路径；解析不到打包资源时原样保留，不引入回归。
+  if (opts?.file && opts.resolveImage) {
+    for (const t of tokens) {
+      if (t.type !== 'inline' || !t.children) continue
+      for (const child of t.children) {
+        if (child.type !== 'image') continue
+        const rawSrc = child.attrGet('src')
+        if (!rawSrc || /^(https?:|data:|\/)/i.test(rawSrc)) continue
+        const rel = resolveDocRelative(opts.file, rawSrc)
+        const url = rel ? opts.resolveImage(rel) : undefined
+        if (url) child.attrSet('src', url)
+      }
+    }
   }
 
   const html = md.renderer.render(tokens, md.options, {})
