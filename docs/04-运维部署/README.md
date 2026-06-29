@@ -88,9 +88,11 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 
 ---
 
-## 4. 中心镜像部署
+## 4. 导出中心部署包
 
-### 4.1 当前镜像与 compose 文件
+本章在开发机或打包机执行，只负责构建、导出和组装发布目录；目标机部署步骤见第 5 章。
+
+### 4.1 当前镜像与部署文件
 
 | 文件 | 作用 |
 |------|------|
@@ -101,20 +103,21 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 | `deploy/nginx.conf` | frontend 容器内 nginx，反代 `/api/` 与 WebSocket |
 | `deploy/backend.env.example` | backend 容器环境变量模板 |
 | `deploy/taos.cfg` | TDengine 服务配置 |
-| `deploy/images/*.tar` / `deploy/data-watch-images.zip` | 离线镜像包 |
+| `deploy/redis.conf` | Redis 服务配置：内存保险丝（maxmemory）+ 持久化策略，由 compose 挂载，容器重建可复现 |
+| `deploy/stack-up.ps1` | 一键从 tar 载入镜像并拉起中心全栈（redis + tdengine + backend + frontend） |
 
 `deploy/docker-compose.yml` 当前服务：
 
 | 服务 | 镜像 | 端口 | 说明 |
 |------|------|------|------|
 | redis | `redis:latest` | `6379:6379` | profile `infra`，可选由 compose 托管 |
-| tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，挂载 `taos.cfg` 与日志卷 |
+| tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，固定 `hostname`/`TAOS_FQDN=tdengine`（否则容器内解析不了自身 FQDN 会启动即崩），挂载 `taos.cfg` 与日志卷 |
 | backend | `data-watch-backend:latest` | `8000:8000` | 读取 `deploy/backend.env` |
 | frontend | `data-watch-frontend:latest` | `8080:80` | nginx 静态资源 + API/WS 代理 |
 
-默认 `docker compose up -d` 只启动 backend/frontend；Redis/TDengine 在 `infra` profile 中，只有现场需要 compose 托管它们时才启用。MySQL 当前不在 compose 中，需使用宿主机或外部 MySQL。
+MySQL 当前不在 compose 中，需使用宿主机或外部 MySQL。
 
-### 4.2 构建镜像
+### 4.2 构建中心镜像
 
 第一次或 Python 基础镜像变化时：
 
@@ -143,7 +146,89 @@ frontend 镜像要点：
 - nginx 运行静态资源；
 - 使用 `deploy/nginx.conf` 反代 API 和 WebSocket。
 
-### 4.3 配置 backend.env
+### 4.3 导出应用镜像
+
+所有中心侧 Docker 镜像统一导出到发布目录的 `docker-images\`。文件名不用、也不能写 Docker tag 里的 `:latest`；统一使用固定 tar 文件名。`stack-up.ps1` 会逐个检查这些 tar 是否存在并执行 `docker load`，缺任一即报错（不检查或补齐 `:latest` tag）。`data-watch-python314t.tar` 也必须导出：backend 镜像以它为构建基础，目标机首次 `up` 时 compose 会按需构建 backend，缺它会失败。
+
+```powershell
+$ReleaseRoot = "D:\data_watch_release"
+New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
+
+docker save data-watch-python314t:latest -o "$ReleaseRoot\docker-images\data-watch-python314t.tar"
+docker save data-watch-backend:latest    -o "$ReleaseRoot\docker-images\data-watch-backend.tar"
+docker save data-watch-frontend:latest   -o "$ReleaseRoot\docker-images\data-watch-frontend.tar"
+```
+
+### 4.4 导出基础设施镜像
+
+仅当目标机没有可用的 Redis/TDengine，且准备由 compose 托管两库时，才需要带这两个 tar。输出目录仍是 `docker-images\`，文件名固定为 `redis.tar` 和 `tdengine.tar`，不要写成 `redis:latest.tar`。
+
+```powershell
+New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
+docker pull redis:latest
+docker pull tdengine/tsdb-amd64:3.4.0.9
+docker save redis:latest                 -o "$ReleaseRoot\docker-images\redis.tar"
+docker save tdengine/tsdb-amd64:3.4.0.9  -o "$ReleaseRoot\docker-images\tdengine.tar"
+```
+
+> 仓库内已有的 `deploy\data-watch-images.zip` 是这两个镜像的打包版，与上面单独导出的 tar 二选一；用 zip 时解压到 `docker-images\` 即可。
+
+### 4.5 复制部署配置到发布目录
+
+镜像只是程序，目标机还要 `deploy\` 里的配置文件和脚本才能启动。这一步在仓库根目录 `D:\python\device_alarm\data_watch` 执行：
+
+```powershell
+New-Item -ItemType Directory -Force "$ReleaseRoot\deploy" | Out-Null
+Copy-Item ".\deploy\docker-compose.yml"     "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\taos.cfg"               "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\nginx.conf"             "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\backend.env.example"    "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\python314t.Dockerfile"  "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\redis.conf"             "$ReleaseRoot\deploy\" -Force
+Copy-Item ".\deploy\stack-up.ps1"           "$ReleaseRoot\deploy\" -Force
+```
+
+> `backend.env` 不拷贝：它是目标机真实配置文件，应由目标机从 `backend.env.example` 复制后填写。
+
+发布目录结构：
+
+```text
+D:\data_watch_release\
+├─ DataWatch-Setup-<版本>.exe
+├─ docker-images\
+│  ├─ data-watch-backend.tar
+│  ├─ data-watch-frontend.tar
+│  ├─ data-watch-python314t.tar          # backend 构建基础镜像，必带
+│  ├─ redis.tar
+│  └─ tdengine.tar
+└─ deploy\
+   ├─ docker-compose.yml
+   ├─ taos.cfg
+   ├─ nginx.conf
+   ├─ backend.env.example
+   ├─ python314t.Dockerfile
+   ├─ redis.conf
+   └─ stack-up.ps1
+```
+
+镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据。
+
+---
+
+## 5. 目标机中心部署
+
+本章在目标机执行。先判断 Redis/TDengine 是否由 compose 托管，再选择启动方式。
+
+### 5.1 部署方式选择
+
+| 场景 | 使用方式 | 说明 |
+|------|----------|------|
+| 目标机已有 Redis/TDengine | 只启动 backend/frontend | 手工加载 backend/frontend 镜像后执行 `docker compose up -d` |
+| compose 托管 Redis/TDengine | 启动中心全栈 | 执行 `stack-up.ps1`，脚本自动加载 tar 镜像并拉起 redis、tdengine、backend、frontend |
+
+MySQL 不由当前 compose 托管，必须使用宿主机、外部服务器或现场已有 MySQL。
+
+### 5.2 配置 backend.env
 
 部署前复制模板：
 
@@ -168,14 +253,14 @@ MYSQL_USER=<mysql-user>
 MYSQL_PASSWORD=<mysql-password>
 MYSQL_DATABASE=device_watch
 
-TDENGINE_HOST=host.docker.internal
+TDENGINE_HOST=tdengine
 TDENGINE_PORT=6041
 TDENGINE_USER=<tdengine-user>
 TDENGINE_PASSWORD=<tdengine-password>
 TDENGINE_DATABASE=device_data
 TDENGINE_LOG_DIR=/tdengine-logs
 
-REDIS_HOST=host.docker.internal
+REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_DB=0
 REDIS_PASSWORD=
@@ -187,26 +272,68 @@ PERSPECTIVE_ENABLED=true
 说明：
 
 - MySQL 可为宿主机、外部服务器或其他容器；compose 当前不托管 MySQL。
-- 若 Redis/TDengine 由 compose `infra` 托管，可把 host 改为服务名 `redis` / `tdengine`。
+- 若 Redis/TDengine 由 compose 托管，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine`。
+- 若 Redis/TDengine 是宿主机或外部服务，把 host 改为 `host.docker.internal` 或实际 IP。
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值。
 - `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
 
-### 4.4 启动中心服务
+### 5.3 启动中心服务
 
 只启动 backend/frontend：
 
 ```powershell
+cd D:\data_watch_release\docker-images
+docker load -i .\data-watch-backend.tar
+docker load -i .\data-watch-frontend.tar
+
 cd D:\data_watch_release\deploy
 docker compose -f .\docker-compose.yml up -d
 ```
 
-需要 compose 托管 Redis/TDengine 时：
+compose 托管 Redis/TDengine，并拉起完整中心栈：
 
 ```powershell
-docker compose -f .\docker-compose.yml --profile infra up -d redis tdengine
+cd D:\data_watch_release\deploy
+powershell.exe -ExecutionPolicy Bypass -File .\stack-up.ps1
 ```
 
-查看：
+> 目标机离线且没有 PowerShell 7 时，用 Windows 自带的 `powershell.exe` 即可，不需要安装 `pwsh`。如果现场已经安装 PowerShell 7，也可以使用 `pwsh -File .\stack-up.ps1`。
+
+`stack-up.ps1` 会逐个检查并加载这 5 个 tar（路径统一在 `docker-images\` 下，固定文件名，缺任一即报错）：
+
+- `..\docker-images\redis.tar`
+- `..\docker-images\tdengine.tar`
+- `..\docker-images\data-watch-python314t.tar`
+- `..\docker-images\data-watch-backend.tar`
+- `..\docker-images\data-watch-frontend.tar`
+
+脚本最后执行 `docker compose -f .\docker-compose.yml --profile infra up -d --pull never`，因此会同时拉起 redis、tdengine、backend、frontend。
+
+> backend / frontend 在 `docker-compose.yml` 里带 `build:` 段。目标机已 `docker load` 到对应镜像时 compose 直接复用；若未命中（镜像缺失/标签不符），compose 会按 `build:` 重建，此时需 `data-watch-python314t.tar` 已加载（backend 的构建基础镜像）且仓库源码目录在场。务必确保 4.3 的 5 个镜像都已正确导出、stack-up 成功 load。
+
+### 5.4 Redis 数据与 stream 容量
+
+重新部署 Redis 前若要清空旧数据，必须连命名卷一起删。否则旧 `dump.rdb` 可能被重新加载，一旦超过 `redis.conf` 的 `maxmemory`，noeviction 会全面拒写：
+
+```powershell
+docker rm -f data-watch-redis
+docker volume ls
+docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此前缀
+```
+
+随包 `docker-images\redis.tar` 对应的 Redis 版本以发布包为准；`redis:latest` 是浮动标签，重新拉取不保证版本一致。`redis.conf` 的 `maxmemory 3gb` 是 12G 虚机下的内存保险丝，撞顶会拒写而非把 TDengine 一起拖垮。
+
+**关于 `stream_maxlen`（stream 容量上限）**
+
+stream 内存只由 collector 的 `XADD MAXLEN` 控制（writer 消费只 XACK 不删 entry），仓库默认 `50000/shard`：
+
+- **内存预算**：`50000 × ~9KB ≈ 450MB/shard`；`shard_count=4` 时单个 `(device_type, group)` 组合约 1.8GB。此预算假设只有一个同量级 stream 组合，组合数增多需按 `maxmemory 3gb` 重算（如 2 组同量级 ≈ 3.6GB，会超保险丝）。
+- **缓冲窗口变短（重要）**：旧值 500000 名义“3 分钟容量”，但在本机内存放不下、必然 OOM；降到 50000 后，writer 掉线/滞后时每 shard 仅缓冲约几十秒~1 分钟，超出的旧数据会被 MAXLEN 裁掉丢失。本质是用“短缓冲 + 不崩”换“长缓冲 + 崩”。
+- **已部署机器生效路径**：改仓库这几份配置只影响新部署/dev；已在运行的目标机必须改 `C:\ProgramData\DataWatch\collector\config\settings.toml` 并重启 collector，`XADD MAXLEN` 才会变，只改仓库不会让线上生效。
+
+### 5.5 查看和访问
+
+查看服务：
 
 ```powershell
 docker compose -f .\docker-compose.yml ps
@@ -214,7 +341,7 @@ docker logs -f data-watch-backend
 docker logs -f data-watch-frontend
 ```
 
-访问：
+访问地址：
 
 ```text
 Web 前端: http://127.0.0.1:8080
@@ -222,7 +349,7 @@ Web 前端: http://127.0.0.1:8080
 后端直连: http://127.0.0.1:8000
 ```
 
-### 4.5 nginx 代理规则
+### 5.6 nginx 代理规则
 
 frontend 容器内 nginx 负责：
 
@@ -230,63 +357,6 @@ frontend 容器内 nginx 负责：
 - `/api/device-monitor/ws/` → backend WebSocket，并保留 Upgrade/Connection；
 - `/healthz` → backend healthz；
 - 其他路径回退 `index.html`，支持前端路由刷新。
-
----
-
-## 5. 离线镜像交付
-
-开发机导出：
-
-```powershell
-$ReleaseRoot = "D:\data_watch_release"
-New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
-
-docker save data-watch-python314t:latest -o "$ReleaseRoot\docker-images\data-watch-python314t_latest.tar"
-docker save data-watch-backend:latest    -o "$ReleaseRoot\docker-images\data-watch-backend_latest.tar"
-docker save data-watch-frontend:latest   -o "$ReleaseRoot\docker-images\data-watch-frontend_latest.tar"
-```
-
-现场无 Redis/TDengine 时额外导出：
-
-```powershell
-docker pull redis:latest
-docker pull tdengine/tsdb-amd64:3.4.0.9
-docker save redis:latest                -o "$ReleaseRoot\docker-images\redis_latest.tar"
-docker save tdengine/tsdb-amd64:3.4.0.9 -o "$ReleaseRoot\docker-images\tdengine_3.4.0.9.tar"
-```
-
-目标机导入：
-
-```powershell
-cd D:\data_watch_release\docker-images
-docker load -i .\data-watch-python314t_latest.tar
-docker load -i .\data-watch-backend_latest.tar
-docker load -i .\data-watch-frontend_latest.tar
-# 可选：docker load -i .\redis_latest.tar
-# 可选：docker load -i .\tdengine_3.4.0.9.tar
-docker images
-```
-
-发布目录建议：
-
-```text
-D:\data_watch_release\
-├─ DataWatch-Setup-<版本>.exe
-├─ docker-images\
-│  ├─ data-watch-python314t_latest.tar
-│  ├─ data-watch-backend_latest.tar
-│  ├─ data-watch-frontend_latest.tar
-│  └─ redis_latest.tar / tdengine_3.4.0.9.tar（可选）
-└─ deploy\
-   ├─ docker-compose.yml
-   ├─ taos.cfg
-   ├─ backend.env.example
-   ├─ backend.env
-   ├─ python314t.Dockerfile
-   └─ nginx.conf
-```
-
-镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据。
 
 ---
 
@@ -409,7 +479,7 @@ pwsh -File installer\build.ps1 -Iscc "D:\path\to\ISCC.exe"
 
 ### 8.2 Docker 镜像
 
-`installer\build.ps1` 不构建 Docker 镜像。镜像构建与导出走第 4、5 节。
+`installer\build.ps1` 不构建 Docker 镜像。镜像构建与导出走第 4 节，目标机部署走第 5 节。
 
 ---
 

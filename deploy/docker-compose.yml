@@ -1,21 +1,31 @@
+name: data_watch
+
 services:
   redis:
     image: redis:latest
     container_name: data-watch-redis
     profiles:
       - infra
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    environment:
+      - TZ=Asia/Shanghai
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
     restart: unless-stopped
 
   tdengine:
     image: tdengine/tsdb-amd64:3.4.0.9
     container_name: data-watch-tdengine
+    hostname: tdengine
     profiles:
       - infra
     environment:
+      # taosd 必须能解析自己的 FQDN，否则启动即崩。固定 fqdn=tdengine，
+      # 配合 hostname: tdengine（Docker 会把它写进 /etc/hosts 指向本容器 IP）。
+      - TAOS_FQDN=tdengine
       - TAOS_QUERY_USE_MEMORY_POOL=0
       - TZ=Asia/Shanghai
     ports:
