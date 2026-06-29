@@ -70,7 +70,7 @@ class RedisConfig:
     db: int = 0
     password: str = ""
     stream_shard_count: int = 4
-    stream_maxlen: int = 500000
+    stream_maxlen: int = 50000
 
 
 @dataclass

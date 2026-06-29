@@ -40,4 +40,4 @@ port = 6379
 db = 0
 password = ""
 stream_shard_count = 4
-stream_maxlen = 500000  # 约 3 分钟停机容量（305 台 × 10 帧/s × 180s ≈ 549000）
+stream_maxlen = 50000  # 每 shard 上限。MAXLEN 卡条数不卡字节；单条约 9KB 时 ≈ 450MB/shard。组合数增多时按 Redis maxmemory 预算重算
