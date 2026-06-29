@@ -1,4 +1,6 @@
 # 中心后端 backend 设计文档
+<!-- xiaohu-illustration:backend-readme-01-gatehouse -->
+![小狐配图：中心后端门房](../../images/xiaohu-backend-readme-01-gatehouse.png)
 
 > backend 是平台的中心数据服务：统一对接 MySQL / TDengine / Redis 三类数据源，向 Web 前端与桌面端提供 REST 接口与两条 WebSocket 实时通道，并承担鉴权、权限、系统日志、设备与点位管理等职责。本文覆盖其框架与分层、鉴权权限、实时与历史两条数据通路、对外契约、配置与扩展方式。
 >
@@ -154,6 +156,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:backend-readme-02-funnel -->
+![小狐配图：三数据源漏斗](../../images/xiaohu-backend-readme-02-funnel.png)
 
 ### 6.1 实时监控订阅推送
 

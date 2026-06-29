@@ -1,4 +1,6 @@
 # 边缘代理 agent 设计文档
+<!-- xiaohu-illustration:agent-readme-01-workbench -->
+![小狐配图：边缘工作台](../../images/xiaohu-agent-readme-01-workbench.png)
 
 > agent 是部署在边缘机上的本机中枢：以 Windows 服务常驻，负责 collector/writer 的进程管控、OPC DA 代理边车管理、数据库凭据的安全保管与下发，以及首次安装的引导配置。桌面端通过它远程观测与管控边缘进程。本文覆盖其框架与结构、三层接口、进程管控、凭据与路径契约、对外契约与扩展方式。
 >
@@ -125,6 +127,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:agent-readme-02-door -->
+![小狐配图：进程门禁](../../images/xiaohu-agent-readme-02-door.png)
 
 ### 6.1 首次安装引导（bootstrap）
 

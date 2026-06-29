@@ -1,4 +1,6 @@
 # 采集端 collector 设计文档
+<!-- xiaohu-illustration:collector-readme-01-pump -->
+![小狐配图：边缘采集泵](../../images/xiaohu-collector-readme-01-pump.png)
 
 > collector 是平台的数据源头：按周期从现场 PLC/OPC 设备采集点位，解析为统一数据点后写入 Redis，供入库端与后端消费。本文覆盖其架构、核心组件、采集流水线、对外契约、配置与扩展方式。
 >
@@ -163,6 +165,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:collector-readme-02-shards -->
+![小狐配图：分组分片盒](../../images/xiaohu-collector-readme-02-shards.png)
 
 ### 6.1 单周期采集流水线
 

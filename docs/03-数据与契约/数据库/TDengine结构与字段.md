@@ -1,4 +1,6 @@
 # TDengine 结构与字段
+<!-- xiaohu-illustration:tdengine-schema-01-columns -->
+![小狐配图：时序列车](../../images/xiaohu-tdengine-schema-01-columns.png)
 
 > TDengine `device_data` 是平台的高频时序历史库，由 writer 写入、backend 查询。它不保存设备配置、权限、菜单、告警规则等关系数据，也不承载实时最新值。
 
@@ -91,6 +93,8 @@ writer 不直接信任 Redis 中的物理列名，Redis 只携带 `var_id`，列
 ---
 
 ## 4. schema 演进规则
+<!-- xiaohu-illustration:tdengine-schema-02-growth -->
+![小狐配图：只增不减花架](../../images/xiaohu-tdengine-schema-02-growth.png)
 
 - writer 可自动 `CREATE DATABASE IF NOT EXISTS device_data KEEP 14d DURATION 1d`。
 - writer 可自动 `CREATE STABLE`。

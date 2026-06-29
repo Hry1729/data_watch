@@ -1,4 +1,6 @@
 # 数据与契约
+<!-- xiaohu-illustration:data-contracts-01-contract -->
+![小狐配图：契约文件夹](../images/xiaohu-data-contracts-01-contract.png)
 
 > 本目录按“契约”和“数据库”两类组织：契约描述模块之间如何调用，数据库描述三类存储组件的结构、字段与边界。
 
@@ -39,6 +41,8 @@ docs/03-数据与契约/
 ---
 
 ## 3. 三类存储的边界
+<!-- xiaohu-illustration:data-contracts-02-boundary -->
+![小狐配图：三库边界线](../images/xiaohu-data-contracts-02-boundary.png)
 
 ```mermaid
 flowchart LR

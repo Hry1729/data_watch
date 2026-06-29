@@ -1,4 +1,6 @@
 # Web 前端 frontend 设计文档
+<!-- xiaohu-illustration:frontend-readme-01-screen -->
+![小狐配图：Web 屏幕工位](../../images/xiaohu-frontend-readme-01-screen.png)
 
 > frontend 是面向业务用户的 Web 控制台，基于 [Art Design Pro](https://www.artd.pro/docs/zh/)（Vue3 + TypeScript 管理后台模板）二次开发，提供设备与点位管理、实时监控、历史查询、系统管理（用户/角色/菜单）、仪表盘与系统日志等完整业务功能。它是与桌面端 app 分工不同的另一前端：app 面向运维（边缘监控与管控），frontend 面向业务。本文覆盖其技术栈、对接、实时通道、路由权限与设计决策。
 >
@@ -106,6 +108,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:frontend-readme-02-wire -->
+![小狐配图：前后端线轴](../../images/xiaohu-frontend-readme-02-wire.png)
 
 ### 6.1 登录与动态导航
 

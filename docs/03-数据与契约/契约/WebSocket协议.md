@@ -1,4 +1,6 @@
 # WebSocket 协议
+<!-- xiaohu-illustration:websocket-contract-01-radio -->
+![小狐配图：实时电台](../../images/xiaohu-websocket-contract-01-radio.png)
 
 > 平台有两条 WebSocket 通道，均由 backend 提供：实时监控（设备点位 snapshot/diff/offline 推送）与历史数据快照（Perspective 会话）。本文定义连接、鉴权、消息格式、状态机与异常语义。
 
@@ -178,6 +180,8 @@ sequenceDiagram
 ---
 
 ## 3. Perspective 历史快照通道
+<!-- xiaohu-illustration:websocket-contract-02-snapshot -->
+![小狐配图：历史快照夹](../../images/xiaohu-websocket-contract-02-snapshot.png)
 
 ### 3.1 连接与会话
 

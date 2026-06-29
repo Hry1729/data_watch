@@ -1,4 +1,6 @@
 # MySQL 结构与字段
+<!-- xiaohu-illustration:mysql-schema-01-cabinet -->
+![小狐配图：关系档案柜](../../images/xiaohu-mysql-schema-01-cabinet.png)
 
 > MySQL `device_watch` 是平台的配置与关系数据事实源，承载设备/点位配置、告警、RBAC、系统日志和运维辅助数据。collector / writer / backend 都会读取它，但语义不同：collector 读采集拓扑，writer 读入库映射，backend 读写业务配置、权限和日志。
 
@@ -124,6 +126,8 @@ RBAC 规则：
 ---
 
 ## 6. 与 Redis / TDengine 的一致性关系
+<!-- xiaohu-illustration:mysql-schema-02-ledger -->
+![小狐配图：字段账本](../../images/xiaohu-mysql-schema-02-ledger.png)
 
 | 字段/概念 | MySQL | Redis | TDengine |
 |----------|-------|-------|----------|

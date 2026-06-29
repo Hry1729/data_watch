@@ -1,4 +1,6 @@
 # 入库端 writer 设计文档
+<!-- xiaohu-illustration:writer-readme-01-queue -->
+![小狐配图：入库排队口](../../images/xiaohu-writer-readme-01-queue.png)
 
 > writer 是平台的入库环节：从 Redis Stream 消费 collector 投递的采集数据，按设备子表批量写入 TDengine，并提供"至少一次、不丢数据"的可靠性保证。本文覆盖其架构、消费-入库流水线、可靠性机制、对外契约、配置与扩展方式。
 >
@@ -135,6 +137,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:writer-readme-02-scale -->
+![小狐配图：字节预算秤](../../images/xiaohu-writer-readme-02-scale.png)
 
 ### 6.1 消费-入库主循环
 

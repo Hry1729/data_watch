@@ -1,4 +1,6 @@
 # API 契约
+<!-- xiaohu-illustration:api-contract-01-counter -->
+![小狐配图：接口柜台](../../images/xiaohu-api-contract-01-counter.png)
 
 > 本文汇总平台对外的 HTTP 接口契约：backend 的业务 REST（供 Web 前端与桌面端）与 agent 的本机管控 REST（供桌面端）。本文定义通用包络、鉴权、分页、错误语义、接口分组与变更门禁。
 
@@ -271,6 +273,8 @@ backend WebSocket 不在本文件展开，见 [WebSocket 协议](WebSocket协议
 ---
 
 ## 6. 接口变更门禁
+<!-- xiaohu-illustration:api-contract-02-pass -->
+![小狐配图：变更闸机](../../images/xiaohu-api-contract-02-pass.png)
 
 任何影响前后端契约的变更，按以下顺序执行：
 

@@ -1,4 +1,6 @@
 # writer 可靠入库与 TDengine 写入
+<!-- xiaohu-illustration:writer-tdengine-01-bucket -->
+![小狐配图：可靠入库水桶](../../images/xiaohu-writer-tdengine-01-bucket.png)
 
 > 本文是《入库-writer》的深度展开，聚焦 Redis Stream 消费、PEL 恢复、ACK 语义、DLQ、MySQL 映射缓存、TDengine 多表批写和 schema 演进。
 
@@ -125,6 +127,8 @@ MysqlMapper.get_or_load(QC100, g001, 12)
 ---
 
 ## 6. TDengine schema 与写入模型
+<!-- xiaohu-illustration:writer-tdengine-02-table -->
+![小狐配图：TDengine 写字台](../../images/xiaohu-writer-tdengine-02-table.png)
 
 ```text
 database: device_data

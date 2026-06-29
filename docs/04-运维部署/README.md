@@ -1,4 +1,6 @@
 # 运维部署
+<!-- xiaohu-illustration:ops-deploy-01-crate -->
+![小狐配图：发布包木箱](../images/xiaohu-ops-deploy-01-crate.png)
 
 > 本文覆盖平台的运行环境、开发启动、中心镜像部署、边缘机一体安装包、发版打包、离线镜像、升级回滚与验收。问题排查已拆到 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
 >
@@ -216,6 +218,8 @@ D:\data_watch_release\
 ---
 
 ## 5. 目标机中心部署
+<!-- xiaohu-illustration:ops-deploy-02-stack -->
+![小狐配图：目标机叠叠乐](../images/xiaohu-ops-deploy-02-stack.png)
 
 本章在目标机执行。先判断 Redis/TDengine 是否由 compose 托管，再选择启动方式。
 

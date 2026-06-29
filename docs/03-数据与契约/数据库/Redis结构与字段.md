@@ -1,4 +1,6 @@
 # Redis 流与点位分组
+<!-- xiaohu-illustration:redis-schema-01-streams -->
+![小狐配图：Redis 四格盒](../../images/xiaohu-redis-schema-01-streams.png)
 
 > Redis 是采集端与入库端之间的缓冲层，同时承载后端读取的实时态。本文定义 Redis 中的键结构、字段契约、分片与点位分组规则，是 collector（生产）、writer（消费入库）、backend（读实时）三方共同遵守的契约。
 
@@ -165,6 +167,8 @@ latest/window 可以承载实时展示所需值；stream 只承载 TDengine 入�
 ---
 
 ## 6. 写序不变式
+<!-- xiaohu-illustration:redis-schema-02-belt -->
+![小狐配图：写序传送带](../../images/xiaohu-redis-schema-02-belt.png)
 
 collector 每周期必须按以下顺序：
 

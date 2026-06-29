@@ -1,4 +1,6 @@
 # 桌面端 app 设计文档
+<!-- xiaohu-illustration:app-readme-01-shell -->
+![小狐配图：桌面壳与通道](../../images/xiaohu-app-readme-01-shell.png)
 
 > app 是面向运维的桌面监控台（Tauri + React）。它运行在边缘机上，通过本机 agent 完成首装配置与进程管控，通过中心 backend 获取模块指标与日志，给运维人员一个集中的观测与操作界面。本文覆盖其技术栈、双数据源对接、启动流程、页面结构与设计决策。
 >
@@ -116,6 +118,8 @@ flowchart TD
 ---
 
 ## 6. 主要流程
+<!-- xiaohu-illustration:app-readme-02-console -->
+![小狐配图：本地控制室](../../images/xiaohu-app-readme-02-console.png)
 
 ### 6.1 启动与首装判定
 

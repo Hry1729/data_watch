@@ -1,4 +1,6 @@
 # DataWatch 文档体系
+<!-- xiaohu-illustration:docs-index-01-map -->
+![小狐配图：文档入口](images/xiaohu-docs-index-01-map.png)
 
 > DataWatch 是面向自动化码头的工业设备数据采集与监控平台。本目录是项目的权威文档体系，按「总体 → 模块 → 契约 → 运维」组织，便于从整体到细节逐层理解。
 
@@ -14,6 +16,8 @@
 ---
 
 ## 目录
+<!-- xiaohu-illustration:docs-index-02-shelves -->
+![小狐配图：分类书架](images/xiaohu-docs-index-02-shelves.png)
 
 ### 01 总体设计
 - [系统架构总览](01-总体设计/系统架构总览.md) — 全局架构、数据流、模块协作、部署拓扑、设计决策摘要
