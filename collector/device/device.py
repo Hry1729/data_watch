@@ -612,9 +612,10 @@ class Device:
         if end - start < self.GE_MIN_DISCRETE_BLOCK_BYTES:
             start = max(0, end - self.GE_MIN_DISCRETE_BLOCK_BYTES)
 
-        # block_address 使用块首位的 bit 编号（8 对齐），driver 端 //8 还原字节偏移
+        # block_address 使用块首位的 PLC 逻辑编号（0 基 bit 索引 +1 转回；8 对齐），
+        # driver 端 -1 还原 0 基后 //8 得字节偏移
         block_bit_base = start * 8
-        block_address = f"%{area}{block_bit_base:05d}"
+        block_address = f"%{area}{(block_bit_base + 1):05d}"
         byte_count = end - start
 
         block = ReadBlock(block_address, count=byte_count, data_type="BYTE")
@@ -759,9 +760,10 @@ class Device:
             logical_number: 用户输入的 PLC 逻辑地址编号
             protocol_offset: GE 库需要的 0-based 偏移
 
-        地址基准（需现场已知点校验后固化）：
-            %R/%AI/%AQ: protocol_offset = logical_number - 1
-            %I/%Q/%M: 保持当前库示例语义，暂不减 1
+        地址基准（已固化）：
+            全区域 protocol_offset = logical_number - 1。
+            对齐前辈 tmeic 项目实盘约定（readSysMemory 不分区域一律 -1）；
+            2026-07-02 %Q2019 真机错位事故定案：离散区旧"暂不减 1"读的是相邻点。
         """
         addr = address.upper()
         match = self._GE_ADDRESS_RE.match(addr)
@@ -780,13 +782,8 @@ class Device:
                 f"Invalid GE SRTP address: {address}. Logical address number must be >= 1."
             )
 
-        # 地址基准转换（需现场校验）
-        if area in ("R", "AI", "AQ"):
-            # 寄存器区域：logical_number - 1
-            protocol_offset = logical_number - 1
-        else:
-            # 离散量区域：保持当前库示例语义
-            protocol_offset = logical_number
+        # 地址基准转换：全区域一律 -1（%I1 = bit 0，与 %R1 = word 0 同构）
+        protocol_offset = logical_number - 1
 
         return {
             "area": area,

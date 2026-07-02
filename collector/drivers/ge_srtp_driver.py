@@ -94,9 +94,8 @@ class GESRTPDriver(BaseDriver):
         ReadBlock.address 视作 PLC 逻辑地址字符串，如 "%R00001"、"%AI0001"。
         driver 内部根据地址格式解析区域类型和逻辑编号，转换为 GE 库需要的 protocol offset。
 
-        地址基准（需现场已知点校验后固化）：
-            %R/%AI/%AQ: protocol_offset = logical_number - 1
-            %I/%Q/%M: 保持库示例语义，暂不减 1
+        地址基准（已固化）：全区域 protocol_offset = logical_number - 1
+        （对齐前辈 tmeic 项目实盘约定；离散区旧"暂不减 1"会错读相邻点）。
         """
         addr = block.address.upper()
         count = block.count
@@ -109,14 +108,12 @@ class GESRTPDriver(BaseDriver):
         area = match.group(1).upper()
         logical_number = int(match.group(2))
 
-        # 地址基准转换
-        if area in ("R", "AI", "AQ"):
-            protocol_offset = logical_number - 1
-        else:
-            protocol_offset = logical_number
+        # 地址基准转换：全区域一律 -1
+        protocol_offset = logical_number - 1
 
-        # 离散区 byte 模式：块地址为 8 对齐的 bit 编号，count 为字节数（device 合并层生成）。
-        # device 合并层当前只生成 BYTE 离散块；下方 bit 路径保留用于兼容外部构造的 ReadBlock。
+        # 离散区 byte 模式：块地址为 8 对齐的逻辑编号（-1 后即 0 基 bit 索引），count 为字节数。
+        # device 合并层当前只生成 BYTE 离散块；下方 bit 路径仅为读取模式兼容
+        # （外部构造的 ReadBlock），地址基准与 BYTE/寄存器一致：逻辑编号一律 -1。
         data_type = str(getattr(block, "data_type", "") or "").upper()
         discrete_byte_mode = area in ("I", "Q", "M") and data_type == "BYTE"
         if discrete_byte_mode:
