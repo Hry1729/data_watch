@@ -115,6 +115,17 @@ class GESRTPDriver(BaseDriver):
         else:
             protocol_offset = logical_number
 
+        # 离散区 byte 模式：块地址为 8 对齐的 bit 编号，count 为字节数（device 合并层生成）。
+        # device 合并层当前只生成 BYTE 离散块；下方 bit 路径保留用于兼容外部构造的 ReadBlock。
+        data_type = str(getattr(block, "data_type", "") or "").upper()
+        discrete_byte_mode = area in ("I", "Q", "M") and data_type == "BYTE"
+        if discrete_byte_mode:
+            if protocol_offset % 8 != 0:
+                raise ReadError(
+                    f"GE discrete byte-mode block {addr} not byte-aligned (bit offset {protocol_offset})"
+                )
+            protocol_offset //= 8
+
         # 根据区域类型调用对应的读取方法
         if area == "R":
             values = self._driver.read_register(protocol_offset, count)
@@ -123,14 +134,14 @@ class GESRTPDriver(BaseDriver):
         elif area == "AQ":
             values = self._driver.read_analog_output(protocol_offset, count)
         elif area == "I":
-            # 离散输入：bit 模式
-            values = self._driver.read_discrete_input(protocol_offset, count, mode='bit')
+            mode = 'byte' if discrete_byte_mode else 'bit'
+            values = self._driver.read_discrete_input(protocol_offset, count, mode=mode)
         elif area == "Q":
-            # 离散输出：bit 模式
-            values = self._driver.read_discrete_output(protocol_offset, count, mode='bit')
+            mode = 'byte' if discrete_byte_mode else 'bit'
+            values = self._driver.read_discrete_output(protocol_offset, count, mode=mode)
         elif area == "M":
-            # 内部离散量：bit 模式
-            values = self._driver.read_discrete_internal(protocol_offset, count, mode='bit')
+            mode = 'byte' if discrete_byte_mode else 'bit'
+            values = self._driver.read_discrete_internal(protocol_offset, count, mode=mode)
         else:
             raise ReadError(f"Unsupported GE area: {area}")
 

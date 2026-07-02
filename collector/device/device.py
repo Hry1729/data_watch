@@ -64,12 +64,14 @@ class Device:
     )
     # GE 合并配置默认值
     GE_MAX_BLOCK_WORDS = 125
-    GE_MAX_BLOCK_BITS = 512
+    # 离散区（%I/%Q/%M）byte 模式：单块最大 250 字节 = 2000 位
+    # （与 125 words 同源：响应长度字段 byte4 单字节 ≤255 的硬约束）
+    GE_MAX_BLOCK_BYTES = 250
     # GE 跨空洞合并：真机 bench 实测单次请求 RTT 恒为 ~33ms、与读取量无关（payload 免费），
     # 空洞位置的数据读回即弃。GAP 默认等于块上限=不额外收紧，实际可跨空洞大小仍由
     # GE_MAX_BLOCK_* 总跨度约束隐含限制；仅当现场需要收紧跨洞（如 PLC 对未组态地址 NACK）时下调。
     GE_MAX_GAP_WORDS = GE_MAX_BLOCK_WORDS
-    GE_MAX_GAP_BITS = GE_MAX_BLOCK_BITS
+    GE_MAX_GAP_BYTES = GE_MAX_BLOCK_BYTES
     # S7 DB 合并配置：同 DB 内连续点合并读取，桥接小空洞、限制单块跨度
     S7_DB_MAX_GAP_BYTES = 64
     S7_DB_MAX_BLOCK_BYTES = 8192
@@ -407,8 +409,8 @@ class Device:
 
         合并规则：
         - %R/%AI/%AQ：按 word 范围合并，最大 125 words
-        - %I/%Q/%M：按 bit 范围合并（第一版只支持 BOOL），最大 512 bits
-        - 允许跨空洞合并：空洞不超过 GE_MAX_GAP_WORDS/GE_MAX_GAP_BITS 且总跨度不超过块上限，
+        - %I/%Q/%M：byte 模式（第一版只支持 BOOL），块按字节界对齐，最大 250 字节 = 2000 位
+        - 允许跨空洞合并：空洞不超过 GE_MAX_GAP_WORDS/GE_MAX_GAP_BYTES 且总跨度不超过块上限，
           空洞位置的数据读回即弃（真机 bench：payload 免费，减少往返次数）
         """
         from drivers.base import ReadBlock
@@ -540,34 +542,46 @@ class Device:
         result_map: Dict[str, Dict[str, Any]],
         blocks: List,
     ) -> None:
-        """合并 GE 离散量区域（%I/%Q/%M）的地址（允许跨空洞）。
+        """合并 GE 离散量区域（%I/%Q/%M）的地址（byte 模式，允许跨空洞）。
+
+        以字节为单位合并：每个 bit 点先换算为所属字节范围（byte_start = bit//8，
+        byte_end = ceil(bit_end/8)），块按字节界对齐，gap/span 均以字节计。
 
         前置条件：items 已由调用方按 start 升序排序。
         """
         from drivers.base import ReadBlock
 
-        current_start: Optional[int] = None
-        current_end: Optional[int] = None
+        current_byte_start: Optional[int] = None
+        current_byte_end: Optional[int] = None
         current_items: List[tuple] = []
 
         for start, end, var, parsed, bit_len in items:
-            if current_start is None:
-                current_start = start
-                current_end = end
+            byte_start = start // 8
+            byte_end = (end + 7) // 8
+            if current_byte_start is None:
+                current_byte_start = byte_start
+                current_byte_end = byte_end
                 current_items.append((start, end, var, parsed, bit_len))
-            elif start - current_end <= self.GE_MAX_GAP_BITS and end - current_start <= self.GE_MAX_BLOCK_BITS:
-                # 可合并：空洞不超过 GE_MAX_GAP_BITS 且总跨度不超限
-                current_end = max(current_end, end)
+            elif (
+                byte_start - current_byte_end <= self.GE_MAX_GAP_BYTES
+                and byte_end - current_byte_start <= self.GE_MAX_BLOCK_BYTES
+            ):
+                # 可合并：空洞不超过 GE_MAX_GAP_BYTES 且总跨度不超限
+                current_byte_end = max(current_byte_end, byte_end)
                 current_items.append((start, end, var, parsed, bit_len))
             else:
                 # 不可合并：创建块
-                self._create_ge_discrete_block(area, current_start, current_end, current_items, result_map, blocks)
-                current_start = start
-                current_end = end
+                self._create_ge_discrete_block(
+                    area, current_byte_start, current_byte_end, current_items, result_map, blocks
+                )
+                current_byte_start = byte_start
+                current_byte_end = byte_end
                 current_items = [(start, end, var, parsed, bit_len)]
 
         if current_items:
-            self._create_ge_discrete_block(area, current_start, current_end, current_items, result_map, blocks)
+            self._create_ge_discrete_block(
+                area, current_byte_start, current_byte_end, current_items, result_map, blocks
+            )
 
     def _create_ge_discrete_block(
         self,
@@ -578,22 +592,23 @@ class Device:
         result_map: Dict[str, Dict[str, Any]],
         blocks: List,
     ) -> None:
-        """创建合并后的 GE 离散量读取块（bit 模式）。"""
+        """创建合并后的 GE 离散量读取块（byte 模式，start/end 为字节偏移）。"""
         from drivers.base import ReadBlock
 
         if start is None or end is None:
             return
 
-        # block_address 使用 PLC 逻辑地址字符串
-        block_address = f"%{area}{start:05d}"
-        bit_count = end - start
+        # block_address 使用块首位的 bit 编号（8 对齐），driver 端 //8 还原字节偏移
+        block_bit_base = start * 8
+        block_address = f"%{area}{block_bit_base:05d}"
+        byte_count = end - start
 
-        block = ReadBlock(block_address, count=bit_count, data_type="BIT")
+        block = ReadBlock(block_address, count=byte_count, data_type="BYTE")
         blocks.append(block)
 
-        # 填充 result_map
+        # 填充 result_map：bit_offset 相对块首位；packing 标记 byte 模式（LSB-first 拆位）
         for item_start, item_end, var, parsed, bit_len in items:
-            bit_offset = item_start - start
+            bit_offset = item_start - block_bit_base
             result_map[var.variable_id] = {
                 "protocol": "ge_srtp",
                 "block_address": block_address,
@@ -601,6 +616,7 @@ class Device:
                 "offset": bit_offset,
                 "data_type": "BOOL",
                 "bit_offset": bit_offset,
+                "packing": "byte",
             }
 
     def _parse_address(self, address: str) -> Dict[str, Any]:

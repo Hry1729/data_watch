@@ -467,7 +467,9 @@ class TaskExecutor:
 
         离散量区域 (%I/%Q/%M):
             第一版只支持 BOOL
-            bit_offset 直接从 bit list 中取值
+            packing="byte"（byte 模式块）：values 为字节列表，LSB-first 拆位
+            （位序与 gesrtp extract_bit_values 一致，bit 模式下已现场验证）
+            否则（bit 模式块）：bit_offset 直接从 bit list 中取值
 
         REAL/DINT/DWORD 字序：
             当前只支持 word_order="low_high"（低地址 word 在前，高地址 word 在后）
@@ -528,6 +530,15 @@ class TaskExecutor:
         if area in ("I", "Q", "M"):
             if data_type == "BOOL":
                 bit_offset = int(mapping.get("bit_offset", 0))
+                if str(mapping.get("packing", "")) == "byte":
+                    # byte 模式块：LSB-first 拆位（byte k 含块内 bits [8k, 8k+8)）
+                    byte_index = bit_offset // 8
+                    if byte_index >= len(values):
+                        raise ValueError(
+                            f"GE byte-packed BOOL bit_offset {bit_offset} out of range "
+                            f"for {len(values)}-byte block {mapping.get('block_address', '?')}"
+                        )
+                    return bool((int(values[byte_index]) >> (bit_offset % 8)) & 1)
                 return bool(values[bit_offset])
             # 第一版不支持离散区的多字节类型
             logger.warning(

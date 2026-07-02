@@ -274,14 +274,18 @@ class TestGEBlockMerging:
 
         device.build_scan_tasks()
 
+        # byte 模式：bits 1..3 落在 byte 0 -> 1 块 1 字节，块首位 bit 0
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
-        assert scan_task.read_blocks[0].data_type == "BIT"
+        assert scan_task.read_blocks[0].data_type == "BYTE"
+        assert scan_task.read_blocks[0].address == "%I00000"
+        assert scan_task.read_blocks[0].count == 1
 
-        # 验证 result_map
-        assert scan_task.result_map["v1"]["bit_offset"] == 0
-        assert scan_task.result_map["v2"]["bit_offset"] == 1
-        assert scan_task.result_map["v3"]["bit_offset"] == 2
+        # 验证 result_map（bit_offset 相对块首位）
+        assert scan_task.result_map["v1"]["bit_offset"] == 1
+        assert scan_task.result_map["v2"]["bit_offset"] == 2
+        assert scan_task.result_map["v3"]["bit_offset"] == 3
+        assert scan_task.result_map["v1"]["packing"] == "byte"
 
     def test_split_register_when_span_exceeds_max_words(self):
         """跨空洞时总跨度超过 125 words -> 正确拆块（gap 在限内但 span 超限）"""
@@ -310,7 +314,7 @@ class TestGEBlockMerging:
             connection_config={"ip": "127.0.0.1"},
         )
         # 逻辑地址 %I1/%I10 -> 0基协议偏移 1/10（离散区暂不减1，待现场校准）
-        # gap = 10 - 2 = 8 <= 512, span = 11 - 1 = 10 <= 512 -> 合并，块内 bit_offset 归零为 0/9
+        # byte 模式：bit 1 -> byte 0，bit 10 -> byte 1（end 11 -> byte_end 2）-> 1 块 2 字节
         device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
         device.add_variable(Variable(variable_id="v2", address="%I10", data_type="BOOL"))
 
@@ -318,10 +322,10 @@ class TestGEBlockMerging:
 
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
-        assert scan_task.read_blocks[0].data_type == "BIT"
-        assert scan_task.read_blocks[0].count == 10
-        assert scan_task.result_map["v1"]["bit_offset"] == 0
-        assert scan_task.result_map["v2"]["bit_offset"] == 9
+        assert scan_task.read_blocks[0].data_type == "BYTE"
+        assert scan_task.read_blocks[0].count == 2
+        assert scan_task.result_map["v1"]["bit_offset"] == 1
+        assert scan_task.result_map["v2"]["bit_offset"] == 10
 
     def test_gap_data_excluded_from_result_map(self):
         """空洞数据不进 result_map：条目数等于真实变量数"""
@@ -368,42 +372,90 @@ class TestGEBlockMerging:
         assert scan_task.result_map["v1"]["word_offset"] == 0
         assert scan_task.result_map["v2"]["word_offset"] == 124
 
-    def test_merge_discrete_span_exactly_max_bits(self):
-        """离散区 span 恰好等于 512 bits -> 仍合并为 1 块（边界含）"""
+    def test_merge_discrete_span_exactly_max_bytes(self):
+        """离散区 span 恰好等于 250 字节 -> 仍合并为 1 块（边界含）"""
         device = Device(
             device_id="qc100",
             device_type="QC",
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %I1 -> offset 1, %I512 -> offset 512, span = 513 - 1 = 512 <= 512 -> 合并
+        # %I1 -> bit 1 -> byte 0；%I1999 -> bit 1999（end 2000）-> byte_end 250
+        # span = 250 - 0 = 250 <= 250 -> 合并
         device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
-        device.add_variable(Variable(variable_id="v2", address="%I512", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v2", address="%I1999", data_type="BOOL"))
 
         device.build_scan_tasks()
 
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
-        assert scan_task.read_blocks[0].count == 512
-        assert scan_task.result_map["v1"]["bit_offset"] == 0
-        assert scan_task.result_map["v2"]["bit_offset"] == 511
+        assert scan_task.read_blocks[0].count == 250
+        assert scan_task.result_map["v1"]["bit_offset"] == 1
+        assert scan_task.result_map["v2"]["bit_offset"] == 1999
 
-    def test_split_discrete_when_span_exceeds_max_bits(self):
-        """离散区 span 超过 512 bits -> 正确拆块"""
+    def test_split_discrete_when_span_exceeds_max_bytes(self):
+        """离散区 span 超过 250 字节 -> 正确拆块"""
         device = Device(
             device_id="qc100",
             device_type="QC",
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %I1 -> offset 1, %I513 -> offset 513, span = 514 - 1 = 513 > 512 -> 拆块
+        # %I1 -> byte 0；%I2000 -> bit 2000（end 2001）-> byte_end 251
+        # span = 251 > 250 -> 拆块
         device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
-        device.add_variable(Variable(variable_id="v2", address="%I513", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v2", address="%I2000", data_type="BOOL"))
 
         device.build_scan_tasks()
 
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 2
+
+    def test_discrete_block_byte_aligned_nonzero_base(self):
+        """块首位按字节界对齐：非零字节基址时地址与 bit_offset 正确"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        # %I9 -> bit 9 -> byte 1（块首位 bit 8）；%I16 -> bit 16 -> byte 2（end 17 -> byte_end 3）
+        device.add_variable(Variable(variable_id="v1", address="%I9", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v2", address="%I16", data_type="BOOL"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        assert len(scan_task.read_blocks) == 1
+        assert scan_task.read_blocks[0].address == "%I00008"
+        assert scan_task.read_blocks[0].count == 2
+        assert scan_task.result_map["v1"]["bit_offset"] == 1
+        assert scan_task.result_map["v2"]["bit_offset"] == 8
+
+    def test_discrete_byte_boundary_offsets(self):
+        """字节边界 0/1 基防混淆：%I7/%I8/%I15/%I16 的块界与 bit_offset"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        # bits 7,8,15,16：byte_start = 7//8 = 0，byte_end = (17+7)//8 = 3 -> 1 块 3 字节，块首位 bit 0
+        device.add_variable(Variable(variable_id="v7", address="%I7", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v8", address="%I8", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v15", address="%I15", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v16", address="%I16", data_type="BOOL"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        assert len(scan_task.read_blocks) == 1
+        assert scan_task.read_blocks[0].address == "%I00000"
+        assert scan_task.read_blocks[0].count == 3
+        assert scan_task.result_map["v7"]["bit_offset"] == 7
+        assert scan_task.result_map["v8"]["bit_offset"] == 8
+        assert scan_task.result_map["v15"]["bit_offset"] == 15
+        assert scan_task.result_map["v16"]["bit_offset"] == 16
 
     def test_merge_overlapping_real_and_int(self):
         """重叠 item：INT 落在 REAL 的第二个 word 上 -> 仍 1 块且偏移正确"""
@@ -591,6 +643,93 @@ class TestGEValueExtraction:
             "data_type": "BOOL",
         }
         assert TaskExecutor._extract_mapped_ge_value(raw, mapping2) is False
+
+    def test_extract_bool_from_discrete_byte_block(self):
+        """从 byte 模式离散块提取 BOOL（LSB-first 拆位）"""
+        # byte0 = 0b0000_0010（bit 1 置位），byte1 = 0b0000_0001（bit 8 置位）
+        raw = [0x02, 0x01]
+
+        def mapping(bit):
+            return {"area": "I", "bit_offset": bit, "data_type": "BOOL", "packing": "byte"}
+
+        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(1)) is True
+        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(0)) is False
+        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(8)) is True
+        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(9)) is False
+
+    def test_extract_bool_from_single_int_byte_block(self):
+        """count=1 时 driver 返回单 int 的退化：归一化后仍可拆位"""
+        mapping = {"area": "I", "bit_offset": 1, "data_type": "BOOL", "packing": "byte"}
+        assert TaskExecutor._extract_mapped_ge_value(0x02, mapping) is True
+
+    def test_extract_byte_packed_out_of_range_raises(self):
+        """bit_offset 超出块字节数 -> 带上下文的 ValueError 而非裸 IndexError"""
+        mapping = {
+            "area": "I",
+            "bit_offset": 16,
+            "data_type": "BOOL",
+            "packing": "byte",
+            "block_address": "%I00000",
+        }
+        with pytest.raises(ValueError, match="out of range"):
+            TaskExecutor._extract_mapped_ge_value([0x00, 0x00], mapping)
+
+
+class _FakeGeDriver:
+    """记录调用参数的假 GE 驱动（byte/bit 模式路径测试用）"""
+
+    def __init__(self):
+        self.calls = []
+
+    def read_discrete_input(self, offset, count, mode='bit'):
+        self.calls.append(("I", offset, count, mode))
+        return [0] * count
+
+    def read_discrete_output(self, offset, count, mode='bit'):
+        self.calls.append(("Q", offset, count, mode))
+        return [0] * count
+
+    def read_discrete_internal(self, offset, count, mode='bit'):
+        self.calls.append(("M", offset, count, mode))
+        return [0] * count
+
+
+class TestGEDriverByteMode:
+    """driver 适配层：BYTE 离散块走 byte 模式（地址 //8），BIT 块保留 bit 路径"""
+
+    def _make_driver(self):
+        from drivers.ge_srtp_driver import GESRTPDriver
+        drv = GESRTPDriver()
+        drv._driver = _FakeGeDriver()
+        drv._connected = True
+        return drv
+
+    def test_byte_block_offset_zero(self):
+        """%I00000（%I1 所在块）-> byte_offset 0，客户端全链路合法"""
+        drv = self._make_driver()
+        drv._read_block(ReadBlock("%I00000", count=2, data_type="BYTE"))
+        assert drv._driver.calls == [("I", 0, 2, "byte")]
+
+    def test_byte_block_nonzero_base_q_area(self):
+        drv = self._make_driver()
+        drv._read_block(ReadBlock("%Q00008", count=1, data_type="BYTE"))
+        assert drv._driver.calls == [("Q", 1, 1, "byte")]
+
+    def test_byte_block_m_area(self):
+        drv = self._make_driver()
+        drv._read_block(ReadBlock("%M00016", count=3, data_type="BYTE"))
+        assert drv._driver.calls == [("M", 2, 3, "byte")]
+
+    def test_byte_block_not_aligned_raises(self):
+        from core.exceptions import ReadError
+        drv = self._make_driver()
+        with pytest.raises(ReadError, match="not byte-aligned"):
+            drv._read_block(ReadBlock("%I00004", count=1, data_type="BYTE"))
+
+    def test_bit_block_keeps_legacy_path(self):
+        drv = self._make_driver()
+        drv._read_block(ReadBlock("%I00001", count=10, data_type="BIT"))
+        assert drv._driver.calls == [("I", 1, 10, "bit")]
 
 
 class TestGEIntegration:
