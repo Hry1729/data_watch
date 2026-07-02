@@ -65,6 +65,11 @@ class Device:
     # GE 合并配置默认值
     GE_MAX_BLOCK_WORDS = 125
     GE_MAX_BLOCK_BITS = 512
+    # GE 跨空洞合并：真机 bench 实测单次请求 RTT 恒为 ~33ms、与读取量无关（payload 免费），
+    # 空洞位置的数据读回即弃。GAP 默认等于块上限=不额外收紧，实际可跨空洞大小仍由
+    # GE_MAX_BLOCK_* 总跨度约束隐含限制；仅当现场需要收紧跨洞（如 PLC 对未组态地址 NACK）时下调。
+    GE_MAX_GAP_WORDS = GE_MAX_BLOCK_WORDS
+    GE_MAX_GAP_BITS = GE_MAX_BLOCK_BITS
     # S7 DB 合并配置：同 DB 内连续点合并读取，桥接小空洞、限制单块跨度
     S7_DB_MAX_GAP_BYTES = 64
     S7_DB_MAX_BLOCK_BYTES = 8192
@@ -403,7 +408,8 @@ class Device:
         合并规则：
         - %R/%AI/%AQ：按 word 范围合并，最大 125 words
         - %I/%Q/%M：按 bit 范围合并（第一版只支持 BOOL），最大 512 bits
-        - 默认不跨空洞（max_gap=0）
+        - 允许跨空洞合并：空洞不超过 GE_MAX_GAP_WORDS/GE_MAX_GAP_BITS 且总跨度不超过块上限，
+          空洞位置的数据读回即弃（真机 bench：payload 免费，减少往返次数）
         """
         from drivers.base import ReadBlock
 
@@ -461,7 +467,10 @@ class Device:
         result_map: Dict[str, Dict[str, Any]],
         blocks: List,
     ) -> None:
-        """合并 GE 寄存器区域（%R/%AI/%AQ）的连续地址。"""
+        """合并 GE 寄存器区域（%R/%AI/%AQ）的地址（允许跨空洞）。
+
+        前置条件：items 已由调用方按 start 升序排序。
+        """
         from drivers.base import ReadBlock
 
         current_start: Optional[int] = None
@@ -473,8 +482,8 @@ class Device:
                 current_start = start
                 current_end = end
                 current_items.append((start, end, var, parsed, word_len))
-            elif start <= current_end and end - current_start <= self.GE_MAX_BLOCK_WORDS:
-                # 可合并：连续/重叠且不超限
+            elif start - current_end <= self.GE_MAX_GAP_WORDS and end - current_start <= self.GE_MAX_BLOCK_WORDS:
+                # 可合并：空洞不超过 GE_MAX_GAP_WORDS 且总跨度不超限
                 current_end = max(current_end, end)
                 current_items.append((start, end, var, parsed, word_len))
             else:
@@ -531,7 +540,10 @@ class Device:
         result_map: Dict[str, Dict[str, Any]],
         blocks: List,
     ) -> None:
-        """合并 GE 离散量区域（%I/%Q/%M）的连续地址。"""
+        """合并 GE 离散量区域（%I/%Q/%M）的地址（允许跨空洞）。
+
+        前置条件：items 已由调用方按 start 升序排序。
+        """
         from drivers.base import ReadBlock
 
         current_start: Optional[int] = None
@@ -543,8 +555,8 @@ class Device:
                 current_start = start
                 current_end = end
                 current_items.append((start, end, var, parsed, bit_len))
-            elif start <= current_end and end - current_start <= self.GE_MAX_BLOCK_BITS:
-                # 可合并：连续/重叠且不超限
+            elif start - current_end <= self.GE_MAX_GAP_BITS and end - current_start <= self.GE_MAX_BLOCK_BITS:
+                # 可合并：空洞不超过 GE_MAX_GAP_BITS 且总跨度不超限
                 current_end = max(current_end, end)
                 current_items.append((start, end, var, parsed, bit_len))
             else:
