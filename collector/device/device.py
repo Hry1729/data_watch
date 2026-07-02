@@ -72,6 +72,12 @@ class Device:
     # GE_MAX_BLOCK_* 总跨度约束隐含限制；仅当现场需要收紧跨洞（如 PLC 对未组态地址 NACK）时下调。
     GE_MAX_GAP_WORDS = GE_MAX_BLOCK_WORDS
     GE_MAX_GAP_BYTES = GE_MAX_BLOCK_BYTES
+    # 驱动最小请求护栏（不可动：保证响应走扩展数据段路径）会把小块请求垫长：
+    # 寄存器 max(count,4) 词、离散 byte 模式 max(count,8) 字节。区域顶部的小块被垫长后
+    # 会越过已组态区域上限（如 %Q 2048 位）→ PLC NACK 整块失败。
+    # 故在合并层把小块向低地址扩齐到最小量（块尾不动、块首下移，低地址恒安全）。
+    GE_MIN_BLOCK_WORDS = 4
+    GE_MIN_DISCRETE_BLOCK_BYTES = 8
     # S7 DB 合并配置：同 DB 内连续点合并读取，桥接小空洞、限制单块跨度
     S7_DB_MAX_GAP_BYTES = 64
     S7_DB_MAX_BLOCK_BYTES = 8192
@@ -513,6 +519,10 @@ class Device:
         if start is None or end is None:
             return
 
+        # 小块向低地址扩齐，避免驱动 max(count,4) 垫长越过区域顶
+        if end - start < self.GE_MIN_BLOCK_WORDS:
+            start = max(0, end - self.GE_MIN_BLOCK_WORDS)
+
         # block_address 使用 PLC 逻辑地址字符串（用户输入形式 +1 转回）
         logical_number = start + 1
         block_address = f"%{area}{logical_number:05d}" if area == "R" else f"%{area}{logical_number:04d}"
@@ -597,6 +607,10 @@ class Device:
 
         if start is None or end is None:
             return
+
+        # 小块向低地址扩齐，避免驱动 max(count,8) 垫长越过区域顶
+        if end - start < self.GE_MIN_DISCRETE_BLOCK_BYTES:
+            start = max(0, end - self.GE_MIN_DISCRETE_BLOCK_BYTES)
 
         # block_address 使用块首位的 bit 编号（8 对齐），driver 端 //8 还原字节偏移
         block_bit_base = start * 8

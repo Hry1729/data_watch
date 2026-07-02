@@ -157,8 +157,11 @@ class TestGEBlockMerging:
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
         # 块地址应为 PLC 逻辑地址字符串
-        assert scan_task.read_blocks[0].address == "%R00100"
-        assert scan_task.read_blocks[0].count == 3
+        assert scan_task.read_blocks[0].address == "%R00099"
+        assert scan_task.read_blocks[0].count == 4
+        assert scan_task.result_map["v1"]["word_offset"] == 1
+        assert scan_task.result_map["v2"]["word_offset"] == 2
+        assert scan_task.result_map["v3"]["word_offset"] == 3
 
     def test_merge_across_gap_within_limit(self):
         """跨空洞合并：gap 与总跨度均在上限内 -> 合并为 1 块，弃读空洞数据"""
@@ -427,10 +430,10 @@ class TestGEBlockMerging:
 
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
-        assert scan_task.read_blocks[0].address == "%I00008"
-        assert scan_task.read_blocks[0].count == 2
-        assert scan_task.result_map["v1"]["bit_offset"] == 1
-        assert scan_task.result_map["v2"]["bit_offset"] == 8
+        assert scan_task.read_blocks[0].address == "%I00000"
+        assert scan_task.read_blocks[0].count == 3
+        assert scan_task.result_map["v1"]["bit_offset"] == 9
+        assert scan_task.result_map["v2"]["bit_offset"] == 16
 
     def test_discrete_byte_boundary_offsets(self):
         """字节边界 0/1 基防混淆：%I7/%I8/%I15/%I16 的块界与 bit_offset"""
@@ -474,11 +477,11 @@ class TestGEBlockMerging:
 
         scan_task = device.scan_tasks[0]
         assert len(scan_task.read_blocks) == 1
-        assert scan_task.read_blocks[0].address == "%R00100"
-        assert scan_task.read_blocks[0].count == 2
-        assert scan_task.result_map["v1"]["word_offset"] == 0
+        assert scan_task.read_blocks[0].address == "%R00098"
+        assert scan_task.read_blocks[0].count == 4
+        assert scan_task.result_map["v1"]["word_offset"] == 2
         assert scan_task.result_map["v1"]["word_length"] == 2
-        assert scan_task.result_map["v2"]["word_offset"] == 1
+        assert scan_task.result_map["v2"]["word_offset"] == 3
 
     def test_accumulate_then_split_starts_new_block_at_third_point(self):
         """连续累积后遇 span 超限 -> 第二块从触发拆分的点开始"""
@@ -500,10 +503,66 @@ class TestGEBlockMerging:
         assert len(scan_task.read_blocks) == 2
         assert scan_task.read_blocks[0].address == "%R00001"
         assert scan_task.read_blocks[0].count == 50
-        assert scan_task.read_blocks[1].address == "%R00127"
-        assert scan_task.read_blocks[1].count == 1
-        assert scan_task.result_map["v3"]["word_offset"] == 0
-        assert scan_task.result_map["v3"]["block_address"] == "%R00127"
+        assert scan_task.read_blocks[1].address == "%R00124"
+        assert scan_task.read_blocks[1].count == 4
+        assert scan_task.result_map["v3"]["word_offset"] == 3
+        assert scan_task.result_map["v3"]["block_address"] == "%R00124"
+
+    def test_discrete_high_small_block_extended_downward(self):
+        """区域顶部离散小块向低地址扩齐，避免驱动垫长越过区域顶。"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        device.add_variable(Variable(variable_id="v1", address="%Q2019", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v2", address="%Q2026", data_type="BOOL"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        assert len(scan_task.read_blocks) == 1
+        assert scan_task.read_blocks[0].address == "%Q01968"
+        assert scan_task.read_blocks[0].count == 8
+        assert scan_task.result_map["v1"]["bit_offset"] == 51
+        assert scan_task.result_map["v2"]["bit_offset"] == 58
+
+    def test_register_small_block_extended_downward(self):
+        """寄存器小块向低地址扩齐，避免驱动 max(count,4) 向高地址垫长。"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        device.add_variable(Variable(variable_id="v1", address="%AI285", data_type="INT"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        assert len(scan_task.read_blocks) == 1
+        assert scan_task.read_blocks[0].address == "%AI0282"
+        assert scan_task.read_blocks[0].count == 4
+        assert scan_task.result_map["v1"]["word_offset"] == 3
+
+    def test_low_end_small_block_kept(self):
+        """贴近区域底的小块保持原块首，由驱动在低端垫长，安全。"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        assert len(scan_task.read_blocks) == 1
+        assert scan_task.read_blocks[0].address == "%I00000"
+        assert scan_task.read_blocks[0].count == 1
+        assert scan_task.result_map["v1"]["bit_offset"] == 1
 
     def test_discrete_non_bool_raises_error(self):
         """离散区非 BOOL 类型报错（第一版限制）"""
