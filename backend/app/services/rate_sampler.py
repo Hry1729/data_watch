@@ -52,11 +52,12 @@ class RateSampler:
         self._writer_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         self._collector_point_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         self._writer_landed_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
+        # collectorPoints 60s 窗口的累计值缓冲（collector 60s 上报，10s 采样算 60s 增量 = 点/min）
+        self._collector_point_totals: deque[int] = deque(maxlen=_MAX_POINTS)
         # 按 stream key 的上次累计值
         self._prev_added: dict[str, int] = {}
         self._prev_read: dict[str, int] = {}
         # metrics counter 单值累计
-        self._prev_collector_point_total: int | None = None
         self._prev_writer_landed_total: int | None = None
         self._prev_monotonic: float | None = None
 
@@ -72,17 +73,20 @@ class RateSampler:
                 label = now_local().strftime("%H:%M:%S")
                 self._collector_points.append((label, self._per_min(self._delta_sum(self._prev_added, added), dt)))
                 self._writer_points.append((label, self._per_min(self._delta_sum(self._prev_read, read), dt)))
-                # metrics counter 仅在读成功且已有基线时出增量，避免恢复后历史累计量一次性算成尖刺
-                if collector_point_total is not None and self._prev_collector_point_total is not None:
-                    self._collector_point_points.append((label, self._per_min(self._delta_scalar(self._prev_collector_point_total, collector_point_total), dt)))
+                # collectorPoints 60s 窗口：collector 60s 上报累计值，10s 采样算 60s 增量 = 点/min。
+                # 不用相邻 10s 增量（会高估 6 倍），用当前 - 6 个采样前（60s）= 真实 1 分钟增量。
+                if collector_point_total is not None:
+                    self._collector_point_totals.append(collector_point_total)
+                    if len(self._collector_point_totals) >= 7:
+                        window_delta = collector_point_total - self._collector_point_totals[-7]
+                        self._collector_point_points.append((label, max(0, window_delta)))
+                # writerLanded 10s 相邻增量（writer flush 低频 ~2/秒，10s 采样准）
                 if writer_landed_total is not None and self._prev_writer_landed_total is not None:
                     self._writer_landed_points.append((label, self._per_min(self._delta_scalar(self._prev_writer_landed_total, writer_landed_total), dt)))
 
         self._prev_added = added
         self._prev_read = read
         # 仅读成功时更新基线；失败轮保留旧基线，下轮恢复后算的是真实增量而非历史累计
-        if collector_point_total is not None:
-            self._prev_collector_point_total = collector_point_total
         if writer_landed_total is not None:
             self._prev_writer_landed_total = writer_landed_total
         self._prev_monotonic = now_mono

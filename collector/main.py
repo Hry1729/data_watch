@@ -343,6 +343,7 @@ class CollectorApp:
             self.config_db_manager = None
 
     async def _performance_log_loop(self, interval_seconds: float = 60.0) -> None:
+        last_stream_points = 0
         while not self._shutdown.is_set():
             try:
                 await asyncio.wait_for(
@@ -350,13 +351,21 @@ class CollectorApp:
                     timeout=interval_seconds,
                 )
             except asyncio.TimeoutError:
+                snap = self.performance_metrics.snapshot()
                 logger.info(
                     "Performance snapshot: %s",
-                    json.dumps(
-                        self.performance_metrics.snapshot(),
-                        separators=(",", ":"),
-                    ),
+                    json.dumps(snap, separators=(",", ":")),
                 )
+                # 上报本分钟 Redis 有效点数增量到 redis metrics counter（60s 一次，零性能影响）。
+                # stream_points_written 是本地累计（write_stream 时 increment），口径=已过滤的有效点数。
+                current = int(snap.get("counters", {}).get("stream_points_written", 0))
+                delta = current - last_stream_points
+                if delta > 0:
+                    try:
+                        self.redis_writer.r.hincrby("rt:metrics:collector", "stream_points", delta)
+                        last_stream_points = current  # 只在上报成功后推进；失败保留，下分钟补 delta
+                    except Exception:
+                        logger.debug("Failed to publish stream_points metrics", exc_info=True)
 
     def _log_status(self) -> None:
         """打印当前状态"""
