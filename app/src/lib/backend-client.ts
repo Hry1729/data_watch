@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppError,
+  CollectorConfig,
   CollectorModuleMetrics,
   ModuleRates,
   WriterLogRow,
@@ -35,6 +36,9 @@ export interface BackendClient {
   writerMetrics(token: string): Promise<WriterModuleMetrics>;
   /** 二期：采集/入库速率与趋势（同源，一个接口出两侧） */
   moduleRates(token: string): Promise<ModuleRates>;
+  /** collector 运行参数配置（stream_maxlen 等，存 MySQL collector_setting） */
+  getCollectorConfig(token: string): Promise<CollectorConfig>;
+  updateCollectorConfig(token: string, streamMaxlen: number): Promise<CollectorConfig>;
 }
 
 // ─── 运行期后端地址 ───────────────────────────────────────────────────────────
@@ -144,6 +148,22 @@ const realBackend: BackendClient = {
       token
     );
   },
+  getCollectorConfig(token) {
+    return backendFetch<CollectorConfig>(
+      "GET",
+      "/api/device-monitor/collector-config",
+      undefined,
+      token
+    );
+  },
+  updateCollectorConfig(token, streamMaxlen) {
+    return backendFetch<CollectorConfig>(
+      "PUT",
+      "/api/device-monitor/collector-config",
+      { streamMaxlen },
+      token
+    );
+  },
 };
 
 // ─── mock / real 选择（动态 import 确保 mock-agent 不进入生产包）─────────────
@@ -179,5 +199,13 @@ export const backendClient: BackendClient = {
   async moduleRates(token) {
     const c = await _implPromise;
     return c.moduleRates(token);
+  },
+  async getCollectorConfig(token) {
+    const c = await _implPromise;
+    return c.getCollectorConfig(token);
+  },
+  async updateCollectorConfig(token, streamMaxlen) {
+    const c = await _implPromise;
+    return c.updateCollectorConfig(token, streamMaxlen);
   },
 };
