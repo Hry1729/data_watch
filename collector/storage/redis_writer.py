@@ -163,3 +163,11 @@ class RedisWriter:
             pipe.execute()
         finally:
             self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
+
+        # metrics 上报单独执行（不进 pipeline）：HINCRBY 若失败（如 key 类型错）不能让
+        # execute() 抛出导致 XADD 被判失败重写（重复 stream entry）。零额外往返不抵主路径安全。
+        if stream_values:
+            try:
+                self.r.hincrby("rt:metrics:collector", "stream_points", len(stream_values))
+            except Exception:
+                pass

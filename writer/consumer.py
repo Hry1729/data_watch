@@ -536,11 +536,13 @@ class StreamConsumer:
         # RETRY 与「DLQ 推送失败的坏行」留 buffer 重试，绝不丢数据（硬约束②）。
         to_ack: list[_BufferedRow] = []
         failed_rows: list[_BufferedRow] = []
+        landed_rows_count = 0
         for indices, status, elapsed_ms in chunk_results:
             chunk_rows = [buffered[i] for i in indices]
             self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), status == LANDED)
             if status == LANDED:
                 to_ack.extend(chunk_rows)
+                landed_rows_count += len(chunk_rows)
             elif status == BAD_DATA:
                 for row in chunk_rows:
                     if self._push_row_to_dlq(row):
@@ -556,6 +558,13 @@ class StreamConsumer:
 
         if to_ack:
             self._ack_rows(to_ack)
+        # 上报本 flush 的 LANDED rows 到 Redis metrics counter（供 backend rate_sampler 算入库速率）。
+        # 失败必须吞掉：metrics 上报不得影响 XACK/TDengine 主流程。
+        if landed_rows_count > 0:
+            try:
+                self._r.hincrby("rt:metrics:writer", "rows_written", landed_rows_count)
+            except Exception:
+                logger.warning("[consumer] metrics hincrby failed", exc_info=True)
         self._buffer = failed_rows
         self._metrics.set_buffer_rows(len(self._buffer))
         self._metrics.record_flush(

@@ -61,6 +61,7 @@ export function CollectorPage() {
   // 二期速率/趋势轮询（5s，与速率卡同源）
   const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
   const cRate = rates?.collector;
+  const cPointRate = rates?.collectorPoints;
 
   // 实时日志 WS（T016）
   const { lines, wsStatus, clear } = useWebSocketLog("collector");
@@ -82,11 +83,12 @@ export function CollectorPage() {
       )}
 
       {/* ④ 指标卡片：3 张接真，速率卡占位 */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <MetricCard label="最短周期" value={metrics?.scanRateMs != null ? `${metrics.scanRateMs} ms` : "—"} />
         <MetricCard label="设备连接" value={metrics ? `${metrics.onlineDevices} / ${metrics.totalDevices}` : "—"} />
         <MetricCard label="采集点位" value={metrics ? metrics.pointTotal.toLocaleString() : "—"} />
-        <MetricCard label="Redis 写入" value={rateCardValue(cRate)} />
+        <MetricCard label="Redis 写入批次" value={rateCardValue(cRate)} />
+        <MetricCard label="Redis 有效点数" value={rateCardValue(cPointRate)} />
       </div>
 
       {/* ⑤ 主体：左侧任务表 + 趋势图 / 右侧日志 */}

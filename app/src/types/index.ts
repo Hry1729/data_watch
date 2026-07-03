@@ -74,13 +74,15 @@ export interface RatePoint {
   v: number;
 }
 export interface ModuleRate {
-  unit: string; // collector: '批次/min'；writer: 'rows/min'
+  unit: string; // collector:'批次/min' writer:'条/min' collectorPoints:'点/min' writerLanded:'rows/min'
   current: number | null; // 最新点；缓冲为空时 null
   series: RatePoint[];
 }
 export interface ModuleRates {
   collector: ModuleRate;
   writer: ModuleRate;
+  collectorPoints: ModuleRate;
+  writerLanded: ModuleRate;
 }
 
 // 顶部连接状态（Agent /viewer/health 聚合快照）
