@@ -190,8 +190,18 @@ export const mockBackend: BackendClient = {
     await delay();
     return {
       collector: { unit: "批次/min", current: null, series: [] },
-      writer: { unit: "rows/min", current: null, series: [] },
+      writer: { unit: "条/min", current: null, series: [] },
+      collectorPoints: { unit: "点/min", current: null, series: [] },
+      writerLanded: { unit: "rows/min", current: null, series: [] },
     };
+  },
+  async getCollectorConfig(_token) {
+    await delay();
+    return { streamMaxlen: 50000 };
+  },
+  async updateCollectorConfig(_token, streamMaxlen) {
+    await delay();
+    return { streamMaxlen };
   },
 };
 

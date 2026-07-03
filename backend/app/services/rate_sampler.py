@@ -1,13 +1,17 @@
-"""速率采样器（二期）：读端采样 Redis Stream 累计计数器，算 per-min 速率，存内存滚动缓冲。
+"""速率采样器（二期）：读端采样 Redis 累计计数器，算 per-min 速率，存内存滚动缓冲。
 
-- collector 速率 = 各 rt:stream:* 的 XINFO STREAM `entries-added` 累计增量
-  （= 写入批次/分钟；每个 entry 是一批点位，无顶层 count 字段，故按批次计）。
-- writer 速率 = writer 消费组的 XINFO GROUPS `entries-read` 累计增量
-  （= 入库行/分钟；writer 是 1 entry → 1 行 TDengine，故 entries-read 即 rows）。
+四路速率：
+- collector 批次 = 各 rt:stream:* 的 XINFO STREAM `entries-added` 累计增量（批次/min）。
+- collector 点数 = rt:metrics:collector `stream_points` 累计增量（点/min，collector 写 stream 时 HINCRBY）。
+- writer 读取 = writer 消费组的 XINFO GROUPS `entries-read` 累计增量（条/min，从 Redis 读出的 entry 数）。
+- writer 入库 = rt:metrics:writer `rows_written` 累计增量（rows/min，TDengine LANDED 行数，writer flush 时 HINCRBY）。
+
+注意：entries-read 是「从 Redis 读出」的条数，不等于 TDengine 落库行数；落库行数看 rows_written。
 
 按 stream key 维护前值（只累加同 key 的正向增量）：新增 stream 首次只建基线、不出尖刺；
-某 key 本轮读取失败则本轮不计入、不更新其基线，避免污染速率。纯只读，零改 collector/writer。
-趋势点存内存滚动缓冲（重启从空开始，~10min 窗口）。速率卡当前值 = 趋势最新点（同源）。
+某 key 本轮读取失败则本轮不计入、不更新其基线，避免污染速率。metrics counter 为单值累计，
+重启归零时该轮不计增量（下轮重建基线）。趋势点存内存滚动缓冲（重启从空开始，~10min 窗口）。
+速率卡当前值 = 趋势最新点（同源）。
 """
 
 from __future__ import annotations
@@ -32,21 +36,34 @@ _MAX_POINTS = WINDOW_SECONDS // SAMPLE_INTERVAL_SECONDS  # 60 点
 WRITER_GROUP_NAME = "writer_cg"
 
 COLLECTOR_UNIT = "批次/min"
-WRITER_UNIT = "rows/min"
+WRITER_UNIT = "条/min"  # entries-read：writer 从 Redis 读出的 entry 条数（非落库行数）
+COLLECTOR_POINT_UNIT = "点/min"  # stream_points：进入 Redis Stream 的有效点数
+WRITER_LANDED_UNIT = "rows/min"  # rows_written：TDengine LANDED 行数
+
+COLLECTOR_METRICS_KEY = "rt:metrics:collector"
+WRITER_METRICS_KEY = "rt:metrics:writer"
+COLLECTOR_POINT_FIELD = "stream_points"
+WRITER_LANDED_FIELD = "rows_written"
 
 
 class RateSampler:
     def __init__(self) -> None:
         self._collector_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         self._writer_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
+        self._collector_point_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
+        self._writer_landed_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         # 按 stream key 的上次累计值
         self._prev_added: dict[str, int] = {}
         self._prev_read: dict[str, int] = {}
+        # metrics counter 单值累计
+        self._prev_collector_point_total: int | None = None
+        self._prev_writer_landed_total: int | None = None
         self._prev_monotonic: float | None = None
 
     async def sample(self) -> None:
-        """采一次：读各 key 累计值，与上次按 key 比算正向增量之和。首次只建基线不出点。"""
+        """采一次：读各 key 累计值与 metrics counter，与上次比算正向增量。首次只建基线不出点。"""
         added, read = await self._read_cumulative()
+        collector_point_total, writer_landed_total = await self._read_metrics_counters()
         now_mono = time.monotonic()
 
         if self._prev_monotonic is not None:
@@ -55,15 +72,27 @@ class RateSampler:
                 label = now_local().strftime("%H:%M:%S")
                 self._collector_points.append((label, self._per_min(self._delta_sum(self._prev_added, added), dt)))
                 self._writer_points.append((label, self._per_min(self._delta_sum(self._prev_read, read), dt)))
+                # metrics counter 仅在读成功且已有基线时出增量，避免恢复后历史累计量一次性算成尖刺
+                if collector_point_total is not None and self._prev_collector_point_total is not None:
+                    self._collector_point_points.append((label, self._per_min(self._delta_scalar(self._prev_collector_point_total, collector_point_total), dt)))
+                if writer_landed_total is not None and self._prev_writer_landed_total is not None:
+                    self._writer_landed_points.append((label, self._per_min(self._delta_scalar(self._prev_writer_landed_total, writer_landed_total), dt)))
 
         self._prev_added = added
         self._prev_read = read
+        # 仅读成功时更新基线；失败轮保留旧基线，下轮恢复后算的是真实增量而非历史累计
+        if collector_point_total is not None:
+            self._prev_collector_point_total = collector_point_total
+        if writer_landed_total is not None:
+            self._prev_writer_landed_total = writer_landed_total
         self._prev_monotonic = now_mono
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "collector": self._series_payload(self._collector_points, COLLECTOR_UNIT),
             "writer": self._series_payload(self._writer_points, WRITER_UNIT),
+            "collectorPoints": self._series_payload(self._collector_point_points, COLLECTOR_POINT_UNIT),
+            "writerLanded": self._series_payload(self._writer_landed_points, WRITER_LANDED_UNIT),
         }
 
     @staticmethod
@@ -75,6 +104,13 @@ class RateSampler:
             if prev_val is not None and cur_val >= prev_val:
                 total += cur_val - prev_val
         return total
+
+    @staticmethod
+    def _delta_scalar(prev: int | None, cur: int) -> int:
+        """单值累计的正面增量；首次（prev=None）或回退（重启归零）时计 0，下轮重建基线。"""
+        if prev is not None and cur >= prev:
+            return cur - prev
+        return 0
 
     @staticmethod
     def _per_min(delta: int, dt_seconds: float) -> int:
@@ -116,6 +152,22 @@ class RateSampler:
             except Exception:
                 pass
         return added, read
+
+    async def _read_metrics_counters(self) -> tuple[int | None, int | None]:
+        """读 collector 点数 / writer 入库 累计计数器（单值 HGET）。失败返回 None，
+        sample() 据此跳过本轮增量且不更新基线，避免恢复后把历史累计量一次性算成速率尖刺。"""
+        r = await get_redis_client()
+        collector_points = await self._hget_int(r, COLLECTOR_METRICS_KEY, COLLECTOR_POINT_FIELD)
+        writer_landed = await self._hget_int(r, WRITER_METRICS_KEY, WRITER_LANDED_FIELD)
+        return collector_points, writer_landed
+
+    @staticmethod
+    async def _hget_int(r: Any, key: str, field: str) -> int | None:
+        try:
+            v = await r.hget(key, field)
+            return int(v) if v is not None else None
+        except Exception:
+            return None
 
 
 _sampler: RateSampler | None = None

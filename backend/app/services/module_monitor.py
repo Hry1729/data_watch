@@ -8,8 +8,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
-from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
+from app.core.time_utils import LOCAL_TZ, to_local_naive
 from app.db.redis import get_redis_client
 
 
@@ -34,7 +33,7 @@ class ModuleMonitorService:
         scan_rates: list[int] = []
 
         for row, last_time in zip(rows, last_times, strict=True):
-            connect_status = self._connect_status(last_time)
+            connect_status = self._connect_status_from_raw(int(row["device_status"] or 0))
             if connect_status == "online":
                 online_devices += 1
 
@@ -100,7 +99,7 @@ class ModuleMonitorService:
                     "lag": lag,
                     "pel": pel,
                     "length": length,
-                    "status": "normal" if lag == 0 else "backlog",
+                    "status": "normal" if (lag < 1000 and pel < 1000) else "backlog",
                 }
             )
 
@@ -131,6 +130,7 @@ class ModuleMonitorService:
                         COALESCE(d.device_name, d.device_code) AS device_name,
                         COALESCE(dg.group_name, '') AS group_name,
                         COALESCE(cp.protocol, '') AS protocol,
+                        d.status AS device_status,
                         MIN(
                             CASE
                                 WHEN dv.enable = 1 AND dv.deleted = 0
@@ -146,7 +146,7 @@ class ModuleMonitorService:
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
                     LEFT JOIN device_variable AS dv ON dv.device_id = d.id
                     WHERE d.enable = 1
-                    GROUP BY d.id, d.device_code, d.device_name, dg.group_name, cp.protocol
+                    GROUP BY d.id, d.device_code, d.device_name, d.status, dg.group_name, cp.protocol
                     ORDER BY d.id ASC
                     """
                 )
@@ -178,13 +178,12 @@ class ModuleMonitorService:
             return None
         return to_local_naive(datetime.fromtimestamp(max_ts_ms / 1000, tz=LOCAL_TZ))
 
-    def _connect_status(self, last_collect_time: datetime | None) -> str:
-        if last_collect_time is None:
-            return "offline"
-        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
-        if age_seconds <= ONLINE_MAX_AGE_SECONDS:
+    @staticmethod
+    def _connect_status_from_raw(raw_status: int) -> str:
+        """与 monitor.MonitorService._build_connect_status_from_raw 同口径：device.status 1=online 2=unstable 其余 offline。"""
+        if raw_status == 1:
             return "online"
-        if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
+        if raw_status == 2:
             return "unstable"
         return "offline"
 

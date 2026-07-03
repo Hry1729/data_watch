@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { agentClient } from "@/lib/agent-client";
+import { backendClient } from "@/lib/backend-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { AppError, ConnectionConfig, DbConfig } from "@/types";
@@ -597,13 +598,17 @@ function SaveCard({
 
 export function SettingsPage() {
   const navigate = useNavigate();
-  const { logout } = useAuth();
+  const { auth, logout } = useAuth();
+  const backendToken = auth?.backendToken ?? null;
 
   const [configLoading, setConfigLoading] = useState(true);
   const [configError,   setConfigError]   = useState<string | null>(null);
   const [form,          setForm]          = useState<FormState>(DEFAULT_FORM);
   const [passwordDirty, setPasswordDirty] = useState<PasswordDirty>({ redis: false, mysql: false, tdengine: false });
   const [saving,        setSaving]        = useState(false);
+  // collector 运行参数（stream_maxlen，存 MySQL，走 backend API，独立于 agentClient 连接配置）
+  const [streamMaxlen,       setStreamMaxlen]      = useState("50000");
+  const [streamMaxlenSaving, setStreamMaxlenSaving] = useState(false);
 
   // 页面进入时加载配置
   useEffect(() => {
@@ -621,6 +626,22 @@ export function SettingsPage() {
       })
       .finally(() => setConfigLoading(false));
   }, [logout]);
+
+  // 加载 collector 运行参数（stream_maxlen）
+  useEffect(() => {
+    if (!backendToken) return;
+    let active = true;
+    backendClient
+      .getCollectorConfig(backendToken)
+      .then((cfg) => { if (active) setStreamMaxlen(String(cfg.streamMaxlen)); })
+      .catch((err) => {
+        if (!active) return;
+        const e = err as AppError;
+        if (e?.type === "unauthorized") { logout(); return; }
+        // 其他错误保留默认 50000
+      });
+    return () => { active = false; };
+  }, [backendToken, logout]);
 
   // Esc 键返回
   useEffect(() => {
@@ -668,6 +689,28 @@ export function SettingsPage() {
       toast.error("保存失败，请重试");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSaveStreamMaxlen() {
+    if (!backendToken) return;
+    const trimmed = streamMaxlen.trim();
+    if (!/^[1-9]\d*$/.test(trimmed)) {
+      toast.error("Stream 上限必须为正整数");
+      return;
+    }
+    const value = Number(trimmed);
+    setStreamMaxlenSaving(true);
+    try {
+      const cfg = await backendClient.updateCollectorConfig(backendToken, value);
+      setStreamMaxlen(String(cfg.streamMaxlen));
+      toast.success("Stream 上限已保存，重启 Collector 后生效");
+    } catch (err) {
+      const e = err as AppError;
+      if (e?.type === "unauthorized") { logout(); return; }
+      toast.error("保存失败，请重试");
+    } finally {
+      setStreamMaxlenSaving(false);
     }
   }
 
@@ -775,6 +818,32 @@ export function SettingsPage() {
             form={form.collector}
             onChange={(f) => setForm((s) => ({ ...s, collector: f }))}
           />
+          <Card className="bg-card border border-border" style={{ borderRadius: 12 }}>
+            <CardHeader className="pb-0 pt-2 px-5">
+              <CardTitle className="text-sm font-semibold text-foreground">Collector 运行参数</CardTitle>
+            </CardHeader>
+            <CardContent className="px-5 pb-5 pt-0">
+              <p className="text-xs text-muted-foreground mt-2 mb-3">修改后需重启 Collector 后生效。</p>
+              <div className="flex items-end gap-3">
+                <FieldRow
+                  label="Stream 上限（每 shard 条数）"
+                  value={streamMaxlen}
+                  onChange={setStreamMaxlen}
+                  width="w-32"
+                />
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={streamMaxlenSaving}
+                  onClick={handleSaveStreamMaxlen}
+                >
+                  <Save className="w-4 h-4" />
+                  {streamMaxlenSaving ? "保存中…" : "保存"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="writer">

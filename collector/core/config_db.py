@@ -368,11 +368,15 @@ class ConfigDBManager:
             return devices, variables
 
     async def load_config(self, base_config: Optional[CollectorConfig] = None) -> CollectorConfig:
-        """在基础配置上注入 MySQL 中的设备和点位。"""
+        """在基础配置上注入 MySQL 中的设备和点位，以及 collector_setting 运行参数。"""
         config = base_config or CollectorConfig()
         devices, variables = await self.load_devices_and_variables()
         config.devices = devices
         config.variables = variables
+        # app 端可配的运行参数：MySQL > settings.toml > 默认（重启 collector 生效）
+        stream_maxlen = await self._load_stream_maxlen()
+        if stream_maxlen is not None:
+            config.redis.stream_maxlen = stream_maxlen
 
         with self._cache_lock:
             self._config_cache = {
@@ -381,6 +385,18 @@ class ConfigDBManager:
                 "last_updated": datetime.now(),
             }
         return config
+
+    async def _load_stream_maxlen(self) -> Optional[int]:
+        """读 collector_setting.stream_maxlen（id=1）。表不存在或读取失败返回 None，沿用 settings.toml/默认。"""
+        try:
+            rows = await self._fetchall(
+                "SELECT stream_maxlen AS stream_maxlen FROM collector_setting WHERE id = 1 LIMIT 1"
+            )
+            if rows:
+                return int(rows[0]["stream_maxlen"])
+        except Exception as exc:
+            logger.debug("Failed to read collector_setting.stream_maxlen: %s", exc)
+        return None
 
     def add_config_changed_callback(self, callback: Callable[[CollectorConfig], None]) -> None:
         self._config_changed_callbacks.append(callback)

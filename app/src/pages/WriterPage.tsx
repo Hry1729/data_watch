@@ -21,12 +21,13 @@ import type { WriterStreamRow } from "@/types";
 
 // ─── 指标卡片 ─────────────────────────────────────────────────────────────────
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warning" }) {
+  const color = tone === "warning" ? "var(--warning)" : "var(--foreground)";
   return (
     <Card className="bg-card border border-border" style={{ borderRadius: 12 }}>
       <CardContent className="px-4 py-3">
         <p className="text-xs text-muted-foreground mb-1">{label}</p>
-        <p className="text-xl font-bold text-foreground">{value}</p>
+        <p className="text-xl font-bold" style={{ color }}>{value}</p>
       </CardContent>
     </Card>
   );
@@ -60,6 +61,7 @@ export function WriterPage() {
   // 二期速率/趋势轮询（5s，与速率卡同源）
   const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
   const wRate = rates?.writer;
+  const wLandedRate = rates?.writerLanded;
 
   // 实时日志 WS（T016）
   const { lines, wsStatus, clear } = useWebSocketLog("writer");
@@ -81,10 +83,11 @@ export function WriterPage() {
       )}
 
       {/* ④ 指标卡片：3 张接真，速率卡占位 */}
-      <div className="grid grid-cols-4 gap-3">
-        <MetricCard label="Stream Lag" value={metrics ? String(metrics.streamLagTotal) : "—"} />
-        <MetricCard label="PEL Pending" value={metrics ? String(metrics.pelPendingTotal) : "—"} />
-        <MetricCard label="批量写入" value={rateCardValue(wRate)} />
+      <div className="grid grid-cols-5 gap-3">
+        <MetricCard label="Stream Lag" value={metrics ? String(metrics.streamLagTotal) : "—"} tone={(metrics?.streamLagTotal ?? 0) >= 5000 ? "warning" : "normal"} />
+        <MetricCard label="PEL Pending" value={metrics ? String(metrics.pelPendingTotal) : "—"} tone={(metrics?.pelPendingTotal ?? 0) >= 5000 ? "warning" : "normal"} />
+        <MetricCard label="Redis 读取" value={rateCardValue(wRate)} />
+        <MetricCard label="TDengine 入库" value={rateCardValue(wLandedRate)} />
         <MetricCard label="DLQ" value={metrics ? String(metrics.dlqTotal) : "—"} />
       </div>
 
@@ -145,11 +148,11 @@ export function WriterPage() {
           </Card>
 
           <TrendChart
-            title="入库写入趋势"
-            unit={wRate?.unit ?? "rows/min"}
-            state={rateTrendState(wRate, ratesLoading, ratesError)}
-            data={wRate?.series ?? []}
-            current={wRate?.current ?? null}
+            title="TDengine 入库趋势"
+            unit={wLandedRate?.unit ?? "rows/min"}
+            state={rateTrendState(wLandedRate, ratesLoading, ratesError)}
+            data={wLandedRate?.series ?? []}
+            current={wLandedRate?.current ?? null}
           />
         </div>
 
