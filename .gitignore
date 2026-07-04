@@ -19,6 +19,7 @@ collector/build/
 writer/build/
 collector/dist/
 frontend/dist/
+build/
 deploy/*.zip
 deploy/images/*.tar
 
@@ -37,6 +38,8 @@ frontend/node_modules/
 .agent_context/
 .multica/
 .opencode/
+.agents/
+.codex/
 
 # 日志
 backend/logs/
