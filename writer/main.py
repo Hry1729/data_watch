@@ -1,4 +1,4 @@
-"""Writer process entry point.
+"""写入器进程入口点。Writer process entry point.
 
 Loads config, wires up Redis / MySQL / TDengine connections,
 builds the stream key list, and starts the consumer loop.
@@ -79,7 +79,7 @@ ORDER BY device_type, group_code
 
 
 def _validate_config(config: dict) -> None:
-    """Validate required config sections/keys before wiring connections."""
+    """在建立连接前验证必需的配置节/键。Validate required config sections/keys before wiring connections."""
     missing: list[str] = []
     for section, keys in _REQUIRED_CONFIG_KEYS.items():
         section_data = config.get(section)
@@ -126,7 +126,7 @@ def _apply_env_overrides(config: dict) -> None:
 
 
 def _discover_stream_scopes(mysql_conn: pymysql.connections.Connection) -> list[tuple[str, str]]:
-    """Discover stream device/group scopes from the live MySQL configuration."""
+    """从实时 MySQL 配置中发现流设备/组范围。"""
     with mysql_conn.cursor(pymysql.cursors.DictCursor) as cur:
         cur.execute(_STREAM_SCOPE_SQL)
         rows = cur.fetchall()
@@ -181,7 +181,7 @@ async def main() -> None:
     mc = config["mysql"]
     wc = config["writer"]
 
-    # --- Redis client (sync, used inside executor calls in consumer) ---
+    # --- Redis 客户端（同步，在消费者的执行器调用中使用）---
     r = redis.Redis(
         host=rc["host"],
         port=rc["port"],
@@ -197,7 +197,7 @@ async def main() -> None:
         logger.error("Cannot connect to Redis: %s", exc)
         sys.exit(1)
 
-    # --- MySQL synchronous connection ---
+    # --- MySQL 同步连接 ---
     try:
         mysql_conn = pymysql.connect(
             host=mc["host"],
@@ -213,9 +213,9 @@ async def main() -> None:
         logger.error("Cannot connect to MySQL: %s", exc)
         sys.exit(1)
 
-    # --- System log writer (dedicated MySQL connection, best-effort) ---
-    # Started right after the main MySQL connection so subsequent startup
-    # failures (scope discovery / TDengine connect) can be persisted to DB.
+    # --- 系统日志写入器（专用 MySQL 连接，尽力投递）---
+    # 在主 MySQL 连接之后立即启动，以便后续启动
+    # 失败（范围发现/TDengine 连接）可以持久化到数据库。
     syslog = SystemLogWriter(mc)
     syslog.start()
 
@@ -249,7 +249,7 @@ async def main() -> None:
     wc["stable_names"] = sorted({f"sd{device_type}" for device_type, _ in stream_scopes})
     logger.info("Discovered %d stream scope(s): %s", len(stream_scopes), stream_scopes)
 
-    # --- TDengine writer ---
+    # --- TDengine 写入器 ---
     writer = TDengineWriter(syslog=syslog)
     try:
         await writer.connect(config)
@@ -276,8 +276,8 @@ async def main() -> None:
         metrics=performance_metrics,
     )
 
-    # Build the full set of stream keys:
-    #   rt:stream:{device_type}:{group_code}:{shard_no}
+    # 构建完整的流键集合：
+    # 格式：rt:stream:{device_type}:{group_code}:{shard_no}
     stream_keys = [
         f"rt:stream:{dt}:{gc}:{shard}"
         for dt, gc in stream_scopes

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GE SRTP RTT benchmark - READ ONLY, no writes.
+"""GE SRTP RTT 基准测试 - 只读，不写入。
 
 Purpose: measure single-block RTT to verify whether 124 blocks x RTT
 accounts for the 4-5s scan time observed on device_id=30.
@@ -22,8 +22,8 @@ _GESRTP = os.path.join(_BASE, "drivers", "gesrtp-py-main")
 if _GESRTP not in sys.path:
     sys.path.insert(0, _GESRTP)
 
-# Silence gesrtp INFO logs (every read logs "Reading register...").
-# They skew timing and flood the console.
+# 静默 gesrtp INFO 日志（每次读取都会记录"Reading register..."）。
+# 它们会干扰计时并刷屏控制台。
 import logging
 logging.getLogger("src").setLevel(logging.WARNING)
 logging.getLogger().setLevel(logging.WARNING)
@@ -70,20 +70,20 @@ def main():
     ms, _ = timed(drv.connect)
     print(f"connect: {ms:.2f}ms\n")
 
-    # [1] single-word register read (count=1) - the common scattered-%R case
+    # [1] 单字寄存器读取（count=1）- 常见的分散 %R 情况
     print("[1] read_register(offset=0, count=1)")
     stats("count=1", bench(lambda: drv.read_register(0, 1), rounds))
 
-    # [2] max block register read (count=125)
+    # [2] 最大块寄存器读取（count=125）
     print("\n[2] read_register(offset=0, count=125)")
     stats("count=125", bench(lambda: drv.read_register(0, 125), rounds))
 
-    # [3] discrete input bit read (count=64 - RX3i minimum)
+    # [3] 离散输入位读取（count=64 - RX3i 最小值）
     print("\n[3] read_discrete_input(offset=0, count=64, bit)")
     stats("discrete bit", bench(lambda: drv.read_discrete_input(0, 64, mode='bit'), rounds))
 
-    # [4] simulate real scan: 124 sequential blocks (offset 0..123, count=1)
-    #     mirrors device_id=30's 124-block serial scan
+    # [4] 模拟真实扫描：124 个串行块（offset 0..123, count=1）
+    # 模拟 device_id=30 的 124 块串行扫描
     print(f"\n[4] simulate 124 sequential blocks (offset 0..123, count=1)")
     t0 = time.perf_counter()
     errs = 0
@@ -98,7 +98,7 @@ def main():
     print(f"  total={total:.1f}ms  avg={total / 124:.2f}ms  errors={errs}")
     print(f"  >>> compare total to the 4-5s observed scan time <<<")
 
-    # [5] probe out-of-range address - exposes NACK / retry / timeout behavior
+    # [5] 探测越界地址 - 暴露 NACK / 重试 / 超时行为
     print(f"\n[5] probe out-of-range offset (read_register(99999, 1))")
     try:
         ms, r = timed(lambda: drv.read_register(99999, 1))

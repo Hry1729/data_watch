@@ -257,7 +257,7 @@ class HistoryService:
         start_dt, end_dt = self._validate_query_range(start_time, end_time)
         self._validate_query_points(points, var_seqs)
 
-        # Validate interval
+        # 验证间隔
         ALLOWED_INTERVALS = {"auto", "100ms", "500ms", "1s", "5s", "30s", "1m", "5m", "30m", "1h"}
         if interval not in ALLOWED_INTERVALS:
             raise ApiError(400, f"Unsupported interval: {interval}. Allowed: {ALLOWED_INTERVALS}")
@@ -269,7 +269,7 @@ class HistoryService:
 
         series_results = []
         for point in points:
-            # Force LAST aggregate for boolean types to avoid invalid interpolation like 0.5
+            # 对布尔类型强制使用 LAST 聚合，避免产生 0.5 这样的无效插值
             is_bool = str(point.var_type).lower() == "bool"
             current_aggregate = "last" if is_bool else aggregate
             agg_func = self._map_aggregate_function(current_aggregate)
@@ -289,9 +289,9 @@ class HistoryService:
                 ts_dt = self._coerce_datetime(ts)
                 if ts_dt:
                     normalized_value = self._normalize_point_value(point.var_type, value)
-                    # For chart data, we prefer actual null over "-" if possible, 
-                    # but _normalize_point_value returns "-" for None.
-                    # We'll convert it back to None if it's "-" to let frontend handle gaps.
+                    # 对于图表数据，我们更倾向于使用实际的 null 而非 "-"
+                    # 但 _normalize_point_value 对 None 返回 "-"
+                    # 如果值为 "-" 则转回 None，让前端处理缺口
                     if normalized_value == "-":
                         normalized_value = None
                     data_points.append([self._format_timestamp(ts_dt), normalized_value])
@@ -335,7 +335,7 @@ class HistoryService:
 
         # 构造时间过滤条件：如果有游标则使用游标，否则使用开始时间
         if cursor_ts and cursor_ts.strip():
-            # Validate and format cursor_ts to prevent SQL injection
+            # 验证并格式化 cursor_ts 以防止 SQL 注入
             cursor_dt = self._parse_datetime(cursor_ts.strip(), "cursorTs")
             safe_cursor = self._format_sql_timestamp(cursor_dt)
             time_filter = f"ts > {safe_cursor}"
@@ -345,7 +345,7 @@ class HistoryService:
 
         rows = []
 
-        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        # 当前写入器 schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
@@ -499,7 +499,7 @@ class HistoryService:
         database_name = self._resolve_current_tdengine_database()
         legacy_database_name = self._resolve_tdengine_database(device)
 
-        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
@@ -742,7 +742,7 @@ class HistoryService:
         end_sql = self._format_sql_timestamp(end_dt)
         td_interval = self._to_tdengine_interval(interval)
 
-        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
@@ -771,7 +771,7 @@ class HistoryService:
                     device.device_code, point.point_id, exc,
                 )
 
-        # Legacy fallback
+        # 旧版回退
         subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
             var_seq=point.var_seq,
@@ -1164,7 +1164,7 @@ class HistoryService:
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
 
-        # Current writer schema: device_data.<device_code> column <td_column_name>.
+        # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
             try:
                 child_table = self.tdengine.qualify_table(
@@ -1193,7 +1193,7 @@ class HistoryService:
                     device.device_code, point.point_id, exc,
                 )
 
-        # Legacy fallback: per-point subtables with `value` column
+        # 旧版回退：每点位子表带 `value` 列
         primary_subtable_name = self._resolve_point_subtable_name(
             device_code=device.device_code,
             var_seq=point.var_seq,
@@ -1292,7 +1292,7 @@ class HistoryService:
         return self._normalize_identifier(device_code).lower()
 
     def _resolve_point_subtable_name(self, device_code: str, var_seq: int | None, point_id: int) -> str:
-        """Legacy subtable naming (pre-v0.6): {device_code_lower}_{var_seq_or_point_id}"""
+        """旧版子表命名（v0.6 前）：{device_code_lower}_{var_seq_or_point_id}"""
         normalized_device_code = self._normalize_identifier(device_code).lower()
         suffix = int(var_seq) if var_seq not in (None, 0) else int(point_id)
         return f"{normalized_device_code}_{suffix}"
@@ -1342,7 +1342,7 @@ class HistoryService:
         return mapping.get(interval, interval)
 
     def _format_sql_timestamp(self, value: datetime) -> str:
-        """Format TDengine SQL timestamps as Unix milliseconds."""
+        """将 TDengine SQL 时间戳格式化为 Unix 毫秒。"""
         local_value = value if value.tzinfo is not None else value.replace(tzinfo=LOCAL_TZ)
         return str(int(local_value.timestamp() * 1000))
 
