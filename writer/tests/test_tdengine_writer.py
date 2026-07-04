@@ -7,6 +7,7 @@ The taosws connection is mocked; execute() runs the captured SQL synchronously.
 
 from __future__ import annotations
 
+import math
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -86,6 +87,27 @@ async def test_multi_table_missing_column_becomes_null():
     sql = executed[0]
     # 列并集 (ts, qc1, qc2)，第二行缺 qc2 → NULL
     assert "(1100, 3.0, NULL)" in sql
+
+
+@pytest.mark.asyncio
+async def test_multi_table_non_finite_value_becomes_null_without_poisoning_row():
+    writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})
+    rows = [
+        {
+            "child_table": "qc100",
+            "stable": "sdqc",
+            "device_code": "qc100",
+            "ts": 1000,
+            "columns": {"qc1": math.nan, "qc2": 2.0},
+        },
+    ]
+
+    results = await writer.write_multi_table(rows)
+
+    assert results[0][1] == LANDED
+    sql = executed[0]
+    assert "(1000, NULL, 2.0)" in sql
+    assert "nan" not in sql.lower()
 
 
 def _status_by_row(results) -> dict[int, str]:

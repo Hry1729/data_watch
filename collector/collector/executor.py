@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import math
 import time
 import traceback
 from datetime import datetime
@@ -375,6 +376,9 @@ class TaskExecutor:
                 protocol = mapped.get("protocol", "")
                 if protocol == "ge_srtp":
                     value = self._extract_mapped_ge_value(raw_values, mapped)
+                    self._log_ge_nonfinite_value(
+                        device_id, variable, raw_values, mapped, value
+                    )
                 else:
                     # 块级缓存：同一合并块只转一次 bytearray，避免每变量重建整块（O(N²)→O(N)）
                     prepared = None
@@ -451,6 +455,46 @@ class TaskExecutor:
         if data_type == "DWORD":
             return struct.unpack(">I", raw[offset:offset + 4])[0]
         return raw[offset]
+
+    @staticmethod
+    def _log_ge_nonfinite_value(
+        device_id: str,
+        variable: Any,
+        raw_values: Any,
+        mapping: Dict[str, Any],
+        value: Any,
+    ) -> None:
+        """记录 GE REAL/FLOAT 解出 NaN/Inf 时的原始 word 与字序对照，不改变采集值。"""
+        data_type = str(mapping.get("data_type", "")).upper()
+        if data_type not in ("REAL", "FLOAT"):
+            return
+        if not isinstance(value, float) or math.isfinite(value):
+            return
+
+        values = raw_values if isinstance(raw_values, list) else [raw_values]
+        word_offset = int(mapping.get("word_offset", 0))
+        if word_offset + 1 >= len(values):
+            return
+
+        low_word = int(values[word_offset]) & 0xFFFF
+        high_word = int(values[word_offset + 1]) & 0xFFFF
+        low_high = struct.unpack("<f", struct.pack("<HH", low_word, high_word))[0]
+        high_low = struct.unpack("<f", struct.pack("<HH", high_word, low_word))[0]
+        logger.warning(
+            "GE REAL/FLOAT decoded non-finite: device=%s variable=%s address=%s "
+            "data_type=%s block=%s word_offset=%s raw_words=[0x%04X,0x%04X] "
+            "low_high=%s high_low=%s",
+            device_id,
+            getattr(variable, "variable_id", "?"),
+            getattr(variable, "address", "?"),
+            data_type,
+            mapping.get("block_address", "?"),
+            word_offset,
+            low_word,
+            high_word,
+            low_high,
+            high_low,
+        )
 
     @staticmethod
     def _extract_mapped_ge_value(raw_values: Any, mapping: Dict[str, Any]) -> Any:

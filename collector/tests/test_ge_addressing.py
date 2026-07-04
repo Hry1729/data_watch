@@ -9,6 +9,9 @@ GE SRTP 地址解析与批量合并测试。
 """
 
 import struct
+import math
+from unittest.mock import patch
+
 import pytest
 
 from device.device import Device, Variable
@@ -689,6 +692,39 @@ class TestGEValueExtraction:
         }
         result = TaskExecutor._extract_mapped_ge_value(raw, mapping)
         assert abs(result - 10.5) < 0.01
+
+    def test_log_ge_nonfinite_value_reports_raw_words_and_word_order_candidates(self):
+        """GE REAL 解出 NaN 时记录原始 word 与两种字序候选，便于现场判断字序。"""
+        raw = [0x0000, 0x7FC0]  # low_high -> IEEE 754 NaN
+        mapping = {
+            "area": "R",
+            "block_address": "%R00100",
+            "word_offset": 0,
+            "word_length": 2,
+            "data_type": "REAL",
+        }
+        variable = Variable(variable_id="v1", address="%R100", data_type="REAL")
+        value = TaskExecutor._extract_mapped_ge_value(raw, mapping)
+
+        assert math.isnan(value)
+        with patch("collector.executor.logger.warning") as warning:
+            TaskExecutor._log_ge_nonfinite_value(
+                "qc100", variable, raw, mapping, value
+            )
+
+        warning.assert_called_once()
+        args = warning.call_args.args
+        assert "GE REAL/FLOAT decoded non-finite" in args[0]
+        assert args[1] == "qc100"
+        assert args[2] == "v1"
+        assert args[3] == "%R100"
+        assert args[4] == "REAL"
+        assert args[5] == "%R00100"
+        assert args[6] == 0
+        assert args[7] == 0x0000
+        assert args[8] == 0x7FC0
+        assert math.isnan(args[9])
+        assert math.isfinite(args[10])
 
     def test_extract_bool_from_discrete_block(self):
         """从离散块提取 BOOL"""

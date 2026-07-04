@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any
 from urllib.parse import quote_plus
@@ -487,9 +488,12 @@ class TDengineWriter:
         if raw is None:
             return "NULL"
         try:
-            return repr(float(raw))
+            value = float(raw)
         except (TypeError, ValueError):
             return "NULL"
+        if not math.isfinite(value):
+            return "NULL"
+        return repr(value)
 
     @staticmethod
     def _union_cols(rows: list[dict], idxs: list[int]) -> list[str]:
