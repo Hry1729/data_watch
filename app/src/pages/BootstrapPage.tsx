@@ -67,9 +67,9 @@ function SectionCard({
     <Card
       style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}
     >
-      <CardHeader className="flex flex-row items-center justify-between gap-3 pb-3">
+      <CardHeader className="flex flex-row items-center justify-between gap-3">
         <div>
-          <CardTitle className="text-base font-semibold text-foreground">{title}</CardTitle>
+          <CardTitle>{title}</CardTitle>
           <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
         </div>
         <Badge variant={STATUS_VARIANT[status]} className="shrink-0">{statusLabel}</Badge>

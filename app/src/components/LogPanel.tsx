@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useRef } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import type { LogLine, LogLevel, WsStatus } from "@/types";
@@ -14,7 +15,7 @@ const LEVEL_CLASS: Record<LogLevel, string> = {
   ERROR: "bg-destructive-soft text-destructive",
 };
 
-// ─── Props ────────────────────────────────────────────────────────────────────
+// ─── 属性 Props ────────────────────────────────────────────────────────────────
 
 export interface LogPanelProps {
   lines: LogLine[];
@@ -44,19 +45,14 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
 
     return (
       // ref 指向面板根节点，供父组件 scrollIntoView
-      <div
+      <Card
         ref={ref}
-        className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-card border border-border"
-        style={{
-          borderRadius: 12,
-        }}
+        className="h-full min-h-0 w-full"
       >
         {/* 面板头部 */}
-        <div
-          className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b"
-        >
-          <span className="text-sm font-semibold text-foreground">实时日志</span>
-
+        <CardHeader>
+          <CardTitle>实时日志</CardTitle>
+          <CardAction>
           <div className="flex items-center gap-3">
             {/* 自动滚动 */}
             <div className="flex items-center gap-1.5">
@@ -67,7 +63,7 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
               />
               <Label
                 htmlFor="log-auto-scroll"
-                className="text-xs text-muted-foreground cursor-pointer"
+                className="text-xs text-muted-foreground"
               >
                 自动滚动
               </Label>
@@ -84,7 +80,8 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
               <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
             </Button>
           </div>
-        </div>
+          </CardAction>
+        </CardHeader>
 
         {/* 断线 Banner（wsStatus !== "connected" 时显示） */}
         {wsStatus !== "connected" && (
@@ -100,9 +97,9 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
         )}
 
         {/* 日志滚动区域 */}
-        <div
+        <CardContent
           ref={scrollRef}
-          className="min-h-0 flex-1 overflow-y-auto px-3 py-2 space-y-0.5"
+          className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2"
           style={{ fontFamily: "monospace", fontSize: 13 }}
         >
           {lines.length === 0 ? (
@@ -127,8 +124,8 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
               </div>
             ))
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
     );
   }
 );

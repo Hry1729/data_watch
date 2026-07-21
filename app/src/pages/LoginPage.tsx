@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { agentClient } from "@/lib/agent-client";
 import { backendClient } from "@/lib/backend-client";
+import { buildAllowedPaths, pickFallbackPath } from "@/lib/navigation-access";
 import type { AppError } from "@/types";
 
 // Agent 地址为本机固定值，不可配置（spec §1.2）
@@ -42,11 +43,31 @@ export function LoginPage() {
       const { token: backendToken, refreshToken: backendRefreshToken } =
         await backendClient.login(username, password);
 
-      // Step 3：写入 AuthContext（仅内存，不持久化）
-      login({ agentToken, backendToken, backendRefreshToken });
+      // Step 3：拉取用户信息与可见菜单（按角色过滤）；失败时仅保留桌面专有页
+      let user;
+      let allowedPaths = buildAllowedPaths([]);
+      try {
+        const [userInfo, menus] = await Promise.all([
+          backendClient.userInfo(backendToken),
+          backendClient.currentUserMenus(backendToken),
+        ]);
+        user = userInfo;
+        allowedPaths = buildAllowedPaths(menus, userInfo.roles);
+      } catch {
+        // 权限接口失败不阻断登录，侧栏只显示桌面专有页
+      }
 
-      // Step 4：跳转总览页
-      navigate("/", { replace: true });
+      // Step 4：写入 AuthContext（仅内存，不持久化）
+      login({
+        agentToken,
+        backendToken,
+        backendRefreshToken,
+        user,
+        allowedPaths,
+      });
+
+      // Step 5：跳转有权限的首页
+      navigate(pickFallbackPath(allowedPaths), { replace: true });
 
     } catch (err) {
       const e = err as AppError;

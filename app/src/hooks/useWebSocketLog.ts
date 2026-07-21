@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import type { LogLevel, LogLine, WsStatus } from "@/types";
 
 // ─── WS 工厂（动态 import 确保 mock 不进入生产包）────────────────────────────
@@ -85,7 +86,7 @@ const MAX_LINES = 50;
 /** 非主动断开后的重连等待时间（ms） */
 const RECONNECT_DELAY_MS = 5000;
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// ─── 钩子 Hook ─────────────────────────────────────────────────────────────────
 
 export interface UseWebSocketLogResult {
   lines: LogLine[];
@@ -99,6 +100,7 @@ export function useWebSocketLog(
   enabled = true
 ): UseWebSocketLogResult {
   const { auth } = useAuth();
+  const { refreshVersion } = usePageRefresh();
   const agentToken = auth?.agentToken ?? null;
 
   const [lines,    setLines]    = useState<LogLine[]>([]);
@@ -174,7 +176,7 @@ export function useWebSocketLog(
       }
       ws = null;
     };
-  }, [name, agentToken, enabled]); // agentToken 变化时重建连接
+  }, [name, agentToken, enabled, refreshVersion]); // agentToken 变化时重建连接
 
   return { lines, wsStatus, clear };
 }

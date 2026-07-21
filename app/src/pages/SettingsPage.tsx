@@ -1,21 +1,18 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowLeft, RotateCcw, Save } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { agentClient } from "@/lib/agent-client";
 import { backendClient } from "@/lib/backend-client";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { normalizeSettingsTab } from "@/components/layout/settings-tabs";
 import type { AppError, ConnectionConfig, DbConfig } from "@/types";
 
 const ZH_TO_THEME = { "浅色": "light", "深色": "dark", "跟随系统": "system" } as const;
@@ -47,7 +44,7 @@ interface FormState {
 
 /**
  * 用户是否修改了对应数据库的密码。
- * 未修改时提交 "" 通知 Agent 保留原密码（见 buildPayload TODO）。
+ * 未修改时不发送 password 字段，由 Agent 保留原密码。
  */
 interface PasswordDirty {
   redis:    boolean;
@@ -234,9 +231,9 @@ function DbCard({
 }) {
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-      <CardHeader className="pb-3 pt-4 px-5">
+      <CardHeader>
         <div className="flex items-center gap-3">
-          <CardTitle className="text-sm font-semibold text-foreground">{title}</CardTitle>
+          <CardTitle>{title}</CardTitle>
           <StatusBadge status={status} />
           <div className="ml-auto">
             <Button
@@ -251,9 +248,9 @@ function DbCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="px-5 pb-5">
+      <CardContent className="space-y-4">
         {error && (
-          <p className="text-xs text-destructive mb-3" role="alert">
+          <p className="text-xs text-destructive" role="alert">
             {error}
           </p>
         )}
@@ -332,7 +329,7 @@ function DatabaseTab({
   }
 
   return (
-    <div className="space-y-4">
+    <>
       {/* Redis */}
       <DbCard
         title="Redis 实时缓冲"
@@ -392,7 +389,7 @@ function DatabaseTab({
           <Input defaultValue="sd{type}" className="w-32 h-8 text-sm font-mono" style={{ borderColor: "var(--border)" }} />
         </div>
       </DbCard>
-    </div>
+    </>
   );
 }
 
@@ -404,10 +401,10 @@ function BasicTab() {
 
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-      <CardHeader className="pb-2 pt-4 px-5">
-        <CardTitle className="text-sm font-semibold text-foreground">基础设置</CardTitle>
+      <CardHeader>
+        <CardTitle>基础设置</CardTitle>
       </CardHeader>
-      <CardContent className="px-5 pb-5 space-y-5">
+      <CardContent className="space-y-4">
         <div className="flex flex-col gap-2">
           <Label className="text-xs text-muted-foreground">外观主题</Label>
           <SegmentedGroup
@@ -436,10 +433,10 @@ function CollectorTab({
 }) {
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-      <CardHeader className="pb-2 pt-4 px-5">
-        <CardTitle className="text-sm font-semibold text-foreground">Collector 配置</CardTitle>
+      <CardHeader>
+        <CardTitle>Collector 配置</CardTitle>
       </CardHeader>
-      <CardContent className="px-5 pb-5 space-y-4">
+      <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           <div className="flex flex-col gap-1">
             <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
@@ -497,10 +494,10 @@ function WriterTab({
 }) {
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-      <CardHeader className="pb-2 pt-4 px-5">
-        <CardTitle className="text-sm font-semibold text-foreground">Writer 配置</CardTitle>
+      <CardHeader>
+        <CardTitle>Writer 配置</CardTitle>
       </CardHeader>
-      <CardContent className="px-5 pb-5 space-y-4">
+      <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           <div className="flex flex-col gap-1">
             <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
@@ -564,10 +561,10 @@ function SaveCard({
 }) {
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
-      <CardHeader className="pb-2 pt-4 px-5">
-        <CardTitle className="text-sm font-semibold text-foreground">保存策略</CardTitle>
+      <CardHeader>
+        <CardTitle>保存策略</CardTitle>
       </CardHeader>
-      <CardContent className="px-5 pb-5">
+      <CardContent className="space-y-4">
         <div className="flex items-center gap-3 flex-wrap">
           <Button variant="default" size="sm" className="gap-1.5" disabled={saving} onClick={onSave}>
             <Save className="h-3.5 w-3.5" />
@@ -599,7 +596,10 @@ function SaveCard({
 export function SettingsPage() {
   const navigate = useNavigate();
   const { auth, logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
   const backendToken = auth?.backendToken ?? null;
+  const [searchParams] = useSearchParams();
+  const activeTab = normalizeSettingsTab(searchParams.get("tab"));
 
   const [configLoading, setConfigLoading] = useState(true);
   const [configError,   setConfigError]   = useState<string | null>(null);
@@ -609,13 +609,18 @@ export function SettingsPage() {
   // collector 运行参数（stream_maxlen，存 MySQL，走 backend API，独立于 agentClient 连接配置）
   const [streamMaxlen,       setStreamMaxlen]      = useState("50000");
   const [streamMaxlenSaving, setStreamMaxlenSaving] = useState(false);
+  const formDirtyRef = useRef(false);
+  const streamMaxlenDirtyRef = useRef(false);
 
   // 页面进入时加载配置
   useEffect(() => {
     agentClient
       .getConfig()
       .then((cfg) => {
-        setForm(configToForm(cfg));
+        if (!formDirtyRef.current) {
+          setForm(configToForm(cfg));
+          setPasswordDirty({ redis: false, mysql: false, tdengine: false });
+        }
         setConfigError(null);
       })
       .catch((err: unknown) => {
@@ -625,7 +630,7 @@ export function SettingsPage() {
         setConfigError("加载配置失败，当前显示默认值");
       })
       .finally(() => setConfigLoading(false));
-  }, [logout]);
+  }, [logout, refreshVersion]);
 
   // 加载 collector 运行参数（stream_maxlen）
   useEffect(() => {
@@ -633,7 +638,7 @@ export function SettingsPage() {
     let active = true;
     backendClient
       .getCollectorConfig(backendToken)
-      .then((cfg) => { if (active) setStreamMaxlen(String(cfg.streamMaxlen)); })
+      .then((cfg) => { if (active && !streamMaxlenDirtyRef.current) setStreamMaxlen(String(cfg.streamMaxlen)); })
       .catch((err) => {
         if (!active) return;
         const e = err as AppError;
@@ -641,7 +646,7 @@ export function SettingsPage() {
         // 其他错误保留默认 50000
       });
     return () => { active = false; };
-  }, [backendToken, logout]);
+  }, [backendToken, logout, refreshVersion]);
 
   // Esc 键返回
   useEffect(() => {
@@ -682,6 +687,8 @@ export function SettingsPage() {
     setSaving(true);
     try {
       await agentClient.putConfig(buildPayload());
+      formDirtyRef.current = false;
+      setPasswordDirty({ redis: false, mysql: false, tdengine: false });
       toast.success("配置已保存");
     } catch (err) {
       const e = err as AppError;
@@ -704,6 +711,7 @@ export function SettingsPage() {
     try {
       const cfg = await backendClient.updateCollectorConfig(backendToken, value);
       setStreamMaxlen(String(cfg.streamMaxlen));
+      streamMaxlenDirtyRef.current = false;
       toast.success("Stream 上限已保存，重启 Collector 后生效");
     } catch (err) {
       const e = err as AppError;
@@ -721,6 +729,8 @@ export function SettingsPage() {
     // 第一步：保存配置
     try {
       await agentClient.putConfig(buildPayload());
+      formDirtyRef.current = false;
+      setPasswordDirty({ redis: false, mysql: false, tdengine: false });
     } catch (err) {
       const e = err as AppError;
       if (e.type === "unauthorized") { logout(); return; }
@@ -738,7 +748,7 @@ export function SettingsPage() {
       } else if (metrics.status === "stopped") {
         toast(`配置已保存，${label} 当前已停止，配置将在下次启动时生效`);
       } else {
-        // crashed | unknown
+        // 崩溃 | 未知
         toast.warning(`配置已保存，但无法确认 ${label} 状态，请到模块页手动重启`);
       }
     } catch (err) {
@@ -751,6 +761,7 @@ export function SettingsPage() {
   }
 
   function markPasswordDirty(db: keyof PasswordDirty) {
+    formDirtyRef.current = true;
     setPasswordDirty((d) => ({ ...d, [db]: true }));
   }
 
@@ -766,20 +777,6 @@ export function SettingsPage() {
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
     <div className="px-6 py-6 space-y-6" style={{ maxWidth: 1200 }}>
-      {/* 顶部返回行 */}
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => navigate(-1)}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回
-        </Button>
-        <h1 className="text-lg font-semibold text-foreground">设置</h1>
-      </div>
-
       {/* 加载失败 inline 提示（非阻塞：表单仍可编辑） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
@@ -787,48 +784,41 @@ export function SettingsPage() {
         </p>
       )}
 
-      {/* 内部标签导航 */}
-      <Tabs defaultValue="database">
-        <TabsList className="mb-5">
-          <TabsTrigger value="basic">基础</TabsTrigger>
-          <TabsTrigger value="database">数据库</TabsTrigger>
-          <TabsTrigger value="collector">Collector</TabsTrigger>
-          <TabsTrigger value="writer">Writer</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab}>
 
-        <TabsContent value="basic">
+        <TabsContent value="basic" className="space-y-4">
           <BasicTab />
         </TabsContent>
 
-        <TabsContent value="database">
+        <TabsContent value="database" className="space-y-4">
           <DatabaseTab
             redis={form.redis}
             mysql={form.mysql}
             tdengine={form.tdengine}
-            onRedisChange={(f) => setForm((s) => ({ ...s, redis: f }))}
-            onMysqlChange={(f) => setForm((s) => ({ ...s, mysql: f }))}
-            onTdengineChange={(f) => setForm((s) => ({ ...s, tdengine: f }))}
+            onRedisChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, redis: f })); }}
+            onMysqlChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, mysql: f })); }}
+            onTdengineChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, tdengine: f })); }}
             passwordDirty={passwordDirty}
             onPasswordDirty={markPasswordDirty}
           />
         </TabsContent>
 
-        <TabsContent value="collector">
+        <TabsContent value="collector" className="space-y-4">
           <CollectorTab
             form={form.collector}
-            onChange={(f) => setForm((s) => ({ ...s, collector: f }))}
+            onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, collector: f })); }}
           />
-          <Card className="bg-card border border-border" style={{ borderRadius: 12 }}>
-            <CardHeader className="pb-0 pt-2 px-5">
-              <CardTitle className="text-sm font-semibold text-foreground">Collector 运行参数</CardTitle>
+          <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+            <CardHeader>
+              <CardTitle>Collector 运行参数</CardTitle>
             </CardHeader>
-            <CardContent className="px-5 pb-5 pt-0">
-              <p className="text-xs text-muted-foreground mt-2 mb-3">修改后需重启 Collector 后生效。</p>
+            <CardContent className="space-y-4">
+              <p className="text-xs text-muted-foreground">修改后需重启 Collector 后生效。</p>
               <div className="flex items-end gap-3">
                 <FieldRow
                   label="Stream 上限（每 shard 条数）"
                   value={streamMaxlen}
-                  onChange={setStreamMaxlen}
+                  onChange={(value) => { streamMaxlenDirtyRef.current = true; setStreamMaxlen(value); }}
                   width="w-32"
                 />
                 <Button
@@ -846,10 +836,10 @@ export function SettingsPage() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="writer">
+        <TabsContent value="writer" className="space-y-4">
           <WriterTab
             form={form.writer}
-            onChange={(f) => setForm((s) => ({ ...s, writer: f }))}
+            onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, writer: f })); }}
           />
         </TabsContent>
       </Tabs>

@@ -10,12 +10,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { agentClient } from "@/lib/agent-client";
 import type { AppError, ModuleStatus } from "@/types";
 
 const POLL_INTERVAL = 3_000; // 3 秒
 
-// ─── useModuleStatus ──────────────────────────────────────────────────────────
+// ─── useModuleStatus 模块状态 ──────────────────────────────────────────────────────
 
 export interface UseModuleStatusResult {
   data: ModuleStatus | null;
@@ -28,6 +29,7 @@ export function useModuleStatus(
   name: "collector" | "writer"
 ): UseModuleStatusResult {
   const { logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
 
   const [data,    setData]    = useState<ModuleStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,12 +88,12 @@ export function useModuleStatus(
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [doFetch]);
+  }, [doFetch, refreshVersion]);
 
   return { data, loading, error, refresh: doFetch };
 }
 
-// ─── useProcessControl ────────────────────────────────────────────────────────
+// ─── useProcessControl 进程控制 ────────────────────────────────────────────────────
 
 /** 需要确认的操作 */
 export type ControlAction = "stop" | "restart";

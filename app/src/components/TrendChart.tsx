@@ -31,6 +31,8 @@ export interface TrendChartProps {
   data?: RatePoint[];
   /** 当前值（速率卡同源）；null 时显示 -- */
   current?: number | null;
+  /** 填充父容器高度；仅用于监控页的自适应布局。 */
+  fillHeight?: boolean;
 }
 
 interface TooltipPayloadItem {
@@ -103,6 +105,7 @@ export function TrendChart({
   state,
   data = [],
   current,
+  fillHeight = false,
 }: TrendChartProps) {
   const gradientId = `trend-grad-${useId().replace(/:/g, "")}`;
   const [rangeMinutes, setRangeMinutes] = useState<RangeMinutes>(10);
@@ -117,12 +120,14 @@ export function TrendChart({
 
   return (
     <Card
-      className="w-full border border-border"
-      style={{ borderRadius: 12 }}
+      className={[
+        "w-full",
+        fillHeight ? "h-full" : "",
+      ].join(" ")}
     >
-      <CardHeader className="pb-1 pt-2 px-5">
+      <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <CardTitle className="text-sm font-semibold text-foreground">{title}</CardTitle>
+          <CardTitle>{title}</CardTitle>
           <div className="flex flex-wrap items-center justify-end gap-3">
             <div className="text-right">
               {state === "ready" && displayCurrent != null ? (
@@ -161,9 +166,17 @@ export function TrendChart({
         </div>
       </CardHeader>
 
-      <CardContent className="px-5 pb-1 pt-1">
+      <CardContent
+        className={[
+          "px-5 pb-1 pt-1",
+          fillHeight ? "flex min-h-0 flex-1 flex-col" : "",
+        ].join(" ")}
+      >
         {/* 图表区域 */}
-        <div className="relative" style={{ height: 180 }}>
+        <div
+          className={["relative", fillHeight ? "min-h-0 flex-1" : ""].join(" ")}
+          style={fillHeight ? undefined : { height: 180 }}
+        >
           {hasSeries ? (
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={visibleData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>

@@ -1,91 +1,80 @@
 # Data Watch Console
 
-Data Watch Console is the desktop operations console for DataWatch. It is built with Tauri, React, TypeScript, Tailwind CSS, and shadcn/ui.
+Data Watch Console 是 DataWatch 的桌面运维与设备监控控制台，技术栈为 Tauri + React + TypeScript + Tailwind + shadcn/ui。
 
-The app does not start collector or writer directly. Process control, configuration, health checks, and log tailing are handled by DataWatch Agent.
+应用不直接拉起 collector / writer。进程管控、配置、健康检查与日志尾随由本机 DataWatch Agent 完成；业务数据、工作台、设备与系统管理走中心 Backend。
+
+更完整的设计说明见：`docs/02-模块设计/app/README.md`。
 
 ## Runtime Dependencies
 
-Local development expects these services:
-
 | Service | Default URL | Purpose |
 |---|---|---|
-| DataWatch Agent | `http://127.0.0.1:7070` | Bootstrap, Agent login, process control, config, health checks, log WebSocket |
-| Backend | `http://127.0.0.1:8000` | Backend login and later business APIs |
+| DataWatch Agent | `http://127.0.0.1:7070` | Bootstrap、Agent 登录、进程管控、配置、健康检查、日志 WebSocket |
+| Backend | 运行期由 agent `runtime-config` 注入 | 业务 API、工作台、设备监控、系统管理、模块指标 |
 
-Agent HTTP calls go through the Tauri Rust proxy command `agent_request`, so they are not affected by WebView CORS.
-
-Backend calls currently use browser `fetch` directly from the WebView, so Backend must allow the Tauri dev origin.
+Agent / Backend 的 HTTP 均经 Tauri Rust 代理（`agent_request` / `backend_request` / `backend_download`），不受 WebView CORS 限制。
 
 ## Local Development
 
-Create or update `app/.env.development`:
+`app/.env.development` 示例：
 
 ```env
 VITE_USE_MOCK=false
 VITE_BACKEND_URL=http://127.0.0.1:8000
 ```
 
-Then start services in this order:
+启动顺序：
 
 ```powershell
-# 1. Start Backend separately and verify /api/auth/login is reachable.
+# 1. 启动 Backend，确认 /api/auth/login 可用
 
-# 2. Start Agent.
+# 2. 启动 Agent
 cd D:\python\device_alarm\data_watch\agent
 .\.venv\Scripts\python.exe main.py
 
-# 3. Start the desktop app.
+# 3. 启动桌面端
 cd D:\python\device_alarm\data_watch\app
 pnpm tauri dev
 ```
 
-In Tauri dev mode the WebView origin is usually `http://localhost:1420`. The packaged desktop app does not use port `1420`.
+Tauri 开发态 WebView 源一般为 `http://localhost:1420`；打包后的桌面应用不再使用该端口。
 
 ## Auth Flow
 
-Login is a two-step flow:
+两步登录：
 
-1. `POST /auth/login` to Agent, returning `agentToken`.
-2. `POST /api/auth/login` to Backend, returning `backendToken` and `backendRefreshToken`.
+1. Agent `POST /auth/login` → `agentToken`
+2. Backend `POST /api/auth/login` → `backendToken` / `backendRefreshToken`
 
-Both calls must succeed before entering the main app.
+两者都成功后，再拉取：
 
-Tokens are stored in React memory only. They are not written to `localStorage`, `sessionStorage`, disk, or any config file.
+- `GET /api/user/info`（含 `roles`）
+- 当前用户菜单树
 
-After login, `AuthContext.login()` also calls `setAgentAuthToken(agentToken)`. This keeps the Agent token available to `agent-client.ts`, so protected Agent APIs such as `/viewer/processes/{name}/metrics` include the Bearer token even when page hooks call `agentClient` without passing a token explicitly. `logout()` clears this in-memory token.
+并计算 `allowedPaths`（菜单映射 + 桌面专有页 + 管理员控制台），写入内存态 `AuthStore`（不落盘）。
 
-## Backend CORS Requirement
+`AuthContext.login()` 会调用 `setAgentAuthToken(agentToken)`，供 agent-client 在 hooks 未显式传 token 时带上 Bearer。
 
-Because Backend requests use WebView `fetch`, Backend must return CORS headers on both preflight and actual responses.
+### 可见性规则（摘要）
 
-For local development, allow at least:
+- **桌面专有**：`/collection/collector`、`/collection/writer`、`/settings` 任意登录用户可见
+- **管理员附加**：`R_SUPER` / `R_ADMIN` 额外可见 `/dashboard/console`
+- 其余页面按后端菜单 component → 桌面 path 映射过滤
 
-```text
-http://localhost:1420
-http://127.0.0.1:1420
-```
+## Navigation Shell
 
-If Backend logs show:
-
-```text
-OPTIONS /api/auth/login 204
-POST /api/auth/login 200
-```
-
-but the app still displays "后端服务不可达", the most likely cause is that the actual `POST` response is missing `Access-Control-Allow-Origin`. PowerShell requests do not enforce CORS, so always verify with the WebView or a browser request that includes an `Origin` header.
-
-For TurboAPI/custom ASGI dispatch, make sure CORS headers are added by the custom response path too, not only by framework middleware.
+- 左侧分组侧栏（可折叠，状态持久化）
+- 顶栏：页面标题、刷新、连接状态、设置、主题
+- 进入 **设置** 时，左侧导航替换为设置分类（基础 / 数据库 / Collector / Writer）；「返回」后还原业务导航
 
 ## WebSocket Logs
-
-Log tailing connects directly to:
 
 ```text
 ws://127.0.0.1:7070/viewer/logs/{collector|writer}/tail
 ```
 
-The token is not placed in the URL. After `open`, the client immediately sends the first frame:
+打开后首帧：
 
 ```json
 { "type": "auth", "token": "<agentToken>" }
@@ -93,49 +82,26 @@ The token is not placed in the URL. After `open`, the client immediately sends t
 
 ## Module Metrics and Charts
 
-Collector / Writer business metrics are fetched from Backend module-monitor APIs. Agent remains responsible only for process and OS-level status.
-
-The chart cards use Recharts and support `empty`, `loading`, `error`, and `ready` states. In the ready state, the current value is shown beside the title, and the chart can switch between 1 minute, 5 minutes, and 10 minutes.
+Collector / Writer 业务指标来自 Backend module-monitor；Agent 负责进程与 OS 级状态。图表支持 empty / loading / error / ready。
 
 ## Top Connection Health
 
-The top-right Redis / MySQL / TDengine status dots poll Agent every 10 seconds:
-
-```text
-GET /viewer/health
-```
-
-The status colors are:
-
-| Color | Status |
-|---|---|
-| Green | connected |
-| Blue | checking |
-| Red | disconnected |
-| Gray | unknown |
-
-Polling pauses while the WebView is hidden and refreshes immediately when it becomes visible again. The settings page "测试" buttons still use `POST /admin/health/check` for one-off checks.
+顶栏 Redis / MySQL / TDengine 状态点每 10s 轮询 Agent `GET /viewer/health`。WebView 隐藏时暂停，可见时立即刷新。设置页「测试连接」走 `POST /admin/health/check`。
 
 ## Password Config Contract
 
-`GET /admin/config` must not return database password fields.
-
-`PUT /admin/config` uses partial update semantics for passwords:
-
-- no `password` key: keep the existing password
-- non-empty `password`: update the password
-- empty string password is invalid
-
-The settings page only sends a password when the user edits that field.
+- `GET /admin/config` 不得返回数据库密码明文
+- `PUT /admin/config`：省略 `password` 表示保持原密码；非空则更新；空字符串非法
+- 设置页仅在用户编辑密码字段时提交 password
 
 ## Common Issues
 
 | Symptom | Likely Cause | Check |
 |---|---|---|
-| Agent error page | Agent is not running or not listening on `127.0.0.1:7070` | `Invoke-RestMethod http://127.0.0.1:7070/bootstrap/status` |
-| Backend unreachable after Backend logs `POST 200` | Missing CORS headers on actual Backend response | Check `Access-Control-Allow-Origin` on the `POST` response |
-| Login succeeds then returns to login page | Protected Agent API returned 401 | Confirm `setAgentAuthToken(agentToken)` is called after login and Agent JWT is valid |
-| Correct password works in PowerShell but not in app | Backend URL or CORS mismatch | Check `VITE_BACKEND_URL` and allowed origins |
+| Agent 错误页 | Agent 未监听 `127.0.0.1:7070` | `Invoke-RestMethod http://127.0.0.1:7070/bootstrap/status` |
+| 登录后立刻退回登录 | 受保护 Agent API 401 | 确认登录后调用了 `setAgentAuthToken` |
+| 超管没有「控制台」 | 未重新登录 / 角色非 R_SUPER\|R_ADMIN | 看 `user.roles` 与 `allowedPaths` |
+| 设置顶栏找不到分类 | 已改为侧栏设置菜单 | 进入设置后看左侧「基础/数据库/…」 |
 
 ## Build
 
@@ -145,4 +111,4 @@ pnpm exec tsc --noEmit
 pnpm tauri build
 ```
 
-The product name is `Data Watch Console`.
+产品名：`Data Watch Console`。

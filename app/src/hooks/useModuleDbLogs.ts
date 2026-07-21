@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { backendClient, type LogListQuery } from "@/lib/backend-client";
 import type { AppError, WriterLogRow } from "@/types";
 
@@ -25,6 +26,7 @@ export function useModuleDbLogs(
   enabled = true
 ): UseModuleDbLogsResult {
   const { auth, logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
   const backendToken = auth?.backendToken ?? null;
 
   // 保存最新 logout，避免拉取 effect 捕获到旧闭包（logout 身份每次渲染变化）
@@ -80,7 +82,7 @@ export function useModuleDbLogs(
     };
     // logout 经 ref 调用，故意不入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, backendToken, serviceName, logType, tick]);
+  }, [enabled, backendToken, serviceName, logType, refreshVersion, tick]);
 
   return { rows, loading, error, refresh };
 }

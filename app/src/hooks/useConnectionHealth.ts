@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { agentClient } from "@/lib/agent-client";
 import type { AppError, ConnectionHealth } from "@/types";
 
@@ -23,6 +24,7 @@ export interface UseConnectionHealthResult {
 
 export function useConnectionHealth(): UseConnectionHealthResult {
   const { logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
 
   const [data, setData] = useState<ConnectionHealth | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +87,7 @@ export function useConnectionHealth(): UseConnectionHealthResult {
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [doFetch]);
+  }, [doFetch, refreshVersion]);
 
   return { data, loading, error, refresh: doFetch };
 }

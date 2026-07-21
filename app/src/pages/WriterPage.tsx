@@ -75,7 +75,7 @@ export function WriterPage() {
   } = useModuleDbLogs("writer", "storage");
 
   return (
-    <div className="px-6 py-6 space-y-4" style={{ maxWidth: 1400 }}>
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 py-4">
       {showError && (
         <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}
@@ -83,7 +83,7 @@ export function WriterPage() {
       )}
 
       {/* ④ 指标卡片：3 张接真，速率卡占位 */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid shrink-0 grid-cols-5 gap-3">
         <MetricCard label="Stream Lag" value={metrics ? String(metrics.streamLagTotal) : "—"} tone={(metrics?.streamLagTotal ?? 0) >= 5000 ? "warning" : "normal"} />
         <MetricCard label="PEL Pending" value={metrics ? String(metrics.pelPendingTotal) : "—"} tone={(metrics?.pelPendingTotal ?? 0) >= 5000 ? "warning" : "normal"} />
         <MetricCard label="Redis 读取" value={rateCardValue(wRate)} />
@@ -92,15 +92,15 @@ export function WriterPage() {
       </div>
 
       {/* ⑤ 主体：左侧 Stream 表 + 趋势图 / 右侧日志 */}
-      <div className="grid grid-cols-5 gap-4 items-stretch" style={{ height: 595 }}>
+      <div className="grid min-h-0 flex-1 overflow-hidden grid-cols-5 items-stretch gap-4">
         {/* 左侧（3/5） */}
-        <div className="col-span-3 min-h-0 space-y-4">
-          <Card className="bg-card border border-border" style={{ height: 260, borderRadius: 12 }}>
-            <CardHeader className="pb-0 pt-2 px-5">
-              <CardTitle className="text-sm font-semibold text-foreground">Stream 消费任务</CardTitle>
+        <div className="col-span-3 grid min-h-0 grid-rows-[260px_minmax(0,1fr)] gap-4 overflow-hidden p-px">
+          <Card className="flex h-full min-h-0 flex-col">
+            <CardHeader>
+              <CardTitle>Stream 消费任务</CardTitle>
             </CardHeader>
-            <CardContent className="px-5 pb-4 pt-0">
-              <div className="max-h-[176px] overflow-y-auto">
+            <CardContent className="flex min-h-0 flex-1 flex-col">
+              <div className="h-full overflow-y-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -148,6 +148,7 @@ export function WriterPage() {
           </Card>
 
           <TrendChart
+            fillHeight
             title="TDengine 入库趋势"
             unit={wLandedRate?.unit ?? "rows/min"}
             state={rateTrendState(wLandedRate, ratesLoading, ratesError)}
@@ -157,13 +158,13 @@ export function WriterPage() {
         </div>
 
         {/* 右侧日志面板（2/5）：实时 WS / 历史 DB 切换，默认实时 */}
-        <div className="col-span-2 flex min-h-0 overflow-hidden self-start" style={{ height: 560 }}>
+        <div className="col-span-2 flex h-full min-h-0 overflow-hidden">
           <Tabs defaultValue="realtime" className="flex h-full w-full flex-col gap-2">
             <TabsList className="w-full">
               <TabsTrigger value="realtime">实时</TabsTrigger>
               <TabsTrigger value="history">历史</TabsTrigger>
             </TabsList>
-            <TabsContent value="realtime" className="flex min-h-0 overflow-hidden">
+            <TabsContent value="realtime" className="flex min-h-0 overflow-hidden p-px">
               <LogPanel
                 lines={lines}
                 wsStatus={wsStatus}
@@ -172,7 +173,7 @@ export function WriterPage() {
                 onClear={clear}
               />
             </TabsContent>
-            <TabsContent value="history" className="flex min-h-0 overflow-hidden">
+            <TabsContent value="history" className="flex min-h-0 overflow-hidden p-px">
               <ModuleDbLogPanel
                 rows={dbRows}
                 loading={dbLoading}

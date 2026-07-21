@@ -15,6 +15,7 @@ import type {
   ModuleStatus,
   ModuleStatusValue,
 } from "@/types";
+import type { MenuTreeItem, RoleGrant, RoleListItem, UserListItem } from "@/types/system-management";
 
 // ─── 辅助 ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ const _passwords: Record<"redis" | "mysql" | "tdengine", string> = {
   tdengine: "mock-tdengine-pass",
 };
 
-// ─── mockAgent ────────────────────────────────────────────────────────────────
+// ─── mockAgent 模拟代理 ────────────────────────────────────────────────────────────
 
 export const mockAgent: AgentClient = {
 
@@ -163,7 +164,70 @@ export const mockAgent: AgentClient = {
   },
 };
 
-// ─── mockBackend ──────────────────────────────────────────────────────────────
+// ─── mockBackend 模拟后端 ──────────────────────────────────────────────────────────
+
+let _mockDebugUntil = 0;
+
+const MOCK_SYSTEM_LOGS = Array.from({ length: 36 }, (_, index) => {
+  const levels = ["INFO", "INFO", "WARN", "INFO", "ERROR"] as const;
+  const types = ["system", "collect", "storage", "operation", "auth"] as const;
+  const level = levels[index % levels.length];
+  const type = types[index % types.length];
+  return {
+    id: 1000 - index,
+    kind: type === "operation" ? "operation" as const : "system" as const,
+    time: new Date(Date.now() - index * 12 * 60_000).toISOString(),
+    level,
+    type,
+    source: type === "collect" ? "collector" : type === "storage" ? "writer" : "backend",
+    serviceName: type === "collect" ? "collector" : type === "storage" ? "writer" : "backend",
+    moduleName: type === "operation" ? "设备管理" : undefined,
+    actionName: type === "operation" ? "更新设备" : undefined,
+    operatorName: type === "operation" ? "admin" : undefined,
+    deviceCode: index % 3 === 0 ? "PLC-S7-01" : undefined,
+    content: level === "ERROR" ? "TDengine batch write failed, retry scheduled" : level === "WARN" ? "采集周期出现短时抖动" : "服务运行正常，周期任务执行完成",
+    resultStatus: type === "operation" ? "success" : undefined,
+    durationMs: 18 + index * 3,
+    requestId: `req-${1000 - index}`,
+    traceId: index % 4 === 0 ? `trace-${1000 - index}` : undefined,
+    detail: { sample: true, sequence: index },
+    exceptionStack: level === "ERROR" ? "MockError: write timeout\n    at batch_writer.flush" : undefined,
+  };
+});
+
+let MOCK_USERS: UserListItem[] = [
+  { id: 1, avatar: "", status: "1", userName: "admin", userGender: "male", nickName: "系统管理员", userPhone: "13800000001", userEmail: "admin@example.com", userRoles: ["R_SUPER"], createBy: "system", createTime: "2026-01-01 08:00:00", updateBy: "system", updateTime: "2026-07-17 10:00:00" },
+  { id: 2, avatar: "", status: "1", userName: "operator", userGender: "female", nickName: "值班员", userPhone: "13800000002", userEmail: "operator@example.com", userRoles: ["R_OPERATOR"], createBy: "admin", createTime: "2026-03-12 09:30:00", updateBy: "admin", updateTime: "2026-07-16 16:20:00" },
+  { id: 3, avatar: "", status: "2", userName: "viewer", userGender: "unknown", nickName: "访客账号", userPhone: "", userEmail: "viewer@example.com", userRoles: ["R_USER"], createBy: "admin", createTime: "2026-05-20 14:12:00", updateBy: "admin", updateTime: "2026-07-10 11:40:00" },
+];
+
+let MOCK_ROLES: RoleListItem[] = [
+  { roleId: 1, roleName: "超级管理员", roleCode: "R_SUPER", description: "拥有全部系统权限", enabled: true, createTime: "2026-01-01 08:00:00" },
+  { roleId: 2, roleName: "运维人员", roleCode: "R_OPERATOR", description: "设备运维与日志查看", enabled: true, createTime: "2026-02-10 10:00:00" },
+  { roleId: 3, roleName: "普通用户", roleCode: "R_USER", description: "只读访问", enabled: true, createTime: "2026-02-10 10:05:00" },
+];
+
+let MOCK_MENUS: MenuTreeItem[] = [
+  { id: 10, path: "/dashboard", name: "Dashboard", component: "", menuType: "directory", sort: 1, enabled: true, meta: { title: "仪表盘", icon: "LayoutDashboard", authList: [] }, children: [
+    { id: 11, parentId: 10, path: "workbench", name: "Workbench", component: "/dashboard/workbench", menuType: "menu", sort: 1, enabled: true, meta: { title: "工作台", keepAlive: true, authList: [{ id: 101, title: "查看", authMark: "view", permissionCode: "dashboard:workbench:view", permissionType: "action", enabled: true, sort: 1 }] } },
+  ] },
+  { id: 30, path: "/device-monitor", name: "DeviceMonitor", component: "", menuType: "directory", sort: 2, enabled: true, meta: { title: "设备监控", authList: [] }, children: [
+    { id: 31, parentId: 30, path: "monitor", name: "DeviceMonitorCard", component: "/device_monitor/monitor/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "设备通讯", authList: [] } },
+    { id: 32, parentId: 30, path: "driver", name: "DriverManage", component: "/device_monitor/driver/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "驱动管理", authList: [] } },
+    { id: 33, parentId: 30, path: "device", name: "DeviceManage", component: "/device_monitor/device/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "设备管理", authList: [] } },
+    { id: 34, parentId: 30, path: "point", name: "PointManage", component: "/device_monitor/point/index", menuType: "menu", sort: 4, enabled: true, meta: { title: "点位管理", authList: [] } },
+    { id: 35, parentId: 30, path: "realtime", name: "RealtimeMonitor", component: "/device_monitor/realtime/index", menuType: "menu", sort: 5, enabled: true, meta: { title: "实时监控", authList: [] } },
+    { id: 36, parentId: 30, path: "history", name: "HistoryData", component: "/device_monitor/history/index", menuType: "menu", sort: 6, enabled: true, meta: { title: "历史数据", authList: [] } },
+    { id: 37, parentId: 30, path: "log", name: "SystemLog", component: "/device_monitor/log/index", menuType: "menu", sort: 7, enabled: true, meta: { title: "系统日志", authList: [] } },
+  ] },
+  { id: 20, path: "/system", name: "System", component: "", menuType: "directory", sort: 9, enabled: true, meta: { title: "系统管理", icon: "Settings2", authList: [] }, children: [
+    { id: 21, parentId: 20, path: "users", name: "Users", component: "/system/user/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "用户管理", authList: [{ id: 201, title: "新增", authMark: "add", permissionCode: "system:user:create", permissionType: "action", enabled: true, sort: 1 }, { id: 202, title: "编辑", authMark: "edit", permissionCode: "system:user:update", permissionType: "action", enabled: true, sort: 2 }] } },
+    { id: 22, parentId: 20, path: "roles", name: "Roles", component: "/system/role/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "角色管理", authList: [] } },
+    { id: 23, parentId: 20, path: "menu", name: "Menus", component: "/system/menu/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "菜单管理", authList: [] } },
+  ] },
+];
+
+const MOCK_ROLE_GRANTS = new Map<number, RoleGrant>([[1, { menuIds: [10, 11, 20, 21, 22], permissionIds: [101, 201, 202], dataScopes: [] }], [2, { menuIds: [10, 11, 20, 21], permissionIds: [101], dataScopes: [] }], [3, { menuIds: [10, 11], permissionIds: [101], dataScopes: [] }]]);
 
 export const mockBackend: BackendClient = {
   async login(u, _p) {
@@ -203,9 +267,267 @@ export const mockBackend: BackendClient = {
     await delay();
     return { streamMaxlen };
   },
+  async dashboardOverview(_token) {
+    await delay(180);
+    return {
+      deviceTotal: 42,
+      onlineDeviceTotal: 36,
+      offlineDeviceTotal: 4,
+      riskDeviceTotal: 2,
+      pointTotal: 2864,
+      systemAlertTotal: 18,
+      systemAlertComparePrev: { countDiff: -5, ratioDiff: -21.7 },
+      generatedAt: new Date().toISOString(),
+    };
+  },
+  async dashboardTrend(_token, rangeType) {
+    await delay(220);
+    const isWeek = rangeType === "last7d";
+    const timeAxis = isWeek
+      ? ["07-11", "07-12", "07-13", "07-14", "07-15", "07-16", "07-17"]
+      : ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"];
+    return {
+      query: { rangeType, granularity: isWeek ? "1d" : "1h" },
+      timeAxis,
+      series: [
+        { metricKey: "collectCount", metricName: "采集量", unit: "点", data: [1820, 2060, 3180, 3460, 3290, 3720, 3510] },
+        { metricKey: "alarmCount", metricName: "告警数", unit: "条", data: [2, 1, 4, 3, 5, 2, 1] },
+        { metricKey: "onlineRate", metricName: "在线率", unit: "%", data: [92, 93, 95, 94, 96, 95, 95] },
+      ],
+      summary: { collectCountTotal: 21040, alarmCountTotal: 18, onlineRateAvg: 94.3 },
+    };
+  },
+  async dashboardDeviceTypeDistribution(_token) {
+    await delay(180);
+    return {
+      total: 42,
+      groups: [
+        { typeCode: "PLC", typeName: "PLC", deviceCount: 14, onlineCount: 13, ratio: 33.3 },
+        { typeCode: "METER", typeName: "仪表", deviceCount: 10, onlineCount: 9, ratio: 23.8 },
+        { typeCode: "ROBOT", typeName: "机器人", deviceCount: 8, onlineCount: 7, ratio: 19.0 },
+        { typeCode: "SENSOR", typeName: "传感器", deviceCount: 6, onlineCount: 5, ratio: 14.3 },
+        { typeCode: "OTHER", typeName: "其他", deviceCount: 4, onlineCount: 2, ratio: 9.6 },
+      ],
+    };
+  },
+  async dashboardConnectionHealth(_token) {
+    await delay(200);
+    return {
+      query: { statRange: "last24h", topN: 8, includeOffline: true },
+      overview: { onlineDevices: 36, offlineDevices: 4, riskDevices: 2 },
+      list: [
+        { deviceId: 1, deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", deviceType: "PLC", connectStatus: "online" as const, exceptionCount: 0, timeoutCount: 0, reconnectCount: 1, successRate: 99.8, lastHeartbeatTime: new Date().toISOString() },
+        { deviceId: 2, deviceCode: "METER-02", deviceName: "二号电力仪表", deviceType: "METER", connectStatus: "unstable" as const, exceptionCount: 3, timeoutCount: 2, reconnectCount: 4, successRate: 94.2, lastHeartbeatTime: new Date().toISOString() },
+      ],
+    };
+  },
+  async dashboardRecentEvents(_token) {
+    await delay(200);
+    const now = Date.now();
+    return {
+      list: [
+        { eventId: "evt-101", eventTime: new Date(now - 4 * 60_000).toISOString(), deviceId: 2, deviceCode: "METER-02", deviceName: "二号电力仪表", eventType: "alarm", eventLevel: "WARN", content: "通讯延迟超过阈值，已自动重试", status: "active" },
+        { eventId: "evt-102", eventTime: new Date(now - 18 * 60_000).toISOString(), deviceId: 7, deviceCode: "ROBOT-07", deviceName: "七号装配机器人", eventType: "alarm", eventLevel: "ERROR", content: "设备连接中断，等待现场确认", status: "active" },
+        { eventId: "evt-103", eventTime: new Date(now - 43 * 60_000).toISOString(), deviceId: 12, deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", eventType: "alarm", eventLevel: "WARN", content: "采集周期波动，当前已恢复", status: "resolved" },
+        { eventId: "evt-104", eventTime: new Date(now - 74 * 60_000).toISOString(), deviceId: 15, deviceCode: "SENSOR-15", deviceName: "环境温度传感器", eventType: "alarm", eventLevel: "INFO", content: "点位数据质量由 Good 变为 Uncertain", status: "resolved" },
+      ],
+    };
+  },
+  async driverList(_token, query) {
+    await delay(160);
+    const list = [
+      { id: 1, driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动", readWriteType: "读写", updateTime: "2026-07-16 14:20:00", status: "available", boundDeviceCount: 14 },
+      { id: 2, driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动", readWriteType: "读写", updateTime: "2026-07-15 09:12:00", status: "available", boundDeviceCount: 10 },
+      { id: 3, driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动", readWriteType: "只读", updateTime: "2026-07-13 18:35:00", status: "available", boundDeviceCount: 8 },
+      { id: 4, driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动", readWriteType: "读写", updateTime: "2026-07-10 10:05:00", status: "disabled", boundDeviceCount: 0 },
+    ].filter((item) => !query.keyword || item.driverName.toLowerCase().includes(query.keyword.toLowerCase()));
+    return { list, total: list.length, pageNo: 1, pageSize: 20, availableCount: 3 };
+  },
+  async driverOptions(_token) {
+    await delay(100);
+    return [
+      { driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动" },
+      { driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动" },
+      { driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动" },
+    ];
+  },
+  async deviceGroupTree(_token) {
+    await delay(120);
+    return [
+      { key: "line-a", name: "一号产线", count: 3, children: [{ key: "device-1", name: "一号线主控PLC", nodeType: "device" as const, deviceId: 1, deviceCode: "PLC-S7-01", connectStatus: "online" as const }] },
+      { key: "line-b", name: "二号产线", count: 2, children: [{ key: "device-2", name: "二号电力仪表", nodeType: "device" as const, deviceId: 2, deviceCode: "METER-02", connectStatus: "unstable" as const }] },
+    ];
+  },
+  async deviceList(_token, query) {
+    await delay(160);
+    const rows = [
+      { id: 1, deviceType: "PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", driverName: "Siemens S7", deviceStatus: "enabled" as const, connectStatus: "online" as const, connectUpdateTime: "2026-07-17 15:30:00", dataStatus: "normal" as const, dataUpdateTime: "2026-07-17 15:30:00", description: "主线控制器" },
+      { id: 2, deviceType: "仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", driverName: "Modbus TCP", deviceStatus: "enabled" as const, connectStatus: "unstable" as const, connectUpdateTime: "2026-07-17 15:29:41", dataStatus: "abnormal" as const, dataUpdateTime: "2026-07-17 15:29:40", description: "能耗计量" },
+      { id: 3, deviceType: "机器人", deviceCode: "ROBOT-07", deviceName: "七号装配机器人", driverName: "OPC UA", deviceStatus: "enabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-17 14:52:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-17 14:51:55", description: "装配工位" },
+      { id: 4, deviceType: "PLC", deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", driverName: "Siemens S7", deviceStatus: "disabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-16 11:10:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-16 11:10:00", description: "维护中" },
+    ];
+    const list = rows.filter((item) => (!query.keyword || `${item.deviceCode} ${item.deviceName}`.toLowerCase().includes(query.keyword.toLowerCase())) && (!query.connectStatus || item.connectStatus === query.connectStatus) && (!query.deviceStatus || item.deviceStatus === query.deviceStatus));
+    return { list, total: list.length, pageNo: query.pageNo ?? 1, pageSize: query.pageSize ?? 20 };
+  },
+  async createDevice(_token, _payload) { await delay(120); return { id: Date.now() }; },
+  async updateDevice(_token, _id, _payload) { await delay(120); return {}; },
+  async deleteDevice(_token, _id) { await delay(120); return {}; },
+  async batchDeleteDevices(_token, ids) { await delay(120); return { count: ids.length }; },
+  async exportDevices(_token, _query, template = false) { return { bytes: Array.from(new TextEncoder().encode("mock workbook")), fileName: template ? "device-import-template.xlsx" : "device-export.xlsx" }; },
+  async importDevices(_token, rows) { return { success: rows.length, fail: 0, errors: [] }; },
+  async pointDeviceTree(_token) { return this.deviceGroupTree(_token); },
+  async pointList(_token, query) {
+    await delay(160);
+    const rows = [
+      { id: 11, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", dataType: "BOOL" as const, description: "设备运行标志", isReadonly: true, driverName: "Siemens S7", updateTime: "2026-07-17 15:30:00" },
+      { id: 12, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", dataType: "REAL" as const, description: "rpm", isReadonly: true, driverName: "Siemens S7", updateTime: "2026-07-17 15:30:00" },
+      { id: 21, deviceId: 2, deviceCode: "METER-02", varSeq: 1, pointName: "A相电压", ioAddress: "40001", dataType: "REAL" as const, description: "V", isReadonly: true, driverName: "Modbus TCP", updateTime: "2026-07-17 15:29:40" },
+    ];
+    const list = rows.filter((item) =>
+      (!query.keyword || `${item.pointName} ${item.ioAddress}`.toLowerCase().includes(query.keyword.toLowerCase()))
+      && (!query.deviceId || item.deviceId === query.deviceId)
+      && (!query.deviceCode || item.deviceCode.toLowerCase().includes(query.deviceCode.toLowerCase()))
+      && (!query.dataType || item.dataType === query.dataType)
+    );
+    return { list, total: list.length, pageNo: query.pageNo ?? 1, pageSize: query.pageSize ?? 20 };
+  },
+  async createPoint(_token, _payload) { await delay(120); return { id: Date.now() }; },
+  async updatePoint(_token, _id, _payload) { await delay(120); return {}; },
+  async deletePoint(_token, _id) { await delay(120); return {}; },
+  async batchDeletePoints(_token, ids) { await delay(120); return { count: ids.length }; },
+  async exportPoints(_token, _query, template = false) { return { bytes: Array.from(new TextEncoder().encode("mock workbook")), fileName: template ? "point-import-template.xlsx" : "point-export.xlsx" }; },
+  async importPoints(_token, rows) { return { success: rows.length, fail: 0, errors: [] }; },
+  async importPointsFromTemplate(_token, _deviceId) { return { success: 3, fail: 0, errors: [] }; },
+  async realtimeInit(_token, deviceId, _groupCode = "g001") {
+    await delay(120);
+    const now = new Date().toISOString();
+    return { deviceId, deviceCode: deviceId === 2 ? "METER-02" : "PLC-S7-01", deviceName: deviceId === 2 ? "二号电力仪表" : "一号线主控PLC", driverName: deviceId === 2 ? "Modbus TCP" : "Siemens S7", connectStatus: "online" as const, lastCollectTime: now, redisConnected: true, degraded: false, data: [
+      { pointId: 11, varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", value: true, updateTime: now, quality: 192, dataType: "BOOL" },
+      { pointId: 12, varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", value: 1480 + Math.round(Math.random() * 20), updateTime: now, quality: 192, dataType: "REAL" },
+      { pointId: 13, varSeq: 3, pointName: "轴承温度", ioAddress: "DB1.DBD8", value: 46.2 + Math.random(), updateTime: now, quality: 192, dataType: "REAL" },
+    ] };
+  },
+  async realtimePointGroups(_token, _deviceCode) {
+    await delay(80);
+    return [{ group_code: "g001", group_name: "默认分组", active_point_count: 3, max_point_count: 3072, status: "active" }];
+  },
+  async historyDevices(_token) { await delay(100); return [{ id: 1, name: "PLC-S7-01 · 一号线主控PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", typeCode: "PLC", typeName: "PLC" }, { id: 2, name: "METER-02 · 二号电力仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", typeCode: "METER", typeName: "仪表" }]; },
+  async historyDeviceTypes(_token) { await delay(80); return [{ typeCode: "PLC", typeName: "PLC", deviceCount: 1 }, { typeCode: "METER", typeName: "仪表", deviceCount: 1 }]; },
+  async historyPoints(_token, deviceId) { await delay(80); return deviceId === 2 ? [{ varSeq: 1, pointName: "A相电压", ioAddress: "40001" }] : [{ varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0" }, { varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4" }, { varSeq: 3, pointName: "轴承温度", ioAddress: "DB1.DBD8" }]; },
+  async historyChart(_token, query) {
+    await delay(180);
+    const times = Array.from({ length: 12 }, (_, i) => new Date(Date.now() - (11 - i) * 300_000).toISOString());
+    return { interval: query.interval ?? "5m", series: query.varSeqs.map((varSeq) => ({ varSeq, name: varSeq === 2 ? "主轴转速" : varSeq === 3 ? "轴承温度" : "运行状态", unit: varSeq === 2 ? "rpm" : varSeq === 3 ? "°C" : "", dataType: "REAL", data: times.map((time, index) => [time, varSeq === 2 ? 1450 + index * 4 : 42 + index * 0.5]) })) };
+  },
+  async historyRawMatrix(_token, query) {
+    await delay(180);
+    const columns = [{ prop: "ts", label: "采样时间" }, ...query.varSeqs.map((varSeq) => ({ prop: `v${varSeq}`, label: `点位 ${varSeq}`, varSeq }))];
+    const rows = Array.from({ length: 8 }, (_, index) => Object.fromEntries([["ts", new Date(Date.now() - index * 60_000).toISOString()], ...query.varSeqs.map((varSeq) => [`v${varSeq}`, (varSeq * 100 + index).toFixed(2)])]));
+    return { columns, rows, nextCursor: null, meta: { alignGranularity: query.alignGranularity ?? "1s", fillMode: "none" as const, pageSize: query.pageSize ?? 100 } };
+  },
+  async historyExport(_token, _payload) { await delay(120); return { taskId: "mock-history-export" }; },
+  async historyExportStatus(_token, _taskId) { await delay(120); return { status: "completed" as const, progress: 100, createdAt: new Date().toISOString() }; },
+  async historyExportDownload(_token, _taskId) {
+    await delay(80);
+    const csv = "采样时间,点位 1\n2026-07-17 12:00:00,100.00\n";
+    return { bytes: Array.from(new TextEncoder().encode(csv)), fileName: "历史数据_mock.csv" };
+  },
+  async systemLogList(_token, query) {
+    await delay(120);
+    const keyword = query.keyword?.toLowerCase();
+    const rows = MOCK_SYSTEM_LOGS.filter((item) =>
+      (!keyword || `${item.content} ${item.source} ${item.deviceCode ?? ""}`.toLowerCase().includes(keyword)) &&
+      (!query.level || item.level === query.level) &&
+      (!query.type || item.type === query.type) &&
+      (!query.kind || query.kind === "all" || item.kind === query.kind) &&
+      (!query.serviceName || item.serviceName === query.serviceName) &&
+      (!query.deviceCode || item.deviceCode?.includes(query.deviceCode)) &&
+      (!query.operatorName || item.operatorName?.includes(query.operatorName)) &&
+      (!query.traceId || item.traceId?.includes(query.traceId))
+    );
+    const pageNo = query.pageNo ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    return { list: rows.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: rows.length, pageNo, pageSize };
+  },
+  async logStats(_token) {
+    await delay(100);
+    const debugRemainingSeconds = Math.max(0, Math.floor((_mockDebugUntil - Date.now()) / 1000));
+    return {
+      todayTotal: 1842,
+      yesterdayTotal: 1728,
+      todayWarnTotal: 34,
+      todayErrorTotal: 7,
+      todayCriticalTotal: 1,
+      debugEnabled: debugRemainingSeconds > 0,
+      debugRemainingSeconds,
+      totalSizeMb: 286.4,
+      maxTotalMb: 1024,
+      lastCleanupTime: "2026-07-17 03:00:00",
+      lastCleanupDeletedTotal: 6240,
+      levelTrend: Array.from({ length: 12 }, (_, index) => ({ time: `${String(index * 2).padStart(2, "0")}:00`, info: 90 + index * 7, warn: 8 + index % 5, error: index % 4, critical: index === 8 ? 1 : 0, debug: debugRemainingSeconds > 0 ? 20 + index * 2 : 0 })),
+      typeRatio: [{ type: "system", count: 620, ratio: 33.7 }, { type: "collect", count: 486, ratio: 26.4 }, { type: "storage", count: 358, ratio: 19.4 }, { type: "operation", count: 241, ratio: 13.1 }, { type: "auth", count: 137, ratio: 7.4 }],
+      sourceRatio: [],
+    };
+  },
+  async toggleLogDebug(_token, payload) {
+    await delay(100);
+    _mockDebugUntil = payload.enabled ? Date.now() + (payload.durationMinutes ?? 60) * 60_000 : 0;
+    return {};
+  },
+  async cleanupLogs(_token, payload) {
+    await delay(180);
+    return { deletedOperationLogs: 128, deletedSystemLogs: 1840, sizeBeforeMb: 286.4, sizeAfterMb: 241.8, triggeredBy: "admin", triggerMode: payload.mode, force: Boolean(payload.force) };
+  },
+  async tdengineLogFiles(_token) {
+    await delay(100);
+    return [{ name: "taosdlog.0", sizeMb: 18.6, modifiedAt: new Date().toISOString() }, { name: "taosdlog.1", sizeMb: 12.2, modifiedAt: new Date(Date.now() - 86_400_000).toISOString() }];
+  },
+  async tdengineLogTail(_token, file, lines = 300) {
+    await delay(100);
+    return { file, lines: Array.from({ length: Math.min(lines, 40) }, (_, index) => `07/17 16:${String(index).padStart(2, "0")}:12.036 INFO  TSC query worker completed, rows=${128 + index}`) };
+  },
+  async userList(_token, query) {
+    await delay(100);
+    const rows = MOCK_USERS.filter((user) => (!query.userName || user.userName.includes(query.userName)) && (!query.userGender || user.userGender === query.userGender) && (!query.userPhone || user.userPhone.includes(query.userPhone)) && (!query.userEmail || user.userEmail.includes(query.userEmail)) && (!query.status || user.status === query.status));
+    const pageNo = query.current ?? 1; const pageSize = query.size ?? 20;
+    return { records: rows.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: rows.length, current: pageNo, size: pageSize };
+  },
+  async userInfo(_token) {
+    await delay(80);
+    return {
+      userId: 1,
+      userName: "admin",
+      email: "admin@example.com",
+      avatar: "",
+      roles: ["R_SUPER"],
+      buttons: ["view", "add", "edit", "delete"],
+    };
+  },
+  async roleOptions(_token) { await delay(80); return MOCK_ROLES.map(({ roleId, roleName, roleCode, enabled }) => ({ roleId, roleName, roleCode, enabled })); },
+  async createUser(_token, payload) { const id = Date.now(); MOCK_USERS = [...MOCK_USERS, { id, avatar: payload.avatar ?? "", status: payload.status ?? "1", userName: payload.userName, userGender: payload.userGender ?? "unknown", nickName: payload.nickName ?? "", userPhone: payload.userPhone ?? "", userEmail: payload.userEmail ?? "", userRoles: payload.userRoles ?? ["R_USER"], createBy: "admin", createTime: new Date().toISOString(), updateBy: "admin", updateTime: new Date().toISOString() }]; return { id }; },
+  async updateUser(_token, id, payload) { MOCK_USERS = MOCK_USERS.map((user) => user.id === id ? { ...user, ...payload, updateTime: new Date().toISOString() } : user); return { id }; },
+  async updateUserStatus(_token, id, status) { MOCK_USERS = MOCK_USERS.map((user) => user.id === id ? { ...user, status } : user); return { id }; },
+  async resetUserPassword(_token, id, _password) { await delay(80); return { id }; },
+  async deleteUser(_token, id) { MOCK_USERS = MOCK_USERS.filter((user) => user.id !== id); return { id }; },
+  async roleList(_token, query) { await delay(100); const rows = MOCK_ROLES.filter((role) => (!query.roleName || role.roleName.includes(query.roleName)) && (!query.roleCode || role.roleCode.includes(query.roleCode)) && (!query.description || role.description.includes(query.description)) && (query.enabled === "" || query.enabled === undefined || role.enabled === query.enabled)); const pageNo = query.current ?? 1; const pageSize = query.size ?? 20; return { records: rows.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: rows.length, current: pageNo, size: pageSize }; },
+  async createRole(_token, payload) { const id = Date.now(); MOCK_ROLES = [...MOCK_ROLES, { roleId: id, roleName: payload.roleName, roleCode: payload.roleCode, description: payload.description ?? "", enabled: payload.enabled ?? true, createTime: new Date().toISOString() }]; return { id }; },
+  async updateRole(_token, id, payload) { MOCK_ROLES = MOCK_ROLES.map((role) => role.roleId === id ? { ...role, ...payload } : role); return { id }; },
+  async updateRoleStatus(_token, id, enabled) { MOCK_ROLES = MOCK_ROLES.map((role) => role.roleId === id ? { ...role, enabled } : role); return { id }; },
+  async deleteRole(_token, id) { MOCK_ROLES = MOCK_ROLES.filter((role) => role.roleId !== id); return { id }; },
+  async roleGrant(_token, id) { return MOCK_ROLE_GRANTS.get(id) ?? { menuIds: [], permissionIds: [], dataScopes: [] }; },
+  async updateRoleGrant(_token, id, payload) { MOCK_ROLE_GRANTS.set(id, payload); return { id }; },
+  async adminMenus(_token) { await delay(100); return MOCK_MENUS; },
+  async currentUserMenus(_token) { await delay(100); return MOCK_MENUS; },
+  async createMenu(_token, payload) { const id = Date.now(); const item = { id, parentId: payload.parentId, path: payload.path, name: payload.name, component: payload.component, menuType: payload.menuType, sort: payload.sort, enabled: payload.enabled, meta: { title: payload.titleKey, icon: payload.icon, keepAlive: payload.keepAlive, isHide: payload.isHide, isHideTab: payload.isHideTab, authList: [] } }; if (payload.parentId) { MOCK_MENUS = MOCK_MENUS.map((menu) => menu.id === payload.parentId ? { ...menu, children: [...(menu.children ?? []), item] } : menu); } else MOCK_MENUS = [...MOCK_MENUS, item]; return { id }; },
+  async updateMenu(_token, id, payload) { const update = (items: MenuTreeItem[]): MenuTreeItem[] => items.map((menu) => menu.id === id ? { ...menu, path: payload.path, name: payload.name, component: payload.component, menuType: payload.menuType, sort: payload.sort, enabled: payload.enabled, meta: { ...menu.meta, title: payload.titleKey, icon: payload.icon, keepAlive: payload.keepAlive, isHide: payload.isHide, isHideTab: payload.isHideTab } } : { ...menu, children: menu.children ? update(menu.children) : undefined }); MOCK_MENUS = update(MOCK_MENUS); return { id }; },
+  async deleteMenu(_token, id) { const remove = (items: MenuTreeItem[]): MenuTreeItem[] => items.filter((menu) => menu.id !== id).map((menu) => ({ ...menu, children: menu.children ? remove(menu.children) : undefined })); MOCK_MENUS = remove(MOCK_MENUS); return { id }; },
+  async menuPermissions(_token, menuId) { const find = (items: MenuTreeItem[]): MenuTreeItem | undefined => { for (const menu of items) { if (menu.id === menuId) return menu; const nested = menu.children ? find(menu.children) : undefined; if (nested) return nested; } }; return find(MOCK_MENUS)?.meta.authList ?? []; },
+  async createMenuPermission(_token, menuId, payload) { const id = Date.now(); const permission = { id, title: payload.permissionName, authMark: payload.authMark ?? payload.permissionCode, enabled: payload.enabled, permissionCode: payload.permissionCode, permissionType: payload.permissionType, sort: payload.sort }; const add = (items: MenuTreeItem[]): MenuTreeItem[] => items.map((menu) => menu.id === menuId ? { ...menu, meta: { ...menu.meta, authList: [...(menu.meta.authList ?? []), permission] } } : { ...menu, children: menu.children ? add(menu.children) : undefined }); MOCK_MENUS = add(MOCK_MENUS); return { id }; },
+  async updateMenuPermission(_token, menuId, permissionId, payload) { const update = (items: MenuTreeItem[]): MenuTreeItem[] => items.map((menu) => menu.id === menuId ? { ...menu, meta: { ...menu.meta, authList: (menu.meta.authList ?? []).map((permission) => permission.id === permissionId ? { ...permission, title: payload.permissionName, authMark: payload.authMark ?? payload.permissionCode, enabled: payload.enabled, permissionType: payload.permissionType, sort: payload.sort } : permission) } } : { ...menu, children: menu.children ? update(menu.children) : undefined }); MOCK_MENUS = update(MOCK_MENUS); return { id: permissionId }; },
+  async deleteMenuPermission(_token, menuId, permissionId) { const remove = (items: MenuTreeItem[]): MenuTreeItem[] => items.map((menu) => menu.id === menuId ? { ...menu, meta: { ...menu.meta, authList: (menu.meta.authList ?? []).filter((permission) => permission.id !== permissionId) } } : { ...menu, children: menu.children ? remove(menu.children) : undefined }); MOCK_MENUS = remove(MOCK_MENUS); return { id: permissionId }; },
 };
 
-// ─── createMockWebSocket ──────────────────────────────────────────────────────
+// ─── createMockWebSocket 创建模拟 WebSocket ──────────────────────────────────────
 
 // 随机日志消息池
 const COLLECTOR_MSGS: { level: LogLevel; message: string }[] = [

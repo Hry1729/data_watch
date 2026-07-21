@@ -1,8 +1,21 @@
 // 认证状态（仅内存，不持久化）
+export interface AuthUserInfo {
+  userId: number;
+  userName: string;
+  email?: string;
+  avatar?: string;
+  roles: string[];
+  buttons: string[];
+}
+
 export interface AuthStore {
   agentToken: string;
   backendToken: string;
   backendRefreshToken: string;
+  /** 当前用户资料（角色 / 按钮权限） */
+  user?: AuthUserInfo;
+  /** 侧栏与路由可见 path；含桌面专有页 */
+  allowedPaths?: string[];
 }
 
 // 模块运行状态
@@ -137,3 +150,81 @@ export type TrendChartState = 'empty' | 'loading' | 'error' | 'ready';
 
 // WS 连接状态
 export type WsStatus = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
+
+// 工作台仪表盘
+export interface DashboardOverview {
+  deviceTotal: number;
+  onlineDeviceTotal: number;
+  offlineDeviceTotal: number;
+  riskDeviceTotal: number;
+  pointTotal: number;
+  systemAlertTotal: number;
+  systemAlertComparePrev: { countDiff: number; ratioDiff: number };
+  generatedAt: string;
+}
+
+export interface DashboardDeviceTypeDistributionGroup {
+  typeCode: string;
+  typeName: string;
+  deviceCount: number;
+  onlineCount: number;
+  ratio: number;
+}
+
+export interface DashboardDeviceTypeDistribution {
+  total: number;
+  groups: DashboardDeviceTypeDistributionGroup[];
+}
+
+export interface DashboardRecentEvent {
+  eventId: string;
+  eventTime: string;
+  deviceId: number;
+  deviceCode: string;
+  deviceName: string;
+  eventType: 'alarm' | 'collect' | 'connection' | string;
+  eventLevel: string;
+  content: string;
+  status: string;
+}
+
+export interface DashboardRecentEventList {
+  list: DashboardRecentEvent[];
+}
+
+export interface DashboardTrendSeries {
+  metricKey: string;
+  metricName: string;
+  unit: string;
+  data: number[];
+}
+
+export interface DashboardTrend {
+  query: { rangeType: string; granularity: string };
+  timeAxis: string[];
+  series: DashboardTrendSeries[];
+  summary: {
+    collectCountTotal: number;
+    alarmCountTotal: number;
+    onlineRateAvg: number;
+  };
+}
+
+export interface DashboardConnectionHealthItem {
+  deviceId: number;
+  deviceCode: string;
+  deviceName: string;
+  deviceType: string;
+  connectStatus: 'online' | 'unstable' | 'offline';
+  exceptionCount: number;
+  timeoutCount: number;
+  reconnectCount: number;
+  successRate: number;
+  lastHeartbeatTime: string;
+}
+
+export interface DashboardConnectionHealth {
+  query: { statRange: string; topN: number; includeOffline: boolean };
+  overview: { onlineDevices: number; offlineDevices: number; riskDevices: number };
+  list: DashboardConnectionHealthItem[];
+}

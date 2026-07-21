@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { backendClient } from "@/lib/backend-client";
 import type { AppError, CollectorModuleMetrics, WriterModuleMetrics } from "@/types";
 
@@ -30,6 +31,7 @@ export function useModuleMetrics(
   name: "collector" | "writer"
 ): UseModuleMetricsResult<CollectorModuleMetrics | WriterModuleMetrics> {
   const { auth, logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
   const backendToken = auth?.backendToken ?? null;
 
   // 保存最新 logout，避免轮询 effect 捕获旧闭包（logout 身份每次渲染变化）
@@ -107,7 +109,7 @@ export function useModuleMetrics(
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [name, backendToken, tick]);
+  }, [name, backendToken, refreshVersion, tick]);
 
   return { data, loading, error, refresh };
 }

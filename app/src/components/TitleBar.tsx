@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
+import appIconUrl from "../../src-tauri/icons/128x128.png";
 
 const appWindow = getCurrentWindow();
 
@@ -23,9 +24,14 @@ export function TitleBar() {
       data-tauri-drag-region
       className="flex h-8 shrink-0 select-none items-center justify-between bg-background pl-3 text-xs text-muted-foreground border-b border-border"
     >
-      <span data-tauri-drag-region className="font-medium">
-        Data Watch Console
-      </span>
+      <div data-tauri-drag-region className="flex items-center gap-2">
+        <img
+          src={appIconUrl}
+          alt=""
+          className="h-4 w-4 shrink-0 rounded-sm object-cover"
+        />
+        <span className="font-medium">Data Watch Console</span>
+      </div>
       <div className="flex h-full">
         <button
           type="button"

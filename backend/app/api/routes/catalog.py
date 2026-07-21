@@ -253,11 +253,13 @@ async def point_list(
     size: str | None = None,
     keyword: str | None = None,
     deviceId: str | None = None,
+    deviceIds: list[str] | str | None = None,
     deviceCode: str | None = None,
     groupId: str | None = None,
     varSeq: str | None = None,
     pointName: str | None = None,
     ioAddress: str | None = None,
+    dataType: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     await require_permissions(credentials, "device_monitor:point:view")
@@ -273,11 +275,13 @@ async def point_list(
                     "size": size,
                     "keyword": keyword,
                     "deviceId": deviceId,
+                    "deviceIds": deviceIds,
                     "deviceCode": deviceCode,
                     "groupId": groupId,
                     "varSeq": varSeq,
                     "pointName": pointName,
                     "ioAddress": ioAddress,
+                    "dataType": dataType,
                 }
             )
         )
@@ -296,6 +300,7 @@ async def export_points(
     varSeq: str | None = None,
     pointName: str | None = None,
     ioAddress: str | None = None,
+    dataType: str | None = None,
     template: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
@@ -317,6 +322,7 @@ async def export_points(
                     "varSeq": varSeq,
                     "pointName": pointName,
                     "ioAddress": ioAddress,
+                    "dataType": dataType,
                 }
             ),
             template=template_flag,

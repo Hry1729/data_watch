@@ -5,8 +5,9 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
-import { setAgentAuthToken } from "@/lib/agent-client";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { setAgentAuthToken } from "@/lib/agent-auth-token";
+import { canAccessPath, pickFallbackPath } from "@/lib/navigation-access";
 import type { AuthStore } from "@/types";
 
 // ─── Context 类型 ────────────────────────────────────────────────────────────
@@ -22,9 +23,9 @@ interface AuthContextValue {
   logout(): void;
 }
 
-const AuthContext = createContext<AuthContextValue>(null!);
+const AuthContext = createContext<AuthContextValue | null>(null);
 
-// ─── Provider ────────────────────────────────────────────────────────────────
+// ─── 提供者 Provider ────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthStore | null>(null);
@@ -59,10 +60,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
+// ─── 钩子 Hook ─────────────────────────────────────────────────────────────────
 
 export function useAuth() {
-  return useContext(AuthContext);
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth 必须在 AuthProvider 内使用");
+  }
+  return context;
 }
 
 // ─── 路由守卫 ────────────────────────────────────────────────────────────────
@@ -80,13 +85,26 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 }
 
 /**
+ * MenuAccessGuard — 按角色菜单过滤路由。
+ * 无权限 path 时跳转到第一个可访问页（桌面专有页始终可进）。
+ */
+export function MenuAccessGuard({ children }: { children: ReactNode }) {
+  const { auth } = useAuth();
+  const location = useLocation();
+  if (!canAccessPath(location.pathname, auth?.allowedPaths, auth?.user?.roles)) {
+    return <Navigate to={pickFallbackPath(auth?.allowedPaths)} replace />;
+  }
+  return <>{children}</>;
+}
+
+/**
  * PublicOnlyRoute — 包裹 /login 路由。
- * 已登录时跳转 /（避免重复进入登录页）；未登录时渲染 children。
+ * 已登录时跳转有权限首页；未登录时渲染 children。
  */
 export function PublicOnlyRoute({ children }: { children: ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { auth, isAuthenticated } = useAuth();
   if (isAuthenticated) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={pickFallbackPath(auth?.allowedPaths)} replace />;
   }
   return <>{children}</>;
 }

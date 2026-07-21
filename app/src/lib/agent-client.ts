@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getAgentAuthToken } from "@/lib/agent-auth-token";
 import type {
   AppError,
   ConnectionConfig,
@@ -7,11 +8,7 @@ import type {
   ModuleStatus,
 } from "@/types";
 
-let currentAgentToken: string | null = null;
-
-export function setAgentAuthToken(token: string | null) {
-  currentAgentToken = token;
-}
+export { setAgentAuthToken } from "@/lib/agent-auth-token";
 
 // ─── 引导页载荷类型 ───────────────────────────────────────────────────────────
 
@@ -81,7 +78,7 @@ function getApiErrorMessage(text: string, fallback: string): string {
     if (typeof payload.detail === "string") return payload.detail;
     if (typeof payload.message === "string") return payload.message;
   } catch {
-    // ignore invalid/non-json error bodies
+    // 忽略无效/非 JSON 的错误响应体
   }
   return fallback;
 }
@@ -107,7 +104,7 @@ async function agentFetch<T>(
       method,
       path,
       body: bodyStr,
-      token: token ?? currentAgentToken ?? undefined,
+      token: token ?? getAgentAuthToken() ?? undefined,
     });
   } catch {
     throw { type: "agent_unreachable" } satisfies AppError;

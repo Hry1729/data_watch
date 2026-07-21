@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useState } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/AppLayout";
 import {
   AuthGuard,
   AuthProvider,
+  MenuAccessGuard,
   PublicOnlyRoute,
 } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
@@ -15,30 +16,94 @@ import { OverviewPage } from "@/pages/OverviewPage";
 import { CollectorPage } from "@/pages/CollectorPage";
 import { WriterPage } from "@/pages/WriterPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { PlaceholderPage } from "@/pages/PlaceholderPage";
 import { agentClient } from "@/lib/agent-client";
 import { setBackendBaseUrl } from "@/lib/backend-client";
 import { Toaster } from "@/components/ui/sonner";
+import { legacyRedirects, placeholderPages } from "@/config/navigation";
+import { PageRefreshProvider } from "@/contexts/PageRefreshContext";
+
+/** 捕获懒加载页/布局渲染异常，避免整页白屏无提示 */
+class RouteErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("路由渲染错误", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex h-full flex-col items-center justify-center gap-3 bg-background p-6">
+          <p className="text-lg font-semibold text-foreground">页面渲染失败</p>
+          <p className="max-w-lg text-center text-sm text-muted-foreground break-all">
+            {this.state.error.message}
+          </p>
+          <Button
+            onClick={() => {
+              this.setState({ error: null });
+              window.location.assign("/dashboard/workbench");
+            }}
+          >
+            返回工作台
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const WorkbenchPage = lazy(() => import("@/pages/WorkbenchPage"));
+const DeviceCommunicationPage = lazy(() => import("@/pages/DeviceCommunicationPage"));
+const DriverManagementPage = lazy(() => import("@/pages/DriverManagementPage"));
+const DeviceManagementPage = lazy(() => import("@/pages/DeviceManagementPage"));
+const PointManagementPage = lazy(() => import("@/pages/PointManagementPage"));
+const RealtimeMonitorPage = lazy(() => import("@/pages/RealtimeMonitorPage"));
+const HistoryDataPage = lazy(() => import("@/pages/HistoryDataPage"));
+const SystemLogPage = lazy(() => import("@/pages/SystemLogPage"));
+const UserManagementPage = lazy(() => import("@/pages/UserManagementPage"));
+const RoleManagementPage = lazy(() => import("@/pages/RoleManagementPage"));
+const MenuManagementPage = lazy(() => import("@/pages/MenuManagementPage"));
+
+const STARTUP_TIMEOUT_MS = 6_000;
 
 // ─── 启动检查（Bootstrap 状态 + Agent 连通性）────────────────────────────────
 //
 // 渲染流程：
 //   挂载 → loading 屏 → getBootstrapStatus()
-//     ├── in_bootstrap: true  → navigate('/bootstrap')
+//     ├── in_bootstrap: true  → 跳转到 navigate('/bootstrap')
 //     ├── in_bootstrap: false → setReady(true)，由 AuthGuard 跳 /login
-//     └── agent_unreachable   → navigate('/error')
+//     └── agent_unreachable   → 跳转到 navigate('/error')
 
+function withStartupTimeout<T>(request: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = window.setTimeout(
+      () => reject(new Error("Agent request timed out")),
+      STARTUP_TIMEOUT_MS,
+    );
+    request.then(resolve, reject).finally(() => window.clearTimeout(timeoutId));
+  });
+}
 function AppStartup({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const [deciding, setDeciding] = useState(true);
 
   useEffect(() => {
     agentClient
-      .getBootstrapStatus()
+    withStartupTimeout(agentClient.getBootstrapStatus())
       .then(async ({ in_bootstrap }) => {
         // 运行期后端地址：从 Agent 读取并注入 backend-client（替代打包写死的 VITE_BACKEND_URL）。
         // 拉取失败不阻断启动，登录时会再暴露问题。
         try {
-          const { backend_base_url } = await agentClient.getRuntimeConfig();
+          const { backend_base_url } = await withStartupTimeout(agentClient.getRuntimeConfig());
           setBackendBaseUrl(backend_base_url);
         } catch {
           // ignore：后端地址不可得时由登录流程报错
@@ -78,7 +143,7 @@ function AgentErrorPage() {
   function handleRetry() {
     setRetrying(true);
     agentClient
-      .getBootstrapStatus()
+    withStartupTimeout(agentClient.getBootstrapStatus())
       .then(({ in_bootstrap }) => {
         if (in_bootstrap) navigate("/bootstrap", { replace: true });
         else navigate("/login", { replace: true });
@@ -125,6 +190,8 @@ export default function App() {
       <AuthProvider>
         {/* AppStartup：启动检查，期间显示 loading 屏 */}
         <AppStartup>
+          <RouteErrorBoundary>
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载页面…</div>}>
           <Routes>
             {/* 公开路由：无 AppLayout，无 AuthGuard */}
             <Route path="/bootstrap" element={<BootstrapPage />} />
@@ -142,19 +209,60 @@ export default function App() {
             <Route
               element={
                 <AuthGuard>
-                  <AppLayout />
+                  <MenuAccessGuard>
+                    <PageRefreshProvider>
+                      <AppLayout />
+                    </PageRefreshProvider>
+                  </MenuAccessGuard>
                 </AuthGuard>
               }
             >
-              <Route index             element={<OverviewPage />} />
-              <Route path="/collector" element={<CollectorPage />} />
-              <Route path="/writer"    element={<WriterPage />} />
-              <Route path="/settings"  element={<SettingsPage />} />
+              <Route path="/dashboard/workbench" element={<WorkbenchPage />} />
+              <Route path="/dashboard/console" element={<OverviewPage />} />
+              <Route path="/collection/collector" element={<CollectorPage />} />
+              <Route path="/collection/writer" element={<WriterPage />} />
+              <Route path="/device/communication" element={<DeviceCommunicationPage />} />
+              <Route path="/device/drivers" element={<DriverManagementPage />} />
+              <Route path="/device/devices" element={<DeviceManagementPage />} />
+              <Route path="/device/points" element={<PointManagementPage />} />
+              <Route path="/device/realtime" element={<RealtimeMonitorPage />} />
+              <Route path="/device/history" element={<HistoryDataPage />} />
+              <Route path="/logs/system" element={<SystemLogPage />} />
+              <Route path="/system/users" element={<UserManagementPage />} />
+              <Route path="/system/roles" element={<RoleManagementPage />} />
+              <Route path="/system/menus" element={<MenuManagementPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+
+              {placeholderPages.map(({ path, title }) => (
+                <Route
+                  key={path}
+                  path={path}
+                  element={<PlaceholderPage title={title} />}
+                />
+              ))}
+
+              {legacyRedirects.map(({ from, to }) =>
+                from === "/" ? (
+                  <Route
+                    key={from}
+                    index
+                    element={<Navigate to={to} replace />}
+                  />
+                ) : (
+                  <Route
+                    key={from}
+                    path={from}
+                    element={<Navigate to={to} replace />}
+                  />
+                ),
+              )}
             </Route>
 
-            {/* 未匹配路由跳登录页 */}
-            <Route path="*" element={<Navigate to="/login" replace />} />
+            {/* 未匹配路由：回到工作台入口（未登录时由 AuthGuard 再跳登录） */}
+            <Route path="*" element={<Navigate to="/dashboard/workbench" replace />} />
           </Routes>
+          </Suspense>
+          </RouteErrorBoundary>
         </AppStartup>
       </AuthProvider>
     </BrowserRouter>

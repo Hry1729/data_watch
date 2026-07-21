@@ -1,5 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { WriterLogRow } from "@/types";
 
 // ─── Level chip 颜色映射（CRITICAL 复用 ERROR 红）─────────────────────────────
@@ -12,7 +13,7 @@ const LEVEL_CLASS: Record<string, string> = {
   CRITICAL: "bg-destructive-soft text-destructive",
 };
 
-// ─── Props ────────────────────────────────────────────────────────────────────
+// ─── 属性 Props ────────────────────────────────────────────────────────────────
 
 export interface ModuleDbLogPanelProps {
   rows: WriterLogRow[];
@@ -30,15 +31,11 @@ export function ModuleDbLogPanel({
   onRefresh,
 }: ModuleDbLogPanelProps) {
   return (
-    <div
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-card border border-border"
-      style={{ borderRadius: 12 }}
-    >
+    <Card className="h-full min-h-0 w-full">
       {/* 面板头部 */}
-      <div
-        className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b"
-      >
-        <span className="text-sm font-semibold text-foreground">历史日志（system_log）</span>
+      <CardHeader>
+        <CardTitle>历史日志（system_log）</CardTitle>
+        <CardAction>
         <Button
           variant="ghost"
           size="icon"
@@ -51,7 +48,8 @@ export function ModuleDbLogPanel({
             className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`}
           />
         </Button>
-      </div>
+        </CardAction>
+      </CardHeader>
 
       {/* 错误 Banner */}
       {error && (
@@ -63,8 +61,8 @@ export function ModuleDbLogPanel({
       )}
 
       {/* 日志滚动区域（DB 返回按时间倒序，最新在上） */}
-      <div
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-2 space-y-0.5"
+      <CardContent
+        className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2"
         style={{ fontFamily: "monospace", fontSize: 13 }}
       >
         {rows.length === 0 ? (
@@ -91,7 +89,7 @@ export function ModuleDbLogPanel({
             </div>
           ))
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

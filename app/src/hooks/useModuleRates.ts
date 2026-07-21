@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { backendClient } from "@/lib/backend-client";
 import type { AppError, ModuleRate, ModuleRates, TrendChartState } from "@/types";
 
@@ -40,6 +41,7 @@ export interface UseModuleRatesResult {
 
 export function useModuleRates(): UseModuleRatesResult {
   const { auth, logout } = useAuth();
+  const { refreshVersion } = usePageRefresh();
   const backendToken = auth?.backendToken ?? null;
 
   const logoutRef = useRef(logout);
@@ -112,7 +114,7 @@ export function useModuleRates(): UseModuleRatesResult {
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [backendToken, tick]);
+  }, [backendToken, refreshVersion, tick]);
 
   return { data, loading, error, refresh };
 }
