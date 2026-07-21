@@ -1,4 +1,4 @@
-"""Consumer-side tests for §7.6 binary-search degrade wiring in _flush.
+"""消费者端测试，验证刷新时的二分搜索降级功能。Consumer-side tests for §7.6 binary-search degrade wiring in _flush.
 
 Verifies the per-row status contract from write_multi_table is honored:
 LANDED → XACK; BAD_DATA → DLQ then XACK only on success; RETRY (and DLQ-push

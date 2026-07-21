@@ -29,7 +29,7 @@ class FakeS7Client:
 
     def read_area(self, area, db_number, start, size):
         self.area_calls.append((area, db_number, start, size))
-        # I/Q/M area
+        # I/Q/M 区域
         mapping = {
             (0x81, 0, 101, 1): bytearray([0b00000001]),
             (0x81, 0, 101, 2): bytearray([0b00000010, 0x2C]),
@@ -38,22 +38,22 @@ class FakeS7Client:
             (0x83, 0, 1304, 4): bytearray([0x00, 0x00, 0x00, 0x2A]),
             (0x83, 0, 1306, 2): bytearray([0x00, 0x2B]),
             (0x83, 0, 1308, 1): bytearray([0x2C]),
-            # Timer area (0x1D): S5TIME BCD format
-            # T1: 50 * 10ms = 500ms (time_base=00, BCD=50)
-            # Byte0 = (0 << 6) | 0 = 0x00, Byte1 = (5 << 4) | 0 = 0x50
+            # 定时器区域（0x1D）：S5TIME BCD 格式
+            # T1：50 * 10ms = 500ms（time_base=00, BCD=50）
+            # 字节0 = (0 << 6) | 0 = 0x00, 字节1 = (5 << 4) | 0 = 0x50
             (0x1D, 0, 1, 1): bytearray([0x00, 0x50]),
-            # T2: 123 * 100ms = 12300ms (time_base=01, BCD=123)
-            # Byte0 = (1 << 6) | 1 = 0x41, Byte1 = (2 << 4) | 3 = 0x23
+            # T2：123 * 100ms = 12300ms（time_base=01, BCD=123）
+            # 字节0 = (1 << 6) | 1 = 0x41, 字节1 = (2 << 4) | 3 = 0x23
             (0x1D, 0, 2, 1): bytearray([0x41, 0x23]),
-            # T1-T2 batch read
+            # T1-T2 批量读取
             (0x1D, 0, 1, 2): bytearray([0x00, 0x50, 0x41, 0x23]),
-            # T10: 500 * 1s = 500000ms (time_base=10, BCD=500)
-            # Byte0 = (2 << 6) | 5 = 0x85, Byte1 = (0 << 4) | 0 = 0x00
+            # T10：500 * 1s = 500000ms（time_base=10, BCD=500）
+            # 字节0 = (2 << 6) | 5 = 0x85, 字节1 = (0 << 4) | 0 = 0x00
             (0x1D, 0, 10, 1): bytearray([0x85, 0x00]),
-            # Counter area (0x1C): BCD format (0-999)
-            # C1: BCD 123 = decimal 123
+            # 计数器区域（0x1C）：BCD 格式（0-999）
+            # C1：BCD 123 = 十进制 123
             (0x1C, 0, 1, 1): bytearray([0x01, 0x23]),
-            # C5: BCD 99 = decimal 99
+            # C5：BCD 99 = 十进制 99
             (0x1C, 0, 5, 1): bytearray([0x00, 0x99]),
         }
         return mapping[(area, db_number, start, size)]
@@ -222,22 +222,22 @@ async def test_ping_waits_for_in_flight_read_worker():
     assert client.get_connected_called.is_set()
 
 
-# ==================== Timer/Counter Tests ====================
+# ==================== 定时器/计数器测试 ====================
 
 def test_read_timer_as_milliseconds():
     """Timer 读取为毫秒数"""
     client = FakeS7Client()
     driver = make_driver(client)
 
-    # T1: 50 * 10ms = 500ms
+    # T1：50 * 10ms = 500ms
     result = driver._read_single_block(ReadBlock("%T1", data_type="TIMER_MS"))
     assert result == [500]
 
-    # T2: 123 * 100ms = 12300ms
+    # T2：123 * 100ms = 12300ms
     result = driver._read_single_block(ReadBlock("%T2", data_type="TIMER_MS"))
     assert result == [12300]
 
-    # T10: 500 * 1s = 500000ms
+    # T10：500 * 1s = 500000ms
     result = driver._read_single_block(ReadBlock("%T10", data_type="TIMER_MS"))
     assert result == [500000]
 
@@ -266,11 +266,11 @@ def test_read_counter_as_int():
     client = FakeS7Client()
     driver = make_driver(client)
 
-    # C1: BCD 0x0123 = 123
+    # C1：BCD 0x0123 = 123
     result = driver._read_single_block(ReadBlock("%C1", data_type="COUNTER"))
     assert result == [123]
 
-    # C5: BCD 0x0099 = 99
+    # C5：BCD 0x0099 = 99
     result = driver._read_single_block(ReadBlock("%C5", data_type="COUNTER"))
     assert result == [99]
 
@@ -286,22 +286,22 @@ def test_read_counter_as_word():
 
 def test_parse_s5time_bcd():
     """S5TIME BCD 解析测试"""
-    # 10ms time base, BCD=50 -> 500ms
+    # 10ms 时基, BCD=50 -> 500ms
     data = bytearray([0x00, 0x50])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 500
 
-    # 100ms time base, BCD=123 -> 12300ms
-    # Byte0 = (1 << 6) | 1 = 0x41, Byte1 = (2 << 4) | 3 = 0x23
+    # 100ms 时基, BCD=123 -> 12300ms
+    # 字节0 = (1 << 6) | 1 = 0x41, 字节1 = (2 << 4) | 3 = 0x23
     data = bytearray([0x41, 0x23])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 12300
 
-    # 1s time base, BCD=500 -> 500000ms
-    # Byte0 = (2 << 6) | 5 = 0x85, Byte1 = 0x00
+    # 1s 时基, BCD=500 -> 500000ms
+    # 字节0 = (2 << 6) | 5 = 0x85, 字节1 = 0x00
     data = bytearray([0x85, 0x00])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 500000
 
-    # 10s time base, BCD=999 -> 9990000ms
-    # Byte0 = (3 << 6) | 9 = 0xC9, Byte1 = (9 << 4) | 9 = 0x99
+    # 10s 时基, BCD=999 -> 9990000ms
+    # 字节0 = (3 << 6) | 9 = 0xC9, 字节1 = (9 << 4) | 9 = 0x99
     data = bytearray([0xC9, 0x99])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 9990000
 

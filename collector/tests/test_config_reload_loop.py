@@ -1,4 +1,4 @@
-"""Config reload loop change classification tests."""
+"""配置重载循环变更分类测试。"""
 
 import asyncio
 import logging

@@ -7,7 +7,7 @@ import unittest
 import sys
 from pathlib import Path
 
-# Add backend directory to sys.path
+# 将 backend 目录添加到 sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from app.services.task_manager import ExportTaskManager, ExportTask, get_export_task_manager
@@ -17,8 +17,8 @@ class TestExportTaskManager(unittest.IsolatedAsyncioTestCase):
         self.test_dir = tempfile.mkdtemp()
         self.tasks_file = os.path.join(self.test_dir, "tasks.json")
         
-        # We will patch ExportTaskManager to use this file
-        # We can just patch the constant/attribute where it's stored
+        # 我们将修补 ExportTaskManager 以使用此文件
+        # 我们可以直接修补存储位置处的常量/属性
         self.original_init = ExportTaskManager.__init__
         
         ExportTaskManager._instance = None
@@ -28,20 +28,20 @@ class TestExportTaskManager(unittest.IsolatedAsyncioTestCase):
         shutil.rmtree(self.test_dir)
 
     async def test_persistence(self):
-        # Instantiate with a specific tasks_file path (we will need to add this capability)
+        # 使用特定的 tasks_file 路径实例化（我们需要添加此功能）
         manager = ExportTaskManager(tasks_file=self.tasks_file)
         
-        # Create a task
+        # 创建一个任务
         task_id = manager.create_task({"type": "test"})
         manager.update_task(task_id, status="completed", progress=100)
         
-        # Check if file was created
+        # 检查文件是否已创建
         self.assertTrue(os.path.exists(self.tasks_file), "Tasks JSON file should be created")
         
-        # Reset singleton to force reload
+        # 重置单例以强制重新加载
         ExportTaskManager._instance = None
         
-        # Reload and check
+        # 重新加载并检查
         manager2 = ExportTaskManager(tasks_file=self.tasks_file)
         task = manager2.get_task(task_id)
         
@@ -54,18 +54,18 @@ class TestExportTaskManager(unittest.IsolatedAsyncioTestCase):
         manager = ExportTaskManager(tasks_file=self.tasks_file)
         task_id = manager.create_task({"type": "cleanup_test"})
         
-        # Create a dummy file
+        # 创建一个虚拟文件
         dummy_export_file = os.path.join(self.test_dir, "export.csv")
         with open(dummy_export_file, "w") as f:
             f.write("test")
             
         manager.update_task(task_id, file_path=dummy_export_file)
         
-        # Manually alter created_at to be older than 24 hours
+        # 手动将 created_at 修改为超过 24 小时
         from datetime import datetime, timezone, timedelta
         manager.tasks[task_id].created_at = datetime.now(timezone.utc) - timedelta(hours=25)
         
-        # Run cleanup loop once manually (we might need to invoke internal logic or let it run)
+        # 手动运行一次清理循环（我们可能需要调用内部逻辑或让它自行运行）
         manager.perform_cleanup()
         
         self.assertNotIn(task_id, manager.tasks, "Expired task should be removed from tasks dict")

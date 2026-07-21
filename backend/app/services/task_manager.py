@@ -130,7 +130,7 @@ class ExportTaskManager:
                 
     def perform_cleanup(self):
         now = datetime.now(timezone.utc)
-        # Tasks expire after 24 hours (86400 seconds)
+        # 任务在 24 小时（86400 秒）后过期
         with self._tasks_lock:
             expired_ids = [
                 task_id

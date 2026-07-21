@@ -1,4 +1,4 @@
-"""Config DB integration smoke tests against a real MySQL database.
+"""配置数据库集成冒烟测试，针对真实 MySQL 数据库。
 
 Default test runs skip this file. To execute:
 
@@ -64,7 +64,7 @@ async def _manager():
 
 
 async def test_load_devices_variables_groups_protocols():
-    """Device/protocol/type and variable/group joins load with real SQL aliases."""
+    """设备/协议/类型和变量/组连接使用真实 SQL 别名加载。"""
     async with _manager() as manager:
         devices, variables = await manager.load_devices_and_variables()
 
@@ -85,7 +85,7 @@ async def test_load_devices_variables_groups_protocols():
 
 
 async def test_get_device_config_versions_shape():
-    """Runtime reload polling signature uses real device columns and aliases."""
+    """运行时重载轮询签名使用真实设备列和别名。"""
     async with _manager() as manager:
         versions = await manager.get_device_config_versions()
 
@@ -102,7 +102,7 @@ async def test_get_device_config_versions_shape():
 
 
 async def test_write_system_log_chinese_json_roundtrip_and_cleanup():
-    """system_log JSON column stores and reads Chinese keys/values safely."""
+    """system_log JSON 列安全地存储和读取中文键/值。"""
     trace_id = f"itest-{uuid.uuid4().hex}"
 
     async with _manager() as manager:
@@ -118,6 +118,7 @@ async def test_write_system_log_chinese_json_roundtrip_and_cleanup():
             assert ok is True
 
             row = await manager._fetchone(
+                # 查询系统日志的内容和详情 JSON
                 """
                 SELECT content AS content, detail_json AS detail_json
                 FROM system_log
@@ -144,7 +145,7 @@ async def test_write_system_log_chinese_json_roundtrip_and_cleanup():
 
 
 async def test_update_device_status_atomic_and_cleanup():
-    """update_device_status exercises select/update/insert and cleans up its rows."""
+    """update_device_status 执行 select/update/insert 并清理其行。"""
     async with _manager() as manager:
         versions = await manager.get_device_config_versions()
         if not versions:
@@ -152,6 +153,7 @@ async def test_update_device_status_atomic_and_cleanup():
 
         device_code = next(iter(versions))
         before = await manager._fetchone(
+            # 查询设备状态和更新时间
             """
             SELECT id AS id, status AS status, update_time AS update_time
             FROM device
@@ -178,6 +180,7 @@ async def test_update_device_status_atomic_and_cleanup():
             )
 
             log_row = await manager._fetchone(
+                # 查询 PLC 连接日志事件类型
                 """
                 SELECT event_type AS event_type
                 FROM plc_connection_log
@@ -195,6 +198,7 @@ async def test_update_device_status_atomic_and_cleanup():
                 (before_log_id, "integration_test"),
             )
             await manager._execute(
+                # 删除指定条件的系统日志
                 """
                 DELETE FROM system_log
                 WHERE id > %s

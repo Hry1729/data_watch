@@ -1,8 +1,4 @@
-"""Dead Letter Queue helpers.
-
-Failed stream entries that exceeded the retry limit are pushed to a Redis List
-keyed by rt:dlq:{device_type}:{group_code}.
-"""
+"""死信队列辅助函数。超过重试限制的失败流条目被推送到 Redis List，键为 rt:dlq:{device_type}:{group_code}。"""
 
 from __future__ import annotations
 

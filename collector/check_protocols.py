@@ -49,7 +49,7 @@ SIDECAR_PROTOCOLS = {
 
 
 def normalize_protocol(value: str) -> str:
-    """Normalize protocol aliases used by DB rows and old seed scripts."""
+    """规范化数据库行和旧种子脚本中使用的协议别名。"""
     return (value or "").strip().lower()
 
 
@@ -66,7 +66,7 @@ def normalize_endpoint(endpoint: str) -> str:
 
 
 def load_toml_file(path: str) -> dict:
-    """Load TOML without requiring the third-party toml package on Python 3.11+."""
+    """在 Python 3.11+ 上无需第三方 toml 包即可加载 TOML。"""
     try:
         import tomllib
 
@@ -122,6 +122,7 @@ async def check_protocols(mysql_config: dict) -> Dict[str, List[str]]:
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
                 await cursor.execute(
+                    # 查询已启用的设备及其端点和协议
                     """
                     SELECT d.device_code, d.endpoint, cp.protocol
                     FROM device d

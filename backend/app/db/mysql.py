@@ -13,8 +13,8 @@ from app.core.config import get_settings
 def get_mysql_engine() -> AsyncEngine:
     settings = get_settings()
     engine = create_async_engine(settings.mysql_async_dsn, pool_pre_ping=True)
-    # SQLAlchemy bases pymysql pre-ping behavior on PyMySQL's ping signature,
-    # while aiomysql's adapter always requires ping(False).
+    # SQLAlchemy 基于 PyMySQL 的 ping 签名来判断 pymysql 的预检行为，
+    # 而 aiomysql 的适配器始终要求 ping(False)。
     engine.sync_engine.dialect._send_false_to_ping = True
 
     @event.listens_for(engine.sync_engine, "connect")

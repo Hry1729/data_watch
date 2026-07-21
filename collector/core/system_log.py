@@ -1,4 +1,6 @@
-﻿"""Collector system-log writer.
+﻿"""系统日志事件数据类定义
+
+Collector system-log writer.
 
 This module writes selected collector runtime events to MySQL system_log.
 It is deliberately explicit instead of mirroring every Python logging record,
@@ -80,7 +82,7 @@ class SystemLogWriter:
         exception_stack: Optional[str] = None,
         elapsed_ms: Optional[int] = None,
     ) -> bool:
-        """Queue a system-log event without blocking the collection path."""
+        """将系统日志事件加入队列，不阻塞采集路径。"""
         if not self._running:
             return False
         event = SystemLogEvent(

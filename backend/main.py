@@ -30,7 +30,7 @@ _inject_workspace_site_packages()
 
 
 def _write_startup_crash_log(exc: BaseException) -> None:
-    """Persist import/app creation failures before database logging is available."""
+    """在数据库日志可用之前，持久化记录导入/应用创建失败的信息。"""
     try:
         log_dir = Path(__file__).resolve().parent / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)

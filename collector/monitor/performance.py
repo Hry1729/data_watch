@@ -1,4 +1,4 @@
-"""Low-overhead runtime metrics for collector performance baselines."""
+"""用于采集器性能基准的低开销运行时指标。"""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ _DEFAULT_BUCKETS_MS = (
 
 
 class TimingHistogram:
-    """Thread-safe fixed-bucket timing histogram with bounded memory."""
+    """线程安全的固定桶定时直方图，内存有界。"""
 
     def __init__(self, buckets_ms: tuple[float, ...] = _DEFAULT_BUCKETS_MS) -> None:
         self._buckets = buckets_ms
@@ -97,7 +97,7 @@ class TimingHistogram:
 
 
 class PerformanceMetrics:
-    """Shared collector timing, counter, gauge, and runtime metrics."""
+    """共享的采集器计时、计数器、仪表和运行时指标。"""
 
     def __init__(self) -> None:
         self._timings: dict[str, TimingHistogram] = {}

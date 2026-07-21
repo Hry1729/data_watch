@@ -1,4 +1,4 @@
-"""Retry helper tests."""
+"""重试辅助函数测试。"""
 
 from unittest.mock import MagicMock
 

@@ -67,7 +67,7 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(candidate, digest)
 
 
-# ── JWT（HS256）───────────────────────────────────────────────────────────────
+# ── JWT（HS256 令牌）───────────────────────────────────────────────────────────
 
 def create_access_token(subject: str, secret: str, expire_hours: int) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)

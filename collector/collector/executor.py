@@ -594,7 +594,7 @@ class TaskExecutor:
         return values[0]
 
     def _emit_read_failure(self, task: CollectTask, error: Exception, elapsed_ms: float) -> None:
-        """Record a failed read as a system log without blocking collection."""
+        """将读取失败记录为系统日志，不阻塞采集。"""
         if self._system_logger is None:
             return
 
@@ -628,7 +628,7 @@ class TaskExecutor:
         elapsed_ms: float,
         error: bool = False,
     ) -> None:
-        """Emit one compact collection summary per interval instead of per point."""
+        """每个间隔发出一条紧凑的采集摘要，而非每个测点发一条。"""
         if self._system_logger is None:
             return
 

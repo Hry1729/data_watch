@@ -1,4 +1,4 @@
-"""Writer system-log writer.
+"""写入器系统日志写入器。Writer system-log writer.
 
 Best-effort writer that pushes selected writer runtime events into the MySQL
 `system_log` table, so they show up in the central log monitoring page (same
@@ -31,7 +31,7 @@ logger = logging.getLogger("writer.system_log")
 _VALID_LEVELS = {"DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"}
 _QUEUE_FULL_WARN_INTERVAL = 60.0
 
-# Column order mirrors backend SystemLog model (backend/app/models/log.py).
+# 列顺序镜像后端 SystemLog 模型（backend/app/models/log.py）。
 _INSERT_SQL = (
     "INSERT INTO system_log "
     "(log_time, level, log_type, source, device_id, device_code, point_id, "
@@ -56,7 +56,7 @@ def _clip(value: Optional[str], max_len: int) -> str:
 
 
 class SystemLogWriter:
-    """Asynchronous best-effort writer for writer-process system logs."""
+    """用于写入器进程系统日志的异步尽力投递写入器。"""
 
     def __init__(self, mysql_config: dict[str, Any], queue_max_size: int = 1000) -> None:
         self._config = mysql_config
@@ -69,7 +69,7 @@ class SystemLogWriter:
         self._last_full_warning = 0.0
 
     def start(self) -> None:
-        """Start the background worker. Never fails on DB connect (lazy connect)."""
+        """启动后台工作线程。不会因数据库连接失败（懒连接）。"""
         if self._running:
             return
         self._running = True
@@ -95,7 +95,7 @@ class SystemLogWriter:
         exception_stack: Optional[str] = None,
         elapsed_ms: Optional[int] = None,
     ) -> bool:
-        """Queue a system-log event without blocking. Drops on full queue.
+        """将系统日志事件加入队列，不阻塞。Queue a system-log event without blocking. Drops on full queue.
 
         The "check _running + enqueue" is guarded by the same lock stop() uses to
         "set _running=False + enqueue sentinel", so an event can never land after
@@ -127,7 +127,7 @@ class SystemLogWriter:
                 return False
 
     def stop(self, timeout: float = 5.0) -> None:
-        """Flush already-queued events then shut down.
+        """刷新已排队的事件然后关闭。Flush already-queued events then shut down.
 
         The sentinel is enqueued AFTER existing events (queue not cleared), so the
         worker processes everything queued before stop() — including a final
@@ -137,8 +137,8 @@ class SystemLogWriter:
             if not self._running:
                 return
             self._running = False
-            # Enqueue the sentinel AFTER existing events without discarding any of
-            # them; a bounded blocking put waits for the worker to drain a slot.
+            # 在现有事件之后将哨兵入队，不丢弃任何事件；
+            # 有界阻塞 put 等待工作线程腾出槽位。
             try:
                 self._queue.put(None, timeout=timeout)
             except queue.Full:
@@ -149,14 +149,14 @@ class SystemLogWriter:
             return
         thread.join(timeout=timeout)
         if thread.is_alive():
-            # Worker still busy (e.g. stuck in execute); do NOT close the connection
-            # it may be using from this thread, and keep the reference around.
+            # 工作线程仍在忙碌（例如卡在执行中）；不要关闭连接
+            # 它可能正从此线程使用中，保留引用。
             logger.warning("Writer system log worker did not stop within timeout")
             return
         self._thread = None
         self._close_conn()
 
-    # ── internal ──────────────────────────────────────────────────────────────
+    # ── 内部方法 ──────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
         while True:

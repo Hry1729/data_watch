@@ -232,6 +232,7 @@ class ConfigDBManager:
             try:
                 device_rows = await self._fetchall_on_conn(
                     conn,
+                    # 查询所有已启用的设备及其协议信息
                     """
                     SELECT
                         d.id AS id,
@@ -264,6 +265,7 @@ class ConfigDBManager:
 
                 variable_rows = await self._fetchall_on_conn(
                     conn,
+                    # 查询设备的变量配置信息
                     """
                     SELECT
                         v.id AS id,
@@ -431,6 +433,7 @@ class ConfigDBManager:
     async def _is_debug_db_enabled(self) -> bool:
         try:
             policy = await self._fetchone(
+                # 查询日志保留策略配置
                 """
                 SELECT
                     debug_db_enabled AS debug_db_enabled,
@@ -467,7 +470,7 @@ class ConfigDBManager:
         exception_stack: Optional[str] = None,
         elapsed_ms: Optional[int] = None,
     ) -> bool:
-        """Best-effort write to system_log. Never let logging break collection."""
+        """尽力写入 system_log。绝不让日志记录破坏采集。"""
         normalized_level = self._normalize_system_log_level(level)
         if normalized_level == "DEBUG" and not await self._is_debug_db_enabled():
             return False
@@ -476,6 +479,7 @@ class ConfigDBManager:
             now = datetime.now()
             detail_text = json.dumps(detail_json, ensure_ascii=False) if detail_json else None
             await self._execute(
+                # 插入系统日志记录
                 """
                 INSERT INTO system_log (
                     log_time, level, log_type, source, device_id, device_code, point_id,
@@ -535,6 +539,7 @@ class ConfigDBManager:
             try:
                 device_row = await self._fetchone_on_conn(
                     conn,
+                    # 根据设备代码查询设备 ID
                     """
                     SELECT id AS id, device_code AS device_code
                     FROM device
@@ -557,6 +562,7 @@ class ConfigDBManager:
                 # 注意：数据库字段名为 messsage（有拼写错误），此处保持一致
                 await self._execute_on_conn(
                     conn,
+                    # 插入 PLC 连接日志
                     """
                     INSERT INTO plc_connection_log (device_id, event_type, status, messsage, create_time)
                     VALUES (%s, %s, %s, %s, %s)
@@ -589,6 +595,7 @@ class ConfigDBManager:
     async def get_device_config_versions(self) -> Dict[str, DeviceSignature]:
         """返回所有启用设备的 {device_code: DeviceSignature}。"""
         rows = await self._fetchall(
+            # 查询已启用的设备信息
             """
             SELECT
                 device_code AS device_code,
@@ -619,6 +626,7 @@ class ConfigDBManager:
     ) -> List[VariableConfig]:
         """重新加载单台设备的变量配置。"""
         rows = await self._fetchall(
+            # 查询设备的变量配置
             """
             SELECT
                 v.id AS id,

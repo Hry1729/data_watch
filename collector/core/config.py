@@ -80,7 +80,7 @@ class CollectorConfig:
     interface_ingest: InterfaceIngestConfig = field(default_factory=InterfaceIngestConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
 
-    # Devices
+    # 设备
     devices: List[DeviceConfig] = field(default_factory=list)
     variables: List[VariableConfig] = field(default_factory=list)
 
@@ -89,7 +89,7 @@ class CollectorConfig:
     # 运行态标记：当前是否正在使用假数据模式
     fake_mode_active: bool = False
 
-    # Logging
+    # 日志
     log_level: str = "INFO"
     log_file: Optional[str] = None  # 日志文件路径，如 "logs/collector.log"，为空则只输出控制台
     log_max_bytes: int = 10 * 1024 * 1024  # 单个日志文件最大 10MB

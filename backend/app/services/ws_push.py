@@ -75,11 +75,7 @@ class WsPushManager:
                 await self.unsubscribe(ws, key[0], key[1])
 
     async def _read_latest(self, device_code: str, group_code: str) -> dict[str, Any] | None:
-        """Read latest hash from Redis.
-
-        Returns None when Redis is unavailable (caller should skip the update cycle).
-        Returns {} when the key doesn't exist (device has no data / is offline).
-        """
+        """从 Redis 读取最新哈希。当 Redis 不可用时返回 None（调用方应跳过更新周期）。当键不存在时返回 {}（设备无数据/离线）。"""
         from app.db.redis import get_redis_client
         try:
             r = await get_redis_client()
@@ -105,7 +101,7 @@ class WsPushManager:
             try:
                 latest = await self._read_latest(device_code, group_code)
                 if latest is None:
-                    # Redis connection error — skip this cycle, warning already logged in _read_latest
+                    # Redis 连接错误 — 跳过此周期，已在 _read_latest 中记录警告
                     continue
                 prev = self._snapshots.get(key, {})
                 if not latest:

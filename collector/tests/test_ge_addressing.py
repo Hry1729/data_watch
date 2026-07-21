@@ -174,7 +174,7 @@ class TestGEBlockMerging:
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %R100 -> offset 99, %R200 -> offset 199
+        # %R100 -> 偏移量 99, %R200 -> 偏移量 199
         # gap = 199 - 100 = 99 <= 125, span = 200 - 99 = 101 <= 125 -> 合并
         device.add_variable(Variable(variable_id="v1", address="%R100", data_type="INT"))
         device.add_variable(Variable(variable_id="v2", address="%R200", data_type="INT"))
@@ -301,7 +301,7 @@ class TestGEBlockMerging:
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %R1 -> offset 0, %R127 -> offset 126
+        # %R1 -> 偏移量 0, %R127 -> 偏移量 126
         # gap = 126 - 1 = 125 <= 125，但 span = 127 - 0 = 127 > 125 -> 拆块
         device.add_variable(Variable(variable_id="v1", address="%R1", data_type="INT"))
         device.add_variable(Variable(variable_id="v2", address="%R127", data_type="INT"))
@@ -386,7 +386,7 @@ class TestGEBlockMerging:
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %I1 -> bit 0 -> byte 0；%I2000 -> bit 1999（end 2000）-> byte_end 250
+        # %I1 -> 位 0 -> 字节 0；%I2000 -> 位 1999（结束 2000）-> 字节结束 250
         # span = 250 - 0 = 250 <= 250 -> 合并
         device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
         device.add_variable(Variable(variable_id="v2", address="%I2000", data_type="BOOL"))
@@ -407,7 +407,7 @@ class TestGEBlockMerging:
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %I1 -> byte 0；%I2001 -> bit 2000（end 2001）-> byte_end 251
+        # %I1 -> 字节 0；%I2001 -> 位 2000（结束 2001）-> 字节结束 251
         # span = 251 > 250 -> 拆块
         device.add_variable(Variable(variable_id="v1", address="%I1", data_type="BOOL"))
         device.add_variable(Variable(variable_id="v2", address="%I2001", data_type="BOOL"))
@@ -447,7 +447,7 @@ class TestGEBlockMerging:
             protocol="ge_srtp",
             connection_config={"ip": "127.0.0.1"},
         )
-        # %I7/8/15/16 -> bits 6,7,14,15：byte_start = 0，byte_end = ceil(16/8) = 2
+        # %I7/8/15/16 -> 位 6,7,14,15：byte_start = 0，byte_end = ceil(16/8) = 2
         # -> 1 块 2 字节，块首=逻辑 %I1；%I8=byte0 MSB位、%I9(若有)=byte1 LSB位
         device.add_variable(Variable(variable_id="v7", address="%I7", data_type="BOOL"))
         device.add_variable(Variable(variable_id="v8", address="%I8", data_type="BOOL"))
@@ -677,8 +677,8 @@ class TestGEValueExtraction:
     def test_extract_real_from_register_block(self):
         """从寄存器块提取 REAL（2 words 组合）"""
         # 浮点数 10.5 的 IEEE 754 表示
-        # 0x41280000 = 10.5
-        # low word = 0x0000, high word = 0x4128
+        # 0x41280000 = 10.5（浮点数）
+        # 低字 = 0x0000, 高字 = 0x4128
         raw_bytes = struct.pack('<f', 10.5)
         low = struct.unpack('<H', raw_bytes[:2])[0]
         high = struct.unpack('<H', raw_bytes[2:])[0]

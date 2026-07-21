@@ -1,4 +1,4 @@
-"""Unit tests for RedisWriter (COL-2)."""
+"""RedisWriter（COL-2）单元测试。"""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def mock_redis():
 
 
 # ---------------------------------------------------------------------------
-# write_latest
+# 写入最新值
 # ---------------------------------------------------------------------------
 
 class TestWriteLatest:
@@ -59,7 +59,7 @@ class TestWriteLatest:
 
 
 # ---------------------------------------------------------------------------
-# write_window
+# 写入窗口
 # ---------------------------------------------------------------------------
 
 class TestWriteWindow:
@@ -79,7 +79,7 @@ class TestWriteWindow:
         writer.write_window("qc100", "g001", 100, {})
         pipe = mock_redis.pipeline.return_value
         ltrim_args = pipe.ltrim.call_args[0]
-        # ltrim(key, 0, 9) keeps indices 0..9 = 10 items
+        # ltrim(key, 0, 9) 保留索引 0..9 = 10 个项目
         assert ltrim_args[1] == 0
         assert ltrim_args[2] == 9
 
@@ -92,7 +92,7 @@ class TestWriteWindow:
 
 
 # ---------------------------------------------------------------------------
-# write_stream
+# 写入流
 # ---------------------------------------------------------------------------
 
 class TestWriteStream:

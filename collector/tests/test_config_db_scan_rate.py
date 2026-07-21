@@ -1,4 +1,4 @@
-"""ConfigDB scan_rate normalization tests."""
+"""ConfigDB scan_rate 规范化测试。"""
 
 from unittest.mock import patch
 

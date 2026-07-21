@@ -1,4 +1,4 @@
-"""Redis Stream consumer that batch-writes to TDengine.
+"""Redis Stream 消费者，批量写入 TDengine。Redis Stream consumer that batch-writes to TDengine.
 
 Each stream entry (produced by the collector) has these fields:
     device_code, device_type, group_code, scan_rate, ts,
@@ -36,7 +36,7 @@ logger = logging.getLogger("writer.consumer")
 
 
 # ---------------------------------------------------------------------------
-# Internal buffer row
+# 内部缓冲行
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -55,7 +55,7 @@ class _BufferedRow:
 
 
 # ---------------------------------------------------------------------------
-# StreamConsumer
+# 流消费者
 # ---------------------------------------------------------------------------
 
 class StreamConsumer:
@@ -99,16 +99,16 @@ class StreamConsumer:
         self._last_dlq_failed_log: float | None = None
 
     # ------------------------------------------------------------------
-    # Public entry point
+    # 公共入口点
     # ------------------------------------------------------------------
 
     async def run_loop(self, stream_keys: list[str]) -> None:
-        """Main consumption loop. Runs until cancelled."""
+        """主消费循环。运行直到被取消。"""
         if not stream_keys:
             raise ValueError("stream_keys is empty — check writer config device_types/group_codes")
         self._ensure_consumer_groups(stream_keys)
 
-        # Drain any pending messages left from a previous run / crashed consumer.
+        # 排空上次运行/崩溃消费者遗留的待处理消息。
         for sk in stream_keys:
             await self.drain_pending(sk, self._consumer_name)
 
@@ -121,18 +121,18 @@ class StreamConsumer:
         block_ms = max(int(self._flush_interval_s * 1000 / 2), 50)
 
         while True:
-            # --- Retry previously failed XACKs first (M5) ---
+            # --- 首先重试之前失败的 XACK（M5）---
             # 必须早于 drain：否则已成功落库但 XACK 失败、又满足 idle 条件的条目
             # 会被 drain reclaim 触发重写，违背 M5 「避免重复写入」的目标。
             self._retry_pending_acks()
 
-            # --- Periodically reclaim idle pending messages (S2) ---
+            # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
                 for sk in stream_keys:
                     await self.drain_pending(sk, self._consumer_name)
                 self._last_pending_drain = time.monotonic()
 
-            # --- Read new messages (skip when buffer is full to apply back-pressure) ---
+            # --- 读取新消息（缓冲区满时跳过以施加背压）---
             if len(self._buffer) < self._max_buffer_rows:
                 streams_arg = {sk: ">" for sk in stream_keys}
                 try:
@@ -177,7 +177,7 @@ class StreamConsumer:
                     self._max_buffer_rows,
                 )
 
-            # --- Flush if time or buffer threshold reached ---
+            # --- 达到时间或缓冲区阈值时刷新 ---
             now = time.monotonic()
             buffer_size = len(self._buffer)
             if buffer_size >= self._max_buffer_rows or (
@@ -219,14 +219,11 @@ class StreamConsumer:
             self._log_performance_if_due()
 
     # ------------------------------------------------------------------
-    # Pending message recovery
+    # 待处理消息恢复
     # ------------------------------------------------------------------
 
     async def drain_pending(self, stream_key: str, consumer_name: str) -> None:
-        """Reclaim idle pending messages and process them.
-
-        Tries XAUTOCLAIM first (Redis >= 6.2); falls back to XPENDING + XCLAIM.
-        """
+        """回收空闲的待处理消息并进行处理。首先尝试 XAUTOCLAIM（Redis >= 6.2）；回退到 XPENDING + XCLAIM。"""
         logger.info("[consumer] draining pending for stream %s", stream_key)
         try:
             await self._drain_with_xautoclaim(stream_key, consumer_name)
@@ -255,7 +252,7 @@ class StreamConsumer:
                     count=self._batch_count,
                 ),
             )
-            # result is (next_start_id, [(entry_id, data), ...], deleted_ids)
+            # 结果为 (next_start_id, [(entry_id, data), ...], deleted_ids)
             next_id, claimed_entries, _ = result
             delivery_counts = self._get_delivery_counts(stream_key, [entry_id for entry_id, _ in claimed_entries])
             for entry_id, entry_data in claimed_entries:
@@ -311,7 +308,7 @@ class StreamConsumer:
                 )
                 for entry_id, entry_data in claimed:
                     try:
-                        # delivery_count comes from xpending_range
+                        # delivery_count 来自 xpending_range
                         dc = next(
                             (p["times_delivered"] for p in pending_entries if p["message_id"] == entry_id),
                             1,
@@ -333,7 +330,7 @@ class StreamConsumer:
                 break  # 已是最后一页
 
     def _get_delivery_counts(self, stream_key: str, entry_ids: list[str]) -> dict[str, int]:
-        """Fetch delivery counts for a batch of entries via one XPENDING call."""
+        """通过一次 XPENDING 调用获取一批条目的投递计数。"""
         if not entry_ids:
             return {}
         try:
@@ -356,7 +353,7 @@ class StreamConsumer:
         return {}
 
     # ------------------------------------------------------------------
-    # Entry parsing
+    # 条目解析
     # ------------------------------------------------------------------
 
     async def _handle_entry(
@@ -373,7 +370,7 @@ class StreamConsumer:
         config_version_raw = entry_data.get("config_version", "0")
         values_raw = entry_data.get("values", "{}")
 
-        # --- DLQ check first ---
+        # --- 首先检查死信队列（DLQ）---
         if delivery_count > self._pending_max_retry:
             moved = push_dlq(
                 self._r,
@@ -418,7 +415,7 @@ class StreamConsumer:
                         )
             return
 
-        # --- Parse required fields ---
+        # --- 解析必填字段 ---
         if not device_code or not group_code:
             logger.warning("[consumer] skipping entry %s: missing device_code/group_code", entry_id)
             self._ack_single(stream_key, entry_id)
@@ -465,7 +462,7 @@ class StreamConsumer:
             )
             return
 
-        # --- Translate var_id → td_column_name with type coercion ---
+        # --- 将 var_id 转换为 td_column_name，带类型强制转换 ---
         columns: dict[str, float] = {}
         for var_id, str_val in raw_values.items():
             col_name = mapping.var_map.get(var_id)
@@ -499,7 +496,7 @@ class StreamConsumer:
         self._metrics.set_buffer_rows(len(self._buffer))
 
     # ------------------------------------------------------------------
-    # Flush
+    # 刷新
     # ------------------------------------------------------------------
 
     async def _flush(self) -> None:
@@ -633,7 +630,7 @@ class StreamConsumer:
         return moved
 
     def _ack_rows(self, rows: list[_BufferedRow]) -> None:
-        """XACK rows, grouped by stream_key."""
+        """按 stream_key 分组后 XACK 确认行。"""
         by_key: dict[str, list[str]] = {}
         for row in rows:
             by_key.setdefault(row.stream_key, []).append(row.entry_id)
@@ -686,11 +683,11 @@ class StreamConsumer:
                 del self._ack_retry[stream_key]
 
     # ------------------------------------------------------------------
-    # Setup helpers
+    # 设置辅助函数
     # ------------------------------------------------------------------
 
     def _ensure_consumer_groups(self, stream_keys: list[str]) -> None:
-        """Create consumer groups (MKSTREAM) for all stream keys if not present."""
+        """如果不存在，为所有流键创建消费者组（MKSTREAM）。"""
         for sk in stream_keys:
             try:
                 self._r.xgroup_create(sk, self._group_name, id="0", mkstream=True)

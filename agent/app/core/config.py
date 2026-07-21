@@ -69,7 +69,7 @@ def save_config(cfg: dict) -> None:
 
 
 def mutate_config(mutator) -> dict:
-    """Load, mutate, and save config under one lock."""
+    """在同一个锁下加载、修改并保存配置。"""
     with _CONFIG_LOCK:
         cfg = _load_config_unlocked()
         mutator(cfg)

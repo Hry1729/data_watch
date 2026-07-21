@@ -123,6 +123,7 @@ class ModuleMonitorService:
         rows = (
             await self.session.execute(
                 text(
+                    # 查询设备及其关联驱动、组信息和变量扫描率
                     """
                     SELECT
                         d.id AS device_id,

@@ -35,8 +35,8 @@ class BaseDriver(ABC):
     def __init__(self):
         self._connected = False
         self._config: Optional[Dict[str, Any]] = None
-        # PLC client libraries are generally not safe for concurrent operations
-        # on the same connection. Drivers should hold this for each read batch.
+        # PLC 客户端库通常不适用于并发操作
+        # 同一连接上。驱动程序应为每个读取批次持有此锁。
         self._read_lock = asyncio.Lock()
 
     @property

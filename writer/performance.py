@@ -1,4 +1,4 @@
-"""Bounded writer metrics used by performance baselines."""
+"""由性能基准使用的有界写入器指标。"""
 
 from __future__ import annotations
 

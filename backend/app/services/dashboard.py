@@ -107,6 +107,7 @@ class DashboardService:
             # 近24小时系统告警数
             current_result = await self.session.execute(
                 text(
+                    # 统计当前时间段的告警日志数量
                     """
                     SELECT COUNT(*) FROM (
                         SELECT 1 FROM system_log
@@ -126,6 +127,7 @@ class DashboardService:
             # 上个24小时系统告警数
             previous_result = await self.session.execute(
                 text(
+                    # 统计上一时间段的告警日志数量
                     """
                     SELECT COUNT(*) FROM (
                         SELECT 1 FROM system_log
@@ -417,14 +419,15 @@ class DashboardService:
             current_rows = (
                 await self.session.execute(
                     text(
-                        """
-                        SELECT
-                            alarm_type,
-                            device_type_code,
-                            level_code,
-                            level_name_snapshot,
-                            severity
-                        FROM alarm_record
+                    # 查询指定时间范围的告警记录
+                    """
+                    SELECT
+                        alarm_type,
+                        device_type_code,
+                        level_code,
+                        level_name_snapshot,
+                        severity
+                    FROM alarm_record
                         WHERE start_time >= :start_time
                           AND start_time < :end_time
                         """
@@ -439,12 +442,13 @@ class DashboardService:
                 (
                     await self.session.execute(
                         text(
-                            """
-                            SELECT COUNT(*) AS total
-                            FROM alarm_record
-                            WHERE start_time >= :start_time
-                              AND start_time < :end_time
-                            """
+                    # 统计指定时间范围的告警总数
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM alarm_record
+                    WHERE start_time >= :start_time
+                      AND start_time < :end_time
+                    """
                         ),
                         {
                             "start_time": previous_start,
@@ -483,14 +487,15 @@ class DashboardService:
             rows = (
                 await self.session.execute(
                     text(
-                        """
-                        SELECT
-                            id,
-                            alarm_no,
-                            start_time,
-                            device_id,
-                            device_code,
-                            device_name,
+                    # 查询最近的告警记录
+                    """
+                    SELECT
+                        id,
+                        alarm_no,
+                        start_time,
+                        device_id,
+                        device_code,
+                        device_name,
                             alarm_type,
                             level_code,
                             level_name_snapshot,
@@ -888,6 +893,7 @@ class DashboardService:
             return self._fact_tables
 
         statement = text(
+            # 检查数据库表是否存在
             """
             SELECT table_name
             FROM information_schema.tables
@@ -941,6 +947,7 @@ class DashboardService:
         rows = (
             await self.session.execute(
                 text(
+                    # 查询有变量配置的设备
                     """
                     SELECT DISTINCT
                         d.id AS device_id,

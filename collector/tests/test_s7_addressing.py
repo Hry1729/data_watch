@@ -140,7 +140,7 @@ def test_device_keeps_width_mismatched_db_point_standalone():
 
 def test_executor_extracts_db_values_from_merged_block():
     """合并块的字节经 executor 还原，结果与单点读取一致。"""
-    # DBB0..7: INT(123) @0, BYTE @2, BYTE @3, REAL(10.0) @4
+    # DBB0..7：INT(123) 地址0, BYTE 地址2, BYTE 地址3, REAL(10.0) 地址4
     raw = [0x00, 0x7B, 0x12, 0x34, 0x41, 0x20, 0x00, 0x00]
 
     assert TaskExecutor._extract_mapped_s7_value(
@@ -299,7 +299,7 @@ def test_s7_driver_reads_percent_prefixed_db_formats():
     ]
 
 
-# ==================== Timer/Counter Addressing Tests ====================
+# ==================== 定时器/计数器寻址测试 ====================
 
 def test_device_parses_timer_address():
     """设备解析 %T 地址"""

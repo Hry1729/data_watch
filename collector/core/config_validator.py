@@ -243,7 +243,7 @@ class ConfigValidator:
         if normalized_protocol in {"opc", "opcua", "opc_ua", "http_push"}:
             return bool(address and address.strip())
 
-        # Unknown protocol: accept only known read address families.
+        # 未知协议：仅接受已知的读取地址族。
         return self._validate_s7_address(address) or self._validate_ge_address(address)
 
     @staticmethod
@@ -251,7 +251,7 @@ class ConfigValidator:
         """验证 S7 标准 DB/I/Q/M/T/C 地址，拒绝旧式 DB<num>.<offset>。"""
         upper = address.upper()
 
-        # Timer/Counter: %T<num> or %C<num>
+        # 定时器/计数器：%T<数字> 或 %C<数字>
         tc_match = re.match(r'^%?[TC](\d+)$', upper)
         if tc_match:
             return True

@@ -1,4 +1,4 @@
-"""TDengine batch writer.
+"""TDengine 批量写入器。TDengine batch writer.
 
 Connects via WebSocket (taos-ws-py / taosws) matching the approach used in
 collector/storage/tdengine.py.
@@ -68,13 +68,13 @@ _MAX_BISECT_DEPTH = 24
 
 
 def _is_connection_error(exc: Exception) -> bool:
-    """Heuristic: does this exception indicate a dropped/unhealthy connection?"""
+    """启发式判断：此异常是否表示连接断开/不健康？"""
     msg = str(exc).lower()
     return any(kw in msg for kw in _CONNECTION_ERROR_KEYWORDS)
 
 
 def _is_data_error(exc: Exception | None) -> bool:
-    """White-list: is this a *definite* bad-data / over-long-SQL error?
+    """白名单：这确定是坏数据/超长 SQL 错误吗？White-list: is this a *definite* bad-data / over-long-SQL error?
 
     Only these are eligible for binary-search isolation. Anything else (including
     None / connection errors) is treated as transient and retried, never DLQ'd.
@@ -99,11 +99,11 @@ class TDengineWriter:
         self._last_reconnect_fail_log: float | None = None
 
     # ------------------------------------------------------------------
-    # Lifecycle
+    # 生命周期
     # ------------------------------------------------------------------
 
     async def connect(self, config: dict) -> None:
-        """Open a WebSocket connection to TDengine (runs taosws.connect in executor)."""
+        """打开到 TDengine 的 WebSocket 连接（在执行器中运行 taosws.connect）。"""
         from taosws import connect  # type: ignore[import]
 
         self._config = config
@@ -147,11 +147,11 @@ class TDengineWriter:
                 logger.info("[tdengine] disconnected")
 
     # ------------------------------------------------------------------
-    # Query helpers (run blocking taosws calls in executor)
+    # 查询辅助函数（在执行器中运行阻塞的 taosws 调用）
     # ------------------------------------------------------------------
 
     async def _execute_ex(self, sql: str) -> tuple[bool, Exception | None]:
-        """Execute SQL, returning (ok, exception).
+        """执行 SQL，返回 (ok, exception)。Execute SQL, returning (ok, exception).
 
         Unlike _execute (bool), this surfaces the failure so the write path can
         classify it (connection vs bad-data vs unknown) and decide whether to
@@ -194,7 +194,7 @@ class TDengineWriter:
             return []
 
     async def _try_reconnect(self) -> None:
-        """Re-establish the TDengine connection after a drop.
+        """在断开后重新建立 TDengine 连接。Re-establish the TDengine connection after a drop.
 
         Guarded by _reconnecting so the _execute calls inside connect()
         (via _ensure_database / _preload_stables) cannot recurse back here.
@@ -236,7 +236,7 @@ class TDengineWriter:
             self._reconnecting = False
 
     # ------------------------------------------------------------------
-    # Schema management
+    # 模式管理
     # ------------------------------------------------------------------
 
     async def _ensure_database(self) -> None:
@@ -315,9 +315,9 @@ class TDengineWriter:
             if not col_name or col_name.lower() == "ts":
                 continue
 
-            # DESCRIBE returns tag metadata differently across connectors/versions.
-            # The live schema has device_code as the only tag, so keep it out of
-            # the data-column cache even when no explicit TAG marker is present.
+            # DESCRIBE 在不同连接器/版本中返回的标签元数据不同。
+            # 活动模式以 device_code 为唯一标签，因此即使没有显式 TAG 标记，
+            # 也将其排除在数据列缓存之外。
             note = " ".join(str(item or "") for item in row[3:]).upper()
             if col_name.lower() in _KNOWN_TAG_COLUMNS or "TAG" in note:
                 continue
@@ -378,13 +378,13 @@ class TDengineWriter:
             return False
 
     # ------------------------------------------------------------------
-    # Write
+    # 写入
     # ------------------------------------------------------------------
 
     async def write_multi_table(
         self, rows: list[dict]
     ) -> list[tuple[list[int], str, float]]:
-        """Write rows across many child tables as chunked multi-table INSERTs.
+        """将行跨多个子表写入为分块的多表 INSERT。Write rows across many child tables as chunked multi-table INSERTs.
 
         rows[i] = {child_table, stable, device_code, ts, columns}. Rows of any
         number of child tables (and stables) are packed into single INSERT
@@ -403,8 +403,8 @@ class TDengineWriter:
             return []
 
         async with self._lock:
-            # Ensure columns per stable (union across all rows of that stable),
-            # so the INSERT never references a column the stable lacks.
+            # 确保每个超级表的列（该超级表所有行的并集），
+            # 以便 INSERT 永远不会引用超级表缺少的列。
             cols_by_stable: dict[str, list[str]] = {}
             seen_by_stable: dict[str, set[str]] = {}
             for row in rows:
@@ -430,7 +430,7 @@ class TDengineWriter:
         sql: str | None = None,
         depth: int = 0,
     ) -> list[tuple[list[int], str, float]]:
-        """Execute one chunk; on a data error, binary-search to isolate bad rows.
+        """执行一个块；在数据错误时使用二分搜索隔离坏行。Execute one chunk; on a data error, binary-search to isolate bad rows.
 
         Returns (indices, status, elapsed_ms) outcome groups. Recursion halves the
         index set each level, so it terminates at single rows (ceil(log2 n) deep);
@@ -468,7 +468,7 @@ class TDengineWriter:
         return left + right
 
     def _build_chunk_sql(self, rows: list[dict], indices: list[int]) -> str:
-        """Build one multi-table INSERT covering exactly `indices` (for bisection).
+        """构建一个恰好覆盖指定索引的多表 INSERT。Build one multi-table INSERT covering exactly `indices` (for bisection).
 
         Groups indices by child table and unions columns per table, mirroring
         _iter_chunks but without the byte-budget packing (a bisected half is
@@ -526,7 +526,7 @@ class TDengineWriter:
         return header + " ".join(self._value_clause(rows[i], all_cols) for i in idxs)
 
     def _split_subtable(self, rows: list[dict], idxs: list[int], all_cols: list[str]):
-        """Split one child table's rows so each fragment stays under MAX_SQL_BYTES.
+        """拆分一个子表的行，使每个片段保持在 MAX_SQL_BYTES 以下。Split one child table's rows so each fragment stays under MAX_SQL_BYTES.
 
         Measures header + per-row clause bytes incrementally to avoid O(n^2).
         A single row clause that alone exceeds the cap is still emitted on its own
@@ -549,16 +549,16 @@ class TDengineWriter:
             yield cur
 
     def _iter_chunks(self, rows: list[dict]):
-        """Yield (row_indices, sql) chunks, each a multi-table INSERT <= MAX_SQL_BYTES."""
+        """生成 (row_indices, sql) 块，每个块是一个不超过 MAX_SQL_BYTES 的多表 INSERT。"""
         prefix = "INSERT INTO "
         prefix_bytes = len(prefix.encode("utf-8"))
 
-        # Group row indices by child table, preserving first-seen order.
+        # 按子表分组行索引，保留首次出现的顺序。
         by_table: dict[str, list[int]] = {}
         for i, row in enumerate(rows):
             by_table.setdefault(row["child_table"], []).append(i)
 
-        # Build per-subtable fragments (splitting oversized subtables by rows).
+        # 构建每个子表的片段（按行拆分过大的子表）。
         fragments: list[tuple[str, list[int], int]] = []
         for idxs in by_table.values():
             all_cols = self._union_cols(rows, idxs)
@@ -566,7 +566,7 @@ class TDengineWriter:
                 frag = self._subtable_fragment(rows, frag_idxs, all_cols)
                 fragments.append((frag, frag_idxs, len(frag.encode("utf-8"))))
 
-        # Next-fit pack fragments into chunks.
+        # 使用 Next-fit 算法将片段打包成块。
         cur_frags: list[str] = []
         cur_idxs: list[int] = []
         cur_bytes = prefix_bytes

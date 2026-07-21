@@ -661,8 +661,8 @@ class Device:
                 "raw": address,
             }
 
-        # Unknown protocol: validate the common formats without forcing a
-        # protocol-specific interpretation.
+        # 未知协议：验证通用格式，不强加
+        # 特定协议的解释。
         if addr.startswith("DB") or addr.startswith("%DB") or self._S7_AREA_RE.match(addr):
             return self._parse_s7_address(address)
         if self._GE_ADDRESS_RE.match(addr):

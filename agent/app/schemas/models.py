@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-# ── Bootstrap ─────────────────────────────────────────────────────────────────
+# ── 引导 Bootstrap ─────────────────────────────────────────────────────────────
 
 class BootstrapStatusResponse(BaseModel):
     in_bootstrap: bool
@@ -49,7 +49,7 @@ class TestConnectionRequest(BaseModel, extra="forbid"):
     database: str | None = None
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+# ── 健康检查 Health ────────────────────────────────────────────────────────────
 
 class HealthCheckConfig(BaseModel):
     host: str | None = None
@@ -69,7 +69,7 @@ class HealthCheckResponse(BaseModel):
     message: str | None = None
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+# ── 认证 Auth ──────────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
     username: str
@@ -80,7 +80,7 @@ class LoginResponse(BaseModel):
     token: str
 
 
-# ── Viewer ────────────────────────────────────────────────────────────────────
+# ── 查看器 Viewer ──────────────────────────────────────────────────────────────
 
 class ViewerStatusResponse(BaseModel):
     agent: str = "running"

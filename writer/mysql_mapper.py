@@ -1,4 +1,4 @@
-"""MySQL-backed variable mapping cache.
+"""基于 MySQL 的变量映射缓存。MySQL-backed variable mapping cache.
 
 Maps (device_code, group_code) → GroupMapping which contains:
   - config_version: int
@@ -43,7 +43,7 @@ class GroupMapping:
 
 
 class MysqlMapper:
-    """Synchronous pymysql-backed mapping cache."""
+    """组映射数据类和映射器类定义。Synchronous pymysql-backed mapping cache."""
 
     def __init__(self, mysql_conn: pymysql.connections.Connection) -> None:
         self._conn = mysql_conn
@@ -55,7 +55,7 @@ class MysqlMapper:
         group_code: str,
         stream_config_version: int,
     ) -> GroupMapping | None:
-        """Return cached mapping if config_version matches, otherwise reload."""
+        """如果 config_version 匹配则返回缓存映射，否则重新加载。"""
         key = f"{device_code}:{group_code}"
         cached = self._cache.get(key)
         if cached is not None and cached.config_version == stream_config_version:
@@ -86,7 +86,7 @@ class MysqlMapper:
         return mapping
 
     def load(self, device_code: str, group_code: str) -> GroupMapping | None:
-        """Query MySQL and build a GroupMapping. Returns None on error."""
+        """查询 MySQL 并构建 GroupMapping。出错时返回 None。"""
         try:
             self._ensure_connected()
             with self._conn.cursor(pymysql.cursors.DictCursor) as cur:
@@ -129,7 +129,7 @@ class MysqlMapper:
             return None
 
     def _ensure_connected(self) -> None:
-        """Ping and reconnect if the MySQL connection was dropped."""
+        """如果 MySQL 连接断开则 ping 并重新连接。"""
         try:
             self._conn.ping(reconnect=True)
         except Exception as exc:

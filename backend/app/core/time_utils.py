@@ -9,23 +9,19 @@ LOCAL_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def now_local() -> datetime:
-    """Return local project time as a naive datetime for MySQL DATETIME fields."""
+    """返回本地项目时间作为 naive datetime，用于 MySQL DATETIME 字段。"""
     return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 
 def to_local_naive(value: datetime) -> datetime:
-    """Convert aware datetimes to local naive time; keep naive values unchanged."""
+    """将带时区的 datetime 转换为本地 naive 时间；保持 naive 值不变。"""
     if value.tzinfo is None:
         return value
     return value.astimezone(LOCAL_TZ).replace(tzinfo=None)
 
 
 def parse_local_datetime(value: object) -> datetime | None:
-    """Parse API datetime values into local naive datetime.
-
-    Naive strings are treated as local project time. Strings with timezone
-    offsets or Z are converted to Asia/Shanghai and then stored as naive time.
-    """
+    """将 API datetime 值解析为本地 naive datetime。不带时区的字符串被视为本地项目时间。带时区偏移或 Z 的字符串转换为 Asia/Shanghai 后以 naive 时间存储。"""
     if value is None:
         return None
     if isinstance(value, datetime):

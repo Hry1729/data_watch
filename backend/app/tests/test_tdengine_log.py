@@ -47,7 +47,7 @@ class TestTdengineLogService(unittest.TestCase):
         for bad in ("../taosdlog.0", "..", ".", "sub/taosdlog.0", "nope.log", ""):
             self.assertIsNone(tlog._resolve_target(self.dir, bad), bad)
 
-    # ── tail ────────────────────────────────────────────────────
+    # ── tail 尾部跟踪 ────────────────────────────────────────────────────
     def test_tail_returns_last_n_lines(self):
         self._write("taosdlog.0", "".join(f"line{i}\n" for i in range(20)))
         rows, truncated = tlog._tail(self.dir / "taosdlog.0", 5)

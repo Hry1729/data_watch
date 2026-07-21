@@ -103,7 +103,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询通信协议列表及其绑定设备数量
+                    # 查询通信协议列表及其绑定设备数量
+                    """
                     SELECT
                         cp.id AS id,
                         cp.protocol AS driver_name,
@@ -150,7 +151,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询可用的通信协议列表
+                    # 查询可用的通信协议列表
+                    """
                     SELECT
                         cp.protocol AS driver_name,
                         COALESCE(cp.description, cp.protocol) AS driver_desc
@@ -247,7 +249,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """查询设备列表及其类型和组信息
+                    # 查询设备列表及其类型和组信息
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -402,7 +405,8 @@ class CatalogService:
         try:
             result = await self.session.execute(
                 text(
-                    """插入新设备记录
+                    # 插入新设备记录
+                    """
                     INSERT INTO device (
                         device_code,
                         device_name,
@@ -456,7 +460,8 @@ class CatalogService:
         existing_row = (
             await self.session.execute(
                 text(
-                    """根据设备 ID 查询设备详细信息
+                    # 根据设备 ID 查询设备详细信息
+                    """
                     SELECT
                         d.id,
                         d.device_code,
@@ -490,7 +495,8 @@ class CatalogService:
         duplicate = (
             await self.session.execute(
                 text(
-                    """检查设备编码是否已存在（排除自身）
+                    # 检查设备编码是否已存在（排除自身）
+                    """
                     SELECT id
                     FROM device
                     WHERE device_code = :device_code
@@ -541,7 +547,8 @@ class CatalogService:
         try:
             await self.session.execute(
                 text(
-                    """更新设备信息
+                    # 更新设备信息
+                    """
                     UPDATE device
                     SET
                         device_code = :device_code,
@@ -704,7 +711,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """查询设备的测点列表
+                    # 查询设备的测点列表
+                    """
                     SELECT
                         dv.id AS point_id,
                         dv.device_id AS device_id,
@@ -799,7 +807,8 @@ class CatalogService:
         device_row = (
             await self.session.execute(
                 text(
-                    """查询设备的基本信息（含类型和模板）
+                    # 查询设备的基本信息（含类型和模板）
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -822,7 +831,8 @@ class CatalogService:
             template_row = (
                 await self.session.execute(
                     text(
-                    """验证模板对指定设备类型是否可用
+                    # 验证模板对指定设备类型是否可用
+                    """
                     SELECT
                         vt.id AS template_id
                     FROM variable_template AS vt
@@ -843,7 +853,8 @@ class CatalogService:
             template_row = (
                 await self.session.execute(
                     text(
-                    """查询设备类型的最新启用模板
+                    # 查询设备类型的最新启用模板
+                    """
                     SELECT
                         vt.id AS template_id
                     FROM variable_template AS vt
@@ -863,7 +874,8 @@ class CatalogService:
         template_points = (
             await self.session.execute(
                 text(
-                    """查询模板的变量定义
+                    # 查询模板的变量定义
+                    """
                     SELECT
                         tv.var_seq AS var_seq,
                         COALESCE(tv.var_name, CAST(tv.var_seq AS CHAR), '') AS var_name,
@@ -890,7 +902,8 @@ class CatalogService:
         existing_rows = (
             await self.session.execute(
                 text(
-                    """查询设备已有的 IO 地址列表
+                    # 查询设备已有的 IO 地址列表
+                    """
                     SELECT
                         dv.var_seq AS var_seq,
                         LOWER(COALESCE(dv.var_address, '')) AS io_address
@@ -918,7 +931,8 @@ class CatalogService:
         fail = 0
         errors: list[dict[str, Any]] = []
         insert_sql = text(
-            """插入新设备变量
+            # 插入新设备变量
+            """
             INSERT INTO device_variable (
                 device_id,
                 var_seq,
@@ -1072,7 +1086,8 @@ class CatalogService:
         device_row = (
             await self.session.execute(
                 text(
-                    """查询设备及其驱动和类型信息
+                    # 查询设备及其驱动和类型信息
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -1098,7 +1113,8 @@ class CatalogService:
         existing_address = (
             await self.session.execute(
                 text(
-                    """检查 IO 地址是否已被使用
+                    # 检查 IO 地址是否已被使用
+                    """
                     SELECT id
                     FROM device_variable
                     WHERE device_id = :device_id
@@ -1115,7 +1131,8 @@ class CatalogService:
         existing_var_seq = (
             await self.session.execute(
                 text(
-                    """检查变量序号是否已被使用
+                    # 检查变量序号是否已被使用
+                    """
                     SELECT id
                     FROM device_variable
                     WHERE device_id = :device_id
@@ -1155,7 +1172,8 @@ class CatalogService:
             )
             result = await self.session.execute(
                 text(
-                    """插入新设备变量（含组信息）
+                    # 插入新设备变量（含组信息）
+                    """
                     INSERT INTO device_variable (
                         device_id,
                         point_group_id,
@@ -1253,7 +1271,8 @@ class CatalogService:
         device_row = (
             await self.session.execute(
                 text(
-                    """查询设备驱动信息
+                    # 查询设备驱动信息
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -1277,7 +1296,8 @@ class CatalogService:
         existing_point = (
             await self.session.execute(
                 text(
-                    """查询测点所属设备和组
+                    # 查询测点所属设备和组
+                    """
                     SELECT device_id, point_group_id
                     FROM device_variable
                     WHERE id = :point_id
@@ -1296,7 +1316,8 @@ class CatalogService:
         existing_address = (
             await self.session.execute(
                 text(
-                    """检查 IO 地址是否已被其他测点使用
+                    # 检查 IO 地址是否已被其他测点使用
+                    """
                     SELECT id
                     FROM device_variable
                     WHERE device_id = :device_id
@@ -1314,7 +1335,8 @@ class CatalogService:
         existing_var_seq = (
             await self.session.execute(
                 text(
-                    """检查变量序号是否已被其他测点使用
+                    # 检查变量序号是否已被其他测点使用
+                    """
                     SELECT id
                     FROM device_variable
                     WHERE device_id = :device_id
@@ -1350,7 +1372,8 @@ class CatalogService:
         try:
             await self.session.execute(
                 text(
-                    """更新设备变量信息
+                    # 更新设备变量信息
+                    """
                     UPDATE device_variable
                     SET
                         device_id = :device_id,
@@ -1413,7 +1436,8 @@ class CatalogService:
     async def batch_delete_points(self, ids: list[Any], *, actor: str) -> dict[str, int]:
         normalized_ids = self._normalize_id_list(ids, field_name="ids")
         select_stmt = text(
-            """批量查询变量信息
+            # 批量查询变量信息
+            """
             SELECT id, device_id, point_group_id, enable, deleted
             FROM device_variable
             WHERE id IN :ids
@@ -1456,7 +1480,8 @@ class CatalogService:
             row = (
                 await self.session.execute(
                     text(
-                    """查询指定设备中某序号的测点
+                    # 查询指定设备中某序号的测点
+                    """
                     SELECT
                         id AS point_id,
                         device_id,
@@ -1486,7 +1511,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """根据 ID 查询测点信息
+                    # 根据 ID 查询测点信息
+                    """
                     SELECT
                         id AS point_id,
                         device_id,
@@ -1531,7 +1557,8 @@ class CatalogService:
             row = (
                 await self.session.execute(
                     text(
-                    """查询设备测点组信息（带行锁）
+                    # 查询设备测点组信息（带行锁）
+                    """
                     SELECT
                         id,
                         max_point_count,
@@ -1552,7 +1579,8 @@ class CatalogService:
                 group_no = self._point_group_no(target_code)
             result = await self.session.execute(
                 text(
-                    """插入新设备测点组
+                    # 插入新设备测点组
+                    """
                     INSERT INTO device_point_group (
                         device_id,
                         group_no,
@@ -1614,7 +1642,8 @@ class CatalogService:
 
             await self.session.execute(
                 text(
-                    """更新测点组状态为已满
+                    # 更新测点组状态为已满
+                    """
                     UPDATE device_point_group
                     SET status = 'full',
                         update_user = :actor,
@@ -1630,7 +1659,8 @@ class CatalogService:
         actor_value = self._truncate_text(actor, 20)
         await self.session.execute(
             text(
-                """更新测点组的计数和状态
+                # 更新测点组的计数和状态
+                """
                 UPDATE device_point_group
                 SET active_point_count = active_point_count + 1,
                     used_column_count = used_column_count + 1,
@@ -1653,7 +1683,8 @@ class CatalogService:
         actor_value = self._truncate_text(actor, 20)
         await self.session.execute(
             text(
-                """更新测点组的配置版本
+                # 更新测点组的配置版本
+                """
                 UPDATE device_point_group
                 SET config_version = config_version + 1,
                     update_user = :actor,
@@ -1668,7 +1699,8 @@ class CatalogService:
     async def _bump_device_variable_config(self, device_id: int) -> None:
         await self.session.execute(
             text(
-                """更新设备的变量配置版本
+                # 更新设备的变量配置版本
+                """
                 UPDATE device
                 SET variable_config_version = COALESCE(variable_config_version, 1) + 1,
                     update_time = NOW()
@@ -1682,7 +1714,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """查询测点是否可删除
+                    # 查询测点是否可删除
+                    """
                     SELECT id, device_id, point_group_id, enable, deleted
                     FROM device_variable
                     WHERE id = :point_id
@@ -1699,7 +1732,8 @@ class CatalogService:
         actor_value = self._truncate_text(actor, 20)
         ids = [int(row["id"]) for row in rows]
         update_stmt = text(
-            """批量逻辑删除变量
+            # 批量逻辑删除变量
+            """
             UPDATE device_variable
             SET deleted = 1,
                 enable = 0,
@@ -1728,7 +1762,8 @@ class CatalogService:
         for point_group_id, counts in by_group.items():
             await self.session.execute(
                 text(
-                    """查询测点组并加行锁
+                    # 查询测点组并加行锁
+                    """
                     SELECT id
                     FROM device_point_group
                     WHERE id = :point_group_id
@@ -1739,7 +1774,8 @@ class CatalogService:
             )
             await self.session.execute(
                 text(
-                    """更新测点组的删除计数
+                    # 更新测点组的删除计数
+                    """
                     UPDATE device_point_group
                     SET active_point_count = GREATEST(active_point_count - :active_count, 0),
                         disabled_point_count = GREATEST(disabled_point_count - :disabled_count, 0),
@@ -1764,7 +1800,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询设备组及其设备信息
+                    # 查询设备组及其设备信息
+                    """
                     SELECT
                         dg.id AS group_id,
                         COALESCE(dg.group_name, '') AS group_name,
@@ -1796,7 +1833,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询设备关联信息
+                    # 查询设备关联信息
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -1827,7 +1865,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询设备的测点详细信息
+                    # 查询设备的测点详细信息
+                    """
                     SELECT
                         dv.id AS point_id,
                         dv.device_id AS device_id,
@@ -2277,7 +2316,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """根据设备编码查询设备信息
+                    # 根据设备编码查询设备信息
+                    """
                     SELECT
                         d.id AS device_id,
                         d.device_code AS device_code,
@@ -2603,7 +2643,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询所有设备类型
+                    # 查询所有设备类型
+                    """
                     SELECT id, type_code, type_name
                     FROM device_type
                     ORDER BY id ASC
@@ -2640,7 +2681,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询所有通信协议
+                    # 查询所有通信协议
+                    """
                     SELECT id, protocol
                     FROM comm_protocol
                     ORDER BY id ASC
@@ -2661,7 +2703,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """根据类型和协议查询设备默认参数
+                    # 根据类型和协议查询设备默认参数
+                    """
                     SELECT group_id, rack, slot, scan_cycle
                     FROM device
                     WHERE type_id = :type_id
@@ -2679,7 +2722,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """根据类型查询设备默认参数
+                    # 根据类型查询设备默认参数
+                    """
                     SELECT group_id, rack, slot, scan_cycle
                     FROM device
                     WHERE type_id = :type_id
@@ -2704,7 +2748,8 @@ class CatalogService:
         row = (
             await self.session.execute(
                 text(
-                    """查询设备组信息
+                    # 查询设备组信息
+                    """
                     SELECT id
                     FROM device_group
                     WHERE group_code = :group_code
@@ -2842,7 +2887,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询设备的测点组汇总信息
+                    # 查询设备的测点组汇总信息
+                    """
                     SELECT
                         dpg.group_code,
                         dpg.group_name,
@@ -2874,7 +2920,8 @@ class CatalogService:
         rows = (
             await self.session.execute(
                 text(
-                    """查询设备的变量详细信息
+                    # 查询设备的变量详细信息
+                    """
                     SELECT
                         dv.id AS var_id,
                         COALESCE(dv.var_name, CAST(dv.var_seq AS CHAR), '') AS var_name,

@@ -1,4 +1,4 @@
-"""Unit tests for TDengineWriter.write_multi_table (stage 5 / §7.6 step 1).
+"""TDengineWriter.write_multi_table 单元测试。Unit tests for TDengineWriter.write_multi_table (stage 5 / §7.6 step 1).
 
 Covers cross-subtable packing into one statement, byte-budget chunking, column
 union with NULL for missing columns, mixed stables, and chunk-level failure.

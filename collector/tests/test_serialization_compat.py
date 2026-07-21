@@ -1,4 +1,4 @@
-"""Compatibility gate for the Collector's Redis JSON payloads."""
+"""采集器 Redis JSON 负载的兼容性检查。"""
 
 from __future__ import annotations
 
