@@ -15,7 +15,9 @@ test("backend client rejects non-success business response codes", () => {
 });
 test("desktop proxy bounds Agent and backend requests with connection timeouts", () => {
   assert.match(proxySource, /connect_timeout\(Duration::from_secs\(3\)\)/);
-  assert.match(proxySource, /build_client\(Duration::from_secs\(5\)\)/);
+  // Agent 支持动态 timeout_secs，默认 5s
+  assert.match(proxySource, /timeout_secs\.unwrap_or\(5\)/);
+  assert.match(proxySource, /build_client\(timeout\)/);
   assert.match(proxySource, /build_client\(Duration::from_secs\(10\)\)/);
 });
 test("startup and retry leave the loading state when the Agent never responds", () => {

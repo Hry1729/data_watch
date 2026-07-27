@@ -344,6 +344,7 @@ class HistoryService:
             time_filter = f"ts >= {start_sql}"
 
         rows = []
+        from_current_schema = False
 
         # 当前写入器 schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
@@ -359,6 +360,8 @@ class HistoryService:
                     f"ORDER BY ts ASC LIMIT {page_size}",
                     database=database_name,
                 )
+                if rows:
+                    from_current_schema = True
             except ValueError as exc:
                 logger.warning(
                     "Invalid TDengine identifier for device=%s td_column_name=%r: %s",
@@ -417,6 +420,16 @@ class HistoryService:
 
         results = []
         last_ts_str = None
+        # 仅当前宽表命中时查质量窄表；legacy 路径保持 quality=null
+        quality_by_ts = await self._fetch_quality_map_for_raw(
+            device=device,
+            point=point,
+            database_name=database_name,
+            time_filter=time_filter,
+            end_sql=end_sql,
+            page_size=page_size,
+            has_current_schema_rows=from_current_schema,
+        )
         for ts, value in rows:
             ts_dt = self._coerce_datetime(ts)
             if ts_dt:
@@ -424,7 +437,8 @@ class HistoryService:
                 results.append({
                     "ts": formatted_ts,
                     "value": self._normalize_point_value(point.var_type, value),
-                    "quality": 1
+                    # 有窄表命中则返回平台质量码；legacy / 缺失仍为 null
+                    "quality": quality_by_ts.get(formatted_ts),
                 })
                 last_ts_str = formatted_ts
 
@@ -437,6 +451,88 @@ class HistoryService:
             "list": results,
             "nextCursor": next_cursor
         }
+
+    async def _fetch_quality_map_for_raw(
+        self,
+        device: HistoryDevice,
+        point: HistoryPoint,
+        database_name: str,
+        time_filter: str,
+        end_sql: str,
+        page_size: int,
+        has_current_schema_rows: bool,
+    ) -> dict[str, int | None]:
+        """从质量窄表读取 ts→quality。
+
+        仅当质量表不存在时降级为空 dict（调用方得 null，兼容未建窄表环境）；
+        其余查询故障记日志并上抛，避免伪装成 legacy null。
+        """
+        if not has_current_schema_rows:
+            return {}
+        try:
+            q_child = self._resolve_quality_child_table_name(device.device_code)
+            table_name = self.tdengine.qualify_table(database_name, q_child)
+            q_rows = await self.tdengine.fetch_all(
+                (
+                    f"SELECT ts, `quality` FROM {table_name} "
+                    f"WHERE var_id = {int(point.point_id)} "
+                    f"AND {time_filter} AND ts <= {end_sql} "
+                    f"ORDER BY ts ASC LIMIT {page_size}"
+                ),
+                database=database_name,
+            )
+        except Exception as exc:
+            if self._is_quality_table_missing_error(exc):
+                logger.info(
+                    "[history] quality narrow table missing device=%s point=%s: %s",
+                    device.device_code,
+                    point.point_id,
+                    exc,
+                )
+                return {}
+            logger.error(
+                "[history] quality narrow query failed device=%s point=%s: %s",
+                device.device_code,
+                point.point_id,
+                exc,
+            )
+            raise ApiError(503, "历史质量数据查询失败", status_code=503) from exc
+
+        quality_by_ts: dict[str, int | None] = {}
+        for q_ts, q_val in q_rows or []:
+            ts_dt = self._coerce_datetime(q_ts)
+            if ts_dt is None:
+                continue
+            formatted = self._format_timestamp(ts_dt)
+            if q_val is None:
+                quality_by_ts[formatted] = None
+            else:
+                try:
+                    quality_by_ts[formatted] = int(q_val)
+                except (TypeError, ValueError):
+                    quality_by_ts[formatted] = None
+        return quality_by_ts
+
+    @staticmethod
+    def _is_quality_table_missing_error(exc: BaseException) -> bool:
+        """识别 TDengine/驱动「表不存在」类错误，供质量窄表缺表降级。"""
+        text = str(exc).lower()
+        needles = (
+            "table does not exist",
+            "table not exist",
+            "does not exist",
+            "not found",
+            "no such table",
+            "unknown table",
+        )
+        # 仅当消息同时暗示 table/表 时，才把 not found 视为缺表，避免误吞连接错误
+        if "table" in text or "表" in str(exc):
+            return any(n in text for n in needles)
+        return False
+
+    def _resolve_quality_child_table_name(self, device_code: str) -> str:
+        """质量窄表子表名，与 writer.quality_schema.quality_child_table_name 一致。"""
+        return f"{self._resolve_current_child_table_name(device_code)}_q"
 
     def _align_to_bucket(self, ts: datetime, granularity: str) -> datetime:
         bucket_ms_map = {"100ms": 100, "500ms": 500, "1s": 1000}

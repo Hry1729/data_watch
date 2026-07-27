@@ -14,7 +14,9 @@ import types
 import pytest
 from fastapi import HTTPException
 
-from app.routers.admin import restart_process, start_process, stop_process
+from app.routers.admin import _raise_driver_error, restart_process, start_process, stop_process
+from app.services.driver_installer import DriverInstallError
+from app.services.driver_zip import DriverZipError
 from app.services.sidecar_manager import ProxyStartError
 
 
@@ -365,3 +367,28 @@ async def test_collector_restart_does_not_stop_proxies(tmp_path):
     sm = FakeSM(port_mapping_path=None, settings_path=_existing_settings(tmp_path))
     await restart_process("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert sm.on_stop_calls == 0
+
+
+def test_driver_4xx_error_keeps_actionable_validation_detail():
+    error = DriverZipError("driver.toml 缺少字段 entry", status_code=422)
+
+    with pytest.raises(HTTPException) as exc_info:
+        _raise_driver_error(error)
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "driver.toml 缺少字段 entry"
+
+
+def test_driver_5xx_error_hides_path_and_logs_detail(caplog):
+    secret_path = r"C:\Users\admin\DataWatch\drivers\demo_drv"
+    error = DriverInstallError(f"collector restart failed: {secret_path}", status_code=503)
+
+    with caplog.at_level("ERROR"), pytest.raises(HTTPException) as exc_info:
+        try:
+            raise error
+        except DriverInstallError as caught:
+            _raise_driver_error(caught)
+
+    assert exc_info.value.status_code == 503
+    assert secret_path not in exc_info.value.detail
+    assert secret_path in caplog.text

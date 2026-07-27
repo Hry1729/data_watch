@@ -8,12 +8,11 @@ import {
 export const DESKTOP_ALWAYS_PATHS = [
   "/collection/collector",
   "/collection/writer",
-  "/settings",
 ] as const;
 
 /** 管理员及以上额外可见页（控制台等） */
 export const ADMIN_ROLES = ["R_SUPER", "R_ADMIN"] as const;
-export const ADMIN_EXTRA_PATHS = ["/dashboard/console"] as const;
+export const ADMIN_EXTRA_PATHS = ["/dashboard/console", "/settings"] as const;
 
 function isAdminRole(roles: string[] | undefined): boolean {
   if (!roles?.length) return false;

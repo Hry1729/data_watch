@@ -271,6 +271,10 @@ REDIS_PASSWORD=
 
 AUTH_SECRET_KEY=<generate-a-strong-random-secret>
 PERSPECTIVE_ENABLED=true
+
+# Agent 服务凭据（Backend 调用 Agent 装卸驱动时使用）
+DATAWATCH_AGENT_SERVICE_TOKEN=<generate-a-strong-random-token>
+DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 ```
 
 说明：
@@ -280,6 +284,8 @@ PERSPECTIVE_ENABLED=true
 - 若 Redis/TDengine 是宿主机或外部服务，把 host 改为 `host.docker.internal` 或实际 IP。
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值。
 - `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
+- **`DATAWATCH_AGENT_SERVICE_TOKEN`（新增）**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` 保持一致。生成方式：`python -c "import secrets; print(secrets.token_hex(32))"`。
+- **`DATAWATCH_AGENT_BASE_URL`（新增）**: Agent 地址。Docker 部署 Backend 时，Agent 在宿主机使用 `http://host.docker.internal:7070`；多节点部署时改为 Agent 实际 IP。
 
 ### 5.3 启动中心服务
 
@@ -428,6 +434,8 @@ agent、collector、writer 的实际路径由双根动态派生，不在 config.
 ```
 
 密码不要手工写入 config.toml；DPAPI 密文不可跨机器复制。
+
+**Agent 服务凭据配置**：Agent 在首次启动或 bootstrap 时会自动生成 `DATAWATCH_AGENT_SERVICE_TOKEN` 并保存到 `config.toml` 的 `[security]` 段。如果 Backend 需要调用 Agent（如卸载驱动、对账补偿），必须在 Backend 的 `backend.env` 中配置相同的 token。单机部署时，可从 `C:\ProgramData\DataWatch\config.toml` 中复制 `service_token` 值到 Backend 配置。
 
 ### 7.4 collector / writer 启停
 

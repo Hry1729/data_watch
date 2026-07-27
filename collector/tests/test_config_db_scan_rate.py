@@ -26,6 +26,43 @@ def test_normalize_scan_rate_uses_default_for_missing_or_invalid_values():
     assert ConfigDBManager._normalize_scan_rate(0, default_seconds=0.5) == pytest.approx(0.5)
 
 
+def test_normalize_slot_defaults_only_when_none():
+    """slot=0 不得被 or 1 吞掉；仅 None 默认 1。"""
+    assert ConfigDBManager._normalize_slot(None) == 1
+    assert ConfigDBManager._normalize_slot(1) == 1
+    assert ConfigDBManager._normalize_slot(2) == 2
+    assert ConfigDBManager._normalize_slot(0) == 0
+    assert ConfigDBManager._normalize_slot(247) == 247
+
+
+def test_modbus_tcp_default_port_is_502():
+    assert ConfigDBManager._default_port_for_protocol("modbus_tcp") == 502
+
+
+@pytest.mark.asyncio
+async def test_get_device_config_versions_preserves_slot_zero():
+    rows = [
+        {
+            "device_code": "MB001",
+            "variable_config_version": 1,
+            "endpoint": "10.0.0.3",
+            "protocol_id": 5,
+            "rack": 0,
+            "slot": 0,
+            "scan_cycle": 1000,
+        },
+    ]
+
+    async def _fetchall(_sql, _params=()):
+        return rows
+
+    manager = ConfigDBManager.__new__(ConfigDBManager)
+    manager._fetchall = _fetchall
+
+    versions = await manager.get_device_config_versions()
+    assert versions["MB001"].slot == 0
+
+
 def test_device_signature_device_fields_ignore_config_version():
     old = DeviceSignature(1, "10.0.0.1", 1, 0, 1, 1000)
     new_version = DeviceSignature(2, "10.0.0.1", 1, 0, 1, 1000)

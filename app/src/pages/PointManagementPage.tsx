@@ -91,6 +91,9 @@ export default function PointManagementPage() {
   useEffect(() => {
     setPage((value) => Math.min(value, totalPages));
   }, [totalPages]);
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [activeType, connectStatus, dataTypeFilter, deviceCodeFilter, deviceId, keyword, page, pageSize]);
   const typeTabs = useMemo(() => Array.from(new Map(devices.map((device) => [device.deviceType, device.deviceType])).entries()).map(([value, label]) => ({ value, label })), [devices]);
   const typeDevices = useMemo(
     () => devices.filter((device) => activeType === "all" || device.deviceType === activeType),

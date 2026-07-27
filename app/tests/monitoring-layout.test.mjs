@@ -46,7 +46,7 @@ for (const panel of ["LogPanel", "ModuleDbLogPanel"]) {
       "utf8",
     );
 
-    assert.match(source, /import \{ Card, CardContent, CardHeader \}/);
+    assert.match(source, /import \{[^}]*\bCard\b[^}]*\bCardContent\b[^}]*\bCardHeader\b[^}]*\}/);
     assert.match(source, /<Card[\s\S]*<CardHeader[\s\S]*<CardContent/);
     assert.doesNotMatch(source, /ring-1 ring-foreground\/10|style=\{\{ borderRadius: 12 \}\}/);
   });

@@ -1,0 +1,45 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="HslControls.WPF.HslSwitch" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:HslControls.WPF" Height="200" Width="200">
+  <FrameworkElement.Resources>
+    <ResourceDictionary>
+      <local:AngleBoolConverter x:Key="angleBoolConverter" />
+    </ResourceDictionary>
+  </FrameworkElement.Resources>
+  <Grid>
+    <Viewbox>
+      <Canvas Width="100" Height="100">
+        <Ellipse Width="65" Height="65" Margin="17.5">
+          <Shape.Fill>
+            <SolidColorBrush Color="{Binding Path=SwitchBackground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </Shape.Fill>
+        </Ellipse>
+        <Ellipse Width="70" Height="70" Margin="15" StrokeThickness="1">
+          <Shape.Stroke>
+            <SolidColorBrush Color="{Binding Path=SwitchBackground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </Shape.Stroke>
+        </Ellipse>
+        <Rectangle Width="13" Height="90" Margin="43.5,5" RenderTransformOrigin="0.5,0.5">
+          <Shape.Fill>
+            <SolidColorBrush Color="{Binding Path=SwitchForeground, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </Shape.Fill>
+          <UIElement.RenderTransform>
+            <RotateTransform Angle="{Binding Path=SwitchAngle, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </UIElement.RenderTransform>
+        </Rectangle>
+        <Ellipse Width="6" Height="15" Margin="47,15" RenderTransformOrigin="0.5,2.33333333">
+          <Shape.Fill>
+            <SolidColorBrush Color="{Binding Path=SwitchInfoColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </Shape.Fill>
+          <UIElement.RenderTransform>
+            <RotateTransform Angle="{Binding Path=SwitchAngle, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </UIElement.RenderTransform>
+        </Ellipse>
+        <TextBlock Name="textBlock1" Width="100" Height="12" FontSize="10" FontStretch="Normal" TextAlignment="Center" Margin="0,-5" RenderTransformOrigin="0.5,4.42" Text="Off">
+          <UIElement.RenderTransform>
+            <RotateTransform Angle="{Binding Path=SwitchAngle, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslSwitch}}}" />
+          </UIElement.RenderTransform>
+        </TextBlock>
+      </Canvas>
+    </Viewbox>
+  </Grid>
+</UserControl>

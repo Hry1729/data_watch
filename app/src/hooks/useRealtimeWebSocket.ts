@@ -18,6 +18,7 @@ interface RealtimeServerMessage {
   group_code?: string;
   values?: Record<string, RealtimeWireValue>;
   tdengineConnected?: boolean | null;
+  deviceOffline?: boolean;
 }
 
 interface RealtimeWebSocketOptions {
@@ -153,7 +154,7 @@ export function useRealtimeWebSocket({
           pendingRef.current = {};
           setValues(message.values ?? {});
           setTdengineConnected(message.tdengineConnected ?? null);
-          setDeviceOffline(false);
+          setDeviceOffline(message.deviceOffline ?? false);
           setLastSyncTime(Date.now());
           return;
         }
@@ -169,6 +170,9 @@ export function useRealtimeWebSocket({
         if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
         heartbeatTimer = null;
         if (!disposed) {
+          pendingRef.current = {};
+          setValues({});
+          setDeviceOffline(true);
           setStatus("disconnected");
           scheduleReconnect();
         }

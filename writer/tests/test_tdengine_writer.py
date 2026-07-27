@@ -185,3 +185,120 @@ async def test_sql_too_long_bisects_into_smaller_chunks():
     assert len(executed) > 1  # 确实二分缩块了
     status = _status_by_row(results)
     assert all(s == LANDED for s in status.values())
+
+
+@pytest.mark.asyncio
+async def test_write_includes_quality_narrow_table_fragment():
+    """v2 行带 qualities 时，同条 INSERT 附带质量窄表片段并确保 sq* 超级表。"""
+    writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})
+    writer._quality_stable_ready = set()
+
+    async def _fake_ensure_quality(q_stable: str) -> None:
+        writer._quality_stable_ready.add(q_stable)
+        executed.append(f"ENSURE_Q:{q_stable}")
+
+    writer._ensure_quality_stable = _fake_ensure_quality  # type: ignore[method-assign]
+
+    rows = [
+        {
+            "child_table": "qc100",
+            "stable": "sdqc",
+            "device_code": "qc100",
+            "ts": 1000,
+            "columns": {"qc1": 1.0, "qc2": 2.0},
+            "qualities": {"101": 0, "102": 2},
+        }
+    ]
+    results = await writer.write_multi_table(rows)
+
+    assert "ENSURE_Q:sqqc" in executed
+    insert_sqls = [s for s in executed if s.startswith("INSERT INTO ")]
+    assert len(insert_sqls) == 1
+    sql = insert_sqls[0]
+    assert "`qc100_q`" in sql
+    assert "USING `device_data`.`sqqc`" in sql
+    assert "`var_id`" in sql
+    assert "`quality`" in sql
+    assert "(1000, 101, 0)" in sql
+    assert "(1000, 102, 2)" in sql
+    assert results[0][1] == LANDED
+
+
+@pytest.mark.asyncio
+async def test_write_without_qualities_skips_narrow_fragment():
+    """无 qualities 时不创建/写入质量窄表。"""
+    writer, executed = _make_writer({"sdqc": {"qc1"}})
+    rows = [
+        {
+            "child_table": "qc100",
+            "stable": "sdqc",
+            "device_code": "qc100",
+            "ts": 1000,
+            "columns": {"qc1": 1.0},
+        }
+    ]
+    await writer.write_multi_table(rows)
+    assert all("sqqc" not in s and "_q`" not in s for s in executed)
+
+
+@pytest.mark.asyncio
+async def test_ensure_quality_stable_creates_with_composite_key():
+    """P0-1：建质量超级表 SQL 含 COMPOSITE KEY，且 DESCRIBE 通过后才标记 ready。"""
+    writer, executed = _make_writer({})
+    writer._quality_stable_ready = set()
+
+    async def _fake_query(sql: str):
+        executed.append(sql)
+        return [
+            ("ts", "TIMESTAMP", 8, ""),
+            ("var_id", "BIGINT", 8, "COMPOSITE KEY"),
+            ("quality", "TINYINT", 1, ""),
+            ("device_code", "VARCHAR", 32, "TAG"),
+        ]
+
+    writer._query = _fake_query  # type: ignore[method-assign]
+    await writer._ensure_quality_stable("sqqc")
+
+    create_sqls = [s for s in executed if s.startswith("CREATE STABLE")]
+    assert len(create_sqls) == 1
+    assert "COMPOSITE KEY" in create_sqls[0]
+    assert "sqqc" in writer._quality_stable_ready
+
+
+@pytest.mark.asyncio
+async def test_ensure_quality_stable_rejects_missing_composite_key():
+    """已有旧表缺 COMPOSITE KEY 时不得标记 ready，并留下迁移提示路径。"""
+    writer, executed = _make_writer({})
+    writer._quality_stable_ready = set()
+
+    async def _fake_query(sql: str):
+        return [
+            ("ts", "TIMESTAMP", 8, ""),
+            ("var_id", "BIGINT", 8, ""),
+            ("quality", "TINYINT", 1, ""),
+        ]
+
+    writer._query = _fake_query  # type: ignore[method-assign]
+    await writer._ensure_quality_stable("sqqc")
+    assert "sqqc" not in writer._quality_stable_ready
+
+
+@pytest.mark.asyncio
+async def test_quality_fragment_allows_same_ts_multiple_var_ids():
+    """同 ts 多 var_id 必须全部进入 INSERT（复合主键契约的写入侧断言）。"""
+    writer, _ = _make_writer({"sdqc": {"qc1"}})
+    rows = [
+        {
+            "child_table": "qc100",
+            "stable": "sdqc",
+            "device_code": "qc100",
+            "ts": 1_720_000_000_000,
+            "columns": {"qc1": 1.0},
+            "qualities": {"1": 192, "2": 192, "3": 0},
+        }
+    ]
+    frag = writer._quality_fragment_for_rows(rows, [0])
+    assert frag is not None
+    assert "(1720000000000, 1, 192)" in frag
+    assert "(1720000000000, 2, 192)" in frag
+    assert "(1720000000000, 3, 0)" in frag

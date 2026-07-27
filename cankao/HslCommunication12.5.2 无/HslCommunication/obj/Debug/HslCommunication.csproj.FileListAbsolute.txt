@@ -1,0 +1,7 @@
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\HslCommunication\obj\Debug\HslCommunication.csprojResolveAssemblyReference.cache
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\HslCommunication\obj\Debug\LogNet.FormLogNetView.resources
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\HslCommunication\obj\Debug\HslCommunication.csproj.GenerateResource.Cache
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\bin\HslCommunication.dll
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\bin\HslCommunication.pdb
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\HslCommunication\obj\Debug\HslCommunication.dll
+F:\develop\破解代码\HslCommunication\HslCommunication12.5.2 无\HslCommunication\obj\Debug\HslCommunication.pdb

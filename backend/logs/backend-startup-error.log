@@ -1772,3 +1772,711 @@ Traceback (most recent call last):
   File "D:\python\device_alarm\data_watch\backend\app\main.py", line 14, in <module>
     from turboapi import CORSMiddleware, JSONResponse, TurboAPI
 ModuleNotFoundError: No module named 'turboapi'
+
+============================================================
+[2026-07-25 11:39:11] [lifespan.startup]
+Error: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Stack:
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/asyncio/streams.py", line 767, in readexactly
+    raise exceptions.IncompleteReadError(incomplete, n)
+asyncio.exceptions.IncompleteReadError: 0 bytes read on a total of 4 expected bytes
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+pymysql.err.OperationalError: (2013, 'Lost connection to MySQL server during query')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/main.py", line 649, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 384, in bootstrap_auth_schema
+    async with engine.begin() as connection:
+               ~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/contextlib.py", line 214, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 1068, in begin
+    async with conn:
+               ^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/base.py", line 121, in __aenter__
+    return await self.start(is_ctxmanager=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        err, dialect, engine
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 2450, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+
+============================================================
+[2026-07-26 09:47:47] [lifespan.startup]
+Error: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Stack:
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/asyncio/streams.py", line 767, in readexactly
+    raise exceptions.IncompleteReadError(incomplete, n)
+asyncio.exceptions.IncompleteReadError: 0 bytes read on a total of 4 expected bytes
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+pymysql.err.OperationalError: (2013, 'Lost connection to MySQL server during query')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/main.py", line 649, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 384, in bootstrap_auth_schema
+    async with engine.begin() as connection:
+               ~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/contextlib.py", line 214, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 1068, in begin
+    async with conn:
+               ^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/base.py", line 121, in __aenter__
+    return await self.start(is_ctxmanager=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        err, dialect, engine
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 2450, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+
+============================================================
+[2026-07-26 09:47:48] [lifespan.startup]
+Error: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Stack:
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/asyncio/streams.py", line 767, in readexactly
+    raise exceptions.IncompleteReadError(incomplete, n)
+asyncio.exceptions.IncompleteReadError: 0 bytes read on a total of 4 expected bytes
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+pymysql.err.OperationalError: (2013, 'Lost connection to MySQL server during query')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/main.py", line 649, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 384, in bootstrap_auth_schema
+    async with engine.begin() as connection:
+               ~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/contextlib.py", line 214, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 1068, in begin
+    async with conn:
+               ^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/base.py", line 121, in __aenter__
+    return await self.start(is_ctxmanager=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        err, dialect, engine
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 2450, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+
+
+============================================================
+[2026-07-26 12:13:47] [lifespan.startup]
+Error: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+Stack:
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 657, in _read_bytes
+    data = await self._reader.readexactly(num_bytes)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/asyncio/streams.py", line 767, in readexactly
+    raise exceptions.IncompleteReadError(incomplete, n)
+asyncio.exceptions.IncompleteReadError: 0 bytes read on a total of 4 expected bytes
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+pymysql.err.OperationalError: (2013, 'Lost connection to MySQL server during query')
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/app/main.py", line 649, in lifespan
+    await bootstrap_auth_schema()
+  File "/app/app/services/auth_bootstrap.py", line 384, in bootstrap_auth_schema
+    async with engine.begin() as connection:
+               ~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/contextlib.py", line 214, in __aenter__
+    return await anext(self.gen)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 1068, in begin
+    async with conn:
+               ^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/base.py", line 121, in __aenter__
+    return await self.start(is_ctxmanager=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/ext/asyncio/engine.py", line 275, in start
+    await greenlet_spawn(self.sync_engine.connect)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3295, in connect
+    return self._connection_cls(self)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 146, in __init__
+    Connection._handle_dbapi_exception_noconnection(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        err, dialect, engine
+        ^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 2450, in _handle_dbapi_exception_noconnection
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 144, in __init__
+    self._dbapi_connection = engine.raw_connection()
+                             ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/base.py", line 3319, in raw_connection
+    return self.pool.connect()
+           ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 448, in connect
+    return _ConnectionFairy._checkout(self)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 1272, in _checkout
+    fairy = _ConnectionRecord.checkout(pool)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 712, in checkout
+    rec = pool._do_get()
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 178, in _do_get
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/impl.py", line 176, in _do_get
+    return self._create_connection()
+           ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 389, in _create_connection
+    return _ConnectionRecord(self)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 674, in __init__
+    self.__connect()
+    ~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 900, in __connect
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/langhelpers.py", line 122, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/pool/base.py", line 896, in __connect
+    self.dbapi_connection = connection = pool._invoke_creator(self)
+                                         ~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/create.py", line 667, in connect
+    return dialect.connect(*cargs_tup, **cparams)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/engine/default.py", line 630, in connect
+    return self.loaded_dbapi.connect(*cargs, **cparams)  # type: ignore[no-any-return]  # NOQA: E501
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/dialects/mysql/aiomysql.py", line 176, in connect
+    await_only(creator_fn(*arg, **kw)),
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 74, in _connect
+    await conn._connect()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 539, in _connect
+    await self._get_server_information()
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 1048, in _get_server_information
+    packet = await self._read_packet()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 609, in _read_packet
+    packet_header = await self._read_bytes(4)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/python314t/lib/python3.14t/site-packages/aiomysql/connection.py", line 661, in _read_bytes
+    raise OperationalError(CR.CR_SERVER_LOST, msg) from e
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError) (2013, 'Lost connection to MySQL server during query')
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+

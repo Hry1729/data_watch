@@ -1,0 +1,165 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="HslControls.WPF.HslWaterBasin" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:HslControls.WPF">
+  <Grid>
+    <Viewbox>
+      <Canvas Name="Group_Aeration_basin_1" UseLayoutRounding="False" Tag="#00000000,#FF008000,Original,0,None" LayoutTransform="Identity" Width="100" Height="55" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Path Name="pathWater" Data="M95,50 L5,50 L5,10 L95,10">
+          <Shape.Fill>
+            <SolidColorBrush Color="{Binding Path=WaterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}" />
+          </Shape.Fill>
+        </Path>
+        <Canvas Name="Group_Basin" Width="100" Height="55">
+          <Path Data="F1 M0,55 L0,0 L5,0 L5,50 L35,50 L38,45 L62,45 L65,50 L95,50 L95,0 L100,0 L100,55">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0.563,1.137" EndPoint="0.437,-0.135">
+                <GradientBrush.GradientStops>
+                  <GradientStop Color="#FF939598" Offset="0" />
+                  <GradientStop Color="#FFBCBEC0" Offset="0.5" />
+                  <GradientStop Color="#FFD5D7D8" Offset="0.6" />
+                  <GradientStop Color="#FFE6E7E8" Offset="1" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="M0,55 L0,0 L5,0 L5,50 L35,50 L38,45 L62,45 L65,50 L95,50 L95,0 L100,0 L100,55" Stroke="#FF4C4C4C" StrokeThickness="0.25" />
+        </Canvas>
+        <Path Name="path1" Data="F1 M37.613,52.472 L38.288,50.782 L39.978,50.22 L41.554,50.782 L42.342,52.472 L41.554,54.049 L39.978,54.837 L38.288,54.049" Stretch="Fill" Canvas.Left="58.136" Canvas.Top="19" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.494" RadiusY="0.506" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0" />
+                <GradientStop Color="#FFBFD3F2" Offset="0.5" />
+                <GradientStop Color="#FFBFD3F2" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path2" Data="F1 M53.9414,51.3457 L54.2794,50.5577 L55.0674,50.2197 L55.8564,50.5577 L56.1934,51.3457 L55.8564,52.1337 L55.0674,52.4717 L54.2794,52.1337" Stretch="Fill" Fill="#FFBFD3F2" Width="2.251" Height="2.252" Canvas.Left="61.665" Canvas.Top="28.125" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}" />
+        <Path Name="path3" Data="F1 M63.176,52.472 L63.852,50.782 L65.541,50.22 L67.117,50.782 L67.793,52.472 L67.117,54.049 L65.541,54.837 L63.852,54.049" Stretch="Fill" Width="4.616" Height="4.616" Canvas.Left="62.817" Canvas.Top="40.442" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0" />
+                <GradientStop Color="#FFBFD3F2" Offset="0.5" />
+                <GradientStop Color="#FFBFD3F2" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path4" Data="F1 M58.5586,32.7646 L58.8966,31.9766 L59.6846,31.6386 L60.5856,31.9766 L60.9236,32.7646 L60.5856,33.5526 L59.6846,33.8906 L58.8966,33.5526" Stretch="Fill" Fill="#FFBFD3F2" Width="2.365" Height="2.252" Canvas.Left="58.136" Canvas.Top="43.812" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}" />
+        <Path Name="path5" Data="F1 M58.559,45.603 L59.234,43.913 L60.924,43.237 L62.5,43.913 L63.176,45.603 L62.5,47.179 L60.924,47.854 L59.234,47.179" Stretch="Fill" Width="4.617" Height="4.617" Canvas.Left="35.817" Canvas.Top="14.253" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0" />
+                <GradientStop Color="#FFBFD3F2" Offset="0.5" />
+                <GradientStop Color="#FFBFD3F2" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path6" Data="F1 M70.045,24.656 L70.834,22.968 L72.41,22.292 L74.1,22.968 L74.775,24.656 L74.1,26.346 L72.41,26.909 L70.834,26.346" Stretch="Fill" Width="4.73" Height="4.617" Canvas.Left="47.51" Canvas.Top="43.066" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.494" RadiusY="0.506" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0" />
+                <GradientStop Color="#FFBFD3F2" Offset="0.5" />
+                <GradientStop Color="#FFBFD3F2" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path7" Data="F1 M39.9775,16.5488 L40.3155,15.7598 L41.1035,15.3098 L41.8925,15.7598 L42.3425,16.5488 L41.8925,17.3368 L41.1035,17.6748 L40.3155,17.3368" Stretch="Fill" Fill="#FFBFD3F2" Width="2.365" Height="2.365" Canvas.Left="41.125" Canvas.Top="19.887" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}" />
+        <Path Name="path_out" Data="F1 M44.595,10.13 L45.271,8.553 L46.959,7.877 L48.536,8.553 L49.212,10.13" Stretch="Fill" Width="4.616" Height="2.254" Canvas.Left="37.191" Canvas.Top="7.562" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.393" RadiusY="0.806" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0" />
+                <GradientStop Color="#FFBFD3F2" Offset="0.5" />
+                <GradientStop Color="#FFBFD3F2" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path8" Data="F1 M46.959,43.237 L47.635,41.549 L49.212,40.873 L50.901,41.549 L51.577,43.237 L50.901,44.814 L49.212,45.49 L47.635,44.814" Stretch="Fill" Width="4.618" Height="4.617" Canvas.Left="37.066" Canvas.Top="29" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path9" Data="F1 M67.793,40.873 L68.469,39.296 L70.158,38.62 L71.734,39.296 L72.41,40.873 L71.734,42.562 L70.158,43.237 L68.469,42.562" Stretch="Fill" Width="4.616" Height="4.616" Canvas.Left="54.692" Canvas.Top="30.442" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path10" Data="F1 M65.428,17.675 L66.104,16.098 L67.793,15.422 L69.482,16.098 L70.158,17.675 L69.482,19.363 L67.793,20.039 L66.104,19.363" Stretch="Fill" Width="4.73" Height="4.616" Canvas.Left="63.192" Canvas.Top="11.942" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.494" RadiusY="0.506" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path11" Data="F1 M56.194,23.53 L56.532,22.63 L57.433,22.292 L58.221,22.63 L58.559,23.53 L58.221,24.318 L57.433,24.656 L56.532,24.318" Stretch="Fill" Width="2.365" Height="2.364" Canvas.Left="47.25" Canvas.Top="26.438" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path12" Data="F1 M42.229,32.765 L42.567,31.977 L43.468,31.639 L44.257,31.977 L44.595,32.765 L44.257,33.553 L43.468,33.891 L42.567,33.553" Stretch="Fill" Width="2.366" Height="2.252" Canvas.Left="43.084" Canvas.Top="41.312" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.488" RadiusY="0.513" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Path Name="path13" Data="F1 M51.577,15.422 L52.252,13.733 L53.941,13.058 L55.518,13.733 L56.194,15.422 L55.518,16.999 L53.941,17.675 L52.252,16.999" Stretch="Fill" Width="4.617" Height="4.618" Canvas.Left="46.066" Canvas.Top="14.816" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Shape.Fill>
+            <RadialGradientBrush Center="0.5,0.5" RadiusX="0.5" RadiusY="0.5" GradientOrigin="0.5,0.5">
+              <GradientBrush.GradientStops>
+                <GradientStop Color="#FFE2E3E4" Offset="0.5" />
+                <GradientStop Color="#FF76777A" Offset="1" />
+              </GradientBrush.GradientStops>
+            </RadialGradientBrush>
+          </Shape.Fill>
+        </Path>
+        <Canvas Name="Group_Air_Bubbles" Tag="#00000000,#FF008000,Original,0,None" Width="20.833" Height="7.433" Left="42.905" Top="0.332" Visibility="{Binding Path=BubblesVisibility, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslWaterBasin}}}">
+          <Path Data="M42.9053,0.331999999999994 L44.0313,1.45799999999999" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.376" Height="1.376" Canvas.Left="-0.125" Canvas.Top="-0.125" />
+          <Path Data="M45.1577,1.458 L46.3967,0.331999999999999" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.489" Height="1.376" Canvas.Left="2.127" Canvas.Top="-0.125" />
+          <Path Data="M44.5947,-0.343800000000002 L44.5947,0.895199999999998" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="0.25" Height="1.489" Canvas.Left="1.564" Canvas.Top="-0.801" />
+          <Path Data="M42.3423,2.0215 L43.4683,2.0215" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.376" Height="0.25" Canvas.Left="-0.688" Canvas.Top="1.565" />
+          <Path Data="M46.3965,3.8232 L45.1575,2.5842" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.489" Height="1.489" Canvas.Left="2.127" Canvas.Top="2.127" />
+          <Path Data="M44.0317,2.584 L42.9057,3.823" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.376" Height="1.489" Canvas.Left="-0.125" Canvas.Top="2.127" />
+          <Path Data="M44.5947,4.3867 L44.5947,3.1477" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="0.25" Height="1.489" Canvas.Left="1.564" Canvas.Top="2.691" />
+          <Path Data="M46.9595,2.0215 L45.7205,2.0215" Stretch="Fill" Stroke="#FFA6BAD9" StrokeThickness="0.25" Width="1.489" Height="0.25" Canvas.Left="2.69" Canvas.Top="1.565" />
+          <Path Data="M60.248,4.2734 L61.374,5.5124" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.376" Height="1.489" Canvas.Left="17.218" Canvas.Top="3.816" />
+          <Path Data="M62.6133,5.5127 L63.7383,4.2737" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.375" Height="1.489" Canvas.Left="19.583" Canvas.Top="3.817" />
+          <Path Data="M62.0488,3.7109 L62.0488,4.9489" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="0.25" Height="1.488" Canvas.Left="19.019" Canvas.Top="3.254" />
+          <Path Data="M59.6846,6.0752 L60.9236,6.0752" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.489" Height="0.25" Canvas.Left="16.654" Canvas.Top="5.618" />
+          <Path Data="M63.7383,7.7646 L62.6133,6.6386" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.375" Height="1.376" Canvas.Left="19.583" Canvas.Top="6.182" />
+          <Path Data="M61.374,6.6387 L60.248,7.7647" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.376" Height="1.376" Canvas.Left="17.218" Canvas.Top="6.182" />
+          <Path Data="M62.0488,8.4404 L62.0488,7.2014" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="0.25" Height="1.489" Canvas.Left="19.019" Canvas.Top="6.744" />
+          <Path Data="M64.3018,6.0752 L63.1758,6.0752" Stretch="Fill" Stroke="#FF4C4C4C" StrokeThickness="0.25" Width="1.376" Height="0.25" Canvas.Left="20.146" Canvas.Top="5.618" />
+        </Canvas>
+      </Canvas>
+    </Viewbox>
+  </Grid>
+</UserControl>

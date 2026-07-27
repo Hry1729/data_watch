@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "DataWatch 系统架构详图",
+    "subtitle": "工业设备数据采集与监控平台 · 模块内部组件与数据流",
+    "output": "data-watch-architecture.html",
+    "viewBox": [1720, 1280]
+  },
+  "components": [
+    { "id": "plc", "type": "external", "label": "PLC / OPC 设备", "sublabel": "S7 · GE-SRTP · OPC UA · OPC DA", "pos": [40, 560], "size": [150, 64] },
+
+    { "id": "proxy", "type": "backend", "label": "C# OPC DA sidecar", "sublabel": "x86 .NET 4.8 proxy", "pos": [40, 360], "size": [150, 60], "tag": "COM 隔离" },
+
+    { "id": "drv_s7", "type": "backend", "label": "S7 驱动", "sublabel": "snap7 纯 Python", "pos": [240, 340], "size": [130, 50] },
+    { "id": "drv_ge", "type": "backend", "label": "GE SRTP 驱动", "sublabel": "gesrtp-py", "pos": [240, 410], "size": [130, 50] },
+    { "id": "drv_opcua", "type": "backend", "label": "OPC UA 驱动", "sublabel": "asyncio", "pos": [240, 480], "size": [130, 50] },
+    { "id": "drv_opcda", "type": "backend", "label": "OPC DA center", "sublabel": "经本机代理", "pos": [240, 550], "size": [130, 50] },
+    { "id": "ingest", "type": "backend", "label": "InterfaceIngestServer", "sublabel": "external-push HTTP 接入", "pos": [240, 620], "size": [150, 50] },
+
+    { "id": "capp", "type": "backend", "label": "CollectorApp", "sublabel": "main.py 装配·生命周期", "pos": [240, 700], "size": [140, 56], "tag": "Python 3.14t" },
+    { "id": "dm", "type": "backend", "label": "DeviceManager", "sublabel": "设备·驱动·generation·重连", "pos": [430, 340], "size": [150, 60] },
+    { "id": "sched", "type": "backend", "label": "TaskScheduler", "sublabel": "crc32 相位错开 · in-flight 串行", "pos": [430, 430], "size": [150, 60] },
+    { "id": "exec", "type": "backend", "label": "TaskExecutor", "sublabel": "读→解析→写流水线", "pos": [430, 520], "size": [150, 60] },
+    { "id": "bounded", "type": "security", "label": "BoundedExecutor", "sublabel": "PLC读/parse/redis 三段有界池", "pos": [430, 610], "size": [150, 56], "tag": "背压丢周期" },
+    { "id": "rw", "type": "backend", "label": "RedisWriter", "sublabel": "window+stream→latest", "pos": [430, 700], "size": [150, 56] },
+
+    { "id": "r_latest", "type": "messagebus", "label": "Redis latest", "sublabel": "rt:latest:{dev}:{grp} Hash", "pos": [660, 340], "size": [180, 56] },
+    { "id": "r_window", "type": "messagebus", "label": "Redis window", "sublabel": "rt:window:...:{scan} List", "pos": [660, 420], "size": [180, 56] },
+    { "id": "r_stream", "type": "messagebus", "label": "Redis stream", "sublabel": "rt:stream:{type}:{grp}:{shard}", "pos": [660, 500], "size": [180, 56] },
+    { "id": "r_dlq", "type": "messagebus", "label": "Redis dlq", "sublabel": "rt:dlq:{type}:{grp} List", "pos": [660, 580], "size": [180, 56], "tag": "上限 1000" },
+
+    { "id": "sc", "type": "backend", "label": "StreamConsumer", "sublabel": "XREADGROUP · drain pending", "pos": [900, 340], "size": [160, 60] },
+    { "id": "map", "type": "backend", "label": "MysqlMapper", "sublabel": "var_id→td_column_name 缓存", "pos": [900, 430], "size": [160, 60] },
+    { "id": "tw", "type": "backend", "label": "TDengineWriter", "sublabel": "多表批写 · 二分降级", "pos": [900, 520], "size": [160, 60] },
+    { "id": "dlq", "type": "backend", "label": "push_dlq", "sublabel": "LPUSH + LTRIM", "pos": [900, 610], "size": [160, 48] },
+    { "id": "slog", "type": "backend", "label": "SystemLogWriter", "sublabel": "独立 MySQL 连接 · 限流", "pos": [900, 680], "size": [160, 48] },
+
+    { "id": "td", "type": "database", "label": "TDengine device_data", "sublabel": "sd{type} · 子表 device_code · DOUBLE 列", "pos": [1140, 340], "size": [220, 80], "tag": "KEEP 14d · 列只增不减" },
+    { "id": "my", "type": "database", "label": "MySQL device_watch", "sublabel": "设备点位 · 告警 · RBAC · 日志", "pos": [1140, 460], "size": [220, 80], "tag": "拓扑/映射事实源" },
+
+    { "id": "asgi", "type": "backend", "label": "EnhancedASGITurboAPI", "sublabel": "ASGI · CORS · 异常 · 路由", "pos": [1140, 620], "size": [180, 56] },
+    { "id": "perm", "type": "security", "label": "Routes + RBAC", "sublabel": "JWT(HS256) · PBKDF2 · 权限码", "pos": [1140, 700], "size": [180, 56] },
+    { "id": "ws_push", "type": "backend", "label": "ws_push", "sublabel": "0.1s 读 latest · snapshot/diff", "pos": [1140, 790], "size": [160, 56] },
+    { "id": "hist", "type": "backend", "label": "HistoryService", "sublabel": "降采样 · 矩阵 · schema 回退", "pos": [1140, 870], "size": [160, 56] },
+    { "id": "persp", "type": "backend", "label": "Perspective", "sublabel": "历史快照会话 · WS snapshot", "pos": [1340, 790], "size": [160, 56] },
+    { "id": "mmon", "type": "backend", "label": "module_monitor", "sublabel": "collector/writer 指标", "pos": [1340, 870], "size": [160, 56] },
+
+    { "id": "ag_api", "type": "security", "label": "agent FastAPI :7070", "sublabel": "bootstrap/auth/viewer/admin", "pos": [240, 130], "size": [160, 56] },
+    { "id": "pm", "type": "security", "label": "ProcessManager", "sublabel": "start/stop/restart · 健康循环", "pos": [430, 130], "size": [150, 56] },
+    { "id": "sm", "type": "security", "label": "SidecarManager", "sublabel": "OPC DA 代理 · 端口映射", "pos": [430, 210], "size": [150, 56] },
+    { "id": "dpapi", "type": "security", "label": "config.toml (DPAPI)", "sublabel": "双根 · password_enc · env 注入", "pos": [240, 210], "size": [160, 56] },
+
+    { "id": "fe_vue", "type": "frontend", "label": "frontend (Vue3)", "sublabel": "Art Design Pro · Pinia · i18n", "pos": [1340, 600], "size": [160, 56] },
+    { "id": "fe_http", "type": "frontend", "label": "http + RBAC 路由", "sublabel": "axios · 动态菜单/路由", "pos": [1340, 690], "size": [160, 48] },
+    { "id": "fe_ws", "type": "frontend", "label": "useRealtimeWs", "sublabel": "snapshot/diff/offline · 退避重连", "pos": [1340, 960], "size": [160, 48] },
+    { "id": "fe_psp", "type": "frontend", "label": "Perspective runtime", "sublabel": "public/perspective 大表", "pos": [1340, 1020], "size": [160, 48] },
+
+    { "id": "app_rust", "type": "frontend", "label": "Tauri Rust 壳", "sublabel": "agent_request / backend_request", "pos": [40, 130], "size": [160, 56] },
+    { "id": "app_ag", "type": "frontend", "label": "agent-client", "sublabel": "bootstrap/viewer/admin", "pos": [40, 210], "size": [150, 48] },
+    { "id": "app_be", "type": "frontend", "label": "backend-client", "sublabel": "metrics · logs · rates", "pos": [40, 280], "size": [150, 48] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "边缘侧 · Windows 工控机 · Inno 一体安装包", "wraps": ["plc", "proxy", "drv_s7", "drv_ge", "drv_opcua", "drv_opcda", "ingest", "dm", "sched", "exec", "bounded", "rw", "capp", "ag_api", "pm", "sm", "dpapi", "app_rust", "app_ag", "app_be"] },
+    { "kind": "security-group", "label": "agent (Windows 服务 · NSSM 常驻)", "wraps": ["ag_api", "pm", "sm", "dpapi"] },
+    { "kind": "security-group", "label": "collector 进程", "wraps": ["drv_s7", "drv_ge", "drv_opcua", "drv_opcda", "ingest", "dm", "sched", "exec", "bounded", "rw", "capp"] },
+    { "kind": "region", "label": "中心侧 · Linux 服务器 · Docker 镜像部署", "wraps": ["r_latest", "r_window", "r_stream", "r_dlq", "sc", "map", "tw", "dlq", "slog", "td", "my", "asgi", "perm", "ws_push", "persp", "hist", "mmon", "fe_vue", "fe_http", "fe_ws", "fe_psp"] },
+    { "kind": "security-group", "label": "writer 进程", "wraps": ["sc", "map", "tw", "dlq", "slog"] },
+    { "kind": "security-group", "label": "backend (TurboAPI ASGI :8000)", "wraps": ["asgi", "perm", "ws_push", "persp", "hist", "mmon"] }
+  ],
+  "connections": [
+    { "from": "plc", "to": "drv_s7", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v" },
+    { "from": "plc", "to": "drv_ge", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v" },
+    { "from": "plc", "to": "drv_opcua", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v" },
+    { "from": "plc", "to": "proxy", "variant": "dashed", "fromSide": "left", "toSide": "bottom" },
+    { "from": "proxy", "to": "drv_opcda", "label": "代理数据", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [205, 530] },
+    { "from": "proxy", "to": "ingest", "label": "push", "variant": "dashed", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [205, 645] },
+
+    { "from": "drv_s7", "to": "dm", "fromSide": "right", "toSide": "left" },
+    { "from": "drv_ge", "to": "dm", "fromSide": "right", "toSide": "left" },
+    { "from": "drv_opcua", "to": "dm", "fromSide": "right", "toSide": "left" },
+    { "from": "drv_opcda", "to": "dm", "fromSide": "right", "toSide": "left" },
+
+    { "from": "capp", "to": "dm", "fromSide": "top", "toSide": "bottom", "variant": "dashed", "route": "orthogonal-v" },
+    { "from": "capp", "to": "sched", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v", "variant": "dashed" },
+    { "from": "capp", "to": "rw", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v", "variant": "dashed" },
+
+    { "from": "dm", "to": "sched", "fromSide": "bottom", "toSide": "top" },
+    { "from": "sched", "to": "exec", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "from": "exec", "to": "bounded", "fromSide": "bottom", "toSide": "top", "variant": "dashed" },
+    { "from": "exec", "to": "rw", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v" },
+    { "from": "ingest", "to": "rw", "fromSide": "right", "toSide": "bottom", "route": "orthogonal-h" },
+
+    { "from": "rw", "to": "r_window", "label": "1 LPUSH", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [620, 660] },
+    { "from": "rw", "to": "r_stream", "label": "2 XADD", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [620, 620] },
+    { "from": "rw", "to": "r_latest", "label": "3 HSET", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [620, 700] },
+
+    { "from": "r_stream", "to": "sc", "label": "XREADGROUP", "variant": "emphasis", "fromSide": "right", "toSide": "left", "route": "orthogonal-h", "labelAt": [870, 410] },
+    { "from": "sc", "to": "map", "fromSide": "bottom", "toSide": "top" },
+    { "from": "sc", "to": "tw", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v" },
+    { "from": "tw", "to": "td", "label": "多表 INSERT", "variant": "emphasis", "fromSide": "top", "toSide": "left", "route": "orthogonal-h", "labelAt": [1080, 310] },
+    { "from": "tw", "to": "dlq", "label": "BAD_DATA", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelAt": [985, 595] },
+    { "from": "dlq", "to": "r_dlq", "label": "LPUSH", "variant": "security", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [830, 660] },
+    { "from": "sc", "to": "r_stream", "label": "XACK", "variant": "dashed", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [860, 660] },
+    { "from": "slog", "to": "my", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v", "variant": "dashed" },
+
+    { "from": "sc", "to": "my", "fromSide": "top", "toSide": "right", "route": "orthogonal-v" },
+    { "from": "dm", "to": "my", "label": "拓扑/状态", "fromSide": "top", "toSide": "left", "route": "orthogonal-v", "labelAt": [620, 260] },
+
+    { "from": "asgi", "to": "perm", "fromSide": "bottom", "toSide": "top", "variant": "dashed" },
+    { "from": "perm", "to": "hist", "fromSide": "bottom", "toSide": "top", "variant": "dashed", "route": "orthogonal-v" },
+    { "from": "perm", "to": "ws_push", "fromSide": "bottom", "toSide": "top", "variant": "dashed", "route": "orthogonal-v" },
+    { "from": "perm", "to": "persp", "fromSide": "right", "toSide": "top", "variant": "dashed", "route": "orthogonal-h" },
+    { "from": "perm", "to": "mmon", "fromSide": "right", "toSide": "top", "variant": "dashed", "route": "orthogonal-h" },
+
+    { "from": "ws_push", "to": "r_latest", "label": "0.1s 读 latest", "variant": "emphasis", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [1080, 760] },
+    { "from": "hist", "to": "td", "label": "历史查询", "variant": "emphasis", "fromSide": "left", "toSide": "bottom", "route": "orthogonal-v", "labelAt": [1080, 600] },
+    { "from": "hist", "to": "my", "fromSide": "left", "toSide": "bottom", "route": "orthogonal-v" },
+
+    { "from": "ag_api", "to": "pm", "fromSide": "right", "toSide": "left" },
+    { "from": "ag_api", "to": "sm", "fromSide": "right", "toSide": "left", "route": "orthogonal-v" },
+    { "from": "ag_api", "to": "dpapi", "fromSide": "bottom", "toSide": "top", "variant": "dashed" },
+    { "from": "pm", "to": "capp", "label": "启停+env注入", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "orthogonal-v", "labelAt": [370, 295] },
+    { "from": "pm", "to": "sc", "label": "启停+env注入", "variant": "security", "fromSide": "top", "toSide": "bottom", "route": "orthogonal-v", "labelAt": [470, 295] },
+    { "from": "sm", "to": "proxy", "label": "启动/认领", "variant": "security", "fromSide": "left", "toSide": "top", "route": "orthogonal-h", "labelAt": [205, 200] },
+
+    { "from": "fe_http", "to": "asgi", "label": "REST /api/*", "variant": "emphasis", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [1080, 670] },
+    { "from": "fe_ws", "to": "ws_push", "label": "WS realtime-push", "variant": "emphasis", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [1080, 920] },
+    { "from": "fe_psp", "to": "persp", "label": "WS snapshot", "fromSide": "left", "toSide": "right", "route": "orthogonal-h", "labelAt": [1080, 980] },
+
+    { "from": "app_ag", "to": "ag_api", "label": "invoke", "variant": "emphasis", "fromSide": "top", "toSide": "left", "route": "orthogonal-v", "labelAt": [120, 90] },
+    { "from": "app_be", "to": "mmon", "label": "invoke", "variant": "emphasis", "fromSide": "top", "toSide": "left", "route": "orthogonal-v", "labelAt": [120, 1000] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "采集与入库解耦", "items": [
+      "collector 与 writer 无代码级调用，仅经 Redis 传递数据",
+      "写序不变式：window/stream 成功后才刷新 latest",
+      "writer：LANDED 才 ACK，坏数据进 DLQ 才 ACK，其余 RETRY"
+    ] },
+    { "dot": "emerald", "title": "三库分工", "items": [
+      "MySQL device_watch：拓扑 / RBAC / 日志 — 配置事实源",
+      "Redis：latest 实时 / window 短窗 / stream 入库队列 / dlq 死信",
+      "TDengine device_data：时序历史宽表，列只增不减"
+    ] },
+    { "dot": "rose", "title": "边缘与安全", "items": [
+      "agent 是边缘中枢：进程管控 + DPAPI 凭据单一来源 + sidecar 编排",
+      "OPC DA 走 C# x86 sidecar，与 64 位 Python 主链路隔离",
+      "双根路径：INSTALL_ROOT 只读 / DATA_ROOT 可写"
+    ] },
+    { "dot": "amber", "title": "双前端分工", "items": [
+      "frontend (Vue3 Web)：业务控制台 — 实时/历史/管理",
+      "app (Tauri 桌面)：边缘运维 — 首装/启停/指标/日志",
+      "app 经 Rust 壳转发 HTTP，规避 CORS；后端地址运行期注入"
+    ] }
+  ]
+}

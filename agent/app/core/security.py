@@ -69,21 +69,60 @@ def verify_password(password: str, encoded: str) -> bool:
 
 # ── JWT（HS256 令牌）───────────────────────────────────────────────────────────
 
-def create_access_token(subject: str, secret: str, expire_hours: int) -> str:
+JWT_ISSUER = "datawatch-agent"
+JWT_AUDIENCE = "datawatch-agent"
+
+class InsufficientRoleError(JWTError):
+    pass
+
+
+def create_access_token(
+    subject: str,
+    secret: str,
+    expire_hours: int,
+    roles: list[str] | None = None,
+) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)
+    payload = {
+        "sub": subject,
+        "exp": expire,
+        "iss": JWT_ISSUER,
+        "aud": JWT_AUDIENCE,
+    }
+    if roles is not None:
+        payload["roles"] = roles
     return jwt.encode(
-        {"sub": subject, "exp": expire},
+        payload,
         secret,
         algorithm="HS256",
     )
 
 
-def verify_token(token: str, secret: str) -> str:
+def verify_token(
+    token: str,
+    secret: str,
+    required_roles: set[str] | None = None,
+) -> str:
     """返回 subject；签名无效/过期/缺字段均抛出 JWTError"""
-    payload = jwt.decode(token, secret, algorithms=["HS256"])
+    payload = jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=JWT_ISSUER,
+        audience=JWT_AUDIENCE,
+    )
+    if payload.get("iss") != JWT_ISSUER:
+        raise JWTError("Token issuer is invalid")
+    if payload.get("aud") != JWT_AUDIENCE:
+        raise JWTError("Token audience is invalid")
     if "exp" not in payload:
         raise JWTError("Token missing exp")
     subject = payload.get("sub")
     if not isinstance(subject, str) or not subject:
         raise JWTError("Token missing subject")
+    if required_roles:
+        roles = payload.get("roles")
+        token_roles = set(roles) if isinstance(roles, list) else set()
+        if not token_roles.intersection(required_roles):
+            raise InsufficientRoleError("Token role is not allowed")
     return subject

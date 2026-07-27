@@ -39,10 +39,10 @@ test("realtime and history pages use shadcn chart containers", async () => {
 test("realtime monitor uses the requested four-section operational layout", async () => {
   const source = await readFile(new URL("../src/pages/RealtimeMonitorPage.tsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(source, /realtimePointGroups/);
+  assert.match(source, /realtimePointGroups/);
   assert.doesNotMatch(source, /点位分组/);
   assert.match(source, /overflow-x-auto/);
-  assert.match(source, /groupCode: "g001"/);
+  assert.match(source, /groupCode: selectedGroupCode/);
   assert.match(source, /chartType === type/);
   assert.match(source, /deviceDialogOpen/);
   assert.match(source, /设备类型/);
@@ -153,7 +153,11 @@ test("driver management uses a full-height paginated table with truncated descri
 
   assert.doesNotMatch(source, /驱动总数|可用驱动/);
   assert.doesNotMatch(source, /max-w-\[1500px\]/);
-  assert.doesNotMatch(source, /query\.refresh/);
+  // 安装/卸载后需刷新列表（共享壳层刷新 + 本页 query.refresh）
+  assert.match(source, /query\.refresh\(\)/);
+  assert.match(source, /backendClient\.uninstallDriver\(auth\.backendToken/);
+  assert.doesNotMatch(source, /agentClient\.uninstallDriver/);
+  assert.doesNotMatch(source, /compensate:/);
   assert.match(source, /flex h-full min-h-0 w-full flex-col/);
   assert.match(source, /flex min-h-0 flex-1 flex-col/);
   assert.match(source, /table-fixed/);

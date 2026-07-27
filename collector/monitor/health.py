@@ -53,6 +53,7 @@ class HealthChecker:
                 "status": device.status.value,
                 "protocol": device.protocol,
                 "healthy": healthy,
+                "config_error": getattr(device, "config_error", None),
             }
 
         online = sum(

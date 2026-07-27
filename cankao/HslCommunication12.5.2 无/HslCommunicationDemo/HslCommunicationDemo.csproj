@@ -1,0 +1,1157 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{3878075B-B8D7-4090-B094-29622581442F}</ProjectGuid>
+    <ProjectTypeGuids>{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <OutputType>WinExe</OutputType>
+    <LangVersion>7</LangVersion>
+    <AssemblyName>HslCommunicationDemo</AssemblyName>
+    <TargetFrameworkIdentifier>.NETFramework</TargetFrameworkIdentifier>
+    <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
+    <WarningLevel>4</WarningLevel>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Platform)' == 'AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <OutputPath>bin\Debug\</OutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <OutputPath>bin\Release\</OutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
+    <OutputPath>..\bin\</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'">
+    <OutputPath>..\bin\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System" />
+    <Reference Include="HslCommunication">
+      <HintPath>..\bin\HslCommunication.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>..\bin\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="HslControls">
+      <HintPath>..\bin\HslControls.dll</HintPath>
+    </Reference>
+    <Reference Include="WeifenLuo.WinFormsUI.Docking.ThemeVS2015">
+      <HintPath>..\bin\WeifenLuo.WinFormsUI.Docking.ThemeVS2015.dll</HintPath>
+    </Reference>
+    <Reference Include="WeifenLuo.WinFormsUI.Docking">
+      <HintPath>..\bin\WeifenLuo.WinFormsUI.Docking.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="DynamicExpresso.Core">
+      <HintPath>..\bin\DynamicExpresso.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Core" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationIcon Include="app.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationManifest Include="app.manifest" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Algorithms\FormConnectPool.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Algorithms\FormPid.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Algorithms\FourierFilter.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Algorithms\FourierTransform.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Algorithms\SiemensConnector.cs" />
+    <Compile Include="BarCode\FormSickBarCode.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Control\FormInputNewValue.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Control\FormInputPassword.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Control\FormInputString.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\AddressExampleControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\BatchReadControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\BorderPanel.cs">
+      <SubType>Component</SubType>
+    </Compile>
+    <Compile Include="DemoControl\CodeExampleControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\CurveLineStyle.cs" />
+    <Compile Include="DemoControl\CurveLineStyleArray.cs" />
+    <Compile Include="DemoControl\CurveMonitorControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\DataExportControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\DataSimulateControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\DataTableControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\DataTableItem.cs" />
+    <Compile Include="DemoControl\DataTableItemArray.cs" />
+    <Compile Include="DemoControl\DebugRemoteControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\DeviceAddressExample.cs" />
+    <Compile Include="DemoControl\DeviceSupportList.cs" />
+    <Compile Include="DemoControl\FormCurveMonitor.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormDeviceSupport.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormDtuMessageCreate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormExpressionExample.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormLogRender.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormMessageShow.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormMqttInput.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormPanelLeft.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormPipeSessionList.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormPropertyModify.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormSaveList.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\FormSupport.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="DemoControl\PipeSelectControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\PipeSessionListControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\ReadAddress.cs" />
+    <Compile Include="DemoControl\ServerSettingControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\SettingMqtt.cs" />
+    <Compile Include="DemoControl\SettingPipe.cs" />
+    <Compile Include="DemoControl\SettingSerial.cs" />
+    <Compile Include="DemoControl\SettingTcpDebug.cs" />
+    <Compile Include="DemoControl\SettingTcpIP.cs" />
+    <Compile Include="DemoControl\SimulateWrite.cs" />
+    <Compile Include="DemoControl\SslServerControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\StringEncoding.cs" />
+    <Compile Include="DemoControl\UserControlCurve.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\UserControlHead.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\UserControlReadWriteDevice.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\UserControlReadWriteOp.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="DemoControl\UserControlReadWriteServer.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslDebug\DebugControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormCheck.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormHandShake.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormMessageCreate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormPacketMessage.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormPingIpAddress.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\FormRegexTest.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslDebug\MessgaeCreate.cs" />
+    <Compile Include="HslDebug\NetworkStatus.cs" />
+    <Compile Include="HslDebug\NetworkStatusResult.cs" />
+    <Compile Include="HslDebug\PacketMessageItem.cs" />
+    <Compile Include="HslDebug\PingResult.cs" />
+    <Compile Include="HslDebug\SocketDebugSession.cs" />
+    <Compile Include="Instrument\CJT188Control.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Instrument\CJT188Helper.cs" />
+    <Compile Include="Instrument\CPLHelper.cs" />
+    <Compile Include="Instrument\DLT645Control.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Instrument\DLT698Control.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Instrument\DLTHelper.cs" />
+    <Compile Include="Instrument\FormEcFanMachine.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Instrument\FormIEC104Server.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Instrument\RkcHelper.cs" />
+    <Compile Include="Light\FormShineInLight.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Modbus\Helper.cs" />
+    <Compile Include="Modbus\ModbusControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Modbus\StationSearchControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="MQTT\FormInputNewPath.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="MQTT\FormMqttRpcDevice.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="MQTT\FormMqttSubscribe.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="MQTT\FormWillTopicSetting.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\AllenBrandly\AllenBrandlyControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\AllenBrandly\AllenBrandlyTagTypeCacheControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\AllenBrandly\Helper.cs" />
+    <Compile Include="PLC\Beckhoff\BeckhoffAdsNetControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Beckhoff\Helper.cs" />
+    <Compile Include="PLC\Beckhoff\Student.cs" />
+    <Compile Include="PLC\Cimon\FormCimonHmiProtocol.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Cimon\Helper.cs" />
+    <Compile Include="PLC\Common\ConnectControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Common\StressTesting.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Delta\Helper.cs" />
+    <Compile Include="PLC\Fatek\FatekProgrameControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Fatek\Helper.cs" />
+    <Compile Include="PLC\Fuji\Helper.cs" />
+    <Compile Include="PLC\Ge\GeControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Ge\Helper.cs" />
+    <Compile Include="PLC\Inovance\Helper.cs" />
+    <Compile Include="PLC\Invt\FormInvtModbus.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Invt\FormInvtModbusRtu.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Invt\Helper.cs" />
+    <Compile Include="PLC\Keyence\Helper.cs" />
+    <Compile Include="PLC\Keyence\NanoControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Lsis\Helper.cs" />
+    <Compile Include="PLC\MegMeet\Helper.cs" />
+    <Compile Include="PLC\Melsec\FxLinksControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Melsec\Helper.cs" />
+    <Compile Include="PLC\Melsec\McQna3EControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Melsec\MelsecSerialControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Omron\FinsTcpControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Omron\FormOmronHostLink.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Omron\FormOmronHostLinkOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Omron\Helper.cs" />
+    <Compile Include="PLC\Omron\HostLinkCModeControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Panasonic\Helper.cs" />
+    <Compile Include="PLC\Panasonic\MewtocolControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Secs\FormSecsHsmsServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Secs\FormServerSecsItem.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\Secs\SecsHelper.cs" />
+    <Compile Include="PLC\Siemens\DbItem.cs" />
+    <Compile Include="PLC\Siemens\Helper.cs" />
+    <Compile Include="PLC\Siemens\S7ObjectNode.cs" />
+    <Compile Include="PLC\Siemens\S7ServerDbControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Siemens\SiemensPPIControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Siemens\SiemensS7Control.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Siemens\SiemensS7PlusControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Siemens\SiemensS7WriteControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Siemens\SiemensWebApiControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Toyota\Helper.cs" />
+    <Compile Include="PLC\Turck\TurckReaderControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\Vigor\Helper.cs" />
+    <Compile Include="PLC\WeCon\FormWeConModbus.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\WeCon\FormWeConModbusRtu.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\WeCon\Helper.cs" />
+    <Compile Include="PLC\XINJE\Helper.cs" />
+    <Compile Include="PLC\YASKAWA\Helper.cs" />
+    <Compile Include="PLC\Yokogawa\Helper.cs" />
+    <Compile Include="PLC\Yokogawa\YokogawaLinkControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="PLC\FormKnx.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\FormMcA1EServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="PLC\my_modbus_server.cs" />
+    <Compile Include="Properties\Resources.cs" />
+    <Compile Include="Properties\Settings.cs" />
+    <Compile Include="Redis\FormRedisCopy.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Redis\FormRedisInput.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\EfortRobotControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Robot\FormABBWebApi.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormEfort.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormEfortPrevious.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormEstunTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormFanucRobot.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormHyundaiUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\FormYamahaRCX.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Robot\JogMoveCmd.cs" />
+    <Compile Include="Toledo\FormToledoTcpServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Toledo\ToledoDataControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Vip\CertificateItem.cs" />
+    <Compile Include="Vip\CertificateListControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Vip\FormCreateCertificate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Vip\FormHslCertificate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Vip\HslCertificateControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="ClientSession.cs" />
+    <Compile Include="dataMy.cs" />
+    <Compile Include="DemoDeviceList.cs" />
+    <Compile Include="DemoUtils.cs" />
+    <Compile Include="FormAbbServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormActive.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBradleyDF1Serial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandly.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandlyBrowser.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandlyConnectedCip.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandlyMicroCip.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandlyPCCC.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAllenBrandlySLC.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormAuthor.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormBeckhoffAdsNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormBeckhoffAdsServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormByteTransfer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCharge.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCimonServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCipServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCJT188.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCJT188OverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormCncFanuc.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormComplexNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDAM3601.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDcsNanJingAuto.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDeltaDvpSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDeltaDvpSerialAscii.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDeltaDvpTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDeltaSerialAsciiOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDeltaSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDigitronCPL.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDigitronCPLOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDigitronCPLServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDisclaimer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645OverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645Server.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645With1997.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645With1997OverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT645With1997Server.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT698.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT698OverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT698Server.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDLT698TcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDTSU6606.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormDtuServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFanucRobotServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFatekPrograme.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFatekProgrameOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFatekProgrameServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFetchWriteServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFileClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFreedomSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFreedomTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFreedomUdpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiCSTNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiCSTServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiSPB.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiSPBOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiSPBServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiSPHNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFujiSPHServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFxLinksServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormFxSerialServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormGeSRTP.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormGeSRTPServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormHslCertificate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormHslMap.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormHttpClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormHttpServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormIEC104.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormImage.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormIndex.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormInovanceSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormInovanceSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormInovanceTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormInputAlien.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceAscii.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceBinary.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceDLEN1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceKvOld.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceNanoSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceNanoSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceNanoServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKeyenceSR2000.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKuka.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormKukaTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLoad.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLogin.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLogNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLsisCnet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLsisCnetOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLsisCpu.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLsisFEnet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormLSisServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMail.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMain.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMcA3CServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMcServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMegMeetSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMegMeetSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMegMeetTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsec1EAscii.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsec1EBinary.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsec3C.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsec3COverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecAscii.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecAsciiUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecBinary.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecCipNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecLinks.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecLinksOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecRBinary.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMelsecUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMemobusTcpServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbus.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusAscii.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusAsciiOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusRtu.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusRtuOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormModbusUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMqttClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMqttFileClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMqttFileServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMqttServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormMqttSyncClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormNewVerison.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmron.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronCip.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronCipServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronConnectedCip.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronHostLinkCMode.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronHostLinkCModeOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronHostLinkCModeServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronHostLinkServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronUdp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOmronUdpServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOpenProtocol.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormOpenProtocolServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPanasonicBinary.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPanasonicMew.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPanasonicMewOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPanasonicMewtocolServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPcccServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPlainSocket.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormPushNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRedisClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRedisSubscribe.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRegister.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRkcTemperatureController.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRkcTemperatureControllerOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRkcTemperatureControllerServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormRSADebug.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormS7Server.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSAMSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSAMTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSecsGem.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSeqCreate.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSerialDebug.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSerialToTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemens.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemens200.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensFW.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensMPI.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensPPI.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensPPIOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensPPIServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS1200.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS1500.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS200.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS200Smart.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS300.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS400.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensS7Plus.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSiemensWebApi.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSimplifyNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormSimplifyNetAlien.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTcpDebug.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTcpServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTcpToTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormToyoPuc.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormToyoPucServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTrustedClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTurckReaderNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormTurckReaderServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormUdpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormUpdateServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormVibrationSensorClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormVigorSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormVigorSerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormVigorServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormWeb.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormWebsocketClient.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormWebsocketQANet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormWebsocketServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormXinJEInternalServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormXinJEInternalTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormXinJESerialOverTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormXinJETcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormXinJEXCSerial.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYASKAWAMemobusTcpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYASKAWAMemobusUdpNet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYokogawaLinkServer.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYokogawaLinkTcp.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYRC1000.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FormYRCHighEthernet.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslFormContent.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="OpenMessage.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Settings1.cs" />
+    <Compile Include="TopicSaveItem.cs" />
+    <Compile Include="UserType.cs" />
+    <Compile Include="UserWebApis.cs" />
+    <Compile Include="HslRedisDesktop\ConsoleControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ContactControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\DbSettings.cs" />
+    <Compile Include="HslRedisDesktop\FormInputString.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\FormRedisAdd.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\FormRedisMain.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\HashValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\HashValueEditForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\KeyOperateControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ListValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ListValueEditForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ListValueInsertForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\RedisSettings.cs" />
+    <Compile Include="HslRedisDesktop\SetValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\SetValueInsertForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\StartControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\StringValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\StringValueEditForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\Utils.cs" />
+    <Compile Include="HslRedisDesktop\ValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ZSetValueControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="HslRedisDesktop\ZSetValueInsertForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Control\FormInputNewValue.resx" LogicalName="HslCommunicationDemo.Control.FormInputNewValue.resources" />
+    <EmbeddedResource Include="DemoControl\FormCurveMonitor.resx" LogicalName="HslCommunicationDemo.DemoControl.FormCurveMonitor.resources" />
+    <EmbeddedResource Include="DemoControl\FormDtuMessageCreate.resx" LogicalName="HslCommunicationDemo.DemoControl.FormDtuMessageCreate.resources" />
+    <EmbeddedResource Include="DemoControl\FormExpressionExample.resx" LogicalName="HslCommunicationDemo.DemoControl.FormExpressionExample.resources" />
+    <EmbeddedResource Include="DemoControl\FormPipeSessionList.resx" LogicalName="HslCommunicationDemo.DemoControl.FormPipeSessionList.resources" />
+    <EmbeddedResource Include="DemoControl\FormSupport.resx" LogicalName="HslCommunicationDemo.DemoControl.FormSupport.resources" />
+    <EmbeddedResource Include="FormInputAlien.resx" LogicalName="HslCommunicationDemo.FormInputAlien.resources" />
+    <EmbeddedResource Include="FormMain.resx" LogicalName="HslCommunicationDemo.FormMain.resources" />
+    <EmbeddedResource Include="PLC\Secs\FormServerSecsItem.resx" LogicalName="HslCommunicationDemo.PLC.Secs.FormServerSecsItem.resources" />
+    <EmbeddedResource Include="Properties\Resources.resx" LogicalName="HslCommunicationDemo.Properties.Resources.resources" />
+    <EmbeddedResource Include="FormRedisMain.resx" LogicalName="HslRedisDesktop.FormRedisMain.resources" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

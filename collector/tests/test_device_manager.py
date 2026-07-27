@@ -1,13 +1,60 @@
 """设备管理器测试"""
 
+import asyncio
 import json
+import sys
+from pathlib import Path
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
-from device.manager import DeviceManager, EndpointPortMapper, PortMappingError
+from device.manager import (
+    DeviceManager,
+    EndpointPortMapper,
+    PortMappingError,
+    build_connection_config,
+    _modbus_unit_id_from_slot,
+)
 from device.device import Device, DeviceStatus
+
+_MODBUS_PKG_ROOT = Path(__file__).resolve().parents[2] / "packages" / "modbus_tcp"
+if str(_MODBUS_PKG_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MODBUS_PKG_ROOT))
+
+
+def test_modbus_unit_id_from_slot_range():
+    assert _modbus_unit_id_from_slot(None) == 1
+    assert _modbus_unit_id_from_slot(2) == 2
+    assert _modbus_unit_id_from_slot(247) == 247
+    for bad in (0, -1, 248):
+        with pytest.raises(ValueError):
+            _modbus_unit_id_from_slot(bad)
+
+
+def test_build_connection_config_maps_slot_for_modbus_only():
+    modbus = DeviceConfig(
+        device_id="M1",
+        device_type="PLC",
+        protocol="modbus_tcp",
+        ip="10.0.0.1",
+        port=502,
+        slot=2,
+    )
+    cfg = build_connection_config(modbus)
+    assert cfg["unit_id"] == 2
+    assert cfg["slot"] == 2
+
+    s7 = DeviceConfig(
+        device_id="S1",
+        device_type="PLC",
+        protocol="s7",
+        ip="10.0.0.2",
+        port=102,
+        slot=1,
+    )
+    s7_cfg = build_connection_config(s7)
+    assert "unit_id" not in s7_cfg
 
 
 @pytest.mark.asyncio
@@ -30,6 +77,51 @@ async def test_device_registration(collector_config):
 
 
 @pytest.mark.asyncio
+async def test_invalid_modbus_config_does_not_block_other_devices_or_reconnect():
+    from drivers.registry import DriverRegistry
+
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig("BAD", "PLC", "modbus_tcp", "10.0.0.1", port=502, slot=1),
+            DeviceConfig("GOOD", "AGV", "opcda_sidecar", "127.0.0.1", port=8090),
+        ],
+        variables=[
+            VariableConfig("bad_type", "BAD", "C0", "WORD", 1, True, 1),
+        ],
+    )
+    registry = DriverRegistry.scan(_MODBUS_PKG_ROOT.parent)
+    manager = DeviceManager(config, driver_registry=registry)
+
+    manager.register_devices()
+    bad = manager.devices["BAD"]
+    assert bad.status == DeviceStatus.CONFIG_ERROR
+    assert "只支持 BOOL" in bad.config_error
+    assert bad.scan_tasks == []
+
+    await manager.connect_all()
+
+    assert manager.devices["GOOD"].status == DeviceStatus.ONLINE
+    assert "BAD" not in manager._reconnect_tasks
+
+
+def test_modbus_scan_task_attaches_decode_via_hooks():
+    """外置 hooks 规划成功后，ScanTask 必须挂上 decode_read_results。"""
+    from drivers.registry import DriverRegistry
+    from device.device import Variable
+
+    registry = DriverRegistry.scan(_MODBUS_PKG_ROOT.parent)
+    hooks = registry.get("modbus_tcp")
+    assert hooks is not None and hooks.build_read_plan is not None
+
+    device = Device("M1", "PLC", "modbus_tcp", {"unit_id": 1})
+    device.external_driver_hooks = hooks
+    device.add_variable(Variable("v1", "C0", "BOOL", 1.0))
+    device.build_scan_tasks()
+    assert len(device.scan_tasks) == 1
+    assert device.scan_tasks[0].decode_read_results is hooks.decode_read_results
+
+
+@pytest.mark.asyncio
 async def test_device_connection(collector_config, mock_driver):
     """测试设备连接"""
     manager = DeviceManager(collector_config)
@@ -44,6 +136,83 @@ async def test_device_connection(collector_config, mock_driver):
         assert result is True
         assert manager.devices["TEST001"].status == DeviceStatus.ONLINE
         mock_driver.connect.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_impl_disconnects_previous_driver_before_replace(collector_config):
+    """重试/覆盖前必须断开旧 driver；每次新建失败实例也须各自 disconnect 一次。"""
+    manager = DeviceManager(collector_config)
+    manager.register_devices()
+    device = manager.devices["TEST001"]
+
+    old_driver = AsyncMock()
+    old_driver.disconnect = AsyncMock()
+    device.driver = old_driver
+
+    created: list = []
+
+    def _factory(_protocol: str):
+        new_driver = AsyncMock()
+        new_driver.connect = AsyncMock(side_effect=Exception("boom"))
+        new_driver.disconnect = AsyncMock()
+        created.append(new_driver)
+        return new_driver
+
+    with patch.object(manager, "_create_driver", side_effect=_factory):
+        with patch.object(manager, "_report_device_status", new=AsyncMock()):
+            with pytest.raises(Exception, match="boom"):
+                await manager._connect_device_impl(device)
+
+    old_driver.disconnect.assert_awaited_once()
+    assert created
+    for drv in created:
+        drv.disconnect.assert_awaited_once()
+    assert device.driver is None
+    assert device.status == DeviceStatus.ERROR
+
+
+@pytest.mark.asyncio
+async def test_connect_impl_disconnect_timeout_does_not_block_replace(collector_config):
+    """旧 driver disconnect 挂起时必须超时后继续覆盖，不得卡住重连。"""
+    manager = DeviceManager(collector_config)
+    manager.register_devices()
+    device = manager.devices["TEST001"]
+
+    hung = AsyncMock()
+
+    async def _never_finish():
+        await asyncio.sleep(3600)
+
+    hung.disconnect = _never_finish
+    device.driver = hung
+
+    new_driver = AsyncMock()
+    new_driver.connect = AsyncMock()
+    new_driver.disconnect = AsyncMock()
+
+    with patch("device.manager._DRIVER_DISCONNECT_TIMEOUT_SEC", 0.05):
+        with patch.object(manager, "_create_driver", return_value=new_driver):
+            with patch.object(manager, "_report_device_status", new=AsyncMock()):
+                ok = await manager._connect_device_impl(device)
+
+    assert ok is True
+    assert device.driver is new_driver
+    assert device.status == DeviceStatus.ONLINE
+    new_driver.connect.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_safe_disconnect_driver_is_idempotent(collector_config):
+    """重复清理与空 driver 必须幂等，不得抛错。"""
+    manager = DeviceManager(collector_config)
+    driver = AsyncMock()
+    driver.disconnect = AsyncMock()
+
+    await manager._safe_disconnect_driver(driver, device_id="T1", reason="test")
+    await manager._safe_disconnect_driver(driver, device_id="T1", reason="test")
+    await manager._safe_disconnect_driver(None, device_id="T1", reason="test")
+
+    assert driver.disconnect.await_count == 2
 
 
 @pytest.mark.asyncio

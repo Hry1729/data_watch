@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.logger import get_logger
 from core.exceptions import DeviceConnectionError
@@ -16,6 +16,7 @@ class DeviceStatus(Enum):
     CONNECTING = "connecting"
     ONLINE = "online"
     ERROR = "error"
+    CONFIG_ERROR = "config_error"
 
 
 @dataclass
@@ -41,6 +42,8 @@ class ScanTask:
     # 批量读取块：连续地址会被合并
     read_blocks: List[Any] = field(default_factory=list)  # ReadBlock
     result_map: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # 外置驱动解码钩子（由 build_read_plan 成功后挂载，避免核心按协议名硬编码）
+    decode_read_results: Optional[Callable[..., Any]] = None
 
 
 class Device:
@@ -106,6 +109,7 @@ class Device:
         self.last_error_time: Optional[float] = None
         self.error_count: int = 0
         self.max_errors: int = 5  # 最大错误次数
+        self.config_error: Optional[str] = None
 
     def add_variable(self, variable: Variable) -> None:
         """添加变量到设备"""
@@ -120,15 +124,16 @@ class Device:
         for var in self.variables:
             rate_map.setdefault(var.scan_rate, []).append(var)
 
-        self.scan_tasks = []
+        scan_tasks: List[ScanTask] = []
         for rate, variables in sorted(rate_map.items()):
             task = ScanTask(scan_rate=rate, variables=variables)
             self._build_read_blocks(task)
-            self.scan_tasks.append(task)
+            scan_tasks.append(task)
             logger.info(
                 f"Device {self.device_id}: scan task rate={rate}s, "
                 f"blocks={len(task.read_blocks)}, vars={len(variables)}"
             )
+        self.scan_tasks = scan_tasks
 
     def _build_read_blocks(self, task: ScanTask) -> None:
         """
@@ -146,6 +151,18 @@ class Device:
 
         if self.protocol.lower() == "ge_srtp":
             self._build_ge_read_blocks(task)
+            return
+
+        # 外置驱动：仅经 Registry 注入的 build_read_plan；成功后挂 decode 到 ScanTask
+        hooks = getattr(self, "external_driver_hooks", None)
+        if hooks is not None and getattr(hooks, "build_read_plan", None):
+            unit_id = self.connection_config.get("unit_id", 1)
+            blocks, result_map = hooks.build_read_plan(
+                task.variables, unit_id=unit_id
+            )
+            task.read_blocks = blocks
+            task.result_map = result_map
+            task.decode_read_results = getattr(hooks, "decode_read_results", None)
             return
 
         blocks = []

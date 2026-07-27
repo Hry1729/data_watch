@@ -107,6 +107,29 @@ flowchart TD
     ING[InterfaceIngestServer<br/>HTTP Push] -->|external-push 数据| RW
 ```
 
+### 4.1 分层边界：核心 / 驱动 / 协议库
+
+采集链路分三层，职责不要混谈：
+
+| 层 | 谁 | 负责什么 | 不负责什么 |
+|----|----|----------|------------|
+| **采集核心** | `TaskScheduler` / `TaskExecutor` / `DeviceManager` / `RedisWriter` | 周期调度、错峰、单设备 in-flight、有界池背压、generation、读块合并编排、解析后写 Redis | 不直接调用 snap7 / 协议厂商 SDK |
+| **协议驱动** | `BaseDriver` 实现（如 `S7Driver`） | `connect` / `disconnect` / `read(blocks)` / `write` / 可选 `ping`；把统一接口翻译成具体协议读写 | 不实现调度、不写 Redis、不管跨设备并发策略 |
+| **协议库** | snap7、自研 GE SRTP、OPC UA 客户端等 | 驱动**内部**调用的底层读写（单点、连续段、连接） | 不被调度器直接引用 |
+
+调用关系固定为：
+
+```text
+TaskScheduler
+  → TaskExecutor.execute
+      → driver.read(read_blocks)     # 只认 BaseDriver
+          → 驱动内部再调 snap7 / 其它协议库
+```
+
+因此：调度器调度的是「驱动接口上的函数」，不是「snap7 的某个 API」。新增协议时实现并注册一个 `BaseDriver` 即可接入同一套并发与入库链路；协议库细节封装在驱动内部。
+
+地址合并（连续点合成 `ReadBlock`）当前在核心的 `Device.build_scan_tasks`；解析还原在 `TaskExecutor._parse_result`。驱动侧主要交付「按块读回原始值」。
+
 ---
 
 ## 5. 关键组件
@@ -258,6 +281,9 @@ MySQL 不可用且 `enable_fake_bootstrap=true` 时，回退为假拓扑（`_bui
 | 单设备 in-flight 串行 | PLC 单连接不可并发；串行是正确性约束而非性能选择 |
 | crc32 相位错开 / 稳定分片 | 内置 `hash()` 受 `PYTHONHASHSEED` 影响每进程不同，crc32 跨进程稳定 |
 | center 端口权威只读 | agent 生成权威映射，collector 只读、缺失即报错，避免动态分配漂移 |
+| 外置驱动 `datawatch_ext` 合成包 | 隔离驱动自身模块名；**不是**第三方依赖多版本隔离（pymodbus 仍进全局 `sys.modules`，一进程单版本） |
+| `CONFIG_ERROR` 与热重载回滚 | 单设备非法配置不拖垮进程；热重载失败保留上一代 tasks，禁止先删旧再报错 |
+| Modbus `unit_id`=`slot`（仅 None→1） | 合法范围 `[1,247]`；禁止 `slot or 1` 吞掉 `0` |
 
 ---
 
@@ -273,9 +299,22 @@ MySQL 不可用且 `enable_fake_bootstrap=true` 时，回退为假拓扑（`_bui
 
 ## 11. 扩展方式：新增一个协议驱动
 
-1. 在 `collector/drivers/` 新建驱动类，继承 `BaseDriver`（`drivers/base.py:32`），实现 `connect` / `disconnect` / `read(blocks)->{address: value}` / `write`，按需重写 `ping`。同连接的批量读需持有 `_read_lock`。
-2. 在 `DeviceManager._create_driver`（`manager.py:792`）注册协议名 → 驱动类。
-3. 若新协议是外部推送或中心采集，按需把协议名加入 `EXTERNAL_PUSH_PROTOCOLS` 或 `CENTER_COLLECTION_PROTOCOLS`（`manager.py:28`），以走对应的分流分支。
+> 前提见上文「4.1 分层边界」：你扩展的是**驱动层**，不是改调度器去直接调协议库。
+
+### 11.1 外置驱动包（推荐，试点：Modbus TCP）
+
+完整制作、打包与安装步骤见：[外置驱动包制作指南](外置驱动包制作指南.md)。
+
+1. 在 `DATAWATCH_DATA_ROOT/drivers/<id>/` 放置 `driver.toml` + Python 包 + 可选 `vendor/` + `vendor_meta.toml`（版本/许可/哈希）。
+2. 实现 `create_driver(context: DriverContext)`；声明 `batch_contiguous` 时提供 `build_read_plan` / `decode_read_results`。
+3. collector 启动扫描注册表经 `datawatch_ext.<id>` 加载；导入期临时使用 vendor 路径，禁止永久污染 `sys.path`。
+4. 非法地址/类型 → 设备 `CONFIG_ERROR`（禁连、禁采、禁重连），并暴露 `config_error`。
+
+### 11.2 内置驱动（S7 / GE 等既有路径）
+
+1. 在 `collector/drivers/` 新建驱动类，继承 `BaseDriver`（`drivers/base.py`），实现 `connect` / `disconnect` / `read(blocks)->{address: value}` / `write`，按需重写 `ping`。同连接的批量读需持有 `_read_lock`。协议库只在本驱动类内部调用。
+2. 在 `DeviceManager._create_driver` 注册协议名 → 驱动类。
+3. 若新协议是外部推送或中心采集，按需把协议名加入 `EXTERNAL_PUSH_PROTOCOLS` 或 `CENTER_COLLECTION_PROTOCOLS`，以走对应的分流分支。
 4. 若读取需要按地址合并块或自定义解析，扩展 `device.build_scan_tasks` 的块合并与 `TaskExecutor._parse_result` 的还原分支。
 5. 补充对应单元测试（参考 `collector/tests/test_s7_driver.py`、`test_runtime_topology.py`）。
 
@@ -286,5 +325,6 @@ MySQL 不可用且 `enable_fake_bootstrap=true` 时，回退为假拓扑（`_bui
 - [系统架构总览](../../01-总体设计/系统架构总览.md)
 - [writer 入库端](../writer/README.md)（下游消费方）
 - [调用链与协议设计](调用链与协议设计.md)（调用链、协议分流、读块合并、热更新）
+- [外置驱动包制作指南](外置驱动包制作指南.md)（ZIP 清单、打包、安装与 checklist）
 - [Redis 流与点位分组](../../03-数据与契约/数据库/Redis结构与字段.md)（Redis 结构完整契约）
 - [数据库设计](../../03-数据与契约/数据库/MySQL结构与字段.md)（设备/点位配置表)

@@ -1,0 +1,5682 @@
+{
+  "project_root": "D:\\python\\device_alarm\\data_watch",
+  "selection_required": true,
+  "model_selection_required": true,
+  "confirmation_required": true,
+  "user_confirmed": true,
+  "target_pages": 60,
+  "lines_per_page": 50,
+  "target_lines": 3000,
+  "estimated_selected_lines": 6000,
+  "estimated_selected_pages": 120,
+  "estimated_all_candidate_lines": 107176,
+  "estimated_all_candidate_pages": 2144,
+  "supplement_rule": "模型优先选择能体现软件核心功能和真实运行逻辑的源码；不足60页时再从其他相关源码中补充；候选源码仍不足时才生成全部代码材料。",
+  "confirmation_stage": "code-selection",
+  "next_action": "请由模型填写 草稿/代码文件选择.json 的抽取选择和选择理由，再让用户确认；确认后运行 confirm_stage.py --stage code-selection。",
+  "instructions": "The script only inventories source files. The model must choose selected/model_reason before user confirmation. Selected files are extracted in full with blank-only lines removed.",
+  "files": [
+    {
+      "path": "collector/main.py",
+      "selected": true,
+      "line_count": 734,
+      "material_line_count": 663,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": "采集服务主入口，体现配置加载、设备注册、调度启动、热重载、监控服务和优雅退出等采集全生命周期。"
+    },
+    {
+      "path": "collector/collector/executor.py",
+      "selected": true,
+      "line_count": 682,
+      "material_line_count": 611,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": "采集执行核心，体现设备批量读取、数据质量处理、重试容错、队列写入和采集指标统计。"
+    },
+    {
+      "path": "frontend/src/views/device_monitor/history/index.vue",
+      "selected": true,
+      "line_count": 1625,
+      "material_line_count": 1426,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": "历史数据页面，体现设备测点筛选、时间范围查询、趋势分析和历史数据展示。"
+    },
+    {
+      "path": "frontend/src/views/device_monitor/realtime/index.vue",
+      "selected": true,
+      "line_count": 2436,
+      "material_line_count": 2154,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": "Perspective 实时监控页面，体现实时数据订阅、设备状态展示、测点监视和交互式监控。"
+    },
+    {
+      "path": "writer/consumer.py",
+      "selected": true,
+      "line_count": 699,
+      "material_line_count": 634,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": "入库消费核心，体现队列消费、批次聚合、背压控制、失败重试和写入指标统计。"
+    },
+    {
+      "path": "writer/tdengine_writer.py",
+      "selected": true,
+      "line_count": 584,
+      "material_line_count": 506,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": "TDengine 入库实现，体现时序数据批量写入、表结构映射、连接管理和异常处理。"
+    },
+    {
+      "path": "collector/drivers/base.py",
+      "selected": false,
+      "line_count": 79,
+      "material_line_count": 60,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/App.tsx",
+      "selected": false,
+      "line_count": 165,
+      "material_line_count": 153,
+      "priority": 0,
+      "selection_tier": "frontend",
+      "evidence": "入口文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/main.tsx",
+      "selected": false,
+      "line_count": 14,
+      "material_line_count": 12,
+      "priority": 0,
+      "selection_tier": "frontend",
+      "evidence": "入口文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/App.vue",
+      "selected": false,
+      "line_count": 41,
+      "material_line_count": 36,
+      "priority": 0,
+      "selection_tier": "frontend",
+      "evidence": "入口文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/main.ts",
+      "selected": false,
+      "line_count": 26,
+      "material_line_count": 23,
+      "priority": 0,
+      "selection_tier": "frontend",
+      "evidence": "入口文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/router.py",
+      "selected": false,
+      "line_count": 23,
+      "material_line_count": 20,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/auth.py",
+      "selected": false,
+      "line_count": 119,
+      "material_line_count": 100,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/catalog.py",
+      "selected": false,
+      "line_count": 485,
+      "material_line_count": 425,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/dashboard.py",
+      "selected": false,
+      "line_count": 137,
+      "material_line_count": 118,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/history.py",
+      "selected": false,
+      "line_count": 342,
+      "material_line_count": 287,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/log.py",
+      "selected": false,
+      "line_count": 264,
+      "material_line_count": 221,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/module_monitor.py",
+      "selected": false,
+      "line_count": 78,
+      "material_line_count": 63,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/monitor.py",
+      "selected": false,
+      "line_count": 131,
+      "material_line_count": 115,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/perspective.py",
+      "selected": false,
+      "line_count": 97,
+      "material_line_count": 84,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/system.py",
+      "selected": false,
+      "line_count": 38,
+      "material_line_count": 30,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/routes/system_manage.py",
+      "selected": false,
+      "line_count": 450,
+      "material_line_count": 393,
+      "priority": 10,
+      "selection_tier": "supplement",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/ComponentLoader.ts",
+      "selected": false,
+      "line_count": 82,
+      "material_line_count": 70,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/IframeRouteManager.ts",
+      "selected": false,
+      "line_count": 78,
+      "material_line_count": 68,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/index.ts",
+      "selected": false,
+      "line_count": 14,
+      "material_line_count": 13,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/MenuProcessor.ts",
+      "selected": false,
+      "line_count": 284,
+      "material_line_count": 242,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/RoutePermissionValidator.ts",
+      "selected": false,
+      "line_count": 161,
+      "material_line_count": 140,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/RouteRegistry.ts",
+      "selected": false,
+      "line_count": 90,
+      "material_line_count": 78,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/RouteTransformer.ts",
+      "selected": false,
+      "line_count": 132,
+      "material_line_count": 115,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/core/RouteValidator.ts",
+      "selected": false,
+      "line_count": 187,
+      "material_line_count": 161,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/guards/afterEach.ts",
+      "selected": false,
+      "line_count": 46,
+      "material_line_count": 41,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/guards/beforeEach.ts",
+      "selected": false,
+      "line_count": 465,
+      "material_line_count": 402,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/index.ts",
+      "selected": false,
+      "line_count": 23,
+      "material_line_count": 20,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/dashboard.ts",
+      "selected": false,
+      "line_count": 24,
+      "material_line_count": 23,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/device-monitor.ts",
+      "selected": false,
+      "line_count": 117,
+      "material_line_count": 116,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/exception.ts",
+      "selected": false,
+      "line_count": 46,
+      "material_line_count": 45,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/index.ts",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 14,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/result.ts",
+      "selected": false,
+      "line_count": 33,
+      "material_line_count": 32,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/modules/system.ts",
+      "selected": false,
+      "line_count": 60,
+      "material_line_count": 59,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/routes/asyncRoutes.ts",
+      "selected": false,
+      "line_count": 9,
+      "material_line_count": 8,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/routes/staticRoutes.ts",
+      "selected": false,
+      "line_count": 90,
+      "material_line_count": 89,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/router/routesAlias.ts",
+      "selected": false,
+      "line_count": 8,
+      "material_line_count": 8,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/router/index.ts",
+      "selected": false,
+      "line_count": 80,
+      "material_line_count": 77,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/router.ts",
+      "selected": false,
+      "line_count": 61,
+      "material_line_count": 57,
+      "priority": 10,
+      "selection_tier": "frontend",
+      "evidence": "路由文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/core/config.py",
+      "selected": false,
+      "line_count": 154,
+      "material_line_count": 121,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/core/deps.py",
+      "selected": false,
+      "line_count": 29,
+      "material_line_count": 24,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/core/exceptions.py",
+      "selected": false,
+      "line_count": 22,
+      "material_line_count": 18,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/core/security.py",
+      "selected": false,
+      "line_count": 89,
+      "material_line_count": 69,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/factory.py",
+      "selected": false,
+      "line_count": 124,
+      "material_line_count": 103,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/routers/admin.py",
+      "selected": false,
+      "line_count": 236,
+      "material_line_count": 193,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/routers/auth.py",
+      "selected": false,
+      "line_count": 85,
+      "material_line_count": 67,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/routers/bootstrap.py",
+      "selected": false,
+      "line_count": 106,
+      "material_line_count": 87,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/routers/viewer.py",
+      "selected": false,
+      "line_count": 178,
+      "material_line_count": 154,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/schemas/models.py",
+      "selected": false,
+      "line_count": 179,
+      "material_line_count": 122,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/health_checker.py",
+      "selected": false,
+      "line_count": 123,
+      "material_line_count": 103,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/log_manager.py",
+      "selected": false,
+      "line_count": 211,
+      "material_line_count": 168,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/managed_process_runner.py",
+      "selected": false,
+      "line_count": 180,
+      "material_line_count": 153,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/opcda_detect.py",
+      "selected": false,
+      "line_count": 138,
+      "material_line_count": 109,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/process_manager.py",
+      "selected": false,
+      "line_count": 397,
+      "material_line_count": 342,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/app/services/sidecar_manager.py",
+      "selected": false,
+      "line_count": 450,
+      "material_line_count": 391,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/BootstrapPage.tsx",
+      "selected": false,
+      "line_count": 274,
+      "material_line_count": 249,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/CollectorPage.tsx",
+      "selected": false,
+      "line_count": 194,
+      "material_line_count": 178,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/LoginPage.tsx",
+      "selected": false,
+      "line_count": 154,
+      "material_line_count": 136,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/OverviewPage.tsx",
+      "selected": false,
+      "line_count": 123,
+      "material_line_count": 111,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/SettingsPage.tsx",
+      "selected": false,
+      "line_count": 861,
+      "material_line_count": 800,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/pages/WriterPage.tsx",
+      "selected": false,
+      "line_count": 188,
+      "material_line_count": 172,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/api/permissions.py",
+      "selected": false,
+      "line_count": 48,
+      "material_line_count": 37,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/audit.py",
+      "selected": false,
+      "line_count": 156,
+      "material_line_count": 131,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/config.py",
+      "selected": false,
+      "line_count": 171,
+      "material_line_count": 148,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/exceptions.py",
+      "selected": false,
+      "line_count": 67,
+      "material_line_count": 57,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/log_scheduler.py",
+      "selected": false,
+      "line_count": 533,
+      "material_line_count": 449,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/log_writer.py",
+      "selected": false,
+      "line_count": 250,
+      "material_line_count": 232,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/logging.py",
+      "selected": false,
+      "line_count": 17,
+      "material_line_count": 10,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/responses.py",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 4,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/security.py",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 82,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/simple_xlsx.py",
+      "selected": false,
+      "line_count": 326,
+      "material_line_count": 271,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/status_thresholds.py",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 11,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/core/time_utils.py",
+      "selected": false,
+      "line_count": 49,
+      "material_line_count": 38,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/db/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/db/mysql.py",
+      "selected": false,
+      "line_count": 47,
+      "material_line_count": 34,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/db/redis.py",
+      "selected": false,
+      "line_count": 28,
+      "material_line_count": 21,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/db/tdengine.py",
+      "selected": false,
+      "line_count": 190,
+      "material_line_count": 154,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/main.py",
+      "selected": false,
+      "line_count": 745,
+      "material_line_count": 651,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/models/__init__.py",
+      "selected": false,
+      "line_count": 35,
+      "material_line_count": 33,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/models/auth.py",
+      "selected": false,
+      "line_count": 156,
+      "material_line_count": 128,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/models/base.py",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 4,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/models/collector.py",
+      "selected": false,
+      "line_count": 18,
+      "material_line_count": 12,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/models/log.py",
+      "selected": false,
+      "line_count": 102,
+      "material_line_count": 89,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/schemas/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/schemas/auth.py",
+      "selected": false,
+      "line_count": 245,
+      "material_line_count": 207,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/schemas/collector.py",
+      "selected": false,
+      "line_count": 28,
+      "material_line_count": 23,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/auth.py",
+      "selected": false,
+      "line_count": 229,
+      "material_line_count": 198,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/auth_bootstrap.py",
+      "selected": false,
+      "line_count": 664,
+      "material_line_count": 611,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/catalog.py",
+      "selected": false,
+      "line_count": 2901,
+      "material_line_count": 2652,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/collector_config.py",
+      "selected": false,
+      "line_count": 30,
+      "material_line_count": 22,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/dashboard.py",
+      "selected": false,
+      "line_count": 1400,
+      "material_line_count": 1265,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/health.py",
+      "selected": false,
+      "line_count": 39,
+      "material_line_count": 28,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/history.py",
+      "selected": false,
+      "line_count": 1380,
+      "material_line_count": 1226,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/log.py",
+      "selected": false,
+      "line_count": 1088,
+      "material_line_count": 951,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/module_monitor.py",
+      "selected": false,
+      "line_count": 191,
+      "material_line_count": 161,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/monitor.py",
+      "selected": false,
+      "line_count": 372,
+      "material_line_count": 331,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/perspective.py",
+      "selected": false,
+      "line_count": 314,
+      "material_line_count": 267,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/rate_sampler.py",
+      "selected": false,
+      "line_count": 216,
+      "material_line_count": 181,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/system_manage.py",
+      "selected": false,
+      "line_count": 844,
+      "material_line_count": 773,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/task_manager.py",
+      "selected": false,
+      "line_count": 157,
+      "material_line_count": 138,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/tdengine_log.py",
+      "selected": false,
+      "line_count": 173,
+      "material_line_count": 139,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/services/ws_push.py",
+      "selected": false,
+      "line_count": 152,
+      "material_line_count": 135,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/tests/test_task_manager.py",
+      "selected": false,
+      "line_count": 75,
+      "material_line_count": 56,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/app/tests/test_tdengine_log.py",
+      "selected": false,
+      "line_count": 92,
+      "material_line_count": 76,
+      "priority": 20,
+      "selection_tier": "supplement",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/views/exception/ArtException.vue",
+      "selected": false,
+      "line_count": 55,
+      "material_line_count": 47,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/views/login/AuthBackground.vue",
+      "selected": false,
+      "line_count": 77,
+      "material_line_count": 65,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/views/login/AuthTopBar.vue",
+      "selected": false,
+      "line_count": 35,
+      "material_line_count": 31,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/views/login/LoginLeftView.vue",
+      "selected": false,
+      "line_count": 107,
+      "material_line_count": 91,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/views/result/ArtResultPage.vue",
+      "selected": false,
+      "line_count": 43,
+      "material_line_count": 40,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/auth/forget-password/index.vue",
+      "selected": false,
+      "line_count": 62,
+      "material_line_count": 52,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/auth/login/index.vue",
+      "selected": false,
+      "line_count": 313,
+      "material_line_count": 274,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/auth/register/index.vue",
+      "selected": false,
+      "line_count": 240,
+      "material_line_count": 211,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/index.vue",
+      "selected": false,
+      "line_count": 41,
+      "material_line_count": 36,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/about-project.vue",
+      "selected": false,
+      "line_count": 44,
+      "material_line_count": 39,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/active-user.vue",
+      "selected": false,
+      "line_count": 47,
+      "material_line_count": 43,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/card-list.vue",
+      "selected": false,
+      "line_count": 74,
+      "material_line_count": 72,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/dynamic-stats.vue",
+      "selected": false,
+      "line_count": 79,
+      "material_line_count": 76,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/new-user.vue",
+      "selected": false,
+      "line_count": 169,
+      "material_line_count": 161,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/sales-overview.vue",
+      "selected": false,
+      "line_count": 43,
+      "material_line_count": 41,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/dashboard/console/modules/todo-list.vue",
+      "selected": false,
+      "line_count": 71,
+      "material_line_count": 68,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/dashboard/index.vue",
+      "selected": false,
+      "line_count": 745,
+      "material_line_count": 659,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/device/index.vue",
+      "selected": false,
+      "line_count": 1246,
+      "material_line_count": 1114,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/device/modules/device-dialog.vue",
+      "selected": false,
+      "line_count": 169,
+      "material_line_count": 150,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/driver/index.vue",
+      "selected": false,
+      "line_count": 384,
+      "material_line_count": 338,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/history/perspective-runtime.ts",
+      "selected": false,
+      "line_count": 117,
+      "material_line_count": 97,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/history/perspective-session.ts",
+      "selected": false,
+      "line_count": 193,
+      "material_line_count": 160,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/log-terminal/index.vue",
+      "selected": false,
+      "line_count": 693,
+      "material_line_count": 599,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/log/db-log-panel.vue",
+      "selected": false,
+      "line_count": 169,
+      "material_line_count": 156,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/log/index.vue",
+      "selected": false,
+      "line_count": 1168,
+      "material_line_count": 1069,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/monitor/index.vue",
+      "selected": false,
+      "line_count": 652,
+      "material_line_count": 582,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/point/index.vue",
+      "selected": false,
+      "line_count": 1328,
+      "material_line_count": 1186,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/point/modules/point-detail-drawer.vue",
+      "selected": false,
+      "line_count": 78,
+      "material_line_count": 71,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/device_monitor/point/modules/point-dialog.vue",
+      "selected": false,
+      "line_count": 258,
+      "material_line_count": 224,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/exception/403/index.vue",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/exception/404/index.vue",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/exception/500/index.vue",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/index/index.vue",
+      "selected": false,
+      "line_count": 29,
+      "material_line_count": 25,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/outside/Iframe.vue",
+      "selected": false,
+      "line_count": 42,
+      "material_line_count": 36,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/category/index.vue",
+      "selected": false,
+      "line_count": 98,
+      "material_line_count": 86,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/components/DocCard.vue",
+      "selected": false,
+      "line_count": 234,
+      "material_line_count": 209,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/components/DocGrid.vue",
+      "selected": false,
+      "line_count": 36,
+      "material_line_count": 33,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/docs.config.ts",
+      "selected": false,
+      "line_count": 444,
+      "material_line_count": 421,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/docs.menu.ts",
+      "selected": false,
+      "line_count": 83,
+      "material_line_count": 78,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/overview/index.vue",
+      "selected": false,
+      "line_count": 134,
+      "material_line_count": 117,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/read/index.vue",
+      "selected": false,
+      "line_count": 456,
+      "material_line_count": 396,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/project-docs/useMarkdown.ts",
+      "selected": false,
+      "line_count": 98,
+      "material_line_count": 87,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/result/fail/index.vue",
+      "selected": false,
+      "line_count": 28,
+      "material_line_count": 27,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/result/success/index.vue",
+      "selected": false,
+      "line_count": 21,
+      "material_line_count": 20,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/menu/index.vue",
+      "selected": false,
+      "line_count": 356,
+      "material_line_count": 330,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/menu/modules/menu-dialog.vue",
+      "selected": false,
+      "line_count": 200,
+      "material_line_count": 183,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/menu/modules/permission-dialog.vue",
+      "selected": false,
+      "line_count": 174,
+      "material_line_count": 156,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/role/index.vue",
+      "selected": false,
+      "line_count": 291,
+      "material_line_count": 269,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/role/modules/role-edit-dialog.vue",
+      "selected": false,
+      "line_count": 170,
+      "material_line_count": 153,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/role/modules/role-permission-dialog.vue",
+      "selected": false,
+      "line_count": 330,
+      "material_line_count": 289,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/role/modules/role-search.vue",
+      "selected": false,
+      "line_count": 125,
+      "material_line_count": 114,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/user-center/index.vue",
+      "selected": false,
+      "line_count": 166,
+      "material_line_count": 147,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/user/index.vue",
+      "selected": false,
+      "line_count": 271,
+      "material_line_count": 252,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/user/modules/user-dialog.vue",
+      "selected": false,
+      "line_count": 227,
+      "material_line_count": 208,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/system/user/modules/user-search.vue",
+      "selected": false,
+      "line_count": 96,
+      "material_line_count": 89,
+      "priority": 20,
+      "selection_tier": "frontend",
+      "evidence": "页面文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/api/auth.ts",
+      "selected": false,
+      "line_count": 40,
+      "material_line_count": 37,
+      "priority": 30,
+      "selection_tier": "frontend",
+      "evidence": "数据交互文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/api/device-monitor.ts",
+      "selected": false,
+      "line_count": 821,
+      "material_line_count": 720,
+      "priority": 30,
+      "selection_tier": "frontend",
+      "evidence": "数据交互文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/api/system-manage.ts",
+      "selected": false,
+      "line_count": 197,
+      "material_line_count": 169,
+      "priority": 30,
+      "selection_tier": "frontend",
+      "evidence": "数据交互文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/api/api.d.ts",
+      "selected": false,
+      "line_count": 258,
+      "material_line_count": 235,
+      "priority": 30,
+      "selection_tier": "frontend",
+      "evidence": "数据交互文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/api/device-monitor.d.ts",
+      "selected": false,
+      "line_count": 795,
+      "material_line_count": 700,
+      "priority": 30,
+      "selection_tier": "frontend",
+      "evidence": "数据交互文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/index.ts",
+      "selected": false,
+      "line_count": 52,
+      "material_line_count": 48,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/modules/menu.ts",
+      "selected": false,
+      "line_count": 109,
+      "material_line_count": 101,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/modules/setting.ts",
+      "selected": false,
+      "line_count": 450,
+      "material_line_count": 409,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/modules/table.ts",
+      "selected": false,
+      "line_count": 97,
+      "material_line_count": 89,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/modules/user.ts",
+      "selected": false,
+      "line_count": 235,
+      "material_line_count": 218,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/store/modules/worktab.ts",
+      "selected": false,
+      "line_count": 568,
+      "material_line_count": 489,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/store/index.ts",
+      "selected": false,
+      "line_count": 157,
+      "material_line_count": 146,
+      "priority": 40,
+      "selection_tier": "frontend",
+      "evidence": "状态或数据文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/AppLayout.tsx",
+      "selected": false,
+      "line_count": 67,
+      "material_line_count": 62,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ConnectionStatusBar.tsx",
+      "selected": false,
+      "line_count": 58,
+      "material_line_count": 52,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/LogPanel.tsx",
+      "selected": false,
+      "line_count": 134,
+      "material_line_count": 122,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ModuleDbLogPanel.tsx",
+      "selected": false,
+      "line_count": 97,
+      "material_line_count": 89,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ModuleSummaryCard.tsx",
+      "selected": false,
+      "line_count": 302,
+      "material_line_count": 274,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ThemeToggle.tsx",
+      "selected": false,
+      "line_count": 52,
+      "material_line_count": 44,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/TitleBar.tsx",
+      "selected": false,
+      "line_count": 61,
+      "material_line_count": 57,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/TrendChart.tsx",
+      "selected": false,
+      "line_count": 239,
+      "material_line_count": 226,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/alert-dialog.tsx",
+      "selected": false,
+      "line_count": 199,
+      "material_line_count": 184,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/badge.tsx",
+      "selected": false,
+      "line_count": 49,
+      "material_line_count": 44,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/button.tsx",
+      "selected": false,
+      "line_count": 65,
+      "material_line_count": 60,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/card.tsx",
+      "selected": false,
+      "line_count": 100,
+      "material_line_count": 91,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/dialog.tsx",
+      "selected": false,
+      "line_count": 163,
+      "material_line_count": 151,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/input.tsx",
+      "selected": false,
+      "line_count": 19,
+      "material_line_count": 16,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/label.tsx",
+      "selected": false,
+      "line_count": 22,
+      "material_line_count": 19,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/separator.tsx",
+      "selected": false,
+      "line_count": 26,
+      "material_line_count": 23,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/skeleton.tsx",
+      "selected": false,
+      "line_count": 13,
+      "material_line_count": 11,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/sonner.tsx",
+      "selected": false,
+      "line_count": 48,
+      "material_line_count": 45,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/switch.tsx",
+      "selected": false,
+      "line_count": 33,
+      "material_line_count": 29,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/table.tsx",
+      "selected": false,
+      "line_count": 114,
+      "material_line_count": 104,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/components/ui/tabs.tsx",
+      "selected": false,
+      "line_count": 90,
+      "material_line_count": 82,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/banners/art-basic-banner/index.vue",
+      "selected": false,
+      "line_count": 343,
+      "material_line_count": 309,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/banners/art-card-banner/index.vue",
+      "selected": false,
+      "line_count": 114,
+      "material_line_count": 107,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/base/art-back-to-top/index.vue",
+      "selected": false,
+      "line_count": 40,
+      "material_line_count": 35,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/base/art-logo/index.vue",
+      "selected": false,
+      "line_count": 32,
+      "material_line_count": 27,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/base/art-svg-icon/index.vue",
+      "selected": false,
+      "line_count": 24,
+      "material_line_count": 18,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-bar-chart-card/index.vue",
+      "selected": false,
+      "line_count": 103,
+      "material_line_count": 97,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-data-list-card/index.vue",
+      "selected": false,
+      "line_count": 74,
+      "material_line_count": 66,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-donut-chart-card/index.vue",
+      "selected": false,
+      "line_count": 124,
+      "material_line_count": 117,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-image-card/index.vue",
+      "selected": false,
+      "line_count": 89,
+      "material_line_count": 82,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-line-chart-card/index.vue",
+      "selected": false,
+      "line_count": 126,
+      "material_line_count": 120,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-progress-card/index.vue",
+      "selected": false,
+      "line_count": 86,
+      "material_line_count": 75,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-stats-card/index.vue",
+      "selected": false,
+      "line_count": 67,
+      "material_line_count": 64,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/cards/art-timeline-list-card/index.vue",
+      "selected": false,
+      "line_count": 69,
+      "material_line_count": 63,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-bar-chart/index.vue",
+      "selected": false,
+      "line_count": 203,
+      "material_line_count": 181,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-dual-bar-compare-chart/index.vue",
+      "selected": false,
+      "line_count": 195,
+      "material_line_count": 177,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-h-bar-chart/index.vue",
+      "selected": false,
+      "line_count": 209,
+      "material_line_count": 187,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-k-line-chart/index.vue",
+      "selected": false,
+      "line_count": 152,
+      "material_line_count": 144,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-line-chart/index.vue",
+      "selected": false,
+      "line_count": 371,
+      "material_line_count": 330,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-radar-chart/index.vue",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 99,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-ring-chart/index.vue",
+      "selected": false,
+      "line_count": 133,
+      "material_line_count": 123,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/charts/art-scatter-chart/index.vue",
+      "selected": false,
+      "line_count": 115,
+      "material_line_count": 107,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-button-more/index.vue",
+      "selected": false,
+      "line_count": 71,
+      "material_line_count": 62,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-button-table/index.vue",
+      "selected": false,
+      "line_count": 59,
+      "material_line_count": 51,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-drag-verify/index.vue",
+      "selected": false,
+      "line_count": 430,
+      "material_line_count": 383,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-excel-export/index.vue",
+      "selected": false,
+      "line_count": 389,
+      "material_line_count": 326,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-excel-import/index.vue",
+      "selected": false,
+      "line_count": 62,
+      "material_line_count": 55,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-form/index.vue",
+      "selected": false,
+      "line_count": 507,
+      "material_line_count": 448,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-search-bar/index.vue",
+      "selected": false,
+      "line_count": 581,
+      "material_line_count": 516,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-wang-editor/index.vue",
+      "selected": false,
+      "line_count": 257,
+      "material_line_count": 221,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-breadcrumb/index.vue",
+      "selected": false,
+      "line_count": 142,
+      "material_line_count": 120,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-chat-window/index.vue",
+      "selected": false,
+      "line_count": 262,
+      "material_line_count": 243,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-fast-enter/index.vue",
+      "selected": false,
+      "line_count": 113,
+      "material_line_count": 101,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-fireworks-effect/index.vue",
+      "selected": false,
+      "line_count": 633,
+      "material_line_count": 561,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-global-component/index.vue",
+      "selected": false,
+      "line_count": 14,
+      "material_line_count": 13,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-global-search/index.vue",
+      "selected": false,
+      "line_count": 431,
+      "material_line_count": 376,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-header-bar/index.vue",
+      "selected": false,
+      "line_count": 439,
+      "material_line_count": 368,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-header-bar/widget/ArtUserMenu.vue",
+      "selected": false,
+      "line_count": 156,
+      "material_line_count": 141,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-horizontal-menu/index.vue",
+      "selected": false,
+      "line_count": 110,
+      "material_line_count": 96,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-horizontal-menu/widget/HorizontalSubmenu.vue",
+      "selected": false,
+      "line_count": 106,
+      "material_line_count": 95,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-mixed-menu/index.vue",
+      "selected": false,
+      "line_count": 279,
+      "material_line_count": 241,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-sidebar-menu/index.vue",
+      "selected": false,
+      "line_count": 345,
+      "material_line_count": 307,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-sidebar-menu/widget/SidebarSubmenu.vue",
+      "selected": false,
+      "line_count": 199,
+      "material_line_count": 178,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-notification/index.vue",
+      "selected": false,
+      "line_count": 456,
+      "material_line_count": 406,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-page-content/index.vue",
+      "selected": false,
+      "line_count": 174,
+      "material_line_count": 152,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-screen-lock/index.vue",
+      "selected": false,
+      "line_count": 519,
+      "material_line_count": 458,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/composables/useSettingsConfig.ts",
+      "selected": false,
+      "line_count": 241,
+      "material_line_count": 227,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/composables/useSettingsHandlers.ts",
+      "selected": false,
+      "line_count": 167,
+      "material_line_count": 141,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/composables/useSettingsPanel.ts",
+      "selected": false,
+      "line_count": 233,
+      "material_line_count": 200,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/composables/useSettingsState.ts",
+      "selected": false,
+      "line_count": 37,
+      "material_line_count": 33,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/index.vue",
+      "selected": false,
+      "line_count": 77,
+      "material_line_count": 66,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/BasicSettings.vue",
+      "selected": false,
+      "line_count": 77,
+      "material_line_count": 71,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/BoxStyleSettings.vue",
+      "selected": false,
+      "line_count": 38,
+      "material_line_count": 35,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/ColorSettings.vue",
+      "selected": false,
+      "line_count": 35,
+      "material_line_count": 33,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/ContainerSettings.vue",
+      "selected": false,
+      "line_count": 33,
+      "material_line_count": 31,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/MenuLayoutSettings.vue",
+      "selected": false,
+      "line_count": 31,
+      "material_line_count": 29,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/MenuStyleSettings.vue",
+      "selected": false,
+      "line_count": 44,
+      "material_line_count": 40,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/SectionTitle.vue",
+      "selected": false,
+      "line_count": 17,
+      "material_line_count": 15,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/SettingActions.vue",
+      "selected": false,
+      "line_count": 235,
+      "material_line_count": 208,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/SettingDrawer.vue",
+      "selected": false,
+      "line_count": 51,
+      "material_line_count": 44,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/SettingHeader.vue",
+      "selected": false,
+      "line_count": 18,
+      "material_line_count": 17,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/SettingItem.vue",
+      "selected": false,
+      "line_count": 101,
+      "material_line_count": 88,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/widget/ThemeSettings.vue",
+      "selected": false,
+      "line_count": 28,
+      "material_line_count": 26,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-work-tab/index.vue",
+      "selected": false,
+      "line_count": 584,
+      "material_line_count": 498,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/media/art-cutter-img/index.vue",
+      "selected": false,
+      "line_count": 350,
+      "material_line_count": 303,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/media/art-video-player/index.vue",
+      "selected": false,
+      "line_count": 111,
+      "material_line_count": 98,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/others/art-menu-right/index.vue",
+      "selected": false,
+      "line_count": 415,
+      "material_line_count": 360,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/others/art-watermark/index.vue",
+      "selected": false,
+      "line_count": 64,
+      "material_line_count": 59,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/tables/art-table-header/index.vue",
+      "selected": false,
+      "line_count": 339,
+      "material_line_count": 306,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/tables/art-table/index.vue",
+      "selected": false,
+      "line_count": 373,
+      "material_line_count": 332,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/text-effect/art-count-to/index.vue",
+      "selected": false,
+      "line_count": 310,
+      "material_line_count": 268,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/text-effect/art-festival-text-scroll/index.vue",
+      "selected": false,
+      "line_count": 32,
+      "material_line_count": 28,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/text-effect/art-text-scroll/index.vue",
+      "selected": false,
+      "line_count": 285,
+      "material_line_count": 244,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/theme/theme-svg/index.vue",
+      "selected": false,
+      "line_count": 100,
+      "material_line_count": 85,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/widget/art-icon-button/index.vue",
+      "selected": false,
+      "line_count": 23,
+      "material_line_count": 20,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/device-monitor/MonitorLoadingPlaceholder.vue",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 96,
+      "priority": 50,
+      "selection_tier": "frontend",
+      "evidence": "页面组成文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useChartColors.ts",
+      "selected": false,
+      "line_count": 39,
+      "material_line_count": 35,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useConnectionHealth.ts",
+      "selected": false,
+      "line_count": 91,
+      "material_line_count": 77,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useModuleDbLogs.ts",
+      "selected": false,
+      "line_count": 86,
+      "material_line_count": 74,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useModuleMetrics.ts",
+      "selected": false,
+      "line_count": 113,
+      "material_line_count": 97,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useModuleRates.ts",
+      "selected": false,
+      "line_count": 118,
+      "material_line_count": 99,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useModuleStatus.ts",
+      "selected": false,
+      "line_count": 164,
+      "material_line_count": 140,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/hooks/useWebSocketLog.ts",
+      "selected": false,
+      "line_count": 180,
+      "material_line_count": 152,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/lib/agent-client.ts",
+      "selected": false,
+      "line_count": 224,
+      "material_line_count": 186,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/lib/backend-client.ts",
+      "selected": false,
+      "line_count": 211,
+      "material_line_count": 191,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/lib/mock-agent.ts",
+      "selected": false,
+      "line_count": 334,
+      "material_line_count": 289,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/lib/utils.ts",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 5,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/composables/useRealtimeWs.ts",
+      "selected": false,
+      "line_count": 141,
+      "material_line_count": 122,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useAppMode.ts",
+      "selected": false,
+      "line_count": 45,
+      "material_line_count": 40,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useAuth.ts",
+      "selected": false,
+      "line_count": 74,
+      "material_line_count": 65,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useCeremony.ts",
+      "selected": false,
+      "line_count": 184,
+      "material_line_count": 164,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useChart.ts",
+      "selected": false,
+      "line_count": 756,
+      "material_line_count": 679,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useCommon.ts",
+      "selected": false,
+      "line_count": 87,
+      "material_line_count": 79,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useFastEnter.ts",
+      "selected": false,
+      "line_count": 55,
+      "material_line_count": 47,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useHeaderBar.ts",
+      "selected": false,
+      "line_count": 201,
+      "material_line_count": 173,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useLayoutHeight.ts",
+      "selected": false,
+      "line_count": 148,
+      "material_line_count": 132,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useTable.ts",
+      "selected": false,
+      "line_count": 790,
+      "material_line_count": 681,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useTableColumns.ts",
+      "selected": false,
+      "line_count": 312,
+      "material_line_count": 287,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useTableHeight.ts",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 93,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/core/useTheme.ts",
+      "selected": false,
+      "line_count": 174,
+      "material_line_count": 149,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/hooks/index.ts",
+      "selected": false,
+      "line_count": 32,
+      "material_line_count": 22,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/constants/index.ts",
+      "selected": false,
+      "line_count": 8,
+      "material_line_count": 7,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/constants/links.ts",
+      "selected": false,
+      "line_count": 35,
+      "material_line_count": 27,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/file/save-blob.ts",
+      "selected": false,
+      "line_count": 14,
+      "material_line_count": 11,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/form/index.ts",
+      "selected": false,
+      "line_count": 12,
+      "material_line_count": 10,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/form/responsive.ts",
+      "selected": false,
+      "line_count": 122,
+      "material_line_count": 115,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/form/validator.ts",
+      "selected": false,
+      "line_count": 316,
+      "material_line_count": 267,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/http/error.ts",
+      "selected": false,
+      "line_count": 182,
+      "material_line_count": 168,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/http/index.ts",
+      "selected": false,
+      "line_count": 227,
+      "material_line_count": 198,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/http/status.ts",
+      "selected": false,
+      "line_count": 18,
+      "material_line_count": 18,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/index.ts",
+      "selected": false,
+      "line_count": 34,
+      "material_line_count": 25,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/navigation/index.ts",
+      "selected": false,
+      "line_count": 10,
+      "material_line_count": 9,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/navigation/jump.ts",
+      "selected": false,
+      "line_count": 68,
+      "material_line_count": 60,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/navigation/route.ts",
+      "selected": false,
+      "line_count": 85,
+      "material_line_count": 74,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/navigation/worktab.ts",
+      "selected": false,
+      "line_count": 67,
+      "material_line_count": 65,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/socket/index.ts",
+      "selected": false,
+      "line_count": 423,
+      "material_line_count": 369,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/storage/index.ts",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 6,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/storage/storage-config.ts",
+      "selected": false,
+      "line_count": 125,
+      "material_line_count": 108,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/storage/storage-key-manager.ts",
+      "selected": false,
+      "line_count": 97,
+      "material_line_count": 88,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/storage/storage.ts",
+      "selected": false,
+      "line_count": 250,
+      "material_line_count": 225,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/sys/console.ts",
+      "selected": false,
+      "line_count": 9,
+      "material_line_count": 8,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/sys/error-handle.ts",
+      "selected": false,
+      "line_count": 285,
+      "material_line_count": 246,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/sys/index.ts",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 5,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/sys/mittBus.ts",
+      "selected": false,
+      "line_count": 63,
+      "material_line_count": 60,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/sys/upgrade.ts",
+      "selected": false,
+      "line_count": 277,
+      "material_line_count": 242,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/table/tableCache.ts",
+      "selected": false,
+      "line_count": 266,
+      "material_line_count": 228,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/table/tableConfig.ts",
+      "selected": false,
+      "line_count": 55,
+      "material_line_count": 54,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/table/tableUtils.ts",
+      "selected": false,
+      "line_count": 297,
+      "material_line_count": 265,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/animation.ts",
+      "selected": false,
+      "line_count": 80,
+      "material_line_count": 74,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/colors.ts",
+      "selected": false,
+      "line_count": 273,
+      "material_line_count": 237,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/emojo.ts",
+      "selected": false,
+      "line_count": 24,
+      "material_line_count": 21,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/iconify-loader.ts",
+      "selected": false,
+      "line_count": 11,
+      "material_line_count": 8,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/iconify-non-ri-subset.json",
+      "selected": false,
+      "line_count": 60,
+      "material_line_count": 60,
+      "priority": 60,
+      "selection_tier": "supplement",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/index.ts",
+      "selected": false,
+      "line_count": 11,
+      "material_line_count": 10,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/loading.ts",
+      "selected": false,
+      "line_count": 99,
+      "material_line_count": 89,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/utils/ui/tabs.ts",
+      "selected": false,
+      "line_count": 60,
+      "material_line_count": 59,
+      "priority": 60,
+      "selection_tier": "frontend",
+      "evidence": "通用能力文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/gen/schemas/capabilities.json",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 70,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/gen/schemas/desktop-schema.json",
+      "selected": false,
+      "line_count": 2525,
+      "material_line_count": 2525,
+      "priority": 70,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/gen/schemas/windows-schema.json",
+      "selected": false,
+      "line_count": 2525,
+      "material_line_count": 2525,
+      "priority": 70,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/index.html",
+      "selected": false,
+      "line_count": 23,
+      "material_line_count": 22,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/contexts/AuthContext.tsx",
+      "selected": false,
+      "line_count": 92,
+      "material_line_count": 79,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/contexts/ThemeContext.tsx",
+      "selected": false,
+      "line_count": 81,
+      "material_line_count": 68,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/types/index.ts",
+      "selected": false,
+      "line_count": 139,
+      "material_line_count": 128,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/vite-env.d.ts",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/images/data-watch-architecture.html",
+      "selected": false,
+      "line_count": 1515,
+      "material_line_count": 1334,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/index.html",
+      "selected": false,
+      "line_count": 47,
+      "material_line_count": 42,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/public/perspective/snippets/perspective-viewer-b2d3aa84cf23212e/inline0.js",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/public/perspective/snippets/perspective-viewer-b2d3aa84cf23212e/inline1.js",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/public/perspective/snippets/perspective-viewer-b2d3aa84cf23212e/inline2.js",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/public/perspective/snippets/perspective-viewer-b2d3aa84cf23212e/inline3.js",
+      "selected": false,
+      "line_count": 44,
+      "material_line_count": 39,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/public/perspective/snippets/perspective-viewer-b2d3aa84cf23212e/inline4.js",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/scripts/clean-dev.ts",
+      "selected": false,
+      "line_count": 838,
+      "material_line_count": 745,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/scripts/generate-iconify-subset.ts",
+      "selected": false,
+      "line_count": 74,
+      "material_line_count": 60,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/svg/loading.ts",
+      "selected": false,
+      "line_count": 32,
+      "material_line_count": 32,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/assets/images.ts",
+      "selected": false,
+      "line_count": 61,
+      "material_line_count": 59,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/fastEnter.ts",
+      "selected": false,
+      "line_count": 79,
+      "material_line_count": 77,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/index.ts",
+      "selected": false,
+      "line_count": 135,
+      "material_line_count": 132,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/modules/component.ts",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 100,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/modules/fastEnter.ts",
+      "selected": false,
+      "line_count": 127,
+      "material_line_count": 125,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/modules/festival.ts",
+      "selected": false,
+      "line_count": 51,
+      "material_line_count": 48,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/modules/headerBar.ts",
+      "selected": false,
+      "line_count": 63,
+      "material_line_count": 60,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/config/setting.ts",
+      "selected": false,
+      "line_count": 109,
+      "material_line_count": 105,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/directives/business/highlight.ts",
+      "selected": false,
+      "line_count": 250,
+      "material_line_count": 218,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/directives/business/ripple.ts",
+      "selected": false,
+      "line_count": 116,
+      "material_line_count": 101,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/directives/core/auth.ts",
+      "selected": false,
+      "line_count": 66,
+      "material_line_count": 58,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/directives/core/roles.ts",
+      "selected": false,
+      "line_count": 87,
+      "material_line_count": 77,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/directives/index.ts",
+      "selected": false,
+      "line_count": 14,
+      "material_line_count": 12,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/enums/appEnum.ts",
+      "selected": false,
+      "line_count": 81,
+      "material_line_count": 75,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/enums/formEnum.ts",
+      "selected": false,
+      "line_count": 24,
+      "material_line_count": 22,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/env.d.ts",
+      "selected": false,
+      "line_count": 34,
+      "material_line_count": 28,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/locales/index.ts",
+      "selected": false,
+      "line_count": 123,
+      "material_line_count": 109,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/mock/temp/formData.ts",
+      "selected": false,
+      "line_count": 273,
+      "material_line_count": 269,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/mock/upgrade/changeLog.ts",
+      "selected": false,
+      "line_count": 12,
+      "material_line_count": 10,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/plugins/echarts.ts",
+      "selected": false,
+      "line_count": 76,
+      "material_line_count": 67,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/plugins/index.ts",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 5,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/common/index.ts",
+      "selected": false,
+      "line_count": 95,
+      "material_line_count": 79,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/common/response.ts",
+      "selected": false,
+      "line_count": 30,
+      "material_line_count": 29,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/component/chart.ts",
+      "selected": false,
+      "line_count": 324,
+      "material_line_count": 299,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/component/index.ts",
+      "selected": false,
+      "line_count": 145,
+      "material_line_count": 139,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/config/index.ts",
+      "selected": false,
+      "line_count": 213,
+      "material_line_count": 199,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/directive/directive.d.ts",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 14,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/import/auto-imports.d.ts",
+      "selected": false,
+      "line_count": 319,
+      "material_line_count": 319,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/import/components.d.ts",
+      "selected": false,
+      "line_count": 137,
+      "material_line_count": 136,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/types/index.ts",
+      "selected": false,
+      "line_count": 22,
+      "material_line_count": 17,
+      "priority": 80,
+      "selection_tier": "frontend",
+      "evidence": "普通源码文件",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src/index.css",
+      "selected": false,
+      "line_count": 190,
+      "material_line_count": 183,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/app.scss",
+      "selected": false,
+      "line_count": 292,
+      "material_line_count": 252,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/dark.scss",
+      "selected": false,
+      "line_count": 93,
+      "material_line_count": 81,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/el-dark.scss",
+      "selected": false,
+      "line_count": 2,
+      "material_line_count": 2,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/el-light.scss",
+      "selected": false,
+      "line_count": 34,
+      "material_line_count": 33,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/el-ui.scss",
+      "selected": false,
+      "line_count": 519,
+      "material_line_count": 431,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/md.scss",
+      "selected": false,
+      "line_count": 1036,
+      "material_line_count": 852,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/mixin.scss",
+      "selected": false,
+      "line_count": 157,
+      "material_line_count": 140,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/reset.scss",
+      "selected": false,
+      "line_count": 41,
+      "material_line_count": 34,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/router-transition.scss",
+      "selected": false,
+      "line_count": 104,
+      "material_line_count": 89,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/tailwind.css",
+      "selected": false,
+      "line_count": 208,
+      "material_line_count": 166,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/theme-animation.scss",
+      "selected": false,
+      "line_count": 63,
+      "material_line_count": 50,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/core/theme-change.scss",
+      "selected": false,
+      "line_count": 11,
+      "material_line_count": 10,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/custom/one-dark-pro.scss",
+      "selected": false,
+      "line_count": 98,
+      "material_line_count": 81,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/assets/styles/index.scss",
+      "selected": false,
+      "line_count": 23,
+      "material_line_count": 16,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/forms/art-wang-editor/style.scss",
+      "selected": false,
+      "line_count": 273,
+      "material_line_count": 221,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-sidebar-menu/style.scss",
+      "selected": false,
+      "line_count": 251,
+      "material_line_count": 215,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-menus/art-sidebar-menu/theme.scss",
+      "selected": false,
+      "line_count": 258,
+      "material_line_count": 216,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/layouts/art-settings-panel/style.scss",
+      "selected": false,
+      "line_count": 92,
+      "material_line_count": 77,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/components/core/tables/art-table/style.scss",
+      "selected": false,
+      "line_count": 99,
+      "material_line_count": 83,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/auth/login/style.css",
+      "selected": false,
+      "line_count": 90,
+      "material_line_count": 75,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/views/index/style.scss",
+      "selected": false,
+      "line_count": 93,
+      "material_line_count": 81,
+      "priority": 90,
+      "selection_tier": "frontend",
+      "evidence": "样式文件证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/main.py",
+      "selected": false,
+      "line_count": 41,
+      "material_line_count": 30,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/service/install_service.py",
+      "selected": false,
+      "line_count": 89,
+      "material_line_count": 64,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/conftest.py",
+      "selected": false,
+      "line_count": 46,
+      "material_line_count": 36,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/fixtures/dummy_child.py",
+      "selected": false,
+      "line_count": 40,
+      "material_line_count": 32,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/fixtures/fake_proxy.py",
+      "selected": false,
+      "line_count": 64,
+      "material_line_count": 50,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_admin.py",
+      "selected": false,
+      "line_count": 367,
+      "material_line_count": 293,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_bootstrap.py",
+      "selected": false,
+      "line_count": 99,
+      "material_line_count": 77,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_collector_start_e2e.py",
+      "selected": false,
+      "line_count": 215,
+      "material_line_count": 175,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_config_paths.py",
+      "selected": false,
+      "line_count": 26,
+      "material_line_count": 18,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_factory.py",
+      "selected": false,
+      "line_count": 83,
+      "material_line_count": 60,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_managed_process_runner.py",
+      "selected": false,
+      "line_count": 63,
+      "material_line_count": 49,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_opcda_detect.py",
+      "selected": false,
+      "line_count": 175,
+      "material_line_count": 122,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_process_manager.py",
+      "selected": false,
+      "line_count": 138,
+      "material_line_count": 111,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_sidecar_manager.py",
+      "selected": false,
+      "line_count": 695,
+      "material_line_count": 580,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "agent/tests/test_viewer.py",
+      "selected": false,
+      "line_count": 61,
+      "material_line_count": 44,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/components.json",
+      "selected": false,
+      "line_count": 25,
+      "material_line_count": 25,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/build.rs",
+      "selected": false,
+      "line_count": 3,
+      "material_line_count": 3,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/capabilities/default.json",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/src/http_proxy.rs",
+      "selected": false,
+      "line_count": 76,
+      "material_line_count": 66,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/src/lib.rs",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/src/main.rs",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 5,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/src/tray.rs",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 5,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "app/src-tauri/tauri.conf.json",
+      "selected": false,
+      "line_count": 42,
+      "material_line_count": 42,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/main.py",
+      "selected": false,
+      "line_count": 52,
+      "material_line_count": 40,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "backend/scripts/clean_demo_menus.py",
+      "selected": false,
+      "line_count": 83,
+      "material_line_count": 66,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/check_protocols.py",
+      "selected": false,
+      "line_count": 275,
+      "material_line_count": 233,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/collector/__init__.py",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 5,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/collector/bounded_executor.py",
+      "selected": false,
+      "line_count": 184,
+      "material_line_count": 155,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/collector/scheduler.py",
+      "selected": false,
+      "line_count": 294,
+      "material_line_count": 256,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/collector/task.py",
+      "selected": false,
+      "line_count": 108,
+      "material_line_count": 91,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/__init__.py",
+      "selected": false,
+      "line_count": 3,
+      "material_line_count": 3,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/config.py",
+      "selected": false,
+      "line_count": 96,
+      "material_line_count": 80,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/config_db.py",
+      "selected": false,
+      "line_count": 667,
+      "material_line_count": 597,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/config_loader.py",
+      "selected": false,
+      "line_count": 124,
+      "material_line_count": 100,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/config_validator.py",
+      "selected": false,
+      "line_count": 409,
+      "material_line_count": 341,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/data_quality.py",
+      "selected": false,
+      "line_count": 493,
+      "material_line_count": 417,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/dry_run.py",
+      "selected": false,
+      "line_count": 322,
+      "material_line_count": 267,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/exceptions.py",
+      "selected": false,
+      "line_count": 40,
+      "material_line_count": 25,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/logger.py",
+      "selected": false,
+      "line_count": 66,
+      "material_line_count": 54,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/opcda_ipc_client.py",
+      "selected": false,
+      "line_count": 412,
+      "material_line_count": 354,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/opcda_ipc_protocol.py",
+      "selected": false,
+      "line_count": 227,
+      "material_line_count": 183,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/opcda_mapper.py",
+      "selected": false,
+      "line_count": 92,
+      "material_line_count": 70,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/retry.py",
+      "selected": false,
+      "line_count": 219,
+      "material_line_count": 180,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/core/system_log.py",
+      "selected": false,
+      "line_count": 134,
+      "material_line_count": 119,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/data_queue/__init__.py",
+      "selected": false,
+      "line_count": 5,
+      "material_line_count": 3,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/data_queue/types.py",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 12,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/device/__init__.py",
+      "selected": false,
+      "line_count": 2,
+      "material_line_count": 2,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/device/device.py",
+      "selected": false,
+      "line_count": 795,
+      "material_line_count": 691,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/device/manager.py",
+      "selected": false,
+      "line_count": 926,
+      "material_line_count": 825,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/__init__.py",
+      "selected": false,
+      "line_count": 8,
+      "material_line_count": 6,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/ge_srtp_driver.py",
+      "selected": false,
+      "line_count": 150,
+      "material_line_count": 124,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/examples/01_basic_usage.py",
+      "selected": false,
+      "line_count": 105,
+      "material_line_count": 77,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/examples/02_realtime_monitor.py",
+      "selected": false,
+      "line_count": 380,
+      "material_line_count": 295,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/examples/03_forensic_dump.py",
+      "selected": false,
+      "line_count": 254,
+      "material_line_count": 194,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/__init__.py",
+      "selected": false,
+      "line_count": 74,
+      "material_line_count": 58,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/connection.py",
+      "selected": false,
+      "line_count": 350,
+      "material_line_count": 282,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/driver.py",
+      "selected": false,
+      "line_count": 796,
+      "material_line_count": 652,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/exceptions.py",
+      "selected": false,
+      "line_count": 181,
+      "material_line_count": 116,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/packet.py",
+      "selected": false,
+      "line_count": 388,
+      "material_line_count": 305,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/src/protocol.py",
+      "selected": false,
+      "line_count": 299,
+      "material_line_count": 242,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/tests/01_connection_basic.py",
+      "selected": false,
+      "line_count": 124,
+      "material_line_count": 91,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/tests/02_memory_all_types.py",
+      "selected": false,
+      "line_count": 292,
+      "material_line_count": 231,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/gesrtp-py-main/tests/03_memory_comprehensive_0_64.py",
+      "selected": false,
+      "line_count": 379,
+      "material_line_count": 315,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/opcda_center_driver.py",
+      "selected": false,
+      "line_count": 244,
+      "material_line_count": 207,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/opcua_driver.py",
+      "selected": false,
+      "line_count": 84,
+      "material_line_count": 71,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/drivers/s7_driver.py",
+      "selected": false,
+      "line_count": 427,
+      "material_line_count": 366,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/monitor/__init__.py",
+      "selected": false,
+      "line_count": 6,
+      "material_line_count": 4,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/monitor/health.py",
+      "selected": false,
+      "line_count": 69,
+      "material_line_count": 55,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/monitor/ingest_server.py",
+      "selected": false,
+      "line_count": 736,
+      "material_line_count": 630,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/monitor/performance.py",
+      "selected": false,
+      "line_count": 250,
+      "material_line_count": 218,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/port_mapping.json",
+      "selected": false,
+      "line_count": 3,
+      "material_line_count": 3,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/scripts/generate_agv_opcda_config.py",
+      "selected": false,
+      "line_count": 245,
+      "material_line_count": 201,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/scripts/init_opcda_center_protocol.sql",
+      "selected": false,
+      "line_count": 35,
+      "material_line_count": 30,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/bin/opcda_proxy_config.json",
+      "selected": false,
+      "line_count": 13,
+      "material_line_count": 13,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/OpcConnectionManager.cs",
+      "selected": false,
+      "line_count": 714,
+      "material_line_count": 627,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/opcda_proxy_config.json",
+      "selected": false,
+      "line_count": 13,
+      "material_line_count": 13,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/OpcDaProxyService.cs",
+      "selected": false,
+      "line_count": 696,
+      "material_line_count": 617,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/proxy_local.json",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 6,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/proxy_vm221.json",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/proxy_vm222.json",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/proxy_vm223.json",
+      "selected": false,
+      "line_count": 16,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_proxy_service/runtime/proxy_9090.json",
+      "selected": false,
+      "line_count": 13,
+      "material_line_count": 13,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/old/opcda_push_config_agv801_810_benchmark.json",
+      "selected": false,
+      "line_count": 141,
+      "material_line_count": 141,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/old/opcda_push_config_agv801_810_full_benchmark.json",
+      "selected": false,
+      "line_count": 172,
+      "material_line_count": 172,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/old/opcda_subscription_benchmark_agv801_810.json",
+      "selected": false,
+      "line_count": 151,
+      "material_line_count": 151,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/opcda_push_config.example.json",
+      "selected": false,
+      "line_count": 54,
+      "material_line_count": 54,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/opcda_push_config.json",
+      "selected": false,
+      "line_count": 29,
+      "material_line_count": 29,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/opcda_push_config_agv801_810.json",
+      "selected": false,
+      "line_count": 141,
+      "material_line_count": 141,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/opcda_push_config_agv801_810_full.json",
+      "selected": false,
+      "line_count": 172,
+      "material_line_count": 172,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_push_service/OpcDaPushService.cs",
+      "selected": false,
+      "line_count": 1823,
+      "material_line_count": 1652,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/sidecars/opcda_sidecar/OpcDaProbe.cs",
+      "selected": false,
+      "line_count": 791,
+      "material_line_count": 724,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/storage/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/storage/redis_client.py",
+      "selected": false,
+      "line_count": 29,
+      "material_line_count": 22,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/storage/redis_writer.py",
+      "selected": false,
+      "line_count": 170,
+      "material_line_count": 154,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/__init__.py",
+      "selected": false,
+      "line_count": 1,
+      "material_line_count": 1,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/bench_ge_srtp.py",
+      "selected": false,
+      "line_count": 114,
+      "material_line_count": 90,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/conftest.py",
+      "selected": false,
+      "line_count": 88,
+      "material_line_count": 72,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/diag_ge_discrete.py",
+      "selected": false,
+      "line_count": 150,
+      "material_line_count": 132,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_bounded_executor.py",
+      "selected": false,
+      "line_count": 129,
+      "material_line_count": 99,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_check_protocols.py",
+      "selected": false,
+      "line_count": 121,
+      "material_line_count": 82,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_collect_task_snapshot.py",
+      "selected": false,
+      "line_count": 51,
+      "material_line_count": 42,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_config_db_integration.py",
+      "selected": false,
+      "line_count": 214,
+      "material_line_count": 180,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_config_db_scan_rate.py",
+      "selected": false,
+      "line_count": 187,
+      "material_line_count": 147,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_config_loader.py",
+      "selected": false,
+      "line_count": 70,
+      "material_line_count": 51,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_config_reload_loop.py",
+      "selected": false,
+      "line_count": 202,
+      "material_line_count": 168,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_config_validator.py",
+      "selected": false,
+      "line_count": 197,
+      "material_line_count": 152,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_data_quality.py",
+      "selected": false,
+      "line_count": 151,
+      "material_line_count": 123,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_device_manager.py",
+      "selected": false,
+      "line_count": 434,
+      "material_line_count": 347,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_dry_run.py",
+      "selected": false,
+      "line_count": 181,
+      "material_line_count": 143,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_executor.py",
+      "selected": false,
+      "line_count": 529,
+      "material_line_count": 422,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_ge_addressing.py",
+      "selected": false,
+      "line_count": 917,
+      "material_line_count": 779,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_ge_srtp_protocol.py",
+      "selected": false,
+      "line_count": 75,
+      "material_line_count": 55,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_integration.py",
+      "selected": false,
+      "line_count": 80,
+      "material_line_count": 64,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_interface_ingest.py",
+      "selected": false,
+      "line_count": 599,
+      "material_line_count": 523,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_opcda_center_driver.py",
+      "selected": false,
+      "line_count": 130,
+      "material_line_count": 100,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_opcua_driver.py",
+      "selected": false,
+      "line_count": 13,
+      "material_line_count": 8,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_performance_metrics.py",
+      "selected": false,
+      "line_count": 62,
+      "material_line_count": 44,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_redis_client.py",
+      "selected": false,
+      "line_count": 26,
+      "material_line_count": 20,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_redis_writer.py",
+      "selected": false,
+      "line_count": 180,
+      "material_line_count": 148,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_retry.py",
+      "selected": false,
+      "line_count": 33,
+      "material_line_count": 23,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_runtime_topology.py",
+      "selected": false,
+      "line_count": 260,
+      "material_line_count": 202,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_s7_addressing.py",
+      "selected": false,
+      "line_count": 361,
+      "material_line_count": 307,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_s7_driver.py",
+      "selected": false,
+      "line_count": 355,
+      "material_line_count": 267,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_scheduler_metrics.py",
+      "selected": false,
+      "line_count": 127,
+      "material_line_count": 99,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_serialization_compat.py",
+      "selected": false,
+      "line_count": 63,
+      "material_line_count": 46,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "collector/tests/test_shutdown_flag.py",
+      "selected": false,
+      "line_count": 22,
+      "material_line_count": 13,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/数据库/device_watch.sql",
+      "selected": false,
+      "line_count": 710,
+      "material_line_count": 678,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/PlcLogV3.2.5_main_20221017_test.py",
+      "selected": false,
+      "line_count": 2757,
+      "material_line_count": 2498,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/drop_tdengine_benchmark_databases.py",
+      "selected": false,
+      "line_count": 102,
+      "material_line_count": 79,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/init_tdengine_benchmark_tables.py",
+      "selected": false,
+      "line_count": 530,
+      "material_line_count": 463,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/redis_mock_writer.py",
+      "selected": false,
+      "line_count": 496,
+      "material_line_count": 413,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/redis_to_tdengine_writer.py",
+      "selected": false,
+      "line_count": 621,
+      "material_line_count": 524,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/tdengine_write_benchmark.py",
+      "selected": false,
+      "line_count": 609,
+      "material_line_count": 534,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/_archive/运维/测试脚本/verify_tzdata_fix.py",
+      "selected": false,
+      "line_count": 189,
+      "material_line_count": 155,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "docs/images/data-watch-architecture.architecture.json",
+      "selected": false,
+      "line_count": 156,
+      "material_line_count": 135,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/locales/langs/en.json",
+      "selected": false,
+      "line_count": 308,
+      "material_line_count": 308,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "frontend/src/locales/langs/zh.json",
+      "selected": false,
+      "line_count": 308,
+      "material_line_count": 308,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/benchmark_collector_serialization.py",
+      "selected": false,
+      "line_count": 113,
+      "material_line_count": 93,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/check_prerequisites.py",
+      "selected": false,
+      "line_count": 316,
+      "material_line_count": 270,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/experiment_tdengine_multitable.py",
+      "selected": false,
+      "line_count": 353,
+      "material_line_count": 296,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/init_redis_consumer_groups.py",
+      "selected": false,
+      "line_count": 130,
+      "material_line_count": 107,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/init_tdengine_v2.py",
+      "selected": false,
+      "line_count": 169,
+      "material_line_count": 138,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/migrate_point_groups.py",
+      "selected": false,
+      "line_count": 206,
+      "material_line_count": 174,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/migrate_tdengine_rename.py",
+      "selected": false,
+      "line_count": 86,
+      "material_line_count": 65,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/sql/db1_device_point_group.sql",
+      "selected": false,
+      "line_count": 26,
+      "material_line_count": 25,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/sql/db2_device_variable_fields.sql",
+      "selected": false,
+      "line_count": 15,
+      "material_line_count": 13,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/sql/db4_device_config_version.sql",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 6,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/summarize_performance_snapshots.py",
+      "selected": false,
+      "line_count": 61,
+      "material_line_count": 48,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "scripts/test_summarize_performance_snapshots.py",
+      "selected": false,
+      "line_count": 31,
+      "material_line_count": 24,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/dlq.py",
+      "selected": false,
+      "line_count": 48,
+      "material_line_count": 42,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/main.py",
+      "selected": false,
+      "line_count": 327,
+      "material_line_count": 289,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/mysql_mapper.py",
+      "selected": false,
+      "line_count": 137,
+      "material_line_count": 118,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/performance.py",
+      "selected": false,
+      "line_count": 129,
+      "material_line_count": 114,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/system_log.py",
+      "selected": false,
+      "line_count": 225,
+      "material_line_count": 200,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/tests/conftest.py",
+      "selected": false,
+      "line_count": 7,
+      "material_line_count": 5,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/tests/test_consumer_degrade.py",
+      "selected": false,
+      "line_count": 117,
+      "material_line_count": 92,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/tests/test_consumer_metrics.py",
+      "selected": false,
+      "line_count": 73,
+      "material_line_count": 65,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/tests/test_performance_metrics.py",
+      "selected": false,
+      "line_count": 19,
+      "material_line_count": 15,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    },
+    {
+      "path": "writer/tests/test_tdengine_writer.py",
+      "selected": false,
+      "line_count": 187,
+      "material_line_count": 146,
+      "priority": 100,
+      "selection_tier": "supplement",
+      "evidence": "补充源码证据",
+      "model_reason": ""
+    }
+  ],
+  "confirmation_note": "用户确认最终6个文件；排除所有driver和drivers目录代码，因为相关驱动来自开源项目。",
+  "confirmed_at": "2026-07-14T09:38:32+00:00"
+}

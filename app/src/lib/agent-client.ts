@@ -41,6 +41,21 @@ export interface BootstrapTestPayload {
 
 // ─── 接口 ─────────────────────────────────────────────────────────────────────
 
+export interface AgentDriverInfo {
+  id: string;
+  protocol: string;
+  name: string;
+  description: string;
+  version: string;
+  sha256: string;
+  capabilities?: string[];
+  readWriteType?: string;
+  source?: string;
+  status: string;
+  error?: string | null;
+  updated_at?: string;
+}
+
 export interface AgentClient {
   getBootstrapStatus():    Promise<{ in_bootstrap: boolean }>;
   getRuntimeConfig():      Promise<{ backend_base_url: string }>;
@@ -61,6 +76,9 @@ export interface AgentClient {
     target: "redis" | "mysql" | "tdengine",
     config?: Partial<DbConfig>
   ): Promise<{ success: boolean; message?: string }>;
+  listDrivers(): Promise<AgentDriverInfo[]>;
+  installDriver(packageBase64: string): Promise<{ driver: AgentDriverInfo }>;
+  uninstallDriver(driverId: string): Promise<{ driver: { id: string; status: string } }>;
 }
 
 // ─── 日志脱敏辅助 ─────────────────────────────────────────────────────────────
@@ -89,7 +107,8 @@ async function agentFetch<T>(
   method: string,
   path: string,
   body?: object,
-  token?: string
+  token?: string,
+  timeoutSecs?: number,
 ): Promise<T> {
   // 序列化原始 body 用于实际请求；脱敏版本仅用于开发日志，不发送给 Agent
   const bodyStr = body ? JSON.stringify(body) : undefined;
@@ -105,6 +124,7 @@ async function agentFetch<T>(
       path,
       body: bodyStr,
       token: token ?? getAgentAuthToken() ?? undefined,
+      timeoutSecs: timeoutSecs ?? null,
     });
   } catch {
     throw { type: "agent_unreachable" } satisfies AppError;
@@ -120,7 +140,7 @@ async function agentFetch<T>(
     } satisfies AppError;
   }
 
-  return JSON.parse(text) as T;
+  return (text ? JSON.parse(text) : {}) as T;
 }
 
 // ─── realAgent 实现 ───────────────────────────────────────────────────────────
@@ -176,6 +196,29 @@ function makeRealAgent(): AgentClient {
       agentFetch<{ success: boolean; message?: string }>(
         "POST", "/admin/health/check", config ? { target, config } : { target }
       ),
+
+    listDrivers: async () => {
+      const data = await agentFetch<{ drivers: AgentDriverInfo[] }>("GET", "/admin/drivers");
+      return data.drivers ?? [];
+    },
+
+    installDriver: (packageBase64) =>
+      agentFetch<{ driver: AgentDriverInfo }>(
+        "POST",
+        "/admin/drivers",
+        { package_base64: packageBase64 },
+        undefined,
+        180,
+      ),
+
+    uninstallDriver: (driverId) =>
+      agentFetch<{ driver: { id: string; status: string } }>(
+        "DELETE",
+        `/admin/drivers/${encodeURIComponent(driverId)}`,
+        undefined,
+        undefined,
+        120,
+      ),
   };
 }
 
@@ -218,4 +261,7 @@ export const agentClient: AgentClient = {
   getConfig:                   ()        => via((c) => c.getConfig()),
   putConfig:                   (cfg)     => via((c) => c.putConfig(cfg)),
   checkHealth:                 (target, config) => via((c) => c.checkHealth(target, config)),
+  listDrivers:                 ()        => via((c) => c.listDrivers()),
+  installDriver:               (b64)     => via((c) => c.installDriver(b64)),
+  uninstallDriver:             (id)      => via((c) => c.uninstallDriver(id)),
 };

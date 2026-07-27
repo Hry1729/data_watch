@@ -7,7 +7,7 @@ import {
 } from "../src/components/layout/settings-tabs.ts";
 
 test("settings tabs expose the approved sections in display order", () => {
-  assert.deepEqual(SETTINGS_TABS, [
+  assert.deepEqual(SETTINGS_TABS.map(({ value, label }) => ({ value, label })), [
     { value: "basic", label: "基础" },
     { value: "database", label: "数据库" },
     { value: "collector", label: "Collector" },
@@ -21,4 +21,3 @@ test("settings tab normalization defaults missing and invalid values to database
   assert.equal(normalizeSettingsTab("basic"), "basic");
   assert.equal(normalizeSettingsTab("collector"), "collector");
 });
-

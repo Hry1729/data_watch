@@ -212,27 +212,43 @@ export default function RealtimeMonitorPage() {
   const preferredDeviceId = requestedDeviceId || savedState.deviceId || availableDevices[0]?.id || 0;
   const selectedDevice = availableDevices.find((device) => device.id === preferredDeviceId) ?? availableDevices[0];
   const selectedDeviceId = selectedDevice?.id ?? 0;
+  const [selectedGroupCode, setSelectedGroupCode] = useState("g001");
   const deviceTypes = useMemo(() => Array.from(new Set(availableDevices.map((device) => device.deviceType))), [availableDevices]);
   const filteredDevices = useMemo(() => availableDevices.filter((device) => {
     const matchesType = draftDeviceType === "all" || device.deviceType === draftDeviceType;
     const keyword = deviceSearch.trim().toLowerCase();
     return matchesType && (!keyword || `${device.deviceCode} ${device.deviceName}`.toLowerCase().includes(keyword));
   }), [availableDevices, deviceSearch, draftDeviceType]);
+  const loadPointGroups = useCallback(
+    (backendToken: string) => selectedDevice?.deviceCode
+      ? backendClient.realtimePointGroups(backendToken, selectedDevice.deviceCode)
+      : Promise.resolve([]),
+    [selectedDevice?.deviceCode],
+  );
+  const pointGroups = useBackendQuery(loadPointGroups, { enabled: Boolean(selectedDevice?.deviceCode) });
 
   useEffect(() => {
     if (!requestedDeviceId && selectedDeviceId) setSearchParams({ deviceId: String(selectedDeviceId) }, { replace: true });
   }, [requestedDeviceId, selectedDeviceId, setSearchParams]);
 
+  useEffect(() => {
+    const groups = pointGroups.data ?? [];
+    const nextGroupCode = groups[0]?.group_code ?? "g001";
+    setSelectedGroupCode((current) => (
+      groups.some((group) => group.group_code === current) ? current : nextGroupCode
+    ));
+  }, [pointGroups.data, selectedDeviceId]);
+
   const loadRealtime = useCallback(
-    (backendToken: string) => backendClient.realtimeInit(backendToken, selectedDeviceId, "g001"),
-    [selectedDeviceId],
+    (backendToken: string) => backendClient.realtimeInit(backendToken, selectedDeviceId, selectedGroupCode),
+    [selectedDeviceId, selectedGroupCode],
   );
   const realtime = useBackendQuery(loadRealtime, { enabled: selectedDeviceId > 0 });
   const realtimeSocket = useRealtimeWebSocket({
     enabled: running,
     token,
     deviceCode: selectedDevice?.deviceCode ?? "",
-    groupCode: "g001",
+    groupCode: selectedGroupCode,
     flushIntervalMs: frequency,
   });
 
@@ -242,10 +258,10 @@ export default function RealtimeMonitorPage() {
     return {
       ...point,
       value: realtimeSocket.deviceOffline ? "--" : wire ? normalizePointValue(point, wire.v) : point.value,
-      quality: realtimeSocket.deviceOffline ? 0 : wire?.q ?? point.quality,
+      quality: realtimeSocket.deviceOffline ? 7 : wire?.q ?? point.quality,
       updateTime: realtimeSocket.deviceOffline ? "" : wire?.t ? new Date(wire.t).toLocaleString("zh-CN", { hour12: false }) : point.updateTime,
     };
-  }), [pointList, realtimeSocket.values]);
+  }), [pointList, realtimeSocket.deviceOffline, realtimeSocket.values]);
 
   const selectedPointItems = resolvedPoints.filter((point) => selectedPoints.includes(point.varSeq));
   const numericPoints = selectedPointItems.filter((point) => (point.dataType ?? "").toUpperCase() !== "BOOL");
@@ -283,7 +299,14 @@ export default function RealtimeMonitorPage() {
 
   function changeDevice(deviceId: string) {
     resetMonitorState();
+    setSelectedGroupCode("g001");
     setSearchParams({ deviceId });
+  }
+
+  function changePointGroup(groupCode: string) {
+    if (groupCode === selectedGroupCode) return;
+    resetMonitorState();
+    setSelectedGroupCode(groupCode);
   }
 
   function openDeviceSelector() {
@@ -352,6 +375,17 @@ export default function RealtimeMonitorPage() {
           <span className="text-xs text-muted-foreground">当前设备</span>
           <Button variant="outline" className="max-w-56" onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span></Button>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">点位组</span>
+          <Select value={selectedGroupCode} onValueChange={changePointGroup} disabled={!selectedDeviceId || pointGroups.loading}>
+            <SelectTrigger className="w-32" aria-label="点位组"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {pointGroups.data?.length
+                ? pointGroups.data.map((group) => <SelectItem key={group.group_code} value={group.group_code}>{group.group_name || group.group_code}</SelectItem>)
+                : <SelectItem value="g001">g001</SelectItem>}
+            </SelectContent>
+          </Select>
+        </div>
         <Button variant="outline" onClick={openPointSelector} disabled={!selectedDeviceId}><Search className="size-3.5" />选择点位{selectedPointItems.length > 0 && <Badge variant="secondary" className="ml-1">{selectedPointItems.length}</Badge>}</Button>
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           <Button onClick={() => setRunning(true)} disabled={running || !selectedDeviceId || selectedPoints.length === 0}><Play className="size-3.5" />开始监控</Button>
@@ -378,12 +412,12 @@ export default function RealtimeMonitorPage() {
 
       <Card className="gap-0 py-0">
         <CardContent className="p-2">
-          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point, index) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><div className="flex items-start justify-between gap-2"><p className="truncate text-[11px] font-medium">{point.pointName}</p><span className="mt-0.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /></div><p className={`mt-0.5 font-mono text-base font-semibold ${point.quality == null || point.quality >= 192 ? "text-foreground" : "text-destructive"}`}>{formatValue(point.value)}</p><p className="truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress} · {point.dataType || "--"}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
+          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point, index) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><div className="flex items-start justify-between gap-2"><p className="truncate text-[11px] font-medium">{point.pointName}</p><span className="mt-0.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /></div><p className={`mt-0.5 font-mono text-base font-semibold ${point.quality == null || point.quality === 0 ? "text-foreground" : "text-destructive"}`}>{formatValue(point.value)}</p><p className="truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress} · {point.dataType || "--"}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
         </CardContent>
       </Card>
 
-      <Card ref={chartCardRef} className="min-w-0">
-        <CardHeader>
+      <Card ref={chartCardRef} className="min-w-0 gap-3 py-0">
+        <CardHeader className="!flex items-center justify-between gap-3 border-b px-4 pb-2 pt-4">
           <CardTitle>点位实时趋势</CardTitle>
           <CardAction>
             <div className="flex items-center gap-1">

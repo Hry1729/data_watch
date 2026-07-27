@@ -42,6 +42,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const { auth, logout } = useAuth();
   const { refreshCurrentPage } = usePageRefresh();
+  const canOpenSettings = auth?.allowedPaths?.includes("/settings") ?? false;
   const visibleGroups = useMemo(
     () => filterNavigationGroups(auth?.allowedPaths),
     [auth?.allowedPaths],
@@ -130,16 +131,18 @@ export function AppLayout() {
       >
         <UserRound className="h-4 w-4" />
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-        onClick={() => navigate("/settings?tab=database")}
-        aria-label="设置"
-        title="设置"
-      >
-        <Settings className="h-4 w-4" />
-      </Button>
+      {canOpenSettings && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => navigate("/settings?tab=database")}
+          aria-label="设置"
+          title="设置"
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+      )}
       <ThemeToggle />
     </div>
   );
@@ -187,6 +190,7 @@ export function AppLayout() {
               <button
                 type="button"
                 onClick={() => navigate(-1)}
+                aria-label="返回上一页"
                 title={sidebarCollapsed ? "返回" : undefined}
                 className={[
                   "flex h-9 w-full items-center rounded-md text-sm transition-colors",
@@ -313,14 +317,16 @@ export function AppLayout() {
                     {auth?.user?.roles?.length ? auth.user.roles.join(" · ") : "Data Watch Console"}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => navigate("/settings?tab=database")}
-                  className="mt-1 flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-sm transition-colors hover:bg-accent"
-                >
-                  <Settings className="h-4 w-4" />
-                  设置
-                </button>
+                {canOpenSettings && (
+                  <button
+                    type="button"
+                    onClick={() => navigate("/settings?tab=database")}
+                    className="mt-1 flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-sm transition-colors hover:bg-accent"
+                  >
+                    <Settings className="h-4 w-4" />
+                    设置
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={logout}

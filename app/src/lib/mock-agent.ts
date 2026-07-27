@@ -162,6 +162,46 @@ export const mockAgent: AgentClient = {
     await delay(600);
     return { success: true };
   },
+
+  async listDrivers() {
+    await delay();
+    return [
+      {
+        id: "modbus_tcp",
+        protocol: "modbus_tcp",
+        name: "Modbus TCP",
+        description: "Mock 已安装驱动",
+        version: "1.0.0",
+        sha256: "abc",
+        capabilities: ["poll", "read"],
+        readWriteType: "只读",
+        source: "installed",
+        status: "loaded",
+        error: null,
+      },
+    ];
+  },
+
+  async installDriver(_packageBase64) {
+    await delay(800);
+    return {
+      driver: {
+        id: "modbus_tcp",
+        protocol: "modbus_tcp",
+        name: "Modbus TCP",
+        description: "Mock 安装成功",
+        version: "1.0.0",
+        sha256: "abc",
+        status: "loaded",
+        source: "installed",
+      },
+    };
+  },
+
+  async uninstallDriver(driverId) {
+    await delay(500);
+    return { driver: { id: driverId, status: "uninstalled" } };
+  },
 };
 
 // ─── mockBackend 模拟后端 ──────────────────────────────────────────────────────────
@@ -350,6 +390,19 @@ export const mockBackend: BackendClient = {
       { driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动" },
       { driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动" },
     ];
+  },
+  async registerDriver(_token, payload) {
+    await delay(120);
+    return {
+      id: 99,
+      protocol: payload.protocol,
+      description: payload.description || payload.name || payload.protocol,
+      created: true,
+    };
+  },
+  async uninstallDriver(_token, payload) {
+    await delay(200);
+    return { protocol: payload.protocol, status: "uninstalled", catalogDeleted: true };
   },
   async deviceGroupTree(_token) {
     await delay(120);

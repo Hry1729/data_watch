@@ -201,6 +201,7 @@ export default function HistoryDataPage() {
     setSelectedPoints([]);
     setChart(null);
     setMatrix(null);
+    lastQueryRef.current = null;
   }
 
   function openDeviceDialog() {
@@ -226,6 +227,7 @@ export default function HistoryDataPage() {
     setSelectedPoints(draftPoints);
     setChart(null);
     setMatrix(null);
+    lastQueryRef.current = null;
     setPointDialogOpen(false);
   }
 
@@ -244,11 +246,12 @@ export default function HistoryDataPage() {
     return true;
   }
 
-  async function loadMatrix(granularity: AlignGranularity, reset: boolean, cursorTs?: string, query = buildQuery()) {
-    if (!token || !selectedPoints.length) return;
+  async function loadMatrix(granularity: AlignGranularity, reset: boolean, cursorTs?: string, query?: ReturnType<typeof buildQuery>) {
+    const effectiveQuery = query ?? lastQueryRef.current?.query;
+    if (!token || !effectiveQuery?.varSeqs.length) return;
     setMatrixLoading(true);
     try {
-      const result = await backendClient.historyRawMatrix(token, { ...query, alignGranularity: granularity, pageSize: 200, cursorTs });
+      const result = await backendClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs });
       setMatrix((current) => reset || !current ? result : { ...result, rows: [...current.rows, ...result.rows] });
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
@@ -267,8 +270,8 @@ export default function HistoryDataPage() {
     try {
       const result = await backendClient.historyChart(token, query);
       setChart(result);
-      await loadMatrix(matrixAlign, true, undefined, query);
       lastQueryRef.current = { query };
+      await loadMatrix(matrixAlign, true, undefined, query);
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
       else toast.error("历史数据查询失败");
@@ -343,7 +346,7 @@ export default function HistoryDataPage() {
       </Card>
 
       <Card className="min-w-0">
-        <CardHeader>
+        <CardHeader className="!flex items-center justify-between gap-3 border-b px-4 pb-2 pt-4">
           <CardTitle>历史趋势图分析</CardTitle>
           <CardAction>
             <div className="flex items-center gap-1">{(["line", "area", "bar", "scatter"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : type === "bar" ? "柱状图" : "散点图"}</Button>)}</div>
@@ -352,7 +355,7 @@ export default function HistoryDataPage() {
         <CardContent>{loading ? <Skeleton className="h-[420px]" /> : chart?.series.length ? <HistoryChart chart={chart} chartType={chartType} /> : <div className="flex h-[420px] items-center justify-center text-sm text-muted-foreground">请选择设备、点位和时间范围后查询</div>}</CardContent>
       </Card>
 
-      <Card><CardHeader><CardTitle>历史数据矩阵</CardTitle><CardAction><div className="flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div></CardAction></CardHeader><CardContent className="space-y-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent></Card>
+      <Card><CardHeader className="!flex flex-row items-center justify-between space-y-0"><CardTitle className="text-base">历史数据矩阵</CardTitle><CardAction><div className="flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div></CardAction></CardHeader><CardContent className="space-y-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent></Card>
 
       <Dialog open={pointDialogOpen} onOpenChange={setPointDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>选择查询点位</DialogTitle><DialogDescription>单次历史查询最多选择 {QUERY_POINT_LIMIT} 个点位。</DialogDescription></DialogHeader><div className="space-y-3"><div className="relative"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input value={pointSearch} onChange={(event) => setPointSearch(event.target.value)} placeholder="搜索点位名称或地址" className="pl-9" /></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">已选择 {draftPoints.length}/{QUERY_POINT_LIMIT}</span><div><Button size="sm" variant="ghost" onClick={() => setDraftPoints(pointList.slice(0, QUERY_POINT_LIMIT).map((point) => point.varSeq))}>全选</Button><Button size="sm" variant="ghost" onClick={() => setDraftPoints([])}>清空</Button></div></div><div className="grid max-h-[360px] grid-cols-2 gap-1 overflow-y-auto rounded-md border p-2">{points.loading ? <Skeleton className="col-span-2 h-48" /> : filteredPoints.length ? filteredPoints.map((point) => { const selected = draftPoints.includes(point.varSeq); const disabled = draftPoints.length >= QUERY_POINT_LIMIT && !selected; return <label key={point.varSeq} className={`flex min-w-0 items-center gap-2 rounded-md px-2 py-2 ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer hover:bg-muted"}`}><Checkbox checked={selected} disabled={disabled} onCheckedChange={(checked) => setDraftPoints((current) => checked ? [...new Set([...current, point.varSeq])].slice(0, QUERY_POINT_LIMIT) : current.filter((value) => value !== point.varSeq))} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{point.pointName}</span><span className="block truncate font-mono text-xs text-muted-foreground">{point.ioAddress}</span></span></label>; }) : <div className="col-span-2 flex h-32 items-center justify-center text-sm text-muted-foreground">没有匹配的点位</div>}</div></div><DialogFooter><Button variant="outline" onClick={() => setPointDialogOpen(false)}>取消</Button><Button onClick={confirmPoints} disabled={!draftPoints.length}>确认</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>

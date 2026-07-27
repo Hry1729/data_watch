@@ -24,10 +24,9 @@ test("settings lives in the user popover instead of a standalone sidebar footer 
   assert.match(source, /设置[\s\S]{0,500}退出登录/);
 });
 
-test("settings route renders back controls and centered section navigation in the top bar", () => {
+test("settings route renders back controls and section navigation in the application shell", () => {
   assert.match(source, /isSettingsRoute/);
   assert.match(source, /SETTINGS_TABS\.map/);
   assert.match(source, /aria-label="返回上一页"/);
-  assert.match(source, /justify-self-center/);
+  assert.match(source, /aria-label=\{isSettingsRoute \? "设置导航" : "主导航"\}/);
 });
-

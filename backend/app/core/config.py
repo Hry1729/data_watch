@@ -93,6 +93,10 @@ class Settings:
     redis_port: int
     redis_db: int
     redis_password: str
+    writer_redis_group_name: str
+    # Backend→Agent 驱动编排服务凭据（不使用用户 JWT）
+    agent_base_url: str
+    agent_token: str
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -168,4 +172,11 @@ def get_settings() -> Settings:
         redis_port=int(read_setting("REDIS_PORT", 6379)),
         redis_db=int(read_setting("REDIS_DB", 0)),
         redis_password=str(read_setting("REDIS_PASSWORD", "")),
+        writer_redis_group_name=str(
+            read_setting("WRITER_REDIS_GROUP_NAME", "writer_cg")
+        ),
+        agent_base_url=str(
+            read_setting("DATAWATCH_AGENT_BASE_URL", "http://127.0.0.1:7070")
+        ).rstrip("/"),
+        agent_token=str(read_setting("DATAWATCH_AGENT_SERVICE_TOKEN", "")),
     )

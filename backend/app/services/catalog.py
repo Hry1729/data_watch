@@ -100,38 +100,83 @@ class CatalogService:
         self.tdengine = tdengine
 
     async def list_drivers(self, params: dict[str, Any]) -> dict[str, Any]:
-        rows = (
-            await self.session.execute(
-                text(
-                    # 查询通信协议列表及其绑定设备数量
-                    """
-                    SELECT
-                        cp.id AS id,
-                        cp.protocol AS driver_name,
-                        COALESCE(cp.description, cp.protocol) AS driver_desc,
-                        cp.create_time AS create_time,
-                        COUNT(d.id) AS bound_device_count
-                    FROM comm_protocol AS cp
-                    LEFT JOIN device AS d ON d.protocol_id = cp.id
-                    GROUP BY cp.id, cp.protocol, cp.description, cp.create_time
-                    ORDER BY cp.id ASC
-                    """
+        # 附带 installed_driver 元数据，供前端区分内置 / 已注册外置包
+        try:
+            rows = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                            cp.id AS id,
+                            cp.protocol AS driver_name,
+                            COALESCE(cp.description, cp.protocol) AS driver_desc,
+                            cp.create_time AS create_time,
+                            COUNT(d.id) AS bound_device_count,
+                            MAX(idrv.driver_id) AS driver_id,
+                            MAX(idrv.driver_version) AS driver_version,
+                            MAX(idrv.driver_sha256) AS driver_sha256,
+                            MAX(idrv.install_source) AS install_source
+                        FROM comm_protocol AS cp
+                        LEFT JOIN device AS d ON d.protocol_id = cp.id
+                        LEFT JOIN installed_driver AS idrv ON idrv.protocol = cp.protocol
+                        GROUP BY cp.id, cp.protocol, cp.description, cp.create_time
+                        ORDER BY cp.id ASC
+                        """
+                    )
                 )
-            )
-        ).mappings().all()
+            ).mappings().all()
+        except Exception:
+            # 迁移前无 installed_driver 表时回退
+            rows = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT
+                            cp.id AS id,
+                            cp.protocol AS driver_name,
+                            COALESCE(cp.description, cp.protocol) AS driver_desc,
+                            cp.create_time AS create_time,
+                            COUNT(d.id) AS bound_device_count,
+                            NULL AS driver_id,
+                            NULL AS driver_version,
+                            NULL AS driver_sha256,
+                            NULL AS install_source
+                        FROM comm_protocol AS cp
+                        LEFT JOIN device AS d ON d.protocol_id = cp.id
+                        GROUP BY cp.id, cp.protocol, cp.description, cp.create_time
+                        ORDER BY cp.id ASC
+                        """
+                    )
+                )
+            ).mappings().all()
 
         keyword = self._normalize_text(params.get("keyword"))
         items = []
         available_count = 0
         for row in rows:
+            protocol = row["driver_name"] or ""
+            driver_id = str(row["driver_id"] or "").strip()
+            install_source = str(row["install_source"] or "").strip()
+            # 仅固定内置协议集合标 builtin；已注册外置包标 installed（Agent 缺失由前端标 missing）
+            if driver_id or install_source:
+                source = "installed"
+            elif self._is_builtin_protocol(protocol):
+                source = "builtin"
+            else:
+                source = "unknown"
             item = {
                 "id": int(row["id"]),
-                "driverName": row["driver_name"] or "",
+                "driverName": protocol,
                 "driverDesc": row["driver_desc"] or "",
                 "readWriteType": self._resolve_read_write_type(row["driver_name"]),
                 "status": "available" if int(row["bound_device_count"] or 0) > 0 else "unused",
                 "boundDeviceCount": int(row["bound_device_count"] or 0),
                 "updateTime": self._format_datetime(self._coerce_datetime(row["create_time"])),
+                "source": source,
+                "driverId": driver_id or None,
+                "version": str(row["driver_version"] or "").strip() or None,
+                "sha256": str(row["driver_sha256"] or "").strip() or None,
+                "installSource": install_source or None,
             }
             if keyword and not self._matches_keyword(
                 keyword,
@@ -157,6 +202,8 @@ class CatalogService:
                         cp.protocol AS driver_name,
                         COALESCE(cp.description, cp.protocol) AS driver_desc
                     FROM comm_protocol AS cp
+                    LEFT JOIN installed_driver AS idrv ON idrv.protocol = cp.protocol
+                    WHERE idrv.protocol IS NULL OR idrv.lifecycle_status = 'active'
                     ORDER BY cp.id ASC
                     """
                 )
@@ -380,6 +427,9 @@ class CatalogService:
 
         type_row = await self._resolve_device_type_row(device_type)
         protocol_row = await self._resolve_protocol_row(driver_name)
+        await self._lock_protocol_for_binding(
+            protocol_id=int(protocol_row["id"]), protocol=str(protocol_row["protocol"])
+        )
         reference_row = await self._fetch_device_reference_row(
             type_id=int(type_row["id"]),
             protocol_id=int(protocol_row["id"]),
@@ -512,6 +562,9 @@ class CatalogService:
 
         type_row = await self._resolve_device_type_row(device_type)
         protocol_row = await self._resolve_protocol_row(driver_name)
+        await self._lock_protocol_for_binding(
+            protocol_id=int(protocol_row["id"]), protocol=str(protocol_row["protocol"])
+        )
         reference_row = await self._fetch_device_reference_row(
             type_id=int(type_row["id"]),
             protocol_id=int(protocol_row["id"]),
@@ -1577,8 +1630,8 @@ class CatalogService:
 
             if row is None:
                 group_no = self._point_group_no(target_code)
-            result = await self.session.execute(
-                text(
+                result = await self.session.execute(
+                    text(
                     # 插入新设备测点组
                     """
                     INSERT INTO device_point_group (
@@ -2540,6 +2593,30 @@ class CatalogService:
             return "只读"
         return "读写"
 
+    def _is_builtin_protocol(self, protocol: Any) -> bool:
+        """与 Agent/collector 内置协议集合对齐；仅这些可标 builtin。
+
+        须兼容 MySQL ``comm_protocol.protocol`` 历史命名（如 SNAP7），
+        与 collector ``config_db._normalize_protocol`` 别名保持一致。
+        """
+        key = str(protocol or "").strip().lower().replace("-", "_").replace(" ", "_")
+        return key in {
+            "s7",
+            "snap7",
+            "siemens",
+            "siemens_s7",
+            "siemens_snap7",
+            "simens_snap7",
+            "ge_srtp",
+            "opc",
+            "opcua",
+            "opc_ua",
+            "opcda_center",
+            "opc_da_center",
+            "opc_da_sidecar",
+            "opcda_sidecar",
+        }
+
     def _resolve_tdengine_database(
         self,
         device_code: str,
@@ -2698,6 +2775,27 @@ class CatalogService:
             if self._normalize_protocol_key(row["protocol"]) == requested_key:
                 return dict(row)
         raise ApiError(400, "driverName is not supported by current dictionary")
+
+    async def _lock_protocol_for_binding(self, *, protocol_id: int, protocol: str) -> None:
+        """Serialize device binding with driver uninstall on the same protocol row."""
+        await self.session.execute(
+            text("SELECT id FROM comm_protocol WHERE id = :id FOR UPDATE"),
+            {"id": protocol_id},
+        )
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT lifecycle_status
+                    FROM installed_driver
+                    WHERE protocol = :protocol
+                    """
+                ),
+                {"protocol": protocol},
+            )
+        ).mappings().first()
+        if row is not None and str(row["lifecycle_status"]) != "active":
+            raise ApiError(409, "该驱动正在卸载中，暂不可绑定设备")
 
     async def _fetch_device_reference_row(self, *, type_id: int, protocol_id: int) -> dict[str, Any] | None:
         row = (

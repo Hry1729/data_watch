@@ -1,0 +1,324 @@
+using System;
+using System.ComponentModel;
+using System.Drawing;
+using System.IO.Ports;
+using System.Windows.Forms;
+using System.Xml.Linq;
+using HslCommunication;
+using HslCommunication.BasicFramework;
+using HslCommunication.Core;
+using HslCommunication.Profinet.YASKAWA;
+using HslCommunicationDemo.DemoControl;
+using HslCommunicationDemo.PLC.YASKAWA;
+
+namespace HslCommunicationDemo
+{
+	public class FormYASKAWAMemobusTcpNet : HslFormContent
+	{
+		private MemobusTcpNet memobus = null;
+
+		private AddressExampleControl addressExampleControl;
+
+		private CodeExampleControl codeExampleControl;
+
+		private IContainer components = null;
+
+		private Panel panel1;
+
+		private Panel panel2;
+
+		private Button button2;
+
+		private Button button1;
+
+		private ComboBox comboBox1;
+
+		private TextBox textBox_cpu_from;
+
+		private Label label1;
+
+		private UserControlHead userControlHead1;
+
+		private TextBox textBox_cpu_to;
+
+		private Label label2;
+
+		private UserControlReadWriteDevice userControlReadWriteDevice1;
+
+		private PipeSelectControl pipeSelectControl1;
+
+		private Label label3;
+
+		public FormYASKAWAMemobusTcpNet()
+		{
+			InitializeComponent();
+			DemoUtils.SetPanelAnchor(panel1, panel2);
+		}
+
+		private void FormSiemens_Load(object sender, EventArgs e)
+		{
+			comboBox1.DataSource = SoftBasic.GetEnumValues<DataFormat>();
+			comboBox1.SelectedItem = DataFormat.CDAB;
+			Language(Program.Language);
+			addressExampleControl = new AddressExampleControl();
+			addressExampleControl.SetAddressExample(Helper.GetMemobusAddress());
+			userControlReadWriteDevice1.AddSpecialFunctionTab(addressExampleControl, false, DeviceAddressExample.GetTitle());
+			codeExampleControl = new CodeExampleControl();
+			userControlReadWriteDevice1.AddSpecialFunctionTab(codeExampleControl, false, CodeExampleControl.GetTitle());
+			userControlReadWriteDevice1.SetEnable(false);
+		}
+
+		private void Language(int language)
+		{
+			if (language == 2)
+			{
+				Text = "YASKAWA Read PLC Demo";
+				button1.Text = "Connect";
+				button2.Text = "Close";
+				label3.Text = "If connection fails, check if the PLC requires a specific client port. Click \"More\" to set it.";
+			}
+		}
+
+		private void FormSiemens_FormClosing(object sender, FormClosingEventArgs e)
+		{
+			if (!button1.Enabled)
+			{
+				button2_Click(null, EventArgs.Empty);
+			}
+		}
+
+		private void button1_Click(object sender, EventArgs e)
+		{
+			if (!byte.TryParse(textBox_cpu_from.Text, out var result))
+			{
+				DemoUtils.ShowMessage("PLC cpuFrom input wrong！");
+				return;
+			}
+			if (!byte.TryParse(textBox_cpu_to.Text, out var result2))
+			{
+				DemoUtils.ShowMessage("PLC cpuTo input wrong！");
+				return;
+			}
+			memobus?.ConnectClose();
+			memobus = new MemobusTcpNet();
+			memobus.CpuFrom = result;
+			memobus.CpuTo = result2;
+			memobus.LogNet = base.LogNet;
+			try
+			{
+				pipeSelectControl1.IniPipe(memobus);
+				memobus.ByteTransform.DataFormat = (DataFormat)comboBox1.SelectedItem;
+				OperateResult operateResult = DeviceConnectPLC(memobus);
+				if (operateResult.IsSuccess)
+				{
+					DemoUtils.ShowMessage(StringResources.Language.ConnectedSuccess);
+					button2.Enabled = true;
+					button1.Enabled = false;
+					userControlReadWriteDevice1.SetEnable(true);
+					userControlReadWriteDevice1.SetReadWriteNet(memobus, "100", true);
+					userControlReadWriteDevice1.BatchRead.SetReadWriteNet(memobus, "100", string.Empty);
+					userControlReadWriteDevice1.BatchRead.SetReadWordRandom(memobus.ReadRandom, "1;100;300   针对09功能码的扩展保持寄存器");
+					userControlReadWriteDevice1.MessageRead.SetReadSourceBytes((byte[] m) => memobus.ReadFromCoreServer(m, true, false), string.Empty, string.Empty);
+					userControlReadWriteDevice1.SetDeviceVariableName(DemoUtils.PlcDeviceName);
+					codeExampleControl.SetCodeText(memobus, "CpuFrom", "CpuTo", "ByteTransform.DataFormat");
+				}
+				else
+				{
+					DemoUtils.ShowMessage(StringResources.Language.ConnectedFailed + operateResult.Message);
+				}
+			}
+			catch (Exception ex)
+			{
+				DemoUtils.ShowMessage(ex.Message);
+			}
+		}
+
+		private void button2_Click(object sender, EventArgs e)
+		{
+			button2.Enabled = false;
+			button1.Enabled = true;
+			userControlReadWriteDevice1.SetEnable(false);
+			pipeSelectControl1.ExtraCloseAction(memobus);
+			memobus?.ConnectClose();
+		}
+
+		public override void SaveXmlParameter(XElement element)
+		{
+			pipeSelectControl1.SaveXmlParameter(element);
+			element.SetAttributeValue(DemoDeviceList.XmlDataFormat, comboBox1.SelectedIndex);
+			element.SetAttributeValue("cpu_from", textBox_cpu_from.Text);
+			element.SetAttributeValue("cpu_to", textBox_cpu_to.Text);
+			userControlReadWriteDevice1.GetDataTable(element);
+		}
+
+		public override void LoadXmlParameter(XElement element)
+		{
+			base.LoadXmlParameter(element);
+			pipeSelectControl1.LoadXmlParameter(element, SettingPipe.TcpPipe);
+			comboBox1.SelectedIndex = int.Parse(element.Attribute(DemoDeviceList.XmlDataFormat).Value);
+			textBox_cpu_from.Text = element.Attribute("cpu_from").Value;
+			textBox_cpu_to.Text = element.Attribute("cpu_to").Value;
+			if (userControlReadWriteDevice1.LoadDataTable(element) > 0)
+			{
+				userControlReadWriteDevice1.SelectTabDataTable();
+			}
+		}
+
+		private void userControlHead1_SaveConnectEvent_1(object sender, EventArgs e)
+		{
+			userControlHead1_SaveConnectEvent(sender, e);
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing && components != null)
+			{
+				components.Dispose();
+			}
+			base.Dispose(disposing);
+		}
+
+		private void InitializeComponent()
+		{
+			this.panel1 = new System.Windows.Forms.Panel();
+			this.pipeSelectControl1 = new HslCommunicationDemo.DemoControl.PipeSelectControl();
+			this.textBox_cpu_to = new System.Windows.Forms.TextBox();
+			this.label2 = new System.Windows.Forms.Label();
+			this.textBox_cpu_from = new System.Windows.Forms.TextBox();
+			this.label1 = new System.Windows.Forms.Label();
+			this.comboBox1 = new System.Windows.Forms.ComboBox();
+			this.button2 = new System.Windows.Forms.Button();
+			this.button1 = new System.Windows.Forms.Button();
+			this.panel2 = new System.Windows.Forms.Panel();
+			this.userControlReadWriteDevice1 = new HslCommunicationDemo.DemoControl.UserControlReadWriteDevice();
+			this.userControlHead1 = new HslCommunicationDemo.DemoControl.UserControlHead();
+			this.label3 = new System.Windows.Forms.Label();
+			this.panel1.SuspendLayout();
+			this.panel2.SuspendLayout();
+			base.SuspendLayout();
+			this.panel1.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			this.panel1.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+			this.panel1.Controls.Add(this.label3);
+			this.panel1.Controls.Add(this.pipeSelectControl1);
+			this.panel1.Controls.Add(this.textBox_cpu_to);
+			this.panel1.Controls.Add(this.label2);
+			this.panel1.Controls.Add(this.textBox_cpu_from);
+			this.panel1.Controls.Add(this.label1);
+			this.panel1.Controls.Add(this.comboBox1);
+			this.panel1.Controls.Add(this.button2);
+			this.panel1.Controls.Add(this.button1);
+			this.panel1.Location = new System.Drawing.Point(3, 35);
+			this.panel1.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+			this.panel1.Name = "panel1";
+			this.panel1.Size = new System.Drawing.Size(997, 65);
+			this.panel1.TabIndex = 0;
+			this.pipeSelectControl1.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 134);
+			this.pipeSelectControl1.Location = new System.Drawing.Point(8, 3);
+			this.pipeSelectControl1.Name = "pipeSelectControl1";
+			this.pipeSelectControl1.SerialBaudRate = "9600";
+			this.pipeSelectControl1.SerialDataBits = "8";
+			this.pipeSelectControl1.SerialParity = System.IO.Ports.Parity.None;
+			this.pipeSelectControl1.SerialStopBits = "1";
+			this.pipeSelectControl1.SettingPipe = HslCommunicationDemo.DemoControl.SettingPipe.TcpPipe;
+			this.pipeSelectControl1.Size = new System.Drawing.Size(790, 28);
+			this.pipeSelectControl1.TabIndex = 43;
+			this.pipeSelectControl1.TcpPortText = "9999";
+			this.pipeSelectControl1.UdpPortText = "9999";
+			this.textBox_cpu_to.Location = new System.Drawing.Point(302, 36);
+			this.textBox_cpu_to.Name = "textBox_cpu_to";
+			this.textBox_cpu_to.Size = new System.Drawing.Size(31, 23);
+			this.textBox_cpu_to.TabIndex = 42;
+			this.textBox_cpu_to.Text = "2";
+			this.label2.AutoSize = true;
+			this.label2.Location = new System.Drawing.Point(227, 39);
+			this.label2.Name = "label2";
+			this.label2.Size = new System.Drawing.Size(62, 17);
+			this.label2.TabIndex = 41;
+			this.label2.Text = "Cpu To：";
+			this.textBox_cpu_from.Location = new System.Drawing.Point(187, 36);
+			this.textBox_cpu_from.Name = "textBox_cpu_from";
+			this.textBox_cpu_from.Size = new System.Drawing.Size(31, 23);
+			this.textBox_cpu_from.TabIndex = 40;
+			this.textBox_cpu_from.Text = "1";
+			this.label1.AutoSize = true;
+			this.label1.Location = new System.Drawing.Point(108, 39);
+			this.label1.Name = "label1";
+			this.label1.Size = new System.Drawing.Size(77, 17);
+			this.label1.TabIndex = 39;
+			this.label1.Text = "Cpu From：";
+			this.comboBox1.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+			this.comboBox1.FormattingEnabled = true;
+			this.comboBox1.Location = new System.Drawing.Point(8, 35);
+			this.comboBox1.Name = "comboBox1";
+			this.comboBox1.Size = new System.Drawing.Size(95, 25);
+			this.comboBox1.TabIndex = 14;
+			this.button2.Enabled = false;
+			this.button2.Location = new System.Drawing.Point(902, 3);
+			this.button2.Name = "button2";
+			this.button2.Size = new System.Drawing.Size(90, 28);
+			this.button2.TabIndex = 5;
+			this.button2.Text = "关闭";
+			this.button2.UseVisualStyleBackColor = true;
+			this.button2.Click += new System.EventHandler(button2_Click);
+			this.button1.Location = new System.Drawing.Point(809, 3);
+			this.button1.Name = "button1";
+			this.button1.Size = new System.Drawing.Size(91, 28);
+			this.button1.TabIndex = 4;
+			this.button1.Text = "连接";
+			this.button1.UseVisualStyleBackColor = true;
+			this.button1.Click += new System.EventHandler(button1_Click);
+			this.panel2.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			this.panel2.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+			this.panel2.Controls.Add(this.userControlReadWriteDevice1);
+			this.panel2.Location = new System.Drawing.Point(3, 104);
+			this.panel2.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+			this.panel2.Name = "panel2";
+			this.panel2.Size = new System.Drawing.Size(997, 540);
+			this.panel2.TabIndex = 1;
+			this.userControlReadWriteDevice1.Dock = System.Windows.Forms.DockStyle.Fill;
+			this.userControlReadWriteDevice1.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 134);
+			this.userControlReadWriteDevice1.Location = new System.Drawing.Point(0, 0);
+			this.userControlReadWriteDevice1.Name = "userControlReadWriteDevice1";
+			this.userControlReadWriteDevice1.Size = new System.Drawing.Size(995, 538);
+			this.userControlReadWriteDevice1.TabIndex = 0;
+			this.userControlHead1.BackColor = System.Drawing.Color.FromArgb(64, 64, 64);
+			this.userControlHead1.Dock = System.Windows.Forms.DockStyle.Top;
+			this.userControlHead1.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 134);
+			this.userControlHead1.HelpLink = "http://www.cnblogs.com/dathlin/p/7469679.html";
+			this.userControlHead1.Location = new System.Drawing.Point(0, 0);
+			this.userControlHead1.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+			this.userControlHead1.MinimumSize = new System.Drawing.Size(800, 32);
+			this.userControlHead1.Name = "userControlHead1";
+			this.userControlHead1.ProtocolInfo = "Memobus Tcp";
+			this.userControlHead1.Size = new System.Drawing.Size(1004, 32);
+			this.userControlHead1.SupportListVisiable = true;
+			this.userControlHead1.TabIndex = 2;
+			this.userControlHead1.SaveConnectEvent += new System.EventHandler<System.EventArgs>(userControlHead1_SaveConnectEvent_1);
+			this.label3.AutoSize = true;
+			this.label3.ForeColor = System.Drawing.Color.Gray;
+			this.label3.Location = new System.Drawing.Point(339, 39);
+			this.label3.Name = "label3";
+			this.label3.Size = new System.Drawing.Size(451, 17);
+			this.label3.TabIndex = 45;
+			this.label3.Text = "(如果连接不上，看下PLC是否要求客户端设置指定的端口号，点击\"More\"设置一下)";
+			base.AutoScaleDimensions = new System.Drawing.SizeF(7f, 17f);
+			base.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+			this.AutoScroll = true;
+			base.ClientSize = new System.Drawing.Size(1004, 645);
+			base.Controls.Add(this.userControlHead1);
+			base.Controls.Add(this.panel2);
+			base.Controls.Add(this.panel1);
+			this.Font = new System.Drawing.Font("微软雅黑", 9f, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 134);
+			base.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
+			base.Name = "FormYASKAWAMemobusTcpNet";
+			base.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+			this.Text = "安川PLC访问Demo";
+			base.FormClosing += new System.Windows.Forms.FormClosingEventHandler(FormSiemens_FormClosing);
+			base.Load += new System.EventHandler(FormSiemens_Load);
+			this.panel1.ResumeLayout(false);
+			this.panel1.PerformLayout();
+			this.panel2.ResumeLayout(false);
+			base.ResumeLayout(false);
+		}
+	}
+}

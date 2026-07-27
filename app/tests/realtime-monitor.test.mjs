@@ -21,6 +21,8 @@ test("realtime websocket authenticates, subscribes, heartbeats, and reconnects",
   assert.match(hookSource, /setTimeout/);
   assert.match(hookSource, /tdengineConnected/);
   assert.match(hookSource, /message\.type === "offline"/);
+  assert.match(hookSource, /setDeviceOffline\(message\.deviceOffline \?\? false\)/);
+  assert.match(hookSource, /socket\.onclose = \(\) => \{[\s\S]*pendingRef\.current = \{\}[\s\S]*setValues\(\{\}\)[\s\S]*setDeviceOffline\(true\)/);
 });
 
 test("realtime page retains the original monitoring workflow", () => {
@@ -44,4 +46,18 @@ test("realtime page retains the original monitoring workflow", () => {
   assert.match(pageSource, /useRealtimeWebSocket/);
   assert.match(pageSource, /realtimePointGroups/);
   assert.match(pageSource, /saveDownload/);
+});
+test("realtime page loads and switches point groups without hardcoding g001", () => {
+  assert.match(pageSource, /backendClient\.realtimePointGroups/);
+  assert.match(pageSource, /selectedGroupCode/);
+  assert.match(pageSource, /realtimeInit\(backendToken,\s*selectedDeviceId,\s*selectedGroupCode\)/);
+  assert.match(pageSource, /groupCode:\s*selectedGroupCode/);
+  assert.match(pageSource, /点位组/);
+});
+
+test("realtime page uses platform quality codes", () => {
+  assert.match(pageSource, /realtimeSocket\.deviceOffline\s*\?\s*7/);
+  assert.match(pageSource, /point\.quality\s*===\s*0/);
+  assert.doesNotMatch(pageSource, /point\.quality\s*>=\s*192/);
+  assert.match(pageSource, /\[pointList, realtimeSocket\.deviceOffline, realtimeSocket\.values\]/);
 });

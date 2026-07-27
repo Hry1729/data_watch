@@ -195,10 +195,19 @@ class ConfigDBManager:
         return v
 
     @staticmethod
+    def _normalize_slot(value: Optional[int]) -> int:
+        """仅 NULL/None 默认 1；保留 0 等原值，供后续 unit_id 校验拒绝。"""
+        if value is None:
+            return 1
+        return int(value)
+
+    @staticmethod
     def _default_port_for_protocol(protocol: str) -> int:
         p = protocol.lower()
         if p == "ge_srtp":
             return 18245
+        if p == "modbus_tcp":
+            return 502
         if p in {"opc", "opcua", "opc_ua"}:
             return 4840
         return 102
@@ -307,7 +316,7 @@ class ConfigDBManager:
                     endpoint=row["endpoint"] or "",
                     port=port,
                     rack=int(row["rack"] or 0),
-                    slot=int(row["slot"] or 1),
+                    slot=self._normalize_slot(row["slot"]),
                     scan_rate=scan_rate,
                     device_pk=int(row["id"]),
                     opc_server=row["server"],
@@ -615,7 +624,7 @@ class ConfigDBManager:
                 endpoint=str(row["endpoint"] or ""),
                 protocol_id=int(row["protocol_id"] or 0),
                 rack=int(row["rack"] or 0),
-                slot=int(row["slot"] or 1),
+                slot=ConfigDBManager._normalize_slot(row["slot"]),
                 scan_cycle=int(row["scan_cycle"] or 1000),
             )
             for row in rows

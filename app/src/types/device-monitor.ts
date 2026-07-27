@@ -14,6 +14,18 @@ export interface DriverListItem {
   updateTime: string;
   status?: string;
   boundDeviceCount?: number;
+  /** 内置 / 已安装 / Agent 独有未注册 / Agent 查询失败 / 已注册但本机包缺失 */
+  source?: "builtin" | "installed" | "unregistered" | "unknown" | "missing";
+  /** Manifest.id，Agent 安装目录名（可与 protocol 不同） */
+  driverId?: string;
+  version?: string;
+  sha256?: string;
+  /** Backend installed_driver.install_source（如 zip） */
+  installSource?: string;
+  /** Agent 本机加载状态：loaded / installed / load_failed / rollback / unknown / missing 等 */
+  loadStatus?: string;
+  capabilities?: string[];
+  error?: string;
 }
 
 export interface DeviceListItem {

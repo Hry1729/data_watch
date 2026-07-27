@@ -61,15 +61,16 @@ async def login(body: LoginRequest):
         if user["status"] != "1":
             raise HTTPException(status_code=403, detail="当前账号不可用，请联系管理员")
 
-        # 角色检查：至少一个启用角色 → 403
+        # 角色检查：至少一个启用角色，并把角色编码写入 Agent JWT。
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT 1 FROM sys_user_role ur"
+                "SELECT r.role_code FROM sys_user_role ur"
                 " JOIN sys_role r ON r.id = ur.role_id"
-                " WHERE ur.user_id = %s AND r.enabled = 1 LIMIT 1",
+                " WHERE ur.user_id = %s AND r.enabled = 1",
                 (user["id"],),
             )
-            if cur.fetchone() is None:
+            roles = [str(row["role_code"]) for row in cur.fetchall()]
+            if not roles:
                 raise HTTPException(status_code=403, detail="当前账号未分配角色")
 
     finally:
@@ -79,6 +80,7 @@ async def login(body: LoginRequest):
         subject=body.username,
         secret=cfg["agent"]["jwt_secret"],
         expire_hours=int(cfg["agent"].get("jwt_expire_hours", 8)),
+        roles=roles,
     )
     logger.info("login success: user=%s", body.username)
     # 不 log token 值

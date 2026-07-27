@@ -9,6 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from core.logger import get_logger
+from core.quality_codes import (
+    QUALITY_GOOD,
+    QUALITY_UNCERTAIN,
+    is_valid_quality,
+)
 from data_queue.types import DataPoint
 
 if TYPE_CHECKING:
@@ -20,9 +25,6 @@ logger = get_logger("ingest_server")
 
 # 采样日志配置：每 N 秒输出一次汇总
 LOG_SAMPLE_INTERVAL_SECONDS = 10
-QUALITY_GOOD = 0
-QUALITY_UNCERTAIN = 2
-VALID_QUALITY_CODES = {0, 1, 2, 3, 4}
 
 
 def _parse_timestamp(raw_value: Any) -> datetime:
@@ -87,15 +89,21 @@ def _normalize_payload(payload: Any, max_batch_size: int) -> List[Dict[str, Any]
 
 
 def _parse_quality_code(raw_value: Any) -> int:
-    """解析内部质量码，允许 0-4；未提供时默认为 Good。"""
+    """解析平台质量码；未提供时默认为 Good。以 is_valid_quality 为唯一校验。"""
     if raw_value is None:
         return QUALITY_GOOD
-    try:
-        quality = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("quality must be an integer code") from exc
-    if quality not in VALID_QUALITY_CODES:
-        raise ValueError("quality must be one of 0, 1, 2, 3, 4")
+    # 拒绝 bool/浮点后再规范化（避免 True→1、0.9→0）
+    if isinstance(raw_value, bool) or isinstance(raw_value, float):
+        raise ValueError("quality must be an integer code")
+    if type(raw_value) is int:
+        quality = raw_value
+    else:
+        try:
+            quality = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("quality must be an integer code") from exc
+    if not is_valid_quality(quality):
+        raise ValueError("quality must be a valid platform quality code")
     return quality
 
 

@@ -1,0 +1,4 @@
+name = "pymodbus"
+version = "3.14.0"
+license = "BSD-3-Clause"
+sha256 = "d3d6c548c97bfb7163e53d6fd8d21434003d164189dfc27e4973d6ff3c3ea2fd"

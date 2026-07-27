@@ -6,8 +6,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import install_root, load_config, module_paths
+from app.core.config import data_root, install_root, load_config, module_paths
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
+from app.routers.admin import _collector_env
+from app.services.driver_installer import DriverInstaller
 from app.services.log_manager import LogManager
 from app.services.managed_process_runner import ManagedProcessRunner
 from app.services.process_manager import ModuleSpec, ProcessManager
@@ -60,6 +62,57 @@ async def _detach_log_tails(log_manager: LogManager) -> None:
             logger.exception("Failed to detach log tail for %s", name)
 
 
+async def _recover_drivers_sync_collector(app: FastAPI) -> None:
+    """磁盘恢复后统一重启 collector，并以 /drivers 验证运行代际。"""
+    installer: DriverInstaller = app.state.driver_installer
+    pm: ProcessManager = app.state.pm
+    sm = app.state.sidecar_manager
+
+    async def _restart() -> None:
+        settings_path = sm.collector_settings_path
+        if settings_path is None or not Path(settings_path).exists():
+            raise RuntimeError("collector settings.toml not found; run bootstrap first")
+        plan = sm.prepare_for_collector_start()
+        extra_args = [
+            "--config",
+            str(settings_path),
+            "--runtime-dir",
+            str(pm.runtime_dir),
+        ]
+        if plan.port_mapping_path is not None:
+            extra_args += ["--port-mapping", str(plan.port_mapping_path)]
+        await pm.restart("collector", extra_args=extra_args, env=_collector_env())
+        app.state.log_manager.attach(
+            "collector",
+            pm.log_file("collector"),
+            asyncio.get_running_loop(),
+        )
+
+    async def _alive() -> bool:
+        try:
+            return pm.status("collector").status == "running"
+        except Exception:
+            return False
+
+    try:
+        results = await installer.recover_incomplete_operations(
+            restart_collector=_restart,
+            collector_alive=_alive,
+        )
+        app.state.driver_recovery_blocked = installer.recovery_blocked
+        for item in results:
+            if item.get("verified"):
+                continue
+            logger.error(
+                "驱动事务恢复未通过 collector 验证，已阻断驱动变更: %s",
+                item,
+            )
+    except Exception:
+        logger.exception("启动恢复驱动事务失败（不阻断 Agent 启动，但阻断驱动变更）")
+        installer.mark_recovery_blocked("启动恢复异常")
+        app.state.driver_recovery_blocked = True
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Stage 3 将在此处初始化 LogManager（日志 tail）
@@ -79,6 +132,11 @@ async def lifespan(app: FastAPI):
     app.state.log_manager = LogManager()
     app.state.sidecar_manager = build_sidecar_manager(cfg, runtime_dir)
     app.state.sidecar_manager.claim_existing_proxies()  # 认领重启前仍存活的 proxy（T022/FR-P15）
+    # 外置驱动安装根：DATAWATCH_DATA_ROOT/drivers
+    app.state.driver_installer = DriverInstaller(data_root() / "drivers")
+    app.state.driver_installer.ensure_layout()
+    # 崩溃补偿：磁盘恢复 + 重启 collector + /drivers 验证代际
+    await _recover_drivers_sync_collector(app)
 
     health_task = asyncio.create_task(pm.health_check_loop())
     try:

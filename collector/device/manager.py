@@ -17,6 +17,7 @@ from device.device import Device, DeviceStatus, Variable
 
 if TYPE_CHECKING:
     from drivers.base import BaseDriver
+    from drivers.registry import DriverRegistry
     from monitor.performance import PerformanceMetrics
 
 logger = get_logger("device_manager")
@@ -26,6 +27,39 @@ PORT_MAPPING_FILE = os.path.join(os.path.dirname(__file__), "..", "port_mapping.
 
 
 EXTERNAL_PUSH_PROTOCOLS = {"http_push", "opcda_sidecar"}
+
+# Modbus TCP 从站号合法范围（不含广播 0）
+_MODBUS_UNIT_ID_MIN = 1
+_MODBUS_UNIT_ID_MAX = 247
+
+# 覆盖旧驱动前 disconnect 超时（秒）；超时后继续推进，避免重连永久卡住
+_DRIVER_DISCONNECT_TIMEOUT_SEC = 5.0
+
+
+def _modbus_unit_id_from_slot(slot: Optional[int]) -> int:
+    """将 device.slot 映射为 Modbus unit_id；仅 slot is None 时默认 1。"""
+    unit_id = _MODBUS_UNIT_ID_MIN if slot is None else int(slot)
+    if not (_MODBUS_UNIT_ID_MIN <= unit_id <= _MODBUS_UNIT_ID_MAX):
+        raise ValueError(
+            f"Modbus unit_id 必须在 {_MODBUS_UNIT_ID_MIN}-{_MODBUS_UNIT_ID_MAX}，"
+            f"当前 slot={slot!r} → unit_id={unit_id}"
+        )
+    return unit_id
+
+
+def build_connection_config(dev_cfg: DeviceConfig) -> Dict[str, Any]:
+    """组装设备连接配置；modbus_tcp 额外映射 slot→unit_id。"""
+    config: Dict[str, Any] = {
+        "ip": dev_cfg.ip,
+        "endpoint": dev_cfg.endpoint,
+        "port": dev_cfg.port,
+        "rack": dev_cfg.rack,
+        "slot": dev_cfg.slot,
+        "opc_server": dev_cfg.opc_server,
+    }
+    if (dev_cfg.protocol or "").lower() == "modbus_tcp":
+        config["unit_id"] = _modbus_unit_id_from_slot(dev_cfg.slot)
+    return config
 
 # 中心采集协议（通过代理进程远程采集）
 CENTER_COLLECTION_PROTOCOLS = {"opcda_center"}
@@ -255,6 +289,7 @@ class DeviceManager:
         port_mapping_file: Optional[str] = None,
         metrics: Optional["PerformanceMetrics"] = None,
         read_executor=None,
+        driver_registry: Optional["DriverRegistry"] = None,
     ):
         self.config = config
         # 专用 PLC 读线程池（§7.3），注入给阻塞型 PLC 驱动；None 时驱动回退默认 executor。
@@ -290,6 +325,9 @@ class DeviceManager:
         self._connect_semaphore = asyncio.Semaphore(10)
         # VM endpoint 到代理端口的映射器
         self._port_mapper: Optional[EndpointPortMapper] = None
+        # 外置驱动注册表；None 时在首次需要时从 DATAWATCH_DATA_ROOT/drivers 懒加载
+        self._driver_registry: Optional["DriverRegistry"] = driver_registry
+        self._driver_registry_scanned = driver_registry is not None
 
     def _generation_lock_for(self, device_id: str) -> threading.RLock:
         with self._generation_registry_lock:
@@ -373,21 +411,35 @@ class DeviceManager:
         # 从配置创建设备
         device_map: Dict[str, Device] = {}
         for dev_cfg in self.config.devices:
-            device = Device(
-                device_id=dev_cfg.device_id,
-                device_type=dev_cfg.device_type,
-                protocol=dev_cfg.protocol,
-                connection_config={
+            try:
+                connection_config = build_connection_config(dev_cfg)
+                config_error = None
+            except Exception as exc:
+                connection_config = {
                     "ip": dev_cfg.ip,
                     "endpoint": dev_cfg.endpoint,
                     "port": dev_cfg.port,
                     "rack": dev_cfg.rack,
                     "slot": dev_cfg.slot,
                     "opc_server": dev_cfg.opc_server,
-                },
+                }
+                config_error = str(exc)
+            device = Device(
+                device_id=dev_cfg.device_id,
+                device_type=dev_cfg.device_type,
+                protocol=dev_cfg.protocol,
+                connection_config=connection_config,
                 device_pk=dev_cfg.device_pk,
                 config_version=dev_cfg.config_version,
             )
+            if config_error is not None:
+                if (
+                    self._is_external_protocol(device.protocol)
+                    or device.protocol.lower() == "modbus_tcp"
+                ):
+                    self._mark_config_error(device, config_error)
+                else:
+                    raise ValueError(config_error)
             device_map[dev_cfg.device_id] = device
 
         # 将变量分配到对应设备
@@ -412,27 +464,18 @@ class DeviceManager:
 
         # 为每个设备构建采集任务，同时预分配端口
         for device in device_map.values():
-            if is_external_push_protocol(device.protocol):
-                device.scan_tasks = []
-                logger.info(
-                    "Device %s registered as external-push protocol=%s; no polling tasks will be created",
-                    device.device_id,
-                    device.protocol,
-                )
-            elif is_center_collection_protocol(device.protocol):
-                # 中心采集协议：预分配代理端口
-                endpoint = device.connection_config.get("endpoint", "")
-                proxy_port = self._port_mapper.get_port(endpoint)
-                device.connection_config["proxy_port"] = proxy_port
-                device.build_scan_tasks()
-                logger.info(
-                    "Device %s registered as center-collection protocol=%s; will poll via proxy on port %d",
-                    device.device_id,
-                    device.protocol,
-                    proxy_port,
-                )
-            else:
-                device.build_scan_tasks()
+            if device.status == DeviceStatus.CONFIG_ERROR:
+                continue
+            try:
+                self._setup_scan_tasks(device)
+            except Exception as exc:
+                if (
+                    self._is_external_protocol(device.protocol)
+                    or device.protocol.lower() == "modbus_tcp"
+                ):
+                    self._mark_config_error(device, str(exc))
+                else:
+                    raise
 
         self.devices = {}
         for device in device_map.values():
@@ -459,6 +502,26 @@ class DeviceManager:
             for var_cfg in var_cfgs
         ]
 
+    def validate_device_config(
+        self, dev_cfg: DeviceConfig, var_cfgs: List[VariableConfig]
+    ) -> Optional[str]:
+        """在替换运行中设备前预建任务，失败时不触碰当前代际。"""
+        try:
+            candidate = Device(
+                device_id=dev_cfg.device_id,
+                device_type=dev_cfg.device_type,
+                protocol=dev_cfg.protocol,
+                connection_config=build_connection_config(dev_cfg),
+                device_pk=dev_cfg.device_pk,
+                config_version=dev_cfg.config_version,
+            )
+            for variable in self._build_variables(var_cfgs):
+                candidate.add_variable(variable)
+            self._setup_scan_tasks(candidate)
+        except Exception as exc:
+            return str(exc)
+        return None
+
     def _setup_scan_tasks(self, device: Device) -> None:
         """按协议为设备构建采集任务（与 register_devices 同规则）。
 
@@ -466,6 +529,7 @@ class DeviceManager:
         - center：先分配代理端口再构建任务
         - 其余：直接构建任务
         """
+        self._attach_external_hooks(device)
         if is_external_push_protocol(device.protocol):
             device.scan_tasks = []
             return
@@ -480,8 +544,112 @@ class DeviceManager:
                 proxy_port = self._port_mapper.get_port(endpoint)
             device.connection_config["proxy_port"] = proxy_port
             device.build_scan_tasks()
+            device.config_error = None
+            if device.status == DeviceStatus.CONFIG_ERROR:
+                device.status = DeviceStatus.OFFLINE
             return
         device.build_scan_tasks()
+        # 仅在成功规划后清除配置错误
+        device.config_error = None
+        if device.status == DeviceStatus.CONFIG_ERROR:
+            device.status = DeviceStatus.OFFLINE
+
+    def _attach_external_hooks(self, device: Device) -> None:
+        """将 Registry 中的 plan/decode 钩子挂到设备，避免核心硬编码协议名。"""
+        registry = self._resolve_driver_registry()
+        if registry is None:
+            device.external_driver_hooks = None
+            return
+        if registry.has_failed(device.protocol):
+            reason = registry.failure_reason(device.protocol) or "未知加载错误"
+            raise RuntimeError(f"驱动 {device.protocol} 加载失败: {reason}")
+        device.external_driver_hooks = registry.get(device.protocol)
+
+    def _is_external_protocol(self, protocol: str) -> bool:
+        registry = self._resolve_driver_registry()
+        return registry is not None and (
+            registry.has(protocol) or registry.has_failed(protocol)
+        )
+
+    @staticmethod
+    def _mark_config_error(device: Device, message: str) -> None:
+        """标记配置错误，保留设备可观测但禁止其进入采集与重连路径。"""
+        device.status = DeviceStatus.CONFIG_ERROR
+        device.config_error = message
+        device.scan_tasks = []
+        logger.error("Device %s configuration error: %s", device.device_id, message)
+
+    def prepare_candidate_device(
+        self, dev_cfg: DeviceConfig, var_cfgs: List[VariableConfig]
+    ) -> Device:
+        """构建候选设备（含 hooks/scan_tasks），不写入 self.devices。"""
+        if self._port_mapper is None:
+            self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
+
+        try:
+            connection_config = build_connection_config(dev_cfg)
+            config_error = None
+        except Exception as exc:
+            connection_config = {
+                "ip": dev_cfg.ip,
+                "endpoint": dev_cfg.endpoint,
+                "port": dev_cfg.port,
+                "rack": getattr(dev_cfg, "rack", 0),
+                "slot": getattr(dev_cfg, "slot", None),
+                "opc_server": getattr(dev_cfg, "opc_server", None),
+            }
+            config_error = str(exc)
+
+        device = Device(
+            device_id=dev_cfg.device_id,
+            device_type=dev_cfg.device_type,
+            protocol=dev_cfg.protocol,
+            connection_config=connection_config,
+            device_pk=dev_cfg.device_pk,
+            config_version=dev_cfg.config_version,
+        )
+        device.active = False
+        for variable in self._build_variables(var_cfgs):
+            device.add_variable(variable)
+        if config_error is not None:
+            self._mark_config_error(device, config_error)
+            return device
+        try:
+            self._setup_scan_tasks(device)
+        except Exception as exc:
+            self._mark_config_error(device, str(exc))
+        return device
+
+    async def discard_candidate(self, candidate: Device) -> None:
+        """丢弃未入表的候选：断开连接，不触碰 manager.devices。"""
+        driver = candidate.driver
+        candidate.driver = None
+        candidate.active = False
+        await self._safe_disconnect_driver(
+            driver, device_id=candidate.device_id, reason="discard_candidate"
+        )
+
+    async def swap_device(self, device_id: str, candidate: Device) -> Optional[Device]:
+        """原子替换 devices 表中的设备；返回被替换的旧 Device（可能为 None）。"""
+        lock = self._generation_lock_for(device_id)
+        with lock:
+            old = self.devices.get(device_id)
+            generation = self._device_generations.get(device_id, 0) + 1
+            self._device_generations[device_id] = generation
+            candidate.generation = generation
+            candidate.active = True
+            if old is not None:
+                old.active = False
+                old.generation = generation
+            self.devices[device_id] = candidate
+
+        if old is not None:
+            driver = old.driver
+            old.driver = None
+            await self._safe_disconnect_driver(
+                driver, device_id=device_id, reason="swap_device_old"
+            )
+        return old
 
     def add_device(
         self, dev_cfg: DeviceConfig, var_cfgs: List[VariableConfig]
@@ -497,24 +665,29 @@ class DeviceManager:
         if self._port_mapper is None:
             self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
 
+        try:
+            connection_config = build_connection_config(dev_cfg)
+            config_error = None
+        except Exception as exc:
+            connection_config = {"ip": dev_cfg.ip, "endpoint": dev_cfg.endpoint, "port": dev_cfg.port}
+            config_error = str(exc)
         device = Device(
             device_id=dev_cfg.device_id,
             device_type=dev_cfg.device_type,
             protocol=dev_cfg.protocol,
-            connection_config={
-                "ip": dev_cfg.ip,
-                "endpoint": dev_cfg.endpoint,
-                "port": dev_cfg.port,
-                "rack": dev_cfg.rack,
-                "slot": dev_cfg.slot,
-                "opc_server": dev_cfg.opc_server,
-            },
+            connection_config=connection_config,
             device_pk=dev_cfg.device_pk,
             config_version=dev_cfg.config_version,
         )
         for variable in self._build_variables(var_cfgs):
             device.add_variable(variable)
-        self._setup_scan_tasks(device)
+        if config_error is not None:
+            self._mark_config_error(device, config_error)
+        else:
+            try:
+                self._setup_scan_tasks(device)
+            except Exception as exc:
+                self._mark_config_error(device, str(exc))
         self._activate_device(device)
         logger.info(
             "Runtime add_device %s protocol=%s vars=%d tasks=%d",
@@ -539,6 +712,9 @@ class DeviceManager:
             for variable in self._build_variables(var_cfgs):
                 device.add_variable(variable)
             self._setup_scan_tasks(device)
+            device.config_error = None
+            if device.status == DeviceStatus.CONFIG_ERROR:
+                device.status = DeviceStatus.OFFLINE
         except Exception:
             device.variables = prev_variables
             device.scan_tasks = prev_scan_tasks
@@ -566,12 +742,12 @@ class DeviceManager:
             except asyncio.CancelledError:
                 pass
 
-        # 2) 断开 driver（不回写 DB 状态，仅日志）
-        try:
-            if device.driver:
-                await device.driver.disconnect()
-        except Exception as exc:
-            logger.warning("remove_device %s driver disconnect error: %s", device_id, exc)
+        # 2) 断开 driver（不回写 DB 状态，仅日志；超时/失败幂等）
+        driver = device.driver
+        device.driver = None
+        await self._safe_disconnect_driver(
+            driver, device_id=device_id, reason="remove_device"
+        )
         device.status = DeviceStatus.OFFLINE
 
         # 3) 从设备表与熔断器移除（保留端口映射）
@@ -589,6 +765,8 @@ class DeviceManager:
 
     async def connect_device(self, device: Device, use_circuit_breaker: bool = True) -> bool:
         """连接单个设备"""
+        if device.status == DeviceStatus.CONFIG_ERROR:
+            return False
         if device.status == DeviceStatus.ONLINE:
             return True
         if is_external_push_protocol(device.protocol):
@@ -636,10 +814,49 @@ class DeviceManager:
             # 直接连接（用于重连）
             return await self._connect_device_impl(device)
 
+    async def _safe_disconnect_driver(
+        self,
+        driver: Optional["BaseDriver"],
+        *,
+        device_id: str,
+        reason: str,
+    ) -> None:
+        """带超时的幂等 disconnect：失败/超时/空实例均不抛，避免卡住重连。"""
+        if driver is None:
+            return
+        try:
+            await asyncio.wait_for(
+                driver.disconnect(),
+                timeout=_DRIVER_DISCONNECT_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Device %s driver disconnect timed out (%.1fs) reason=%s",
+                device_id,
+                _DRIVER_DISCONNECT_TIMEOUT_SEC,
+                reason,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Device %s driver disconnect failed reason=%s: %s",
+                device_id,
+                reason,
+                exc,
+            )
+
     @with_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     async def _connect_device_impl(self, device: Device) -> bool:
         """实际连接实现"""
         device.status = DeviceStatus.CONNECTING
+        # 覆盖前先释放旧驱动，避免重试泄漏连接（超时后仍继续覆盖）
+        previous = device.driver
+        if previous is not None:
+            device.driver = None
+            await self._safe_disconnect_driver(
+                previous, device_id=device.device_id, reason="replace_previous"
+            )
+
+        driver = None
         try:
             driver = self._create_driver(device.protocol)
             device.driver = driver
@@ -653,6 +870,11 @@ class DeviceManager:
         except Exception as e:
             device.status = DeviceStatus.ERROR
             device.error_count += 1
+            if driver is not None:
+                device.driver = None
+                await self._safe_disconnect_driver(
+                    driver, device_id=device.device_id, reason="connect_failed_cleanup"
+                )
             logger.error("Device %s connect failed: %s", device.device_id, e)
             await self._report_device_status(device, 0, f"connect failed: {e}", "connect")
             raise
@@ -701,6 +923,7 @@ class DeviceManager:
     async def _connect_center_collection_device_impl(self, device: Device) -> bool:
         """中心采集设备连接实现"""
         device.status = DeviceStatus.CONNECTING
+        driver = None
         try:
             # 构建代理连接配置
             endpoint = device.connection_config.get("endpoint", "")
@@ -721,6 +944,16 @@ class DeviceManager:
                 "update_rate_ms": 500,
                 "timeout": 10.0,
             }
+
+            # 覆盖前先释放旧驱动（超时后仍继续覆盖）
+            previous = device.driver
+            if previous is not None:
+                device.driver = None
+                await self._safe_disconnect_driver(
+                    previous,
+                    device_id=device.device_id,
+                    reason="replace_previous_proxy",
+                )
 
             driver = self._create_driver(device.protocol)
             device.driver = driver
@@ -744,6 +977,13 @@ class DeviceManager:
         except Exception as e:
             device.status = DeviceStatus.ERROR
             device.error_count += 1
+            if driver is not None:
+                device.driver = None
+                await self._safe_disconnect_driver(
+                    driver,
+                    device_id=device.device_id,
+                    reason="proxy_connect_failed_cleanup",
+                )
             logger.error(
                 "Device %s center collection connect failed: %s",
                 device.device_id,
@@ -766,32 +1006,82 @@ class DeviceManager:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         success = sum(1 for r in results if r is True)
         for device, result in zip(devices, results):
-            if result is not True:
+            if result is not True and device.status != DeviceStatus.CONFIG_ERROR:
                 await self.schedule_reconnect(device)
         logger.info("Connected %s/%s devices", success, len(devices))
 
     async def disconnect_all(self) -> None:
-        """断开所有设备"""
-        # 停止所有重连任务
+        """断开所有设备（并发，每设备独立超时）。"""
         for task in self._reconnect_tasks.values():
             if not task.done():
                 task.cancel()
         self._reconnect_tasks.clear()
 
-        # 断开所有设备
-        for device in self.devices.values():
+        devices = list(self.devices.values())
+
+        async def _one(device: Device) -> None:
+            driver = device.driver
+            device.driver = None
+            await self._safe_disconnect_driver(
+                driver, device_id=device.device_id, reason="disconnect_all"
+            )
+            device.status = DeviceStatus.OFFLINE
             try:
-                if device.driver:
-                    await device.driver.disconnect()
-                device.status = DeviceStatus.OFFLINE
                 await self._report_device_status(device, 0, "disconnected", "disconnect")
             except Exception as e:
-                logger.warning("Device %s disconnect error: %s", device.device_id, e)
+                logger.warning(
+                    "Device %s disconnect status report error: %s",
+                    device.device_id,
+                    e,
+                )
+
+        if devices:
+            await asyncio.gather(*(_one(d) for d in devices), return_exceptions=True)
         logger.info("All devices disconnected")
 
+    def _resolve_driver_registry(self) -> Optional["DriverRegistry"]:
+        """返回外置驱动注册表；未显式注入时懒扫描 DATAWATCH_DATA_ROOT/drivers。"""
+        if self._driver_registry is not None:
+            return self._driver_registry
+        if self._driver_registry_scanned:
+            return None
+        self._driver_registry_scanned = True
+        from drivers.registry import DriverRegistry, default_drivers_root
+
+        drivers_root = default_drivers_root()
+        if not drivers_root.is_dir():
+            self._driver_registry = DriverRegistry()
+            return self._driver_registry
+        try:
+            self._driver_registry = DriverRegistry.scan(drivers_root)
+            logger.info(
+                "外置驱动扫描完成 root=%s protocols=%s",
+                drivers_root,
+                self._driver_registry.protocols(),
+            )
+        except Exception as exc:
+            logger.warning("外置驱动扫描失败 root=%s: %s", drivers_root, exc)
+            self._driver_registry = DriverRegistry()
+        return self._driver_registry
+
     def _create_driver(self, protocol: str) -> "BaseDriver":
-        """根据协议类型创建内置驱动"""
+        """根据协议类型创建驱动：外置注册表优先（内置协议除外），再回退内置分支。"""
+        from drivers.registry import BUILTIN_PROTOCOLS, default_data_root
+
         name = protocol.lower()
+
+        registry = self._resolve_driver_registry()
+        if (
+            registry is not None
+            and name not in BUILTIN_PROTOCOLS
+            and registry.has(name)
+        ):
+            return registry.create(
+                name,
+                read_executor=self._read_executor,
+                data_root=default_data_root(),
+            )
+
         if name == "s7":
             from drivers.s7_driver import S7Driver
             return S7Driver(read_executor=self._read_executor)
@@ -808,6 +1098,8 @@ class DeviceManager:
 
     async def check_device_health(self, device: Device) -> bool:
         """检查设备健康状态"""
+        if device.status == DeviceStatus.CONFIG_ERROR:
+            return False
         if device.status != DeviceStatus.ONLINE:
             return False
         if is_external_push_protocol(device.protocol):
@@ -852,6 +1144,8 @@ class DeviceManager:
 
     async def schedule_reconnect(self, device: Device) -> None:
         """调度设备重连"""
+        if device.status == DeviceStatus.CONFIG_ERROR:
+            return
         if is_external_push_protocol(device.protocol):
             return
         if device.device_id in self._reconnect_tasks:
@@ -904,6 +1198,8 @@ class DeviceManager:
 
     async def mark_device_error(self, device: Device, message: str, event_type: str = "timeout") -> None:
         """标记设备异常并调度重连。"""
+        if device.status == DeviceStatus.CONFIG_ERROR:
+            return
         if device.status == DeviceStatus.ONLINE:
             device.status = DeviceStatus.ERROR
         device.error_count += 1

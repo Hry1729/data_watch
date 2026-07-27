@@ -44,3 +44,14 @@ test("point management renders all bulk operations including template import", (
 test("desktop frontend includes the XLSX parser used by the original page", () => {
   assert.match(packageSource, /"xlsx"/);
 });
+
+test("catalog selections reset when the visible result scope changes", () => {
+  assert.match(
+    deviceSource,
+    /setSelectedIds\(\[\]\);\s*\}, \[activeType, connectStatus, keyword, page, pageSize\]\)/,
+  );
+  assert.match(
+    pointSource,
+    /setSelectedIds\(\[\]\);\s*\}, \[activeType, connectStatus, dataTypeFilter, deviceCodeFilter, deviceId, keyword, page, pageSize\]\)/,
+  );
+});

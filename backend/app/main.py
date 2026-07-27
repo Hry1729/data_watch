@@ -29,6 +29,11 @@ from app.core.logging import configure_logging, get_logger
 from app.core.log_writer import write_system_log, write_system_log_sync
 from app.core.log_scheduler import start_log_scheduler, stop_log_scheduler
 from app.services.auth_bootstrap import bootstrap_auth_schema
+from app.services.driver_lifecycle import (
+    reconcile_driver_operations,
+    start_driver_operation_cleanup,
+    stop_driver_operation_cleanup,
+)
 from app.services.rate_sampler import start_rate_sampler, stop_rate_sampler
 from app.services.perspective import get_perspective_session_manager
 
@@ -649,6 +654,12 @@ async def lifespan(_: TurboAPI):
             await bootstrap_auth_schema()
             logger.info("Auth schema bootstrap enabled and completed")
 
+        # 补偿跨 Agent/MySQL 未完成的驱动生命周期（失败不阻断启动）
+        try:
+            reconcile_stats = await reconcile_driver_operations()
+            logger.info("Driver operation reconcile done: %s", reconcile_stats)
+        except Exception:
+            logger.exception("Driver operation reconcile failed (non-blocking)")
         # 启动日志定时任务调度器
         await start_log_scheduler()
         logger.info("Log scheduler started")
@@ -689,9 +700,14 @@ async def lifespan(_: TurboAPI):
 
         raise
 
+    await start_driver_operation_cleanup()
+    logger.info("Driver operation cleanup scheduler started")
     try:
         yield
     finally:
+        await stop_driver_operation_cleanup()
+        logger.info("Driver operation cleanup scheduler stopped")
+
         # 关闭 Redis 连接
         await close_redis()
         logger.info("Redis connection closed")

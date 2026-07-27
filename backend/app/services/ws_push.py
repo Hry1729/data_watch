@@ -6,10 +6,23 @@ import logging
 import time as _time
 from typing import Any
 
+from app.core.status_thresholds import UNSTABLE_MAX_AGE_SECONDS
+
 logger = logging.getLogger("backend.ws_push")
 
 _td_health: dict = {"ok": None, "ts": 0.0}
 _TD_HEALTH_TTL = 30.0
+
+
+def _latest_is_stale(latest: dict[str, Any]) -> bool:
+    timestamps = [
+        entry.get("t")
+        for entry in latest.values()
+        if isinstance(entry, dict) and isinstance(entry.get("t"), (int, float))
+    ]
+    if not timestamps:
+        return True
+    return _time.time() * 1000 - max(timestamps) > UNSTABLE_MAX_AGE_SECONDS * 1000
 
 
 async def _check_tdengine() -> bool | None:
@@ -43,8 +56,11 @@ class WsPushManager:
             self._tasks[key] = asyncio.create_task(
                 self._push_loop(device_code, group_code)
             )
-        snapshot = await self._read_latest(device_code, group_code) or {}
+        latest = await self._read_latest(device_code, group_code)
+        offline = latest is None or _latest_is_stale(latest)
+        snapshot = {} if offline else latest
         self._snapshots[key] = snapshot
+        self._offline[key] = offline
         td_ok = await _check_tdengine()
         await ws.send_json(
             {
@@ -53,6 +69,7 @@ class WsPushManager:
                 "group_code": group_code,
                 "values": snapshot,
                 "tdengineConnected": td_ok,
+                "deviceOffline": offline,
             }
         )
 
@@ -100,16 +117,16 @@ class WsPushManager:
             await asyncio.sleep(0.1)
             try:
                 latest = await self._read_latest(device_code, group_code)
-                if latest is None:
-                    # Redis 连接错误 — 跳过此周期，已在 _read_latest 中记录警告
+                if latest is None or _latest_is_stale(latest):
+                    if not self._offline.get(key, False):
+                        await self._broadcast(
+                            key,
+                            {"type": "offline", "device_code": device_code, "group_code": group_code},
+                        )
+                        self._offline[key] = True
+                    self._snapshots[key] = {}
                     continue
                 prev = self._snapshots.get(key, {})
-                if not latest:
-                    # 仅在跳变为离线时推一次，离线持续期间不再重复广播。
-                    if not self._offline.get(key, False):
-                        await self._broadcast(key, {"type": "offline", "device_code": device_code})
-                        self._offline[key] = True
-                    continue
                 self._offline[key] = False
                 diff = {k: v for k, v in latest.items() if v != prev.get(k)}
                 if diff:

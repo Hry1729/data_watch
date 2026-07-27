@@ -6,10 +6,12 @@ from turboapi import APIRouter, Depends, Response
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.permissions import require_permissions
+from app.core.audit import audit_log
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
 from app.services.catalog import CatalogService
+from app.services.driver_lifecycle import DriverLifecycleService, is_uninstalling
 
 
 router = APIRouter(tags=["catalog"])
@@ -53,6 +55,74 @@ async def driver_options(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.list_driver_options()
+        # 卸载中的协议不得出现在设备绑定下拉
+        data = [item for item in data if not is_uninstalling(item.get("driverName", ""))]
+        return success_response(data=data)
+
+
+@router.post("/api/device-monitor/driver/register")
+@audit_log(
+    module_name="driver",
+    action_name="register",
+    biz_type="driver",
+    success_msg="驱动注册成功",
+    failure_msg="驱动注册失败",
+)
+async def driver_register(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """Agent 安装成功后注册/更新 comm_protocol 目录。"""
+    await require_permissions(credentials, "device_monitor:driver:manage")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = DriverLifecycleService(session)
+        data = await service.register_protocol(payload or {})
+        return success_response(data=data)
+
+
+@router.post("/api/device-monitor/driver/uninstall")
+@audit_log(
+    module_name="driver",
+    action_name="uninstall",
+    biz_type="driver",
+    success_msg="驱动卸载成功",
+    failure_msg="驱动卸载失败",
+)
+async def driver_uninstall(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """卸载编排入口：绑定检查 → Agent DELETE → 删除目录行。
+
+    body: ``{ protocol|driverName, driverId? }``；Agent 凭据取自服务端配置。
+    """
+    await require_permissions(credentials, "device_monitor:driver:manage")
+    body = payload or {}
+    protocol = str(body.get("protocol") or body.get("driverName") or "").strip()
+    driver_id = str(body.get("driverId") or body.get("driver_id") or "").strip()
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = DriverLifecycleService(session)
+        data = await service.uninstall(
+            protocol=protocol,
+            driver_id=driver_id or None,
+        )
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/driver/uninstall-status")
+async def driver_uninstall_status(
+    protocol: str | None = None,
+    driverName: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:driver:view")
+    name = (protocol or driverName or "").strip()
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = DriverLifecycleService(session)
+        data = await service.uninstall_status(name)
         return success_response(data=data)
 
 

@@ -98,6 +98,22 @@ export interface BackendClient {
   dashboardRecentEvents(token: string): Promise<DashboardRecentEventList>;
   driverList(token: string, query: { pageNo?: number; pageSize?: number; keyword?: string }): Promise<PaginatedResult<DriverListItem>>;
   driverOptions(token: string): Promise<{ driverName: string; driverDesc: string }[]>;
+  registerDriver(
+    token: string,
+    payload: {
+      protocol: string;
+      driverId?: string;
+      description?: string;
+      name?: string;
+      port?: number;
+      version?: string;
+      sha256?: string;
+    },
+  ): Promise<{ id: number; protocol: string; description: string; created: boolean; driverId?: string }>;
+  uninstallDriver(
+    token: string,
+    payload: { protocol: string; driverId?: string },
+  ): Promise<{ protocol: string; status: string; catalogDeleted?: boolean; driverId?: string }>;
   deviceGroupTree(token: string): Promise<DeviceGroupTreeNode[]>;
   deviceList(token: string, query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
   createDevice(token: string, payload: DeviceForm): Promise<{ id: number }>;
@@ -393,6 +409,12 @@ const realBackend: BackendClient = {
   driverOptions(token) {
     return backendFetch("GET", "/api/device-monitor/driver/options", undefined, token);
   },
+  registerDriver(token, payload) {
+    return backendFetch("POST", "/api/device-monitor/driver/register", payload, token);
+  },
+  uninstallDriver(token, payload) {
+    return backendFetch("POST", "/api/device-monitor/driver/uninstall", payload, token);
+  },
   deviceGroupTree(token) {
     return backendFetch("GET", "/api/device-monitor/device/group-tree", undefined, token);
   },
@@ -582,6 +604,8 @@ export const backendClient: BackendClient = {
   },
   async driverList(token, query) { const c = await _implPromise; return c.driverList(token, query); },
   async driverOptions(token) { const c = await _implPromise; return c.driverOptions(token); },
+  async registerDriver(token, payload) { const c = await _implPromise; return c.registerDriver(token, payload); },
+  async uninstallDriver(token, payload) { const c = await _implPromise; return c.uninstallDriver(token, payload); },
   async deviceGroupTree(token) { const c = await _implPromise; return c.deviceGroupTree(token); },
   async deviceList(token, query) { const c = await _implPromise; return c.deviceList(token, query); },
   async createDevice(token, payload) { const c = await _implPromise; return c.createDevice(token, payload); },

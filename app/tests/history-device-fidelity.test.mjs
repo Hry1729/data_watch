@@ -35,3 +35,9 @@ test("history page offers the original chart modes and paged matrix controls", (
   assert.match(historySource, /cursorTs/);
   assert.match(clientSource, /cursorTs\?: string/);
 });
+
+test("history matrix keeps the last submitted query instead of mixing current controls", () => {
+  assert.ok((historySource.match(/lastQueryRef\.current = null/g) ?? []).length >= 2);
+  assert.match(historySource, /const effectiveQuery = query \?\? lastQueryRef\.current\?\.query/);
+  assert.match(historySource, /historyRawMatrix\(token, \{\s*\.\.\.effectiveQuery,/);
+});

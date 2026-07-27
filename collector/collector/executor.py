@@ -362,17 +362,45 @@ class TaskExecutor:
         points = []
         now = datetime.now()
         s7_block_cache = {}  # block_addr -> bytearray，同一合并块只转一次
+        result_map = getattr(scan_task, "result_map", {}) or {}
+        external_decoded: Dict[str, Any] = {}
+        # 优先使用 ScanTask 上挂载的 decode（外置驱动规划时写入）
+        decode_hook = getattr(scan_task, "decode_read_results", None)
+        device_manager = getattr(self, "device_manager", None)
+        if result_map:
+            # ScanTask 未挂 decoder 时，可经 registry + binding.protocol 回退查找
+            if decode_hook is None and device_manager is not None:
+                sample = next(iter(result_map.values()))
+                external_protocol = sample.get("protocol")
+                resolve = getattr(device_manager, "_resolve_driver_registry", None)
+                registry = resolve() if callable(resolve) else None
+                if registry is not None and external_protocol:
+                    registration = registry.get(str(external_protocol))
+                    if registration is not None and registration.decode_read_results:
+                        decode_hook = registration.decode_read_results
+            # 只要有 decoder + result_map：整表交给 decoder，不依赖 protocol 筛选
+            if decode_hook is not None:
+                external_decoded = decode_hook(result, result_map)
 
         for variable in scan_task.variables:
-            result_map = getattr(scan_task, "result_map", {})
             mapped = result_map.get(variable.variable_id)
             if mapped:
+                if decode_hook is not None:
+                    if variable.variable_id not in external_decoded:
+                        continue
+                    points.append(DataPoint(
+                        device_id=device_id,
+                        variable_id=variable.variable_id,
+                        value=external_decoded[variable.variable_id],
+                        timestamp=now,
+                    ))
+                    continue
                 block_addr = mapped["block_address"]
                 raw_values = result.get(block_addr)
                 if raw_values is None:
                     continue
 
-                # 根据 protocol 选择还原方法
+                # 根据 protocol 选择还原方法（内置 S7/GE 映射路径）
                 protocol = mapped.get("protocol", "")
                 if protocol == "ge_srtp":
                     value = self._extract_mapped_ge_value(raw_values, mapped)

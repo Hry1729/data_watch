@@ -14,6 +14,7 @@ Row dict schema:
         "device_code": str,   # tag value, e.g. qc100
         "ts":          int,   # epoch milliseconds
         "columns":     dict[str, float],  # td_column_name → value
+        "qualities":   dict[str, int],    # 可选：var_id → 平台质量码（窄表）
     }
 """
 
@@ -25,6 +26,15 @@ import math
 import time
 from typing import Any
 from urllib.parse import quote_plus
+
+from quality_schema import (
+    QUALITY_NARROW_MIGRATION_HINT,
+    QualitySchemaError,
+    describe_has_var_id_composite_key,
+    quality_child_table_name,
+    quality_narrow_create_sql,
+    quality_stable_name,
+)
 
 logger = logging.getLogger("writer.tdengine")
 
@@ -85,12 +95,22 @@ def _is_data_error(exc: Exception | None) -> bool:
     return any(kw in msg for kw in _DATA_ERROR_KEYWORDS)
 
 
+def _quality_stable_from_value_stable(stable: str) -> str:
+    """由值超级表名推导质量超级表：sdqc → sqqc。"""
+    s = str(stable or "").lower()
+    if s.startswith("sd") and len(s) > 2:
+        return quality_stable_name(s[2:])
+    return quality_stable_name(s)
+
+
 class TDengineWriter:
     def __init__(self, syslog=None) -> None:
         self._conn: Any = None
         self._database: str = "device_data"
         self._lock = asyncio.Lock()
         self._col_cache: dict[str, set[str]] = {}
+        # 已确保存在的质量窄表超级表名（sq*）
+        self._quality_stable_ready: set[str] = set()
         self._config: dict | None = None
         self._reconnecting: bool = False
         self._syslog = syslog
@@ -377,6 +397,88 @@ class TDengineWriter:
                 logger.error("[tdengine] add column failed: %s.%s: %s", stable, col, exc)
             return False
 
+    async def _ensure_quality_stable(self, q_stable: str) -> None:
+        """确保质量窄表超级表存在，且 var_id 为 COMPOSITE KEY（P0-1）。"""
+        if q_stable in self._quality_stable_ready:
+            return
+
+        db = _quote(self._database)
+        stbl = _quote(q_stable)
+        sql = quality_narrow_create_sql(db, stbl)
+        if not await self._execute(sql):
+            logger.error(
+                "[tdengine] failed to ensure quality stable: %s.%s",
+                self._database,
+                q_stable,
+            )
+            return
+
+        # CREATE IF NOT EXISTS 不会升级旧表：启动时校验复合主键
+        try:
+            await self._validate_quality_narrow_schema(q_stable)
+        except QualitySchemaError as exc:
+            logger.error(
+                "[tdengine] quality stable schema invalid %s.%s: %s | %s",
+                self._database,
+                q_stable,
+                exc,
+                QUALITY_NARROW_MIGRATION_HINT,
+            )
+            return
+
+        self._quality_stable_ready.add(q_stable)
+        logger.info("[tdengine] quality stable ready: %s.%s", self._database, q_stable)
+
+    async def _validate_quality_narrow_schema(self, q_stable: str) -> None:
+        """检测已有质量表是否缺少 var_id COMPOSITE KEY；缺则抛错并提示迁移。"""
+        rows = await self._query(
+            f"DESCRIBE {_quote(self._database)}.{_quote(q_stable)}"
+        )
+        if not rows:
+            # 新建后立即 DESCRIBE 失败时不静默放行：视为未就绪
+            raise QualitySchemaError(
+                f"DESCRIBE empty for quality stable {q_stable}"
+            )
+        if not describe_has_var_id_composite_key(rows):
+            raise QualitySchemaError(
+                f"{q_stable} missing var_id COMPOSITE KEY; {QUALITY_NARROW_MIGRATION_HINT}"
+            )
+
+    def _quality_fragment_for_rows(self, rows: list[dict], idxs: list[int]) -> str | None:
+        """为指定行构建质量窄表 INSERT 片段；无质量则返回 None。"""
+        value_clauses: list[str] = []
+        q_stable: str | None = None
+        q_child: str | None = None
+        device_code: str | None = None
+
+        for i in idxs:
+            row = rows[i]
+            qualities = row.get("qualities") or {}
+            if not qualities:
+                continue
+            if q_stable is None:
+                q_stable = _quality_stable_from_value_stable(row["stable"])
+                q_child = quality_child_table_name(row["device_code"])
+                device_code = str(row["device_code"])
+            ts = int(row["ts"])
+            for var_id, quality in qualities.items():
+                value_clauses.append(
+                    f"({ts}, {int(var_id)}, {int(quality)})"
+                )
+
+        if not value_clauses or q_stable is None or q_child is None or device_code is None:
+            return None
+
+        db = _quote(self._database)
+        tbl = _quote(q_child)
+        stbl = _quote(q_stable)
+        tag_val = device_code.replace("'", "''")
+        header = (
+            f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') "
+            f"(`ts`, `var_id`, `quality`) VALUES "
+        )
+        return header + " ".join(value_clauses)
+
     # ------------------------------------------------------------------
     # 写入
     # ------------------------------------------------------------------
@@ -386,7 +488,7 @@ class TDengineWriter:
     ) -> list[tuple[list[int], str, float]]:
         """将行跨多个子表写入为分块的多表 INSERT。Write rows across many child tables as chunked multi-table INSERTs.
 
-        rows[i] = {child_table, stable, device_code, ts, columns}. Rows of any
+        rows[i] = {child_table, stable, device_code, ts, columns, qualities?}. Rows of any
         number of child tables (and stables) are packed into single INSERT
         statements bounded by MAX_SQL_BYTES, since one TDengine statement can
         cover thousands of subtables but is capped at ~4 MiB of SQL.
@@ -407,6 +509,7 @@ class TDengineWriter:
             # 以便 INSERT 永远不会引用超级表缺少的列。
             cols_by_stable: dict[str, list[str]] = {}
             seen_by_stable: dict[str, set[str]] = {}
+            quality_stables: set[str] = set()
             for row in rows:
                 stable = row["stable"]
                 seen = seen_by_stable.setdefault(stable, set())
@@ -415,8 +518,12 @@ class TDengineWriter:
                     if col not in seen:
                         seen.add(col)
                         cols.append(col)
+                if row.get("qualities"):
+                    quality_stables.add(_quality_stable_from_value_stable(stable))
             for stable, cols in cols_by_stable.items():
                 await self._ensure_columns(stable, cols)
+            for q_stable in quality_stables:
+                await self._ensure_quality_stable(q_stable)
 
             results: list[tuple[list[int], str, float]] = []
             for indices, sql in self._iter_chunks(rows):
@@ -477,10 +584,13 @@ class TDengineWriter:
         by_table: dict[str, list[int]] = {}
         for i in indices:
             by_table.setdefault(rows[i]["child_table"], []).append(i)
-        fragments = [
-            self._subtable_fragment(rows, idxs, self._union_cols(rows, idxs))
-            for idxs in by_table.values()
-        ]
+        fragments = []
+        for idxs in by_table.values():
+            frag = self._subtable_fragment(rows, idxs, self._union_cols(rows, idxs))
+            q_frag = self._quality_fragment_for_rows(rows, idxs)
+            if q_frag:
+                frag = f"{frag} {q_frag}"
+            fragments.append(frag)
         return "INSERT INTO " + " ".join(fragments)
 
     @staticmethod
@@ -558,12 +668,15 @@ class TDengineWriter:
         for i, row in enumerate(rows):
             by_table.setdefault(row["child_table"], []).append(i)
 
-        # 构建每个子表的片段（按行拆分过大的子表）。
+        # 构建每个子表的片段（按行拆分过大的子表）；同块附带质量窄表片段。
         fragments: list[tuple[str, list[int], int]] = []
         for idxs in by_table.values():
             all_cols = self._union_cols(rows, idxs)
             for frag_idxs in self._split_subtable(rows, idxs, all_cols):
                 frag = self._subtable_fragment(rows, frag_idxs, all_cols)
+                q_frag = self._quality_fragment_for_rows(rows, frag_idxs)
+                if q_frag:
+                    frag = f"{frag} {q_frag}"
                 fragments.append((frag, frag_idxs, len(frag.encode("utf-8"))))
 
         # 使用 Next-fit 算法将片段打包成块。

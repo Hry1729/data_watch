@@ -16,9 +16,11 @@ pub async fn agent_request(
     path: String,
     body: Option<String>,
     token: Option<String>,
+    timeout_secs: Option<u64>,
 ) -> Result<(u16, String), String> {
     let url = format!("http://127.0.0.1:7070{}", path);
-    let client = build_client(Duration::from_secs(5))?;
+    let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
+    let client = build_client(timeout)?;
 
     let mut req = match method.as_str() {
         "GET" => client.get(&url),

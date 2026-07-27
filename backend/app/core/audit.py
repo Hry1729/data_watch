@@ -112,19 +112,27 @@ def audit_log(
 
                 duration_ms = int((time.time() - start_time) * 1000)
 
-                await write_operation_log(
-                    operator_id=operator_id,
-                    operator_name=operator_name,
-                    module_name=module_name,
-                    action_name=action_name,
-                    level=level,
-                    content=content,
-                    detail=detail,
-                    request_id=request_id,
-                    duration_ms=duration_ms,
-                    result_status=result_status,
-                    biz_type=biz_type,
-                )
+                # ✅ 审计写入用 try-except 保护，失败不影响业务结果
+                try:
+                    await write_operation_log(
+                        operator_id=operator_id,
+                        operator_name=operator_name,
+                        module_name=module_name,
+                        action_name=action_name,
+                        level=level,
+                        content=content,
+                        detail=detail,
+                        request_id=request_id,
+                        duration_ms=duration_ms,
+                        result_status=result_status,
+                        biz_type=biz_type,
+                    )
+                except Exception as audit_error:
+                    # 审计失败只记录日志，不影响业务结果
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"审计日志写入失败 {module_name}.{action_name}: {audit_error}"
+                    )
 
                 return result
 
@@ -135,20 +143,28 @@ def audit_log(
 
                 duration_ms = int((time.time() - start_time) * 1000)
 
-                await write_operation_log(
-                    operator_id=operator_id,
-                    operator_name=operator_name,
-                    module_name=module_name,
-                    action_name=action_name,
-                    level="ERROR",
-                    content=content,
-                    detail=detail,
-                    request_id=request_id,
-                    duration_ms=duration_ms,
-                    result_status=result_status,
-                    biz_type=biz_type,
-                )
+                # ✅ 业务失败的审计也用 try-except 保护
+                try:
+                    await write_operation_log(
+                        operator_id=operator_id,
+                        operator_name=operator_name,
+                        module_name=module_name,
+                        action_name=action_name,
+                        level="ERROR",
+                        content=content,
+                        detail=detail,
+                        request_id=request_id,
+                        duration_ms=duration_ms,
+                        result_status=result_status,
+                        biz_type=biz_type,
+                    )
+                except Exception as audit_error:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        f"审计日志写入失败 {module_name}.{action_name}: {audit_error}"
+                    )
 
+                # ✅ 重新抛出原始业务异常，不是审计异常
                 raise
 
         return wrapper

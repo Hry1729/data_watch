@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="HslControls.WPF.HslCoolFan" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:HslControls.WPF">
+  <Grid>
+    <Viewbox Stretch="Uniform">
+      <Canvas Name="Group_Cool_fan__animation_frame_2" UseLayoutRounding="False" Tag="#00000000,#FF008000,Original,0,None" LayoutTransform="Identity" Width="112.5" Height="112.5" HorizontalAlignment="Left" VerticalAlignment="Top">
+        <Canvas Name="Group_Fan_Shroud" Tag="#00000000,#FF008000,Original,0,None" Width="112.5" Height="112.5" Top="-0.5">
+          <Path Data="M0,112 L112.5,112 L112.5,-0.5 L0,-0.5" Stretch="Fill" Width="112.5" Height="112.5" Canvas.Left="0">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0.01" Color="{Binding Path=EdgeColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFF5F5F5" Offset="0.51" />
+                  <GradientStop Offset="1" Color="{Binding Path=EdgeColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+        </Canvas>
+        <Canvas Name="Group_Back" Tag="#00000000,#FF008000,Original,0,None" Width="103.912" Height="108.641" Left="4.617" Top="3.359">
+          <Path Data="F1 M108.5293,55.3145 C108.5293,84.0085 85.2673,107.2705 56.5733,107.2705 C27.8793,107.2705 4.6173,84.0085 4.6173,55.3145 C4.6173,26.6205 27.8793,3.3585 56.5733,3.3585 C85.2673,3.3585 108.5293,26.6205 108.5293,55.3145" Stretch="Fill" Fill="#FF7F7F7F" Width="103.912" Height="103.912" Canvas.Left="0" Canvas.Top="0" />
+          <Path Data="F1 M105.4053,55.6934 C105.4053,82.8724 83.3723,104.9054 56.1933,104.9054 C29.0143,104.9054 6.9823,82.8724 6.9823,55.6934 C6.9823,28.5144 29.0143,6.4824 56.1933,6.4824 C83.3723,6.4824 105.4053,28.5144 105.4053,55.6934" Stretch="Fill" Fill="#FF231F20" Width="98.423" Height="98.423" Canvas.Left="2.365" Canvas.Top="3.124" />
+          <Path Data="F1 M6.982,109.072 L13.964,109.072 L13.964,112 L6.982,112" Stretch="Fill" Fill="#FF000000" Width="6.982" Height="2.928" Canvas.Left="2.365" Canvas.Top="105.713" />
+          <Path Data="F1 M16.329,109.072 L23.311,109.072 L23.311,112 L16.329,112" Stretch="Fill" Fill="#FF000000" Width="6.982" Height="2.928" Canvas.Left="11.712" Canvas.Top="105.713" />
+          <Path Data="F1 M32.771,109.072 L39.753,109.072 L39.753,112 L32.771,112" Stretch="Fill" Fill="#FF000000" Width="6.982" Height="2.928" Canvas.Left="28.154" Canvas.Top="105.713" />
+          <Path Data="F1 M105.405,112 L98.424,112 L98.424,109.072 L105.405,109.072" Stretch="Fill" Fill="#FF000000" Width="6.981" Height="2.928" Canvas.Left="93.807" Canvas.Top="105.713" />
+          <Path Data="F1 M96.059,112 L89.078,112 L89.078,109.072 L96.059,109.072" Stretch="Fill" Fill="#FF000000" Width="6.981" Height="2.928" Canvas.Left="84.461" Canvas.Top="105.713" />
+          <Path Data="F1 M79.617,112 L72.635,112 L72.635,109.072 L79.617,109.072" Stretch="Fill" Fill="#FF000000" Width="6.982" Height="2.928" Canvas.Left="68.018" Canvas.Top="105.713" />
+        </Canvas>
+        <Canvas Name="Group_Impeller" Tag="#00000000,#FF008000,Original,0,None" Width="94.266" Height="90.158" Left="9.101" Top="10.812" RenderTransformOrigin="0.5,0.5">
+          <UIElement.RenderTransform>
+            <RotateTransform Angle="{Binding Path=StartAngle, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+          </UIElement.RenderTransform>
+          <Path Data="F1 M87.5371,91.499 L67.0661,58.345 L53.6521,66.627 L74.1221,99.781" Stretch="Fill" Fill="#FF4D4D4D" Width="33.885" Height="41.436" Canvas.Left="44.551" Canvas.Top="47.533" />
+          <Path Data="F1 M102.918,46.5317 L63.687,47.7257 L64.27,63.2477 L103.311,62.1717" Stretch="Fill" Fill="#FF4D4D4D" Width="39.624" Height="16.716" Canvas.Left="54.586" Canvas.Top="35.72" />
+          <Path Data="F1 M71.5996,10.812 L53.1476,45.233 L66.7626,52.708 L85.4066,18.169" Stretch="Fill" Fill="#FF4D4D4D" Width="32.259" Height="41.896" Canvas.Left="44.047" Canvas.Top="0" />
+          <Path Data="F1 M40.8364,100.7451 L59.2884,66.3241 L45.6724,58.8491 L27.0294,93.3891" Stretch="Fill" Fill="#FF4D4D4D" Width="32.259" Height="41.896" Canvas.Left="17.928" Canvas.Top="48.037" />
+          <Path Data="F1 M24.8989,20.0586 L45.3689,53.2126 L58.7829,44.9296 L38.3129,11.7766" Stretch="Fill" Fill="#FF4D4D4D" Width="33.884" Height="41.436" Canvas.Left="15.798" Canvas.Top="0.965" />
+          <Path Data="F1 M9.5171,65.0254 L48.7481,63.8314 L48.1651,48.3094 L9.1251,49.3864" Stretch="Fill" Fill="#FF4D4D4D" Width="39.623" Height="16.716" Canvas.Left="0.024" Canvas.Top="37.497" />
+          <Path Data="F1 M68.623,29.844 C68.18,30.692 67.294,32.39 66.849,33.236 L66.849,33.236 C62.349,41.851 53.839,45.498 53.839,45.498 L53.839,45.498 L67.811,52.798 C67.811,52.798 75.929,49.903 81.041,40.122 L81.041,40.122 C81.525,39.199 82.265,37.775 82.749,36.854 L82.749,36.854 C87.38,27.99 85.855,18.262 85.855,18.262 L85.855,18.262 L71.881,10.963 C71.881,10.963 72.942,21.576 68.623,29.844" Stretch="Fill" Width="32.256" Height="41.835" Canvas.Left="44.738" Canvas.Top="0.151">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="-0.046,0.769" EndPoint="1.05,0.247">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="F1 M30.46,42.912 C29.422,42.953 27.816,43.015 26.778,43.055 L26.778,43.055 C16.784,43.443 9.101,49.601 9.101,49.601 L9.101,49.601 L9.713,65.357 C9.713,65.357 18.395,59.158 27.715,58.796 L27.715,58.796 C28.672,58.76 30.585,58.686 31.541,58.648 L31.541,58.648 C41.253,58.273 48.648,63.845 48.648,63.845 L48.648,63.845 L48.038,48.091 C48.038,48.091 41.961,42.889 31.656,42.889 L31.656,42.889 C31.264,42.889 30.866,42.897 30.46,42.912" Stretch="Fill" Width="39.547" Height="22.468" Canvas.Left="0" Canvas.Top="32.077">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0.023,1.02" EndPoint="0.919,0.046">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="F1 M53.652,66.627 C53.652,66.627 51.992,75.085 57.79,84.474 L57.79,84.474 C58.337,85.361 59.18,86.729 59.728,87.615 L59.728,87.615 C64.983,96.122 74.122,99.783 74.122,99.783 L74.122,99.783 L87.537,91.499 C87.537,91.499 77.87,86.988 72.968,79.052 L72.968,79.052 L70.958,75.794 C65.851,67.526 67.066,58.345 67.066,58.345 L67.066,58.345" Stretch="Fill" Width="34.105" Height="41.438" Canvas.Left="44.331" Canvas.Top="47.533">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0.785,0.909" EndPoint="0.185,0.109">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="F1 M32.31,71.608 C31.807,72.52 31.03,73.926 30.528,74.837 L30.528,74.837 C25.694,83.591 26.995,93.352 26.995,93.352 L26.995,93.352 L40.798,100.97 C40.798,100.97 39.98,90.335 44.489,82.168 L44.489,82.168 C44.951,81.331 45.876,79.655 46.339,78.816 L46.339,78.816 C51.035,70.308 59.629,66.861 59.629,66.861 L59.629,66.861 L45.827,59.239 C45.827,59.239 37.644,61.947 32.31,71.608" Stretch="Fill" Width="32.793" Height="41.731" Canvas.Left="17.735" Canvas.Top="48.427">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="-0.044,0.756" EndPoint="1.037,0.231">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="F1 M84.789,52.866 C83.833,52.9 81.92,52.967 80.963,52.999 L80.963,52.999 C71.251,53.337 63.878,47.735 63.878,47.735 L63.878,47.735 L64.426,63.49 C64.426,63.49 70.952,69.124 81.98,68.741 L81.98,68.741 C83.021,68.704 84.626,68.649 85.665,68.611 L85.665,68.611 C95.66,68.264 103.367,62.135 103.367,62.135 L103.367,62.135 L102.819,46.38 C102.819,46.38 94.111,52.542 84.789,52.866" Stretch="Fill" Width="39.489" Height="22.38" Canvas.Left="54.777" Canvas.Top="35.568">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0.083,0.963" EndPoint="0.98,-0.015">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+          <Path Data="F1 M24.851,20.087 C24.851,20.087 34.518,24.597 39.418,32.535 L39.418,32.535 C39.921,33.349 40.927,34.978 41.431,35.792 L41.431,35.792 C46.535,44.062 45.322,53.243 45.322,53.243 L45.322,53.243 L58.738,44.96 C58.738,44.96 60.396,36.501 54.598,27.11 L54.598,27.11 C54.05,26.225 53.207,24.857 52.661,23.973 L52.661,23.973 C47.408,15.464 38.265,11.805 38.265,11.805 L38.265,11.805" Stretch="Fill" Width="34.106" Height="41.438" Canvas.Left="15.75" Canvas.Top="0.993">
+            <Shape.Fill>
+              <LinearGradientBrush StartPoint="0.816,0.89" EndPoint="0.216,0.091">
+                <GradientBrush.GradientStops>
+                  <GradientStop Offset="0" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                  <GradientStop Color="#FFECECED" Offset="0.5" />
+                  <GradientStop Offset="1" Color="{Binding Path=CenterColor, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCoolFan}}}" />
+                </GradientBrush.GradientStops>
+              </LinearGradientBrush>
+            </Shape.Fill>
+          </Path>
+        </Canvas>
+        <Canvas Name="Group_Axial" Tag="#00000000,#FF008000,Original,0,None" Width="27.481" Height="27.481" Left="42.477" Top="42.038">
+          <Path Data="F1 M49,44.0884 C55.456,40.1024 63.922,42.1044 67.908,48.5604 C71.895,55.0164 69.892,63.4824 63.436,67.4684 C56.979,71.4554 48.514,69.4524 44.528,62.9964 C40.542,56.5404 42.544,48.0754 49,44.0884" Stretch="Fill" Fill="#FF666666" Width="27.481" Height="27.481" Canvas.Left="0" Canvas.Top="0" />
+          <Path Data="F1 M50.0649,45.813 C55.5689,42.415 62.7849,44.122 66.1829,49.626 C69.5809,55.129 67.8739,62.346 62.3709,65.743 C56.8669,69.142 49.6509,67.436 46.2519,61.932 C42.8549,56.428 44.5619,49.211 50.0649,45.813" Stretch="Fill" Fill="#FFE5E5E5" Width="23.426" Height="23.427" Canvas.Left="2.027" Canvas.Top="2.027" />
+          <Path Data="F1 M54.2065,52.5205 C56.0055,51.4095 58.3645,51.9675 59.4755,53.7675 C60.5865,55.5665 60.0295,57.9245 58.2295,59.0365 C56.4305,60.1475 54.0705,59.5895 52.9595,57.7905 C51.8495,55.9905 52.4075,53.6315 54.2065,52.5205" Stretch="Fill" Fill="#FF7F7F7F" Width="7.659" Height="7.659" Canvas.Left="9.911" Canvas.Top="9.911" />
+        </Canvas>
+      </Canvas>
+    </Viewbox>
+  </Grid>
+</UserControl>

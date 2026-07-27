@@ -1,0 +1,21 @@
+manifest_version = 1
+driver_api = "1.0"
+
+id = "modbus_tcp"
+protocol = "modbus_tcp"
+name = "Modbus TCP"
+description = "Modbus TCP 通用只读驱动（FC1 线圈 / FC3 保持寄存器）"
+version = "1.0.0"
+entry = "modbus_tcp.driver:create_driver"
+
+python_abi = "cp314t"
+os = ["windows"]
+architectures = ["x86_64"]
+
+capabilities = [
+  "poll",
+  "batch_contiguous",
+  "read",
+]
+
+read_write = "只读"

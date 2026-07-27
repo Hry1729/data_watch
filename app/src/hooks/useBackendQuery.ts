@@ -30,8 +30,11 @@ export function useBackendQuery<T>(
     }
     const activeToken = token;
     let active = true;
+    let inFlight = false;
 
     async function fetchOnce() {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const result = await load(activeToken);
         if (!active) return;
@@ -46,6 +49,7 @@ export function useBackendQuery<T>(
         }
         setError(appError?.type === "network_error" ? "无法连接到后端服务" : "数据加载失败");
       } finally {
+        inFlight = false;
         if (active) setLoading(false);
       }
     }

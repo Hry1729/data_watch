@@ -33,6 +33,7 @@ from core.opcda_mapper import OpcDaTagMapper
 from core.system_log import SystemLogWriter
 from core.dry_run import dry_run_main
 from device.manager import DeviceManager, is_center_collection_protocol
+from device.device import Device, DeviceStatus
 from collector.bounded_executor import BoundedExecutor, BoundedThreadPoolExecutor
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
@@ -41,6 +42,7 @@ from storage.redis_client import get_redis, close_pool
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
+from monitor.driver_status_server import DriverStatusServer
 from monitor.performance import PerformanceMetrics
 
 logger = get_logger("main")
@@ -166,6 +168,7 @@ class CollectorApp:
                 max_batch_size=ingest_cfg.max_batch_size,
                 max_body_bytes=ingest_cfg.max_body_bytes,
             )
+        self.driver_status_server = None
     async def start(self) -> None:
         """启动采集服务"""
         self.performance_metrics.enable_gc_pause_tracking()
@@ -222,6 +225,29 @@ class CollectorApp:
                 realtime_config=self.config,
                 device_manager=self.device_manager,
             )
+
+        # 5b. 驱动加载状态探针（供 Agent 确认真实 loaded）
+        def _list_loaded_drivers():
+            registry = self.device_manager._resolve_driver_registry()
+            if registry is None:
+                return []
+            return registry.list_status()
+
+        def _registry_generation() -> int:
+            registry = self.device_manager._resolve_driver_registry()
+            if registry is None:
+                return 0
+            return int(getattr(registry, "generation", 0) or 0)
+
+        self.driver_status_server = DriverStatusServer(
+            list_drivers=_list_loaded_drivers,
+            get_generation=_registry_generation,
+        )
+        try:
+            self.driver_status_server.start()
+        except OSError as exc:
+            logger.warning("Driver status server failed to bind: %s", exc)
+            self.driver_status_server = None
 
         # 6. 启动健康检查
         self._health_task = asyncio.create_task(self.health_checker.run())
@@ -301,6 +327,9 @@ class CollectorApp:
 
         if self.ingest_server is not None:
             await self.ingest_server.stop()
+        if self.driver_status_server is not None:
+            self.driver_status_server.stop()
+            self.driver_status_server = None
         unfinished_jobs = await self.executor.shutdown(timeout=SHUTDOWN_DRAIN_TIMEOUT)
         await self.device_manager.disconnect_all()
         # 读池在驱动 disconnect 之后再关：disconnect 自身也走该池。
@@ -442,20 +471,44 @@ class CollectorApp:
                     try:
                         old_sig = tracked[device_id]
                         new_sig = current[device_id]
+                        # 任意协议：先在候选上完成校验；失败保留旧代际，禁止先删后建。
+                        config_error = self.device_manager.validate_device_config(
+                            dev_cfg, vars_by_dev.get(device_id, [])
+                        )
+                        # 仅真实错误字符串才拒绝（避免测试桩 MagicMock 被当成失败）
+                        if isinstance(config_error, str) and config_error.strip():
+                            old_device = self.device_manager.get_device(device_id)
+                            if old_device is not None:
+                                old_device.config_error = config_error
+                            logger.error(
+                                "Rejected invalid reload device=%s; keeping previous generation: %s",
+                                device_id,
+                                config_error,
+                            )
+                            continue
                         if old_sig.device_fields_changed(new_sig):
                             if is_center_collection_protocol(dev_cfg.protocol):
                                 logger.warning(
                                     "OPC DA device %s config changed; Agent must have reconciled proxy and port mapping before collector rebuild",
                                     device_id,
                                 )
-                            await self._remove_device(device_id)
-                            await self._add_device(dev_cfg, vars_by_dev.get(device_id, []))
+                            await self._replace_device_atomic(
+                                device_id,
+                                dev_cfg,
+                                vars_by_dev.get(device_id, []),
+                            )
                         else:
                             await self._apply_device_variables(
                                 device_id, dev_cfg, vars_by_dev.get(device_id, [])
                             )
+                        old_device = self.device_manager.get_device(device_id)
+                        if old_device is not None:
+                            old_device.config_error = None
                         tracked[device_id] = new_sig
                     except Exception as exc:
+                        old_device = self.device_manager.get_device(device_id)
+                        if old_device is not None:
+                            old_device.config_error = str(exc)
                         logger.error("Failed to reload device %s: %s", device_id, exc)
 
                 # 约束4：无论个别设备是否失败，都以本轮完整快照刷新
@@ -470,6 +523,104 @@ class CollectorApp:
             except Exception as exc:
                 logger.error("Config reload loop error: %s", exc)
 
+    async def _replace_device_atomic(self, device_id: str, dev_cfg, var_cfgs) -> None:
+        """字段变更：候选不入表，就绪后原子交换；失败保留旧代际。"""
+        from collector.task import CollectTask
+
+        old = self.device_manager.get_device(device_id)
+        old_tasks = []
+        if isinstance(old, Device):
+            old_tasks = [
+                CollectTask(device=old, scan_task=st) for st in old.scan_tasks
+            ]
+
+        candidate = self.device_manager.prepare_candidate_device(dev_cfg, var_cfgs)
+        if candidate.status == DeviceStatus.CONFIG_ERROR:
+            if isinstance(old, Device):
+                old.config_error = candidate.config_error
+            logger.error(
+                "Device %s candidate config error; kept previous generation: %s",
+                device_id,
+                candidate.config_error,
+            )
+            raise RuntimeError(candidate.config_error or "candidate CONFIG_ERROR")
+
+        try:
+            ok = await self.device_manager.connect_device(candidate)
+            if not ok:
+                await self.device_manager.discard_candidate(candidate)
+                logger.error(
+                    "Device %s candidate connect failed; kept previous generation",
+                    device_id,
+                )
+                raise RuntimeError("candidate connect failed")
+
+            new_tasks = [
+                CollectTask(device=candidate, scan_task=st)
+                for st in candidate.scan_tasks
+            ]
+
+            # 原子交换后再装调度；失败则换回旧对象并重装旧任务
+            await self.device_manager.swap_device(device_id, candidate)
+            try:
+                await self.scheduler.reload_device_tasks(device_id, new_tasks)
+            except Exception:
+                if isinstance(old, Device):
+                    await self.device_manager.swap_device(device_id, old)
+                    # 先恢复连接，再装调度，避免任务在断连态抢跑
+                    try:
+                        ok = await self.device_manager.connect_device(old)
+                        if not ok:
+                            await self.device_manager.schedule_reconnect(old)
+                            logger.error(
+                                "Device %s reconnect previous returned False; "
+                                "scheduled reconnect",
+                                device_id,
+                            )
+                    except Exception as reconnect_exc:
+                        logger.error(
+                            "Device %s reconnect previous after rollback failed: %s",
+                            device_id,
+                            reconnect_exc,
+                        )
+                        try:
+                            await self.device_manager.schedule_reconnect(old)
+                        except Exception as schedule_exc:
+                            logger.error(
+                                "Device %s schedule_reconnect after rollback also failed: %s",
+                                device_id,
+                                schedule_exc,
+                            )
+                    try:
+                        await self.scheduler.reload_device_tasks(device_id, old_tasks)
+                    except Exception as restore_exc:
+                        logger.error(
+                            "Device %s reinstall previous tasks failed: %s",
+                            device_id,
+                            restore_exc,
+                        )
+                    logger.error(
+                        "Device %s scheduler install failed; restored previous generation",
+                        device_id,
+                    )
+                await self.device_manager.discard_candidate(candidate)
+                raise
+
+            logger.info(
+                "Device %s atomically replaced: version=%d tasks=%d",
+                device_id,
+                candidate.config_version,
+                len(new_tasks),
+            )
+        except Exception:
+            # 尚未 swap 成功时的清理（connect 失败已 discard）
+            if (
+                self.device_manager.get_device(device_id) is not candidate
+                and candidate.driver is not None
+            ):
+                await self.device_manager.discard_candidate(candidate)
+            raise
+
     async def _add_device(self, dev_cfg, var_cfgs) -> None:
         """运行期注册并连接一台新设备，注册其采集任务。"""
         device = self.device_manager.add_device(dev_cfg, var_cfgs)
@@ -477,7 +628,7 @@ class CollectorApp:
             return
         # 与启动行为一致：新增设备自动连接 PLC（external-push 仅置 online）
         ok = await self.device_manager.connect_device(device)
-        if not ok:
+        if not ok and device.status.value != "config_error":
             await self.device_manager.schedule_reconnect(device)
         new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
         if new_tasks:

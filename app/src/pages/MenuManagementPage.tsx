@@ -114,18 +114,19 @@ export function MenuManagementPage() {
           </CardAction>
         </CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
-            <Table>
-              <TableHeader className="bg-muted/50">
+          {/* 由外层统一横纵滚动，避免 Table 内层 overflow 把底栏滚到表格最底部 */}
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:overflow-visible">
+            <Table className="min-w-[1280px]">
+              <TableHeader className="sticky top-0 z-10 bg-muted/50">
                 <TableRow>
                   <TableHead className="min-w-64 text-center">菜单名称</TableHead>
-                  <TableHead className="text-center">类型</TableHead>
+                  <TableHead className="min-w-20 text-center">类型</TableHead>
                   <TableHead className="min-w-44 text-center">路由</TableHead>
                   <TableHead className="min-w-52 text-center">组件</TableHead>
-                  <TableHead className="text-center">排序</TableHead>
-                  <TableHead className="text-center">状态</TableHead>
-                  <TableHead className="min-w-64 text-center">按钮权限</TableHead>
-                  <TableHead className="text-center">操作</TableHead>
+                  <TableHead className="min-w-16 text-center">排序</TableHead>
+                  <TableHead className="min-w-20 text-center">状态</TableHead>
+                  <TableHead className="min-w-72 text-center">按钮权限</TableHead>
+                  <TableHead className="min-w-40 text-center">操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

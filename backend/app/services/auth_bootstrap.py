@@ -281,6 +281,7 @@ PERMISSION_SEEDS = [
     PermissionSeed("device_monitor:dashboard:view", "工作台查看", "page", "MonitorDashboard", "device_monitor:dashboard:view", sort=10),
     PermissionSeed("device_monitor:monitor:view", "监控卡片查看", "page", "DeviceMonitorCard", "device_monitor:monitor:view", sort=15),
     PermissionSeed("device_monitor:driver:view", "驱动管理查看", "page", "DriverManage", "device_monitor:driver:view", sort=20),
+    PermissionSeed("device_monitor:driver:manage", "驱动安装卸载", "action", "DriverManage", "device_monitor:driver:manage", sort=21),
     PermissionSeed("device_monitor:device:view", "设备管理查看", "page", "DeviceManage", "device_monitor:device:view", sort=30),
     PermissionSeed("device_monitor:device:create", "设备新增", "action", "DeviceManage", "device_monitor:device:create", sort=31),
     PermissionSeed("device_monitor:device:update", "设备编辑", "action", "DeviceManage", "device_monitor:device:update", sort=32),

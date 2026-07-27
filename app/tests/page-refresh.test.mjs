@@ -55,3 +55,11 @@ test("custom data pages refresh without discarding their current state", async (
   assert.match(settingsSource, /streamMaxlenDirtyRef/);
   assert.match(settingsSource, /refreshVersion/);
 });
+
+test("backend polling serializes requests so slow responses cannot overlap", async () => {
+  const source = await readFile(new URL("../src/hooks/useBackendQuery.ts", import.meta.url), "utf8");
+  assert.match(source, /let inFlight = false/);
+  assert.match(source, /if \(inFlight\) return/);
+  assert.match(source, /inFlight = true/);
+  assert.match(source, /inFlight = false/);
+});

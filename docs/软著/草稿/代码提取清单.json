@@ -1,0 +1,84 @@
+{
+  "software_name": "工业设备数据采集与监控平台",
+  "version": "V1.0",
+  "project_root": "D:\\python\\device_alarm\\data_watch",
+  "file_count": 6,
+  "material_line_count": 6000,
+  "source_line_count": 6760,
+  "selected_source_line_count": 5994,
+  "lines_per_page": 50,
+  "total_pages": 120,
+  "target_pages": 60,
+  "available_candidate_line_count": 107176,
+  "available_candidate_pages": 2144,
+  "supplement_status": "候选源码可达到前30页/后30页要求",
+  "mode": "front30_back30",
+  "selection_file": "软件著作权申请资料\\草稿\\代码文件选择.json",
+  "outputs": [
+    "代码-前30页.md",
+    "代码-后30页.md"
+  ],
+  "files": [
+    {
+      "path": "collector/main.py",
+      "source_line_count": 734,
+      "blank_line_count": 71,
+      "selected_line_start": 1,
+      "selected_line_end": 734,
+      "selected_line_count": 663,
+      "material_line_start": 1,
+      "material_line_end": 664
+    },
+    {
+      "path": "collector/collector/executor.py",
+      "source_line_count": 682,
+      "blank_line_count": 71,
+      "selected_line_start": 1,
+      "selected_line_end": 682,
+      "selected_line_count": 611,
+      "material_line_start": 665,
+      "material_line_end": 1276
+    },
+    {
+      "path": "frontend/src/views/device_monitor/history/index.vue",
+      "source_line_count": 1625,
+      "blank_line_count": 199,
+      "selected_line_start": 1,
+      "selected_line_end": 1625,
+      "selected_line_count": 1426,
+      "material_line_start": 1277,
+      "material_line_end": 2703
+    },
+    {
+      "path": "frontend/src/views/device_monitor/realtime/index.vue",
+      "source_line_count": 2436,
+      "blank_line_count": 282,
+      "selected_line_start": 1,
+      "selected_line_end": 2436,
+      "selected_line_count": 2154,
+      "material_line_start": 2704,
+      "material_line_end": 4858
+    },
+    {
+      "path": "writer/consumer.py",
+      "source_line_count": 699,
+      "blank_line_count": 65,
+      "selected_line_start": 1,
+      "selected_line_end": 699,
+      "selected_line_count": 634,
+      "material_line_start": 4859,
+      "material_line_end": 5493
+    },
+    {
+      "path": "writer/tdengine_writer.py",
+      "source_line_count": 584,
+      "blank_line_count": 78,
+      "selected_line_start": 1,
+      "selected_line_end": 584,
+      "selected_line_count": 506,
+      "material_line_start": 5494,
+      "material_line_end": 6000
+    }
+  ],
+  "safe_software_filename": "工业设备数据采集与监控平台"
+}

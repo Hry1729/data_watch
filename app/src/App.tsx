@@ -97,7 +97,6 @@ function AppStartup({ children }: { children: ReactNode }) {
   const [deciding, setDeciding] = useState(true);
 
   useEffect(() => {
-    agentClient
     withStartupTimeout(agentClient.getBootstrapStatus())
       .then(async ({ in_bootstrap }) => {
         // 运行期后端地址：从 Agent 读取并注入 backend-client（替代打包写死的 VITE_BACKEND_URL）。
@@ -142,9 +141,10 @@ function AgentErrorPage() {
 
   function handleRetry() {
     setRetrying(true);
-    agentClient
     withStartupTimeout(agentClient.getBootstrapStatus())
-      .then(({ in_bootstrap }) => {
+      .then(async ({ in_bootstrap }) => {
+        const { backend_base_url } = await withStartupTimeout(agentClient.getRuntimeConfig());
+        setBackendBaseUrl(backend_base_url);
         if (in_bootstrap) navigate("/bootstrap", { replace: true });
         else navigate("/login", { replace: true });
       })

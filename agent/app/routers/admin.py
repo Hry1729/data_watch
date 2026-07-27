@@ -1,18 +1,27 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from app.core.config import (
     DB_SECTIONS,
     apply_db_patch,
+    data_root,
     load_config,
     module_paths,
     mutate_config,
 )
-from app.core.deps import get_current_user
+from app.core.deps import (
+    get_current_admin,
+    get_current_admin_or_driver_service,
+    get_driver_service,
+)
 from app.core.security import dpapi_decrypt
 from app.schemas.models import (
     ConnectionConfigIn,
@@ -20,10 +29,19 @@ from app.schemas.models import (
     HealthCheckRequest,
     HealthCheckResponse,
 )
+from app.services.driver_installer import DriverInstallError, DriverInstaller
+from app.services.driver_zip import DriverZipError
 from app.services.health_checker import check_mysql, check_redis, check_tdengine
 from app.services.process_manager import ProcessManagerError
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
+
+
+class DriverInstallJsonBody(BaseModel):
+    """JSON 方式提交驱动包（便于测试与无 multipart 客户端）。"""
+
+    package_base64: str = Field(..., min_length=1)
 
 
 def _require_known(pm, name: str) -> None:
@@ -127,7 +145,7 @@ def _writer_env() -> dict[str, str]:
 
 
 @router.post("/processes/{name}/start")
-async def start_process(name: str, request: Request, _user: str = Depends(get_current_user)):
+async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
     pm = request.app.state.pm
     _require_known(pm, name)
     if pm.status(name).status == "running":
@@ -150,7 +168,7 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
 
 @router.post("/processes/{name}/stop")
-async def stop_process(name: str, request: Request, _user: str = Depends(get_current_user)):
+async def stop_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
     pm = request.app.state.pm
     _require_known(pm, name)
     await pm.stop(name)
@@ -162,7 +180,7 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
 
 
 @router.post("/processes/{name}/restart")
-async def restart_process(name: str, request: Request, _user: str = Depends(get_current_user)):
+async def restart_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
     pm = request.app.state.pm
     _require_known(pm, name)
 
@@ -183,7 +201,7 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 
 
 @router.get("/config", response_model=ConnectionConfigOut)
-async def get_config(_user: str = Depends(get_current_user)):
+async def get_config(_user: str = Depends(get_current_admin)):
     cfg = load_config()
     return ConnectionConfigOut(
         redis=_db_config_out(cfg, "redis"),
@@ -195,7 +213,7 @@ async def get_config(_user: str = Depends(get_current_user)):
 
 
 @router.put("/config")
-async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_current_user)):
+async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_current_admin)):
     try:
         # 进程段(collector/writer)路径由 config.module_paths 按安装根/数据根派生，
         # 只读不可配置；PUT 仅处理 DB 段。
@@ -215,7 +233,7 @@ async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_cu
 @router.post("/health/check", response_model=HealthCheckResponse)
 async def health_check(
     request: HealthCheckRequest,
-    _user: str = Depends(get_current_user),
+    _user: str = Depends(get_current_admin),
 ) -> HealthCheckResponse:
     cfg = load_config()
 
@@ -234,3 +252,201 @@ async def health_check(
         "tdengine": check_tdengine,
     }
     return await asyncio.to_thread(checkers[request.target], target_cfg)
+
+
+def _get_installer(request: Request) -> DriverInstaller:
+    installer = getattr(request.app.state, "driver_installer", None)
+    if installer is None:
+        installer = DriverInstaller(data_root() / "drivers")
+        request.app.state.driver_installer = installer
+    return installer
+
+
+async def _restart_collector_for_drivers(request: Request) -> None:
+    """安装/卸载后冷加载：复用现有 collector restart 拼参与 env。"""
+    pm = request.app.state.pm
+    if "collector" not in pm.modules:
+        raise ProcessManagerError("collector module not configured")
+    extra_args = _collector_extra_args(request)
+    env = _collector_env()
+    await pm.restart("collector", extra_args=extra_args, env=env)
+    request.app.state.log_manager.attach(
+        "collector",
+        pm.log_file("collector"),
+        asyncio.get_running_loop(),
+    )
+
+
+async def _collector_is_alive(request: Request) -> bool:
+    pm = request.app.state.pm
+    try:
+        return pm.status("collector").status == "running"
+    except Exception:
+        return False
+
+
+def _raise_driver_error(exc: Exception) -> None:
+    if isinstance(exc, (DriverZipError, DriverInstallError)):
+        if exc.status_code >= 500:
+            logger.exception("驱动操作内部错误")
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail="驱动操作失败，请查看 Agent 日志",
+            ) from exc
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    raise exc
+
+
+def _raise_driver_internal_error(exc: Exception) -> None:
+    logger.exception("驱动操作内部错误")
+    raise HTTPException(
+        status_code=503,
+        detail="驱动操作失败，请查看 Agent 日志",
+    ) from exc
+
+
+@router.get("/drivers")
+async def list_drivers(
+    request: Request,
+    _user: str = Depends(get_current_admin_or_driver_service),
+):
+    installer = _get_installer(request)
+    drivers = await installer.list_drivers()
+    return {
+        "drivers": drivers,
+        "recovery": installer.recovery_status(),
+    }
+
+
+@router.post("/drivers/recovery/retry")
+async def retry_driver_recovery(
+    request: Request,
+    _user: str = Depends(get_current_admin),
+):
+    """显式重试崩溃恢复：磁盘已就位时再重启 collector 并验证代际。"""
+    installer = _get_installer(request)
+
+    async def _restart() -> None:
+        await _restart_collector_for_drivers(request)
+
+    async def _alive() -> bool:
+        return await _collector_is_alive(request)
+
+    try:
+        results = await installer.recover_incomplete_operations(
+            restart_collector=_restart,
+            collector_alive=_alive,
+        )
+    except ProcessManagerError as exc:
+        _raise_driver_internal_error(exc)
+    request.app.state.driver_recovery_blocked = installer.recovery_blocked
+    return {
+        "results": results,
+        "recovery": installer.recovery_status(),
+    }
+
+
+@router.post("/drivers", status_code=201)
+async def install_driver(
+    request: Request,
+    user: str = Depends(get_current_admin),
+):
+    """安装或升级外置驱动包。
+
+    支持：
+    - multipart 字段 ``package``（文件）
+    - JSON ``{"package_base64":"..."}``
+    - 原始 ``application/zip`` body
+
+    幂等（同 ID/版本/SHA）返回 200。
+    """
+    zip_bytes: bytes | None = None
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        upload = form.get("package")
+        if upload is None:
+            raise HTTPException(status_code=400, detail="缺少 multipart 字段 package")
+        read = getattr(upload, "read", None)
+        if read is None:
+            raise HTTPException(status_code=400, detail="package 必须为文件")
+        zip_bytes = await read()
+    elif "application/json" in content_type:
+        body = DriverInstallJsonBody.model_validate(await request.json())
+        try:
+            zip_bytes = base64.b64decode(body.package_base64, validate=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"package_base64 无效: {exc}") from exc
+    else:
+        raw = await request.body()
+        if raw:
+            zip_bytes = raw
+
+    if not zip_bytes:
+        raise HTTPException(status_code=400, detail="缺少驱动 ZIP（package 或 package_base64）")
+
+    installer = _get_installer(request)
+    if installer.recovery_blocked:
+        raise HTTPException(
+            status_code=503,
+            detail="driver_recovery_blocked: 请先 POST /admin/drivers/recovery/retry",
+        )
+
+    async def _restart() -> None:
+        await _restart_collector_for_drivers(request)
+
+    async def _alive() -> bool:
+        return await _collector_is_alive(request)
+
+    try:
+        result = await installer.install(
+            zip_bytes,
+            restart_collector=_restart,
+            collector_alive=_alive,
+            operator=user,
+        )
+    except (DriverZipError, DriverInstallError) as exc:
+        _raise_driver_error(exc)
+        raise  # pragma: no cover
+    except ProcessManagerError as exc:
+        _raise_driver_internal_error(exc)
+
+    if not result.created:
+        return JSONResponse(status_code=200, content={"driver": result.driver})
+    return {"driver": result.driver}
+
+
+@router.delete("/drivers/{driver_id}")
+async def uninstall_driver(
+    driver_id: str,
+    request: Request,
+    user: str = Depends(get_driver_service),
+):
+    installer = _get_installer(request)
+    if installer.recovery_blocked:
+        raise HTTPException(
+            status_code=503,
+            detail="driver_recovery_blocked: 请先 POST /admin/drivers/recovery/retry",
+        )
+
+    async def _restart() -> None:
+        await _restart_collector_for_drivers(request)
+
+    async def _alive() -> bool:
+        return await _collector_is_alive(request)
+
+    try:
+        result = await installer.uninstall(
+            driver_id,
+            restart_collector=_restart,
+            collector_alive=_alive,
+            operator=user,
+        )
+    except (DriverZipError, DriverInstallError) as exc:
+        _raise_driver_error(exc)
+        raise  # pragma: no cover
+    except ProcessManagerError as exc:
+        _raise_driver_internal_error(exc)
+
+    return {"driver": result}

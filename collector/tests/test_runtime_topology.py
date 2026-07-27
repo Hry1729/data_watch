@@ -73,6 +73,7 @@ async def test_remove_device_cancels_reconnect_and_disconnects():
     # 模拟已连接并因故障进入重连
     device.driver = AsyncMock()
     device.driver.disconnect = AsyncMock()
+    saved_driver = device.driver
     device.status = DeviceStatus.ERROR
     manager._circuit_breakers["DEL_PLC"] = MagicMock()
     await manager.schedule_reconnect(device)
@@ -80,7 +81,7 @@ async def test_remove_device_cancels_reconnect_and_disconnects():
 
     await manager.remove_device("DEL_PLC")
 
-    device.driver.disconnect.assert_awaited_once()
+    saved_driver.disconnect.assert_awaited_once()
     assert "DEL_PLC" not in manager._reconnect_tasks
     assert "DEL_PLC" not in manager.devices
     assert "DEL_PLC" not in manager._circuit_breakers

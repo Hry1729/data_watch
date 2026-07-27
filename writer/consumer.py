@@ -3,6 +3,7 @@
 Each stream entry (produced by the collector) has these fields:
     device_code, device_type, group_code, scan_rate, ts,
     config_version, values (JSON str of {var_id: str_value})
+    可选 v2：contract_version=2, qualities (JSON str of {var_id: int})
 
 Processing pipeline per entry:
     1. Parse fields
@@ -22,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -30,6 +32,7 @@ import redis
 from dlq import push_dlq
 from mysql_mapper import MysqlMapper
 from performance import WriterPerformanceMetrics
+from quality_codes import is_valid_quality
 from tdengine_writer import BAD_DATA, LANDED, TDengineWriter
 
 logger = logging.getLogger("writer.consumer")
@@ -50,6 +53,8 @@ class _BufferedRow:
     stable: str
     ts: int
     columns: dict[str, float]
+    # var_id → 平台质量码；空表示不写质量窄表（v1 / legacy unknown）
+    qualities: dict[str, int] = field(default_factory=dict)
     entry_data: dict = field(default_factory=dict)  # 原始 stream 字段，BAD_DATA 进 DLQ 时需要
     delivery_count: int = 1
 
@@ -463,20 +468,185 @@ class StreamConsumer:
             return
 
         # --- 将 var_id 转换为 td_column_name，带类型强制转换 ---
+        # 任一非法值整 entry 隔离：禁止写假 0.0，推 DLQ 后再决定是否 ACK
         columns: dict[str, float] = {}
+        bad_var_ids: list[str] = []
         for var_id, str_val in raw_values.items():
             col_name = mapping.var_map.get(var_id)
             if not col_name:
                 continue
             try:
-                columns[col_name] = float(str_val)
+                num = float(str_val)
             except (ValueError, TypeError):
-                columns[col_name] = 0.0
+                bad_var_ids.append(str(var_id))
+                continue
+            if not math.isfinite(num):
+                bad_var_ids.append(str(var_id))
+                continue
+            columns[col_name] = num
+
+        if bad_var_ids:
+            last_error = f"type_conversion failed var_ids={','.join(bad_var_ids)}"
+            moved = push_dlq(
+                self._r,
+                device_type=device_type or "unknown",
+                group_code=group_code or "unknown",
+                entry_id=entry_id,
+                stream_key=stream_key,
+                data=dict(entry_data),
+                retry_count=delivery_count,
+                last_error=last_error,
+            )
+            if moved:
+                self._ack_single(stream_key, entry_id)
+            else:
+                logger.error(
+                    "[consumer] DLQ failed for type_conversion entry %s, not acking",
+                    entry_id,
+                )
+            return
 
         if not columns:
             logger.debug("[consumer] entry %s has no mappable columns, acking", entry_id)
             self._ack_single(stream_key, entry_id)
             return
+
+        # --- Stream 质量：v1 不写窄表；v2 严格校验后写入 ---
+        qualities: dict[str, int] = {}
+        if "contract_version" not in entry_data:
+            contract_version = 1
+        else:
+            try:
+                contract_version = int(entry_data["contract_version"])
+            except (ValueError, TypeError):
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error=(
+                        f"Unsupported contract_version: {entry_data.get('contract_version')!r}"
+                    ),
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                return
+            if contract_version not in (1, 2):
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error=f"Unsupported contract_version: {contract_version}",
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                return
+
+        if contract_version == 2:
+            qualities_raw = entry_data.get("qualities", "{}")
+            try:
+                if isinstance(qualities_raw, (bytes, bytearray)):
+                    qualities_raw = qualities_raw.decode("utf-8")
+                raw_qualities = (
+                    json.loads(qualities_raw)
+                    if isinstance(qualities_raw, str)
+                    else qualities_raw
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[consumer] invalid qualities JSON for entry %s: %s", entry_id, exc
+                )
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error=f"qualities_json_invalid: {exc}",
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                return
+            if not isinstance(raw_qualities, dict):
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error="qualities is not a JSON object",
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                return
+
+            # 过滤非存储点后，values 与 qualities 键集合必须对齐（设计契约）
+            raw_qualities_norm = {str(k): v for k, v in raw_qualities.items()}
+            stored_value_ids = {
+                str(vid) for vid in raw_values if vid in mapping.var_map
+            }
+            stored_quality_ids = {
+                vid for vid in raw_qualities_norm if vid in mapping.var_map
+            }
+            if stored_value_ids != stored_quality_ids:
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error=(
+                        f"quality_key_mismatch values={sorted(stored_value_ids)} "
+                        f"qualities={sorted(stored_quality_ids)}"
+                    ),
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                return
+
+            bad_quality_var_ids: list[str] = []
+            for var_id in stored_value_ids:
+                q_code = raw_qualities_norm[var_id]
+                if not is_valid_quality(q_code):
+                    bad_quality_var_ids.append(str(var_id))
+                    continue
+                qualities[str(var_id)] = int(q_code)
+
+            if bad_quality_var_ids:
+                last_error = (
+                    f"invalid_quality var_ids={','.join(bad_quality_var_ids)}"
+                )
+                moved = push_dlq(
+                    self._r,
+                    device_type=device_type or "unknown",
+                    group_code=group_code or "unknown",
+                    entry_id=entry_id,
+                    stream_key=stream_key,
+                    data=dict(entry_data),
+                    retry_count=delivery_count,
+                    last_error=last_error,
+                )
+                if moved:
+                    self._ack_single(stream_key, entry_id)
+                else:
+                    logger.error(
+                        "[consumer] DLQ failed for invalid_quality entry %s, not acking",
+                        entry_id,
+                    )
+                return
 
         self._buffer.append(
             _BufferedRow(
@@ -489,6 +659,7 @@ class StreamConsumer:
                 stable=mapping.stable,
                 ts=ts,
                 columns=columns,
+                qualities=qualities,
                 entry_data=dict(entry_data),
                 delivery_count=delivery_count,
             )
@@ -514,6 +685,7 @@ class StreamConsumer:
                 "device_code": row.device_code,
                 "ts": row.ts,
                 "columns": row.columns,
+                "qualities": row.qualities,
             }
             for row in buffered
         ]

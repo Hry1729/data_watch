@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import LOCAL_TZ, to_local_naive
+from app.core.writer_group import get_writer_group_name
 from app.db.redis import get_redis_client
 
 
@@ -67,6 +68,7 @@ class ModuleMonitorService:
 
     async def get_writer_metrics(self) -> dict[str, Any]:
         r = await get_redis_client()
+        writer_group = get_writer_group_name()
 
         streams: list[dict[str, Any]] = []
         stream_lag_total = 0
@@ -78,28 +80,43 @@ class ModuleMonitorService:
             except Exception:
                 groups = []
 
-            lag = 0
+            # 主指标只计 writer 消费组；其它 group 仅作诊断字段
+            lag: int | None = None
             pel = 0
+            other_groups: list[dict[str, Any]] = []
             for group in groups:
+                name = str(group.get("name") or "")
+                if name != writer_group:
+                    other_groups.append(
+                        {
+                            "name": name,
+                            "lag": group.get("lag"),
+                            "pending": group.get("pending"),
+                        }
+                    )
+                    continue
                 group_lag = group.get("lag")
-                lag += int(group_lag) if group_lag is not None else 0
+                lag = None if group_lag is None else int(group_lag)
                 group_pending = group.get("pending")
-                pel += int(group_pending) if group_pending is not None else 0
+                pel = int(group_pending) if group_pending is not None else 0
 
             try:
                 length = int(await r.xlen(key))
             except Exception:
                 length = 0
 
-            stream_lag_total += lag
+            if lag is not None:
+                stream_lag_total += lag
             pel_pending_total += pel
+            backlog = (lag is not None and lag >= 1000) or pel >= 1000
             streams.append(
                 {
                     "streamKey": str(key),
                     "lag": lag,
                     "pel": pel,
                     "length": length,
-                    "status": "normal" if (lag < 1000 and pel < 1000) else "backlog",
+                    "status": "backlog" if backlog else "normal",
+                    "otherGroups": other_groups,
                 }
             )
 
@@ -116,6 +133,7 @@ class ModuleMonitorService:
             "streamLagTotal": stream_lag_total,
             "pelPendingTotal": pel_pending_total,
             "dlqTotal": dlq_total,
+            "writerGroupName": writer_group,
             "streams": streams,
         }
 

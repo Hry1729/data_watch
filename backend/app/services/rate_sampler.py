@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 from app.core.time_utils import now_local
+from app.core.writer_group import get_writer_group_name
 from app.db.redis import get_redis_client
 
 logger = logging.getLogger("backend.rate_sampler")
@@ -31,9 +32,8 @@ SAMPLE_INTERVAL_SECONDS = 10
 WINDOW_SECONDS = 600  # 10 分钟
 _MAX_POINTS = WINDOW_SECONDS // SAMPLE_INTERVAL_SECONDS  # 60 点
 
-# 只统计 writer 自己的消费组，避免未来出现多消费组时把 rows/min 重复计算。
-# 与 writer/config/settings.toml 的 group_name 对应。
-WRITER_GROUP_NAME = "writer_cg"
+# 单一配置来源：writer/config/settings.toml 的 redis.group_name
+WRITER_GROUP_NAME = get_writer_group_name()
 
 COLLECTOR_UNIT = "批次/min"
 WRITER_UNIT = "条/min"  # entries-read：writer 从 Redis 读出的 entry 条数（非落库行数）

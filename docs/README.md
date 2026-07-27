@@ -26,6 +26,7 @@
 ### 02 模块设计（一个模块一个目录）
 - [collector 采集端](02-模块设计/collector/README.md) — 周期采集、驱动、调度、Redis 写出
   - [调用链与协议设计](02-模块设计/collector/调用链与协议设计.md)
+  - [外置驱动包制作指南](02-模块设计/collector/外置驱动包制作指南.md) — ZIP 清单、打包、安装与升级
 - [writer 入库端](02-模块设计/writer/README.md) — Stream 消费、TDengine 批写、二分降级、DLQ
   - [可靠入库与 TDengine 写入](02-模块设计/writer/可靠入库与TDengine写入.md)
 - [backend 中心后端](02-模块设计/backend/README.md) — TurboAPI、鉴权权限、实时/历史两通道、三数据源

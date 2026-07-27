@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<UserControl x:Class="HslControls.WPF.HslCurve" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:d="http://schemas.microsoft.com/expression/blend/2008" xmlns:local="clr-namespace:HslControls.WPF">
+  <Grid Name="grid1">
+    <Grid />
+    <Canvas Name="canvas1" />
+    <TextBlock Name="title1" TextAlignment="Center" Width="{Binding ElementName=grid1, Path=ActualWidth}" Text="{Binding Path=Title, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCurve}}}">
+      <TextBlock.Foreground>
+        <SolidColorBrush Color="{Binding Path=ColorLinesAndText, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType={x:Type local:HslCurve}}}" />
+      </TextBlock.Foreground>
+    </TextBlock>
+  </Grid>
+</UserControl>

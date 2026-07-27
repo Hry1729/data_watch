@@ -67,6 +67,9 @@ export default function DeviceManagementPage() {
   useEffect(() => {
     setPage((value) => Math.min(value, totalPages));
   }, [totalPages]);
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [activeType, connectStatus, keyword, page, pageSize]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
 
   function openCreate() { setEditing(null); setForm({ ...EMPTY_FORM, driverName: drivers.data?.[0]?.driverName ?? "" }); setDialogOpen(true); }
