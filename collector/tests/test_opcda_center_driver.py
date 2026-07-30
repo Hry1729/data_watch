@@ -5,6 +5,7 @@ channel 当前不在 connect() 上下文（它是点位 ID 前缀 {channel}.{dev
 """
 
 import logging
+from datetime import datetime
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock
@@ -63,6 +64,8 @@ async def test_ipc_connect_opc_server_failure_log_has_context(monkeypatch, caplo
 async def test_ipc_read_items_isolates_bad_result_item(caplog):
     from core import opcda_ipc_client
     from core.opcda_ipc_protocol import ResponseStatus
+    from core.quality_codes import QUALITY_GOOD
+    from drivers.base import DriverSample
 
     client = opcda_ipc_client.OpcDaIpcClient(host="127.0.0.1", port=9090)
     resp = MagicMock()
@@ -70,14 +73,31 @@ async def test_ipc_read_items_isolates_bad_result_item(caplog):
     resp.data = [
         {"item_id": "tag_ok_1", "value": 12.5, "quality": 192, "timestamp": "2026-01-01T00:00:00"},
         {"item_id": "tag_bad", "value": 99.0, "timestamp": "2026-01-01T00:00:01"},
+        {"item_id": "tag_invalid_quality", "value": 88.0, "quality": "bad", "timestamp": "2026-01-01T00:00:01"},
         {"item_id": "tag_ok_2", "value": 7.0, "quality": 192, "timestamp": "2026-01-01T00:00:02"},
     ]
     client._send_request = AsyncMock(return_value=resp)
 
     with caplog.at_level(logging.WARNING):
-        values = await client.read_items(["tag_ok_1", "tag_bad", "tag_ok_2"])
+        values = await client.read_items(
+            ["tag_ok_1", "tag_bad", "tag_invalid_quality", "tag_ok_2"]
+        )
 
-    assert values == {"tag_ok_1": 12.5, "tag_bad": None, "tag_ok_2": 7.0}
+    # 现在返回 DriverSample，Good 质量的点位正常返回，解析失败的点位为 None
+    assert values["tag_ok_1"] == DriverSample(
+        value=12.5,
+        quality=QUALITY_GOOD,
+        source_timestamp=datetime(2026, 1, 1, 0, 0, 0),
+        protocol_quality=192,
+    )
+    assert values["tag_bad"] is None
+    assert values["tag_invalid_quality"] is None
+    assert values["tag_ok_2"] == DriverSample(
+        value=7.0,
+        quality=QUALITY_GOOD,
+        source_timestamp=datetime(2026, 1, 1, 0, 0, 2),
+        protocol_quality=192,
+    )
     assert "跳过无法解析的 OPC DA 结果项" in caplog.text
 
 

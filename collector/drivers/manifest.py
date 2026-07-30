@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence, Tuple
 
+from core.version import __version__ as COLLECTOR_VERSION
+from core.version import parse_semver
+
 # 第一期支持的能力枚举
 ALLOWED_CAPABILITIES = frozenset(
     {
@@ -72,6 +75,8 @@ class DriverManifest:
     capabilities: Tuple[str, ...]
     read_write: str
     source_path: Path
+    # 可选：驱动要求的最低 collector 版本（SemVer X.Y.Z）
+    min_collector_version: str | None = None
 
 
 def load_driver_toml(path: Path) -> DriverManifest:
@@ -103,6 +108,10 @@ def load_driver_toml(path: Path) -> DriverManifest:
     arch_list = _validate_string_list(data["architectures"], "architectures", path)
     read_write = _validate_read_write(data["read_write"], path)
     _validate_read_write_vs_capabilities(read_write, capabilities, path)
+    # 可选字段：缺省表示不限制 collector 版本
+    min_collector_version = data.get("min_collector_version")
+    if min_collector_version is not None:
+        _validate_version(min_collector_version, path, field="min_collector_version")
 
     return DriverManifest(
         manifest_version=int(data["manifest_version"]),
@@ -119,6 +128,9 @@ def load_driver_toml(path: Path) -> DriverManifest:
         capabilities=capabilities,
         read_write=read_write,
         source_path=path,
+        min_collector_version=(
+            str(min_collector_version) if min_collector_version is not None else None
+        ),
     )
 
 
@@ -137,10 +149,13 @@ def validate_package_compatibility(
     package_root: Path,
     *,
     expected_abi: str | None = None,
+    collector_version: str | None = None,
 ) -> None:
     """校验目录名、入口落点、ABI/OS/架构与当前运行环境。"""
     if expected_abi is None:
         expected_abi = current_python_abi()
+    if collector_version is None:
+        collector_version = COLLECTOR_VERSION
     if package_root.name != manifest.id:
         raise DriverManifestError(
             f"驱动目录名 {package_root.name!r} 必须与 id {manifest.id!r} 一致: "
@@ -181,6 +196,15 @@ def validate_package_compatibility(
             f"当前架构 {current_arch!r} 不在驱动 architectures={manifest.architectures}: "
             f"{manifest.source_path}"
         )
+
+    if manifest.min_collector_version is not None:
+        required = parse_semver(manifest.min_collector_version)
+        current = parse_semver(collector_version)
+        if current < required:
+            raise DriverManifestError(
+                f"驱动要求 collector >= {manifest.min_collector_version}，"
+                f"当前为 {collector_version}: {manifest.source_path}"
+            )
 
 
 def _normalize_os(value: str) -> str:
@@ -241,14 +265,14 @@ def _validate_protocol(value: Any, path: Path) -> str:
     return protocol
 
 
-def _validate_version(value: Any, path: Path) -> None:
+def _validate_version(value: Any, path: Path, field: str = "version") -> None:
     if not isinstance(value, str) or not _SEMVER_PATTERN.match(value):
         raise DriverManifestError(
-            f"version 必须为 SemVer X.Y.Z，当前为 {value!r}: {path}"
+            f"{field} 必须为 SemVer X.Y.Z，当前为 {value!r}: {path}"
         )
     if len(value) > MAX_VERSION_CHARS:
         raise DriverManifestError(
-            f"version 最大长度为 {MAX_VERSION_CHARS} 字符: {path}"
+            f"{field} 最大长度为 {MAX_VERSION_CHARS} 字符: {path}"
         )
 
 

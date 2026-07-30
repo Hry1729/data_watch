@@ -101,6 +101,9 @@ class DriverRegistry:
 
         registrations: Dict[str, DriverRegistration] = {}
         failures: Dict[str, DriverLoadFailure] = {}
+        # 第一轮：仅做清单校验，不 import 任何驱动代码，
+        # 以便在加载前拿到全部候选包、建立跨驱动的 vendor 所有权视图。
+        candidates: List[tuple[Path, DriverManifest, str]] = []
         for child in sorted(drivers_root.iterdir()):
             if not child.is_dir():
                 continue
@@ -138,14 +141,19 @@ class DriverRegistry:
                     manifest.id, protocol, child, "manifest", "试图覆盖内置协议"
                 )
                 continue
-            if protocol in registrations:
-                logger.error(
-                    "驱动包 load_failed：协议 %r 重复注册 path=%s",
-                    protocol,
-                    manifest_path,
-                )
+
+            candidates.append((child, manifest, protocol))
+
+        # 第二轮：按扫描顺序确定 vendor 顶层依赖归属，冲突者不进入加载
+        vendor_rejections = _resolve_vendor_ownership(candidates)
+
+        # 第三轮：实际 import 并注册
+        for child, manifest, protocol in candidates:
+            rejection = vendor_rejections.get(protocol)
+            if rejection is not None:
+                logger.error("驱动包 load_failed：%s path=%s", rejection, child)
                 failures[protocol] = DriverLoadFailure(
-                    manifest.id, protocol, child, "manifest", "协议重复注册"
+                    manifest.id, protocol, child, "vendor_conflict", rejection
                 )
                 continue
 
@@ -166,6 +174,19 @@ class DriverRegistry:
                 logger.error("驱动包加载失败 path=%s: %s", child, exc)
                 failures[protocol] = DriverLoadFailure(
                     manifest.id, protocol, child, "load", str(exc)
+                )
+                continue
+
+            # 协议重复判断：只有成功加载的包才占住协议名
+            if protocol in registrations:
+                logger.error(
+                    "驱动包 load_failed：协议 %r 已被 %r 注册 path=%s",
+                    protocol,
+                    registrations[protocol].manifest.id,
+                    child,
+                )
+                failures[protocol] = DriverLoadFailure(
+                    manifest.id, protocol, child, "load", "协议重复注册"
                 )
                 continue
 
@@ -267,6 +288,7 @@ class DriverRegistry:
             raise DriverRegistryError(
                 f"工厂 {manifest.entry} 必须返回 BaseDriver，实际为 {type(driver)!r}"
             )
+        driver.native_quality = "native_quality" in manifest.capabilities
         return driver
 
 
@@ -338,6 +360,62 @@ def _calculate_vendor_sha256(vendor_dir: Path) -> str:
             for chunk in iter(lambda: file.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _peek_vendor_declaration(package_root: Path) -> Optional[tuple[str, str, str]]:
+    """只读 vendor_meta.toml 取 (name, version, sha256)，不做哈希与完整性校验。
+
+    预扫描阶段用于建立跨驱动的依赖所有权视图，故刻意不重复 _load_vendor_metadata
+    的目录哈希开销；格式非法一律返回 None，留给后续真正加载时报出准确错误。
+    """
+    metadata_path = package_root / "vendor_meta.toml"
+    if not metadata_path.is_file():
+        return None
+    try:
+        data = tomllib.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    name = data.get("name")
+    version = data.get("version")
+    sha256 = data.get("sha256")
+    if not all(isinstance(item, str) and item.strip() for item in (name, version, sha256)):
+        return None
+    return (name, version, sha256.lower())
+
+
+def _resolve_vendor_ownership(
+    candidates: List[tuple[Path, "DriverManifest", str]],
+) -> Dict[str, str]:
+    """按扫描顺序确定 vendor 顶层包名归属，返回 {protocol: 拒绝原因}。
+
+    Python 的 sys.modules 是全局单例，同一顶层包名无法多版本共存。首个声明者取得
+    所有权；后续驱动声明同名依赖时，仅当 (version, sha256) 完全一致才视为同一份
+    依赖而放行，否则拒绝并在错误中点明所有者，避免把冲突报成"路径不对"。
+
+    先声明者胜（而非双方皆拒）：拒绝双方会让新装的冲突驱动连带打挂已在运行的驱动。
+    """
+    owners: Dict[str, tuple[str, str, str]] = {}  # 顶层包名 → (version, sha256, driver_id)
+    rejections: Dict[str, str] = {}
+    for package_root, manifest, protocol in candidates:
+        declaration = _peek_vendor_declaration(package_root)
+        if declaration is None:
+            continue
+        name, version, sha256 = declaration
+        owner = owners.get(name)
+        if owner is None:
+            owners[name] = (version, sha256, manifest.id)
+            continue
+        owner_version, owner_sha256, owner_id = owner
+        if (version, sha256) == (owner_version, owner_sha256):
+            # 同名同版本同内容：同一份依赖，共存无歧义
+            continue
+        rejections[protocol] = (
+            f"vendor 依赖 {name!r} 已被驱动 {owner_id!r} 以 "
+            f"version={owner_version!r} sha256={owner_sha256[:12]}… 占用；"
+            f"本包声明 version={version!r} sha256={sha256[:12]}…，"
+            f"同名依赖无法多版本共存"
+        )
+    return rejections
 
 
 def _load_vendor_metadata(package_root: Path) -> Optional[VendorMetadata]:

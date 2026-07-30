@@ -7,9 +7,11 @@ import asyncio
 import json
 import threading
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.logger import get_logger
+from core.opcda_quality import map_opcda_quality
 from core.opcda_ipc_protocol import (
     DEFAULT_PROXY_PORT,
     DEFAULT_REQUEST_TIMEOUT,
@@ -23,10 +25,23 @@ from core.opcda_ipc_protocol import (
     create_shutdown_request,
     ResponseStatus,
 )
+from drivers.base import DriverSample
 
 logger = get_logger("opcda_ipc_client")
 
 _MAX_RESPONSE_BYTES = 64 * 1024 * 1024
+
+
+def _parse_source_timestamp(raw_timestamp: str) -> datetime:
+    if not isinstance(raw_timestamp, str) or not raw_timestamp.strip():
+        raise ValueError("OPC DA timestamp must be a non-empty ISO8601 string")
+    text = raw_timestamp.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    timestamp = datetime.fromisoformat(text)
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.astimezone().replace(tzinfo=None)
+    return timestamp
 
 
 class OpcDaIpcClient:
@@ -249,40 +264,34 @@ class OpcDaIpcClient:
                 logger.error("读取点位失败: %s", response.error)
                 return {item_id: None for item_id in item_ids}
 
-            # 解析结果
-            results: Dict[str, Any] = {}
-            bad_quality: Dict[str, int] = {}
+            # 解析结果，保留所有样本并映射质量码
+            results: Dict[str, DriverSample] = {}
             if response.data and isinstance(response.data, list):
                 for item_data in response.data:
                     try:
                         result = OpcDaReadResult.from_dict(item_data)
+                        platform_quality = map_opcda_quality(result.quality)
+                        source_timestamp = _parse_source_timestamp(result.timestamp)
+                        results[result.item_id] = DriverSample(
+                            value=result.value,
+                            quality=platform_quality,
+                            source_timestamp=source_timestamp,
+                            protocol_quality=result.quality,
+                        )
                     except Exception as e:
                         logger.warning("跳过无法解析的 OPC DA 结果项: %s, data=%s", e, item_data)
                         continue
-                    # 只返回质量好的数据
-                    if result.quality >= 192:  # OPC Good quality
-                        results[result.item_id] = result.value
-                    else:
-                        results[result.item_id] = None
-                        bad_quality[result.item_id] = result.quality
-                        logger.debug(
-                            "点位质量不佳: %s, quality=%s",
-                            result.item_id,
-                            result.quality,
-                        )
 
-            # 补充未返回的点位
+            # 补充未返回的点位为 None（executor 会跳过）
             missing_items: List[str] = []
             for item_id in item_ids:
                 if item_id not in results:
                     results[item_id] = None
                     missing_items.append(item_id)
 
-            if item_ids and all(results.get(item_id) is None for item_id in item_ids):
-                logger.warning(
-                    "OPC DA read returned no good values: requested=%s, bad_quality=%s, missing=%s",
-                    len(item_ids),
-                    dict(list(bad_quality.items())[:3]),
+            if missing_items:
+                logger.debug(
+                    "OPC DA read missing items: %s",
                     missing_items[:3],
                 )
 

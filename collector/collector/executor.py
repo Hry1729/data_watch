@@ -21,10 +21,12 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from core.exceptions import ReadError
 from core.logger import get_logger
+from core.quality_codes import QUALITY_CONFIG_DECODE_ERROR, QUALITY_GOOD, is_valid_quality
 from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from data_queue.types import DataPoint
 from device.manager import DeviceManager
+from drivers.base import DriverSample
 from monitor.performance import PerformanceMetrics
 
 if TYPE_CHECKING:
@@ -34,6 +36,45 @@ logger = get_logger("executor")
 
 # 相同日志抑制间隔（秒）
 LOG_SUPPRESS_INTERVAL = 30
+
+
+def _normalize_driver_sample(
+    raw: Any,
+    default_timestamp: datetime,
+    native_quality: bool = False,
+) -> tuple[Any, int, datetime, int | None]:
+    """将驱动返回的单点标量归一化为 (value, quality, timestamp, protocol_quality)。
+
+    Args:
+        raw: 单个标量值，可能是裸值或 DriverSample。
+        default_timestamp: 协议未提供 source_timestamp 时的回落值。
+
+    Returns:
+        (value, quality, timestamp, protocol_quality) 四元组。
+        value 为 None 时调用方应跳过不构造 DataPoint，因为 writer v2 契约
+        无法表达"只有质量没有数值"的点。
+
+    Notes:
+        - 裸值走快路径，不构造 DriverSample，避免给普通驱动加分配开销。
+        - 非法平台质量码会被转为 CONFIG_DECODE_ERROR 并记录 warning。
+    """
+    if isinstance(raw, DriverSample):
+        quality = raw.quality
+        if not is_valid_quality(quality):
+            logger.warning(
+                "Driver returned invalid quality code %r, converting to CONFIG_DECODE_ERROR",
+                quality,
+            )
+            quality = QUALITY_CONFIG_DECODE_ERROR
+        timestamp = raw.source_timestamp if raw.source_timestamp is not None else default_timestamp
+        return (raw.value, quality, timestamp, raw.protocol_quality)
+    if native_quality:
+        logger.warning(
+            "Driver declaring native_quality returned a raw value; "
+            "converting quality to CONFIG_DECODE_ERROR"
+        )
+        return (raw, QUALITY_CONFIG_DECODE_ERROR, default_timestamp, None)
+    return (raw, QUALITY_GOOD, default_timestamp, None)
 
 
 class TaskExecutor:
@@ -145,12 +186,19 @@ class TaskExecutor:
 
         # 解析结果
         parse_start = self._clock()
+        native_quality = bool(getattr(device.driver, "native_quality", False))
         try:
             if self._parse_executor is None:
-                points = self._parse_result(device.device_id, scan_task, result)
+                points = self._parse_result(
+                    device.device_id, scan_task, result, native_quality
+                )
             else:
                 points = await self._parse_executor.run(
-                    self._parse_result, device.device_id, scan_task, result
+                    self._parse_result,
+                    device.device_id,
+                    scan_task,
+                    result,
+                    native_quality,
                 )
         except ExecutorSaturatedError as exc:
             self._total_errors += 1
@@ -331,10 +379,17 @@ class TaskExecutor:
                     for var_id, (point, dt, is_storage) in var_data.items()
                     if is_storage and dt != "STRING"
                 }
+                # stream_qualities：键集合与 stream_values 一致
+                stream_qualities = {
+                    var_id: int(getattr(point, "quality", 0))
+                    for var_id, (point, dt, is_storage) in var_data.items()
+                    if is_storage and dt != "STRING"
+                }
                 # window+stream 合并一次往返（§7.5）；任一失败抛出 → 跳过 latest。
                 self._redis_writer.write_window_stream(
                     device_code, device_type, group_code, scan_rate_ms,
                     ts_ms, group_versions[group_code], frame, stream_values,
+                    stream_qualities,
                 )
 
                 self._redis_writer.write_latest(device_code, group_code, fields)
@@ -357,6 +412,7 @@ class TaskExecutor:
         device_id: str,
         scan_task,
         result: dict,
+        native_quality: bool = False,
     ) -> List[DataPoint]:
         """解析读取结果为DataPoint列表"""
         points = []
@@ -388,11 +444,18 @@ class TaskExecutor:
                 if decode_hook is not None:
                     if variable.variable_id not in external_decoded:
                         continue
+                    raw = external_decoded[variable.variable_id]
+                    value, quality, timestamp, protocol_quality = _normalize_driver_sample(
+                        raw, now, native_quality
+                    )
+                    if value is None:
+                        continue
                     points.append(DataPoint(
                         device_id=device_id,
                         variable_id=variable.variable_id,
-                        value=external_decoded[variable.variable_id],
-                        timestamp=now,
+                        value=value,
+                        timestamp=timestamp,
+                        quality=quality,
                     ))
                     continue
                 block_addr = mapped["block_address"]
@@ -403,9 +466,9 @@ class TaskExecutor:
                 # 根据 protocol 选择还原方法（内置 S7/GE 映射路径）
                 protocol = mapped.get("protocol", "")
                 if protocol == "ge_srtp":
-                    value = self._extract_mapped_ge_value(raw_values, mapped)
+                    raw = self._extract_mapped_ge_value(raw_values, mapped)
                     self._log_ge_nonfinite_value(
-                        device_id, variable, raw_values, mapped, value
+                        device_id, variable, raw_values, mapped, raw
                     )
                 else:
                     # 块级缓存：同一合并块只转一次 bytearray，避免每变量重建整块（O(N²)→O(N)）
@@ -415,13 +478,19 @@ class TaskExecutor:
                         if prepared is None:
                             prepared = self._to_s7_bytearray(raw_values)
                             s7_block_cache[block_addr] = prepared
-                    value = self._extract_mapped_s7_value(raw_values, mapped, prepared)
+                    raw = self._extract_mapped_s7_value(raw_values, mapped, prepared)
 
+                value, quality, timestamp, protocol_quality = _normalize_driver_sample(
+                    raw, now, native_quality
+                )
+                if value is None:
+                    continue
                 points.append(DataPoint(
                     device_id=device_id,
                     variable_id=variable.variable_id,
                     value=value,
-                    timestamp=now,
+                    timestamp=timestamp,
+                    quality=quality,
                 ))
                 continue
 
@@ -435,11 +504,17 @@ class TaskExecutor:
             values = raw_values if isinstance(raw_values, list) else [raw_values]
 
             for val in values:
+                value, quality, timestamp, protocol_quality = _normalize_driver_sample(
+                    val, now, native_quality
+                )
+                if value is None:
+                    continue
                 point = DataPoint(
                     device_id=device_id,
                     variable_id=variable.variable_id,
-                    value=val,
-                    timestamp=now,
+                    value=value,
+                    timestamp=timestamp,
+                    quality=quality,
                 )
                 points.append(point)
 

@@ -96,6 +96,11 @@ def test_point_from_dict_rejects_invalid_quality_code():
 
 def test_opcda_quality_maps_raw_quality_to_internal_code():
     assert _map_opcda_quality({"quality": 192}) == 0
+    assert _map_opcda_quality({"quality": 64}) == 2
+    assert _map_opcda_quality({"quality": 0}) == 5
+    assert _map_opcda_quality({"quality": 128}) == 8
+    # 高 8 位为 vendor-specific，只能按低字节主质量位判断。
+    assert _map_opcda_quality({"quality": 0x0140}) == 2
     assert _map_opcda_quality({"quality_good": False, "quality": 192}) == 2
 
 
@@ -162,6 +167,7 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
         latest_fields["30041800"]["t"],
         7,
         {"30041800": "12.5"},
+        {"30041800": 4},
     )
 
 
@@ -407,7 +413,16 @@ def test_ingest_server_redis_multi_scan_rate_frame_failure_isolates_latest():
         realtime_config=config,
     )
 
-    def stream_side_effect(device_code, device_type, group_code, scan_rate_ms, ts, config_version, values):
+    def stream_side_effect(
+        device_code,
+        device_type,
+        group_code,
+        scan_rate_ms,
+        ts,
+        config_version,
+        values,
+        qualities,
+    ):
         if scan_rate_ms == 500:
             raise RuntimeError("stream write failed for 500ms frame")
 

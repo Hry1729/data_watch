@@ -115,6 +115,25 @@ class TestWriteStream:
         assert isinstance(entry["values"], bytes)
         parsed_values = json.loads(entry["values"])
         assert parsed_values == {"5": "9.9"}
+        assert "contract_version" not in entry
+        assert "qualities" not in entry
+
+    def test_xadd_entry_contains_v2_quality_fields(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        writer.write_stream(
+            "qc100",
+            "qc",
+            "g001",
+            100,
+            1700000000000,
+            2,
+            {"5": "9.9"},
+            {"5": 2},
+        )
+
+        entry = mock_redis.xadd.call_args[0][1]
+        assert entry["contract_version"] == "2"
+        assert json.loads(entry["qualities"]) == {"5": 2}
 
     def test_xadd_uses_configured_maxlen(self, mock_redis):
         writer = RedisWriter(mock_redis, _make_config(maxlen=200000))
@@ -165,6 +184,24 @@ class TestWriteWindowStream:
         assert json.loads(entry["values"]) == {"5": "9.9"}
         assert pipe.xadd.call_args[1]["maxlen"] == 200000
         assert pipe.xadd.call_args[1]["approximate"] is True
+
+    def test_pipeline_xadd_contains_v2_quality_fields(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        writer.write_window_stream(
+            "qc100",
+            "qc",
+            "g001",
+            100,
+            1700000000000,
+            7,
+            {"ts": 1},
+            {"5": "9.9"},
+            {"5": 5},
+        )
+
+        entry = mock_redis.pipeline.return_value.xadd.call_args[0][1]
+        assert entry["contract_version"] == "2"
+        assert json.loads(entry["qualities"]) == {"5": 5}
 
 
 def test_writer_records_json_and_redis_io_timings(mock_redis):

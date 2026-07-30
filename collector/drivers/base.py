@@ -2,7 +2,11 @@
 
 import asyncio
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+from core.quality_codes import QUALITY_GOOD
 
 
 class ReadBlock:
@@ -29,8 +33,31 @@ class WritePoint:
         return f"WritePoint({self.address}, value={self.value})"
 
 
+@dataclass(frozen=True, slots=True)
+class DriverSample:
+    """带质量的单点样本（驱动 → Executor 的统一标量契约）。
+
+    仅声明 native_quality 能力的驱动需要返回本类型；未声明的驱动继续返回裸值，
+    由 Executor 统一包装为 QUALITY_GOOD。
+
+    Attributes:
+        value: 点位值。None 表示本轮无样本，不进入历史。
+        quality: 平台质量码，取值见 core.quality_codes（业务码 ∪ 保留码）。
+        source_timestamp: 协议返回的源时间戳；None 表示采用采集时刻。
+        protocol_quality: 协议原始质量码（如 OPC DA 的 quality bit field），
+            作为诊断预留，不参与平台质量判定，当前不写入 Redis Stream。
+    """
+
+    value: Any
+    quality: int = QUALITY_GOOD
+    source_timestamp: Optional[datetime] = None
+    protocol_quality: Optional[int] = None
+
+
 class BaseDriver(ABC):
     """设备驱动基类，所有协议驱动需实现此接口"""
+
+    native_quality = False
 
     def __init__(self):
         self._connected = False
@@ -60,7 +87,15 @@ class BaseDriver(ABC):
         Args:
             blocks: 读取块列表，支持合并连续地址
         Returns:
-            {address: value} 字典
+            {address: value} 字典。value 的合法形式按驱动能力声明分流：
+
+            1. 未声明 native_quality 的驱动：返回裸值（标量或 list），
+               由 Executor 统一包装为 QUALITY_GOOD；
+            2. 声明 native_quality 的驱动：成功样本必须返回 DriverSample
+               （单点）或 list[DriverSample]（连续块），不得返回裸值——
+               否则无法区分"故意 Good"与"漏传质量"。
+
+            两种情况下，地址缺失或值为 None 均表示本轮无样本，不进入历史。
         """
         pass
 

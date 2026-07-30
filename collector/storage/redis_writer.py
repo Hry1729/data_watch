@@ -81,8 +81,14 @@ class RedisWriter:
         ts: int,
         config_version: int,
         values: dict[str, str],
+        qualities: dict[str, int] | None = None,
     ) -> None:
-        """写 stream Stream。values: {var_id: value_str}，已过滤 STRING 和 is_storage=0"""
+        """写 stream Stream。values: {var_id: value_str}，已过滤 STRING 和 is_storage=0。
+
+        Args:
+            qualities: v2 质量码映射 {var_id: quality_code}。None 时产 v1（兼容渐进迁移），
+                非 None 时产 v2（contract_version=2 + qualities 字段）。
+        """
         # 稳定哈希：内置 hash(str) 受 PYTHONHASHSEED 影响每进程不同，
         # 会导致 collector 重启后同设备落到不同 shard。crc32 进程间稳定。
         shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
@@ -90,22 +96,27 @@ class RedisWriter:
         started = self._clock()
         try:
             encoded_values = msgspec.json.encode(values)
+            encoded_qualities = msgspec.json.encode(qualities) if qualities is not None else None
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
 
         started = self._clock()
         try:
+            fields = {
+                "device_code": device_code,
+                "device_type": device_type,
+                "group_code": group_code,
+                "scan_rate": str(scan_rate_ms),
+                "ts": str(ts),
+                "config_version": str(config_version),
+                "values": encoded_values,
+            }
+            if qualities is not None:
+                fields["contract_version"] = "2"
+                fields["qualities"] = encoded_qualities
             self.r.xadd(
                 stream_key,
-                {
-                    "device_code": device_code,
-                    "device_type": device_type,
-                    "group_code": group_code,
-                    "scan_rate": str(scan_rate_ms),
-                    "ts": str(ts),
-                    "config_version": str(config_version),
-                    "values": encoded_values,
-                },
+                fields,
                 maxlen=self._maxlen,
                 approximate=True,
             )
@@ -122,11 +133,15 @@ class RedisWriter:
         config_version: int,
         frame: dict,
         stream_values: dict[str, str],
+        stream_qualities: dict[str, int] | None = None,
     ) -> None:
         """window + stream 合并进一个 pipeline（§7.5：每设备每周期往返 3→2）。
 
         stream_values 为空时只写 window。任一命令失败时 execute() 抛出，调用方据此
         跳过 latest，保住 latest-last 不变式。非事务 pipeline，语义与原先两次独立写一致。
+
+        Args:
+            stream_qualities: v2 质量码映射。None 时产 v1，非 None 时产 v2。
         """
         window_key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
         started = self._clock()
@@ -134,6 +149,9 @@ class RedisWriter:
             encoded_frame = msgspec.json.encode(frame)
             encoded_values = (
                 msgspec.json.encode(stream_values) if stream_values else None
+            )
+            encoded_qualities = (
+                msgspec.json.encode(stream_qualities) if stream_qualities is not None else None
             )
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
@@ -146,17 +164,21 @@ class RedisWriter:
             if encoded_values is not None:
                 shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
                 stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
+                fields = {
+                    "device_code": device_code,
+                    "device_type": device_type,
+                    "group_code": group_code,
+                    "scan_rate": str(scan_rate_ms),
+                    "ts": str(ts),
+                    "config_version": str(config_version),
+                    "values": encoded_values,
+                }
+                if stream_qualities is not None:
+                    fields["contract_version"] = "2"
+                    fields["qualities"] = encoded_qualities
                 pipe.xadd(
                     stream_key,
-                    {
-                        "device_code": device_code,
-                        "device_type": device_type,
-                        "group_code": group_code,
-                        "scan_rate": str(scan_rate_ms),
-                        "ts": str(ts),
-                        "config_version": str(config_version),
-                        "values": encoded_values,
-                    },
+                    fields,
                     maxlen=self._maxlen,
                     approximate=True,
                 )

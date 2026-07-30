@@ -44,6 +44,7 @@ class OpcDaCenterDriver(BaseDriver):
 
     # 协议标识
     PROTOCOL_NAME = "opcda_center"
+    native_quality = True
 
     def __init__(self):
         super().__init__()

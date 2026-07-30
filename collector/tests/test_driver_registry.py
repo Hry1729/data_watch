@@ -90,6 +90,22 @@ def test_scan_registers_external_driver(tmp_path):
     assert isinstance(driver, BaseDriver)
 
 
+def test_create_marks_manifest_native_quality_capability(tmp_path):
+    drivers_root = _write_driver_package(tmp_path, "quality_proto", "quality_proto")
+    manifest_path = drivers_root / "quality_proto" / "driver.toml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            'capabilities = ["poll", "read"]',
+            'capabilities = ["poll", "read", "native_quality"]',
+        ),
+        encoding="utf-8",
+    )
+
+    driver = DriverRegistry.scan(drivers_root).create("quality_proto")
+
+    assert driver.native_quality is True
+
+
 def test_scan_skips_staging_and_backup(tmp_path):
     drivers_root = _write_driver_package(tmp_path, "good_one", "good_one")
     (drivers_root / ".staging").mkdir()
@@ -452,6 +468,76 @@ def test_scan_rejects_vendor_with_mismatched_hash(tmp_path):
 
     registry = DriverRegistry.scan(drivers_root)
     assert not registry.has("vendor_guard")
+
+
+def _add_vendor(package_root: Path, name: str, version: str, body: str) -> None:
+    """给驱动包写入 vendor 依赖与匹配的 vendor_meta.toml。
+
+    同时让驱动模块真的 import 该依赖：声明了 vendor_meta 却不 import，
+    加载后校验会以"未找到依赖模块"失败（既有行为）。
+    """
+    from drivers.registry import _calculate_vendor_sha256
+
+    vendor_pkg = package_root / "vendor" / name
+    vendor_pkg.mkdir(parents=True)
+    (vendor_pkg / "__init__.py").write_text(body, encoding="utf-8")
+
+    driver_py = package_root / package_root.name / "driver.py"
+    driver_py.write_text(
+        f"import {name}\n" + driver_py.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    sha = _calculate_vendor_sha256(package_root / "vendor")
+    (package_root / "vendor_meta.toml").write_text(
+        textwrap.dedent(
+            f"""
+            name = "{name}"
+            version = "{version}"
+            license = "MIT"
+            sha256 = "{sha}"
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_same_vendor_different_version_rejects_later_declarant(tmp_path):
+    """同名 vendor 不同版本：先声明者胜，后者以 vendor_conflict 拒绝。"""
+    _write_driver_package(tmp_path, "aaa_first", "aaa_first")
+    drivers_root = _write_driver_package(tmp_path, "zzz_second", "zzz_second")
+    _add_vendor(
+        drivers_root / "aaa_first", "sharedlib", "1.0.0", '__version__ = "1.0.0"\n'
+    )
+    _add_vendor(
+        drivers_root / "zzz_second", "sharedlib", "2.0.0", '__version__ = "2.0.0"\n'
+    )
+
+    registry = DriverRegistry.scan(drivers_root)
+
+    # 先声明者（目录序在前）保住注册，后者被预扫描拒绝
+    assert registry.has("aaa_first")
+    assert not registry.has("zzz_second")
+    assert registry.has_failed("zzz_second")
+    reason = registry.failure_reason("zzz_second")
+    # 错误必须点明所有者是谁，而非报成"路径不对"
+    assert "aaa_first" in reason
+    assert "sharedlib" in reason
+
+
+def test_same_vendor_same_version_and_hash_coexist(tmp_path):
+    """同名同版本同内容：视为同一份依赖，两个驱动都放行。"""
+    _write_driver_package(tmp_path, "twin_a", "twin_a")
+    drivers_root = _write_driver_package(tmp_path, "twin_b", "twin_b")
+    body = '__version__ = "1.0.0"\nVALUE = 1\n'
+    _add_vendor(drivers_root / "twin_a", "twinlib", "1.0.0", body)
+    _add_vendor(drivers_root / "twin_b", "twinlib", "1.0.0", body)
+
+    registry = DriverRegistry.scan(drivers_root)
+
+    assert registry.has("twin_a")
+    assert registry.has("twin_b")
 
 
 def test_vendor_evil_sibling_prefix_is_rejected(tmp_path, monkeypatch):

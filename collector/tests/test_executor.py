@@ -527,3 +527,50 @@ async def test_executor_redis_latest_called_after_window_and_stream():
     method_names = [c[0] for c in parent.mock_calls]
     assert method_names.index("write_latest") > method_names.index("write_window_stream")
     await device_manager.disconnect_all()
+
+
+def test_normalize_driver_sample():
+    """归一化函数覆盖：裸值、DriverSample、非法质量、None 值。"""
+    from datetime import datetime
+    from collector.executor import _normalize_driver_sample
+    from core.quality_codes import QUALITY_GOOD, QUALITY_UNCERTAIN, QUALITY_CONFIG_DECODE_ERROR
+    from drivers.base import DriverSample
+
+    default_ts = datetime(2026, 7, 30, 12, 0, 0)
+
+    # 裸值快路径
+    value, quality, timestamp, protocol_quality = _normalize_driver_sample(42, default_ts)
+    assert value == 42
+    assert quality == QUALITY_GOOD
+    assert timestamp == default_ts
+    assert protocol_quality is None
+
+    # DriverSample with source_timestamp
+    sample_ts = datetime(2026, 7, 30, 11, 59, 50)
+    sample = DriverSample(value=3.14, quality=QUALITY_UNCERTAIN, source_timestamp=sample_ts, protocol_quality=192)
+    value, quality, timestamp, protocol_quality = _normalize_driver_sample(sample, default_ts)
+    assert value == 3.14
+    assert quality == QUALITY_UNCERTAIN
+    assert timestamp == sample_ts
+    assert protocol_quality == 192
+
+    # DriverSample without source_timestamp (回落到 default_ts)
+    sample2 = DriverSample(value="ok", quality=QUALITY_GOOD)
+    value, quality, timestamp, protocol_quality = _normalize_driver_sample(sample2, default_ts)
+    assert value == "ok"
+    assert quality == QUALITY_GOOD
+    assert timestamp == default_ts
+    assert protocol_quality is None
+
+    # 非法质量码转 CONFIG_DECODE_ERROR
+    sample3 = DriverSample(value=100, quality=999)
+    value, quality, timestamp, protocol_quality = _normalize_driver_sample(sample3, default_ts)
+    assert value == 100
+    assert quality == QUALITY_CONFIG_DECODE_ERROR
+    assert timestamp == default_ts
+
+    # None 值（调用方应跳过不构造 DataPoint）
+    sample4 = DriverSample(value=None, quality=QUALITY_GOOD)
+    value, quality, timestamp, protocol_quality = _normalize_driver_sample(sample4, default_ts)
+    assert value is None
+    assert quality == QUALITY_GOOD

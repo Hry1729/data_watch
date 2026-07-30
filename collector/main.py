@@ -689,6 +689,7 @@ class CollectorApp:
                 ts_ms,
                 1,
                 values,
+                {var_id: 0 for var_id in values},
             )
 
 

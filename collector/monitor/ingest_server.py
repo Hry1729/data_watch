@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from urllib.parse import urlparse
 
 from core.logger import get_logger
+from core.opcda_quality import map_opcda_quality
 from core.quality_codes import (
     QUALITY_GOOD,
     QUALITY_UNCERTAIN,
@@ -120,7 +121,7 @@ def _map_opcda_quality(item: Dict[str, Any]) -> int:
         opc_quality = int(raw_quality)
     except (TypeError, ValueError) as exc:
         raise ValueError("quality must be an integer code") from exc
-    return QUALITY_GOOD if opc_quality & 0xC0 == 0xC0 else QUALITY_UNCERTAIN
+    return map_opcda_quality(opc_quality)
 
 
 def _point_from_dict(item: Dict[str, Any]) -> DataPoint:
@@ -292,11 +293,15 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 config_version,
                 generation,
             )
-            frame = by_frame.setdefault(frame_key, {"ts": ts_ms, "values": {}, "stream_values": {}})
+            frame = by_frame.setdefault(
+                frame_key,
+                {"ts": ts_ms, "values": {}, "stream_values": {}, "stream_qualities": {}},
+            )
             frame["ts"] = max(frame["ts"], ts_ms)
             frame["values"][str(point.variable_id)] = value_text
             if getattr(var, "is_storage", True) and str(getattr(var, "data_type", "")).upper() != "STRING":
                 frame["stream_values"][str(point.variable_id)] = value_text
+                frame["stream_qualities"][str(point.variable_id)] = quality
 
             accepted += 1
 
@@ -337,6 +342,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                             frame_data["ts"],
                             config_version,
                             frame_data["stream_values"],
+                            frame_data["stream_qualities"],
                         )
                     except Exception as exc:
                         errors.append(f"redis write_stream failed for {frame_label}: {exc}")

@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from drivers.manifest import DriverManifestError, load_driver_toml
+from drivers.manifest import (
+    DriverManifestError,
+    current_python_abi,
+    load_driver_toml,
+    validate_package_compatibility,
+)
 
 
 def _write_toml(tmp_path: Path, content: str) -> Path:
@@ -112,3 +117,49 @@ def test_wrong_manifest_version_raises(tmp_path):
     path = _write_toml(tmp_path, _valid_toml(manifest_version=2))
     with pytest.raises(DriverManifestError, match="manifest_version"):
         load_driver_toml(path)
+
+
+def _write_package(tmp_path: Path, **overrides) -> tuple[object, Path]:
+    """在 tmp_path 下造出满足 entry 落点要求的最小驱动包，返回 (manifest, package_root)。"""
+    root = tmp_path / "modbus_tcp"
+    pkg = root / "modbus_tcp"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "driver.py").write_text("", encoding="utf-8")
+    toml = _valid_toml(python_abi=f'"{current_python_abi()}"', **overrides)
+    path = root / "driver.toml"
+    path.write_text(textwrap.dedent(toml).strip() + "\n", encoding="utf-8")
+    return load_driver_toml(path), root
+
+
+def test_min_collector_version_defaults_to_none(tmp_path):
+    path = _write_toml(tmp_path, _valid_toml())
+    assert load_driver_toml(path).min_collector_version is None
+
+
+def test_min_collector_version_is_parsed(tmp_path):
+    path = _write_toml(tmp_path, _valid_toml(min_collector_version='"0.2.0"'))
+    assert load_driver_toml(path).min_collector_version == "0.2.0"
+
+
+def test_min_collector_version_rejects_invalid_semver(tmp_path):
+    path = _write_toml(tmp_path, _valid_toml(min_collector_version='"0.2"'))
+    with pytest.raises(DriverManifestError, match="min_collector_version"):
+        load_driver_toml(path)
+
+
+def test_newer_collector_requirement_is_rejected(tmp_path):
+    manifest, root = _write_package(tmp_path, min_collector_version='"0.9.0"')
+    with pytest.raises(DriverManifestError, match="0.9.0"):
+        validate_package_compatibility(manifest, root, collector_version="0.1.0")
+
+
+def test_satisfied_collector_requirement_passes(tmp_path):
+    manifest, root = _write_package(tmp_path, min_collector_version='"0.1.0"')
+    validate_package_compatibility(manifest, root, collector_version="0.1.0")
+    validate_package_compatibility(manifest, root, collector_version="1.0.0")
+
+
+def test_absent_requirement_skips_version_check(tmp_path):
+    manifest, root = _write_package(tmp_path)
+    validate_package_compatibility(manifest, root, collector_version="0.0.1")
