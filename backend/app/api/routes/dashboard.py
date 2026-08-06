@@ -108,6 +108,18 @@ async def dashboard_device_connection_health(
         return success_response(data=data)
 
 
+@router.get("/api/device-monitor/dashboard/edge-pipeline-health")
+async def dashboard_edge_pipeline_health(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:dashboard:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = DashboardService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_edge_pipeline_health()
+        return success_response(data=data)
+
+
 @router.get("/api/device-monitor/dashboard/alarm-distribution")
 async def dashboard_alarm_distribution(
     statRange: str | None = None,

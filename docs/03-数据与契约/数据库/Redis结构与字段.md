@@ -127,32 +127,38 @@ shard = crc32(device_code) % stream_shard_count
 
 `stream_shard_count` 必须在 collector 与 writer 保持一致。
 
-### 5.2 条目字段
+### 5.2 条目字段（contract v2）
 
 | 字段 | 含义 |
 |------|------|
+| `contract_version` | 契约版本，v2 起必须为 `2` |
 | `device_code` | 设备编号 |
 | `device_type` | 设备类型，映射 TDengine 超级表 `sd{device_type}` |
 | `group_code` | 点位分组 |
 | `scan_rate` | 扫描周期 ms |
 | `ts` | 采集时间戳 ms |
 | `config_version` | 点位分组配置版本 |
-| `values` | JSON 字符串 `{var_id: 值串}` |
+| `values` | JSON 数组 `[var_id, ...]`，与 qualities 一一对应 |
+| `qualities` | JSON 数组 `[quality_code, ...]`，与 values 一一对应 |
 
-示例：
+**v2 示例**（含质量码）：
 
 ```json
 XADD rt:stream:qc:g001:0 *
 {
+  "contract_version": "2",
   "device_code": "QC100",
   "device_type": "qc",
   "group_code": "g001",
   "scan_rate": "100",
   "ts": "1718000000000",
   "config_version": "12",
-  "values": "{\"900001\":\"23.4\",\"900002\":\"1\"}"
+  "values": "[23.4, 1]",
+  "qualities": "[0, 0]"
 }
 ```
+
+**兼容性**：writer 读取时若 `contract_version < 2` 或缺 `qualities` 字段，兼容填充质量码 `0`（GOOD）。
 
 ### 5.3 写入过滤
 

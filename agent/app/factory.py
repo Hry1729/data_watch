@@ -6,10 +6,13 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import data_root, install_root, load_config, module_paths
+from app.core.config import data_root, install_root, load_config, module_paths, mutate_config
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
+from app.core.role import build_role, managed_module_names
+from app.core.security import dpapi_decrypt
 from app.routers.admin import _collector_env
 from app.services.driver_installer import DriverInstaller
+from app.services.edge_sync import EdgeSyncService
 from app.services.log_manager import LogManager
 from app.services.managed_process_runner import ManagedProcessRunner
 from app.services.process_manager import ModuleSpec, ProcessManager
@@ -21,7 +24,6 @@ from app.services.sidecar_manager import (
 
 logger = logging.getLogger(__name__)
 
-_MODULE_NAMES = ("collector", "writer")
 _SHUTDOWN_TIMEOUT_SECONDS = 25.0
 
 
@@ -47,15 +49,15 @@ def build_sidecar_manager(cfg: dict, runtime_dir: Path) -> SidecarManager:
 
 
 async def _stop_child_processes(pm: ProcessManager) -> None:
-    for name in _MODULE_NAMES:
+    for name in pm.modules:
         try:
             await pm.stop(name)
         except Exception:
             logger.exception("Failed to stop module %s during Agent shutdown", name)
 
 
-async def _detach_log_tails(log_manager: LogManager) -> None:
-    for name in _MODULE_NAMES:
+async def _detach_log_tails(pm: ProcessManager, log_manager: LogManager) -> None:
+    for name in pm.modules:
         try:
             await asyncio.to_thread(log_manager.detach, name)
         except Exception:
@@ -119,30 +121,56 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     runtime_dir = Path(cfg["agent"].get("runtime_dir", r"C:\ProgramData\DataWatch\runtime"))
     modules = {}
-    for name in ("collector", "writer"):
+    for name in managed_module_names():
         exe, working_dir = module_paths(name)
         modules[name] = ModuleSpec(
             name=name,
             executable=str(exe),
             args=list(cfg.get(name, {}).get("args", [])),
             working_dir=str(working_dir),
+            supports_shutdown_flag=name in {"collector", "writer"},
         )
     pm = ProcessManager(runtime_dir=runtime_dir, modules=modules)
     app.state.pm = pm
     app.state.log_manager = LogManager()
-    app.state.sidecar_manager = build_sidecar_manager(cfg, runtime_dir)
-    app.state.sidecar_manager.claim_existing_proxies()  # 认领重启前仍存活的 proxy（T022/FR-P15）
+    app.state.sidecar_manager = (
+        build_sidecar_manager(cfg, runtime_dir) if "collector" in modules else None
+    )
+    if app.state.sidecar_manager is not None:
+        app.state.sidecar_manager.claim_existing_proxies()
     # 外置驱动安装根：DATAWATCH_DATA_ROOT/drivers
     app.state.driver_installer = DriverInstaller(data_root() / "drivers")
     app.state.driver_installer.ensure_layout()
-    # 崩溃补偿：磁盘恢复 + 重启 collector + /drivers 验证代际
-    await _recover_drivers_sync_collector(app)
+    # 崩溃补偿只属于包含 Collector 的角色。
+    if "collector" in modules:
+        await _recover_drivers_sync_collector(app)
 
     health_task = asyncio.create_task(pm.health_check_loop())
+    edge_sync = None
+    edge_sync_task = None
+    if build_role() == "edge":
+        def process_status(name: str) -> str:
+            try:
+                return pm.status(name).status
+            except Exception:
+                return "unknown"
+
+        edge_sync = EdgeSyncService(
+            data_root() / "edge" / "edge.db",
+            load_config=load_config,
+            mutate_config=mutate_config,
+            decrypt=dpapi_decrypt,
+            process_status=process_status,
+        )
+        app.state.edge_sync = edge_sync
+        edge_sync_task = asyncio.create_task(edge_sync.run_forever())
     try:
         yield
     finally:
         logger.info("Agent shutting down...")
+        if edge_sync is not None and edge_sync_task is not None:
+            edge_sync.stop()
+            await edge_sync_task
         try:
             await asyncio.wait_for(
                 _stop_child_processes(app.state.pm),
@@ -154,7 +182,7 @@ async def lifespan(app: FastAPI):
                 _SHUTDOWN_TIMEOUT_SECONDS,
             )
 
-        await _detach_log_tails(app.state.log_manager)
+        await _detach_log_tails(app.state.pm, app.state.log_manager)
 
         health_task.cancel()
         try:
@@ -173,10 +201,11 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
 
-    from app.routers import bootstrap, auth, viewer, admin
+    from app.routers import bootstrap, auth, viewer, admin, local
     app.include_router(bootstrap.router)
     app.include_router(auth.router)
     app.include_router(viewer.router)
     app.include_router(admin.router)
+    app.include_router(local.router)
 
     return app

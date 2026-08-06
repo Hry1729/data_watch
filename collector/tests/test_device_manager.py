@@ -55,6 +55,10 @@ def test_build_connection_config_maps_slot_for_modbus_only():
     )
     s7_cfg = build_connection_config(s7)
     assert "unit_id" not in s7_cfg
+    assert s7_cfg["read_timeout_ms"] is None
+
+    s7.read_timeout_ms = 850
+    assert build_connection_config(s7)["read_timeout_ms"] == 850
 
 
 @pytest.mark.asyncio

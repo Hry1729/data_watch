@@ -48,14 +48,14 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /设备类型/);
   assert.match(source, /设备编号/);
   assert.match(source, /搜索设备名称或编号/);
-  assert.match(source, /!flex items-center justify-between/);
+  assert.match(source, /!flex shrink-0 items-center justify-between/);
   assert.match(source, /暂未选择监控点位/);
   assert.match(source, /max-w-56/);
   assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
   assert.match(source, /w-40 shrink-0 rounded-md border bg-card px-2\.5 py-1\.5/);
   assert.match(source, /flex min-w-max gap-2 pb-2 pr-2/);
-  assert.match(source, /className="min-w-0 gap-3 py-0"/);
-  assert.match(source, /border-b px-4 pb-2 pt-4/);
+  assert.match(source, /flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0/);
+  assert.match(source, /border-b px-4 py-2\.5/);
   assert.match(source, /<Card className="gap-0 py-0">/);
   assert.match(source, /grid grid-cols-1 gap-x-6 gap-y-2 px-2 py-1 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4/);
   assert.match(source, /xl:justify-self-end/);
@@ -246,4 +246,14 @@ test("point management uses server pagination and passes the selected device ids
   assert.match(routerSource, /deviceIds: list\[str\] \| str \| None/);
   assert.match(routerSource, /"deviceIds": deviceIds/);
   assert.match(serviceSource, /params\.get\("deviceIds"\)/);
+});
+
+test("device form edits the primary and backup collection endpoints", async () => {
+  const deviceSource = await readFile(new URL("../src/pages/DeviceManagementPage.tsx", import.meta.url), "utf8");
+  const deviceTypes = await readFile(new URL("../src/types/device-monitor.ts", import.meta.url), "utf8");
+  assert.match(deviceSource, /<Label>主地址<\/Label>/);
+  assert.match(deviceSource, /<Label>备用地址<\/Label>/);
+  assert.match(deviceSource, /endpoint:\s*row\.endpoint/);
+  assert.match(deviceSource, /endpointBackup:\s*row\.endpointBackup/);
+  assert.match(deviceTypes, /endpoint:\s*string;[\s\S]*endpointBackup\?:\s*string;/);
 });

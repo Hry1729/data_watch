@@ -10,7 +10,7 @@
 
 ## 1. 概述
 
-writer 是一个基于 asyncio 的单进程入库服务。它消费 collector 写入 Redis 的 `rt:stream:*` 消费队列，把每条采集帧翻译成 TDengine 的列值并批量落库。核心职责：
+writer 是一个基于 asyncio 的单进程、多消费分片入库服务。它消费 Collector 或 Central Ingest 写入 Redis 的 `rt:stream:*` 队列，把每条采集帧翻译成 TDengine 的列值并批量落库。默认启动 4 个 worker，Stream key 均匀分片且每个 worker 使用独立 MySQL mapper 连接和 TDengine 连接。核心职责：
 
 - **消费**：以 Redis 消费组（consumer group）方式拉取 Stream 消息；
 - **翻译**：经 MySQL 元数据把 `var_id` 映射为 TDengine 列名，并做类型归一；
@@ -31,7 +31,7 @@ writer 与 collector 无代码级耦合，二者只通过 Redis Stream 协作。
 | 高吞吐批量入库 | 跨子表多表 INSERT，按 ~3MB 字节预算分块 |
 | 坏数据不阻塞整批 | 二分降级隔离坏行，好行照常落库 |
 | 故障可自愈 | TDengine/MySQL 断线自动重连；连续失败退避 |
-| 配置可演进 | 映射按 config_version 缓存失效；schema 列只增不减 |
+| 配置可演进 | 永久 point_storage_mapping 解码历史数据；schema 列只增不减 |
 
 **不在本模块范围**：数据采集（collector）、对前端供数与历史查询（backend）。
 
@@ -44,7 +44,7 @@ writer 与 collector 无代码级耦合，二者只通过 Redis Stream 协作。
 | **Stream key** | `rt:stream:{device_type}:{group_code}:{shard}`，collector 的输出 = writer 的输入 |
 | **消费组 / consumer** | Redis consumer group + consumer 名，多实例可分摊同一组的消息 |
 | **PEL** | Pending Entries List，已投递未 ACK 的消息列表，是"至少一次"的基础 |
-| **GroupMapping** | `(device_code, group_code)` 的映射：超级表、子表、`var_id→列名`，按 config_version 失效 |
+| **GroupMapping** | `(device_code, group_code)` 的永久映射：超级表、子表、`var_id→列名`；stream config_version 仅作上下文 |
 | **超级表 stable / 子表 child_table** | TDengine 模型：每设备类型一张超级表 `sd{type}`，每设备一张子表（= device_code） |
 | **flush** | 把缓冲行批量写入 TDengine 的动作，由时间或缓冲阈值触发 |
 | **二分降级** | 批写失败且为确定坏数据错误时，二分隔离出坏行的策略 |
@@ -88,11 +88,11 @@ flowchart TD
 
 ### 5.1 main（装配与 stream 发现）
 
-`writer/main.py:164`。启动序列：加载 `config/settings.toml` → 用 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖连接字段（env 优先，生产凭据来自 agent）→ 校验必需配置项 → 连接 Redis / MySQL / TDengine → 启动系统日志 → **从 MySQL 发现 stream 范围** → 启动消费循环。
+`writer/main.py`。启动序列：加载 `config/settings.toml` → 用 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖连接字段 → 校验配置 → 连接 Redis/MySQL → 从 MySQL 发现 Stream 范围 → 按 `consumer_workers` 划分 Stream key → 为每个分片建立独立 MySQL mapper 与 TDengine 连接 → 启动消费循环。
 
 - **stream_keys 动态发现**（`_discover_stream_scopes` `main.py:128`）：查 MySQL 中所有启用且有 TDengine 列的 `(device_type, group_code)` 组合，再对每个组合 × `stream_shard_count` 个分片，拼出全部 `rt:stream:{dt}:{gc}:{shard}` 键。这与 collector 写出的分片键格式严格对齐。
 - **凭据注入**（`_apply_env_overrides` `main.py:106`）：mysql/redis/tdengine 的 host/port/user/database/password 均可由环境变量覆盖；settings.toml 仅作开发期回退与运行参数。
-- watchdog 监听 `runtime/writer.shutdown_flag`，由 agent 写文件触发停机。
+- 默认 `consumer_workers=4`，实际 worker 数不超过 Stream key 数；多 worker 的 consumer name 自动追加 `-1`、`-2` 等后缀。
 
 ### 5.2 StreamConsumer（消费-入库主循环）
 
@@ -104,13 +104,13 @@ flowchart TD
 4. **flush**——达时间或缓冲阈值时批量落库；
 5. **连续失败退避**——flush 失败递增退避（上限 10s）并降噪日志。
 
-每条消息经 `_handle_entry` (`consumer.py:362`)：先做 DLQ 检查（投递次数超 `pending_max_retry` → DLQ + ACK），再解析字段、经 MysqlMapper 取映射、翻译列名（`float` 强制，失败归 0）、入缓冲。
+每条消息经 `_handle_entry`：先做 DLQ 检查，再解析字段；永久 mapping 缓存命中时走事件循环内快路径，只有首次加载进入 executor/MySQL；随后完成列名翻译、类型和质量码校验并进入缓冲。
 
 ### 5.3 TDengineWriter（多表批写 + 二分降级）
 
 `writer/tdengine_writer.py:87`。WebSocket（taosws）连接，数据库 `device_data`（KEEP 14d / DURATION 1d）。
 
-- **schema 自管**：超级表 `(ts TIMESTAMP, <列> DOUBLE) TAGS (device_code)`；列缓存 `_col_cache`，按需 `ALTER STABLE ADD COLUMN`。所有数据列均为 `DOUBLE`。
+- **schema 自管**：值超级表 `(ts TIMESTAMP, <列> DOUBLE) TAGS (device_code)`；列缓存 `_col_cache`，按需 `ALTER STABLE ADD COLUMN`。质量码 `0..255` 写入平行窄表 `(ts, var_id BIGINT COMPOSITE KEY, quality TINYINT UNSIGNED)`；Writer 启动时校验复合键和无符号列，不兼容旧 schema 会阻断启动并提示迁移。
 - **多表批写**（`write_multi_table` `tdengine_writer.py:383`）：把跨多个子表的行打包进单条多表 `INSERT`，按 `MAX_SQL_BYTES`（~3MB，TDengine 硬上限约 4MiB）用 next-fit 分块；超大子表再按行切分。
 - **二分降级**（`_write_chunk` `tdengine_writer.py:425`）：一块写失败时——
   - 连接错 / 未连接 / 未知错 → 整块 `RETRY`（绝不二分、绝不进 DLQ）；
@@ -120,13 +120,14 @@ flowchart TD
 
 > **错误分类哲学**：只认具体错误码判坏数据，**故意不匹配** `invalid`/`out of range`/`syntax` 等英文词——这些也出现在配置越界、协议/版本等瞬时错误里，误判会把可重试数据错送进 DLQ。未知错一律 RETRY。
 
-### 5.4 MysqlMapper（映射缓存）
+### 5.4 MysqlMapper（永久映射缓存）
 
-`writer/mysql_mapper.py:45`。`get_or_load(device_code, group_code, config_version)` 返回 GroupMapping：
+`writer/mysql_mapper.py`。每个消费 worker 拥有独立 MySQL 连接和 MysqlMapper：
 
-- 缓存命中且 `config_version` 一致 → 直接返回；否则查 MySQL 重建（join `device_variable`/`device_point_group`/`device`/`device_type`，过滤 `deleted=0 enable=1`）。
-- **版本不匹配降级**（M2）：若 MySQL 版本与流中版本不一致但存在旧缓存，降级用旧映射——因 TDengine schema 只增不减，旧列必然仍存在，写入安全；避免条目永久卡 PEL 直至进 DLQ。
-- 同步 pymysql；在消费循环中经 executor 调用，避免阻塞事件循环（M3）。
+- `get_cached(device_code, group_code)` 命中时直接在事件循环内返回，不进入 executor，也不访问 MySQL。
+- 首次缺失才经 executor 调用 `get_or_load`，从永久 `point_storage_mapping` 读取 stable、child table、列名和 var_type。
+- `stream_config_version` 仅保留作接口兼容和日志上下文，不再用当前可编辑配置拒绝历史数据；旧 config version 由永久 mapping 正确解码。
+- MySQL 断线时 `ping(reconnect=True)` 后重试加载；确实没有永久映射时返回 None，由消费可靠性流程处理。
 
 ### 5.5 DLQ / 系统日志 / 性能指标
 
@@ -168,7 +169,7 @@ sequenceDiagram
 
 `_flush` (`consumer.py:505`) 拿到 `write_multi_table` 的逐块结果后按状态分流：
 
-- **LANDED** → 加入待 ACK；
+- **LANDED** → 加入待 ACK，同一 Stream 最多 500 个 entry id 合并为一次 XACK；
 - **BAD_DATA** → 逐行 `push_dlq`，**推送成功才 ACK**，失败留 buffer；
 - **RETRY** → 不 ACK、不进 DLQ，留 buffer 下轮重试。
 
@@ -187,7 +188,7 @@ sequenceDiagram
 | 输入 | 消费 `rt:stream:{device_type}:{group_code}:{shard}`（collector 产生） |
 | 输出 | 写入 TDengine `device_data` 库：超级表 `sd{type}`、子表 = device_code |
 | 死信 | `rt:dlq:{device_type}:{group_code}` List（上限 1000） |
-| 元数据 | 读 MySQL `device_variable`/`device_point_group`/`device`/`device_type` |
+| 元数据 | 启动发现范围读取当前配置；数据解码读取永久 `point_storage_mapping` |
 | 停机 | `runtime/writer.shutdown_flag` 文件（agent → writer） |
 
 完整 Stream 字段与 TDengine 表结构见《03-数据与契约》。
@@ -201,7 +202,7 @@ sequenceDiagram
 - `[redis]`：host/port/db/password、`stream_shard_count`、`group_name`、`consumer_name`；
 - `[mysql]`：host/port/user/password/database；
 - `[tdengine]`：host/port/user/password/database；
-- `[writer]`：`flush_interval_ms`、`batch_count`、`max_buffer_rows`、`pending_min_idle_ms`、`pending_max_retry`。
+- `[writer]`：`flush_interval_ms`（默认 200）、`batch_count`（默认 1000）、`max_buffer_rows`（默认 10000）、`consumer_workers`（默认 4）、`pending_min_idle_ms`、`pending_max_retry`。
 
 连接字段可被 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖（生产凭据由 agent 注入）。`stable_names` 与 stream 范围在启动时从 MySQL 自动发现，无需手配。
 
@@ -216,7 +217,7 @@ sequenceDiagram
 | 跨子表多表 INSERT | 数百子表不再串行落库，单语句覆盖数千子表，吞吐大幅提升 |
 | ~3MB 字节预算分块 | 贴近 TDengine 单语句 4MiB 硬上限留余量，避免 0x0219 |
 | 二分降级 + 错误码白名单 | 坏行隔离但不误伤可重试错误；未知错一律重试，绝不误送 DLQ |
-| 映射版本降级（M2） | schema 只增不减使旧映射安全可用，避免配置切换瞬间数据卡死 |
+| 永久 mapping + 缓存快路径 | 历史 config_version 仍可解码；缓存命中不进入 executor/MySQL，降低高频消费开销 |
 | 列统一 DOUBLE | 简化 schema 演进；代价是布尔/枚举语义在时序库中以数值表达 |
 | 缓冲满即背压 | 跳过读、优先 flush，避免内存无界增长 |
 
@@ -226,17 +227,15 @@ sequenceDiagram
 
 > 仅记录，供技术债清理阶段评估，本文不处理。
 
-- **单进程单 consumer**：当前部署为单实例。消费组已支持水平扩展（不同 consumer 名同组），但多实例运行未在本模块固化。
-- **MySQL 映射为同步单连接**：经 executor 规避阻塞；高并发元数据查询下仍是潜在串行点。
+- **单进程边界**：当前为一个 writer 进程内最多 `consumer_workers` 个异步分片。每个分片有独立 MySQL/TDengine 连接，但进程级故障会同时影响全部分片；消费组协议允许后续扩展为多进程/多实例。
+- **永久 mapping 缓存常驻**：mapping 契约要求物理坐标永久不变，因此命中后不按 config_version 失效；新增设备/组需通过重启 Writer 或后续显式失效机制加载。
 - **DLQ 只入不出**：无自动重放工具；List 上限 1000，溢出时 LTRIM 丢弃最旧死信。
 - **数据列统一 DOUBLE**：非数值语义（布尔/枚举）以数值落库；STRING 在 collector 侧已被排除出 stream。
-
----
 
 ## 11. 扩展方式
 
 - **新增设备类型 / 点位分组**：无需改 writer 代码——在 MySQL 配好 `device_type`、`device_point_group`、`device_variable.td_column_name` 后，writer 启动时会自动发现对应 stream 范围并按需建超级表/列。
-- **调优入库吞吐**：调整 `[writer]` 的 `flush_interval_ms` / `batch_count` / `max_buffer_rows`，以及 `[redis]` 的 `stream_shard_count`（需与 collector 一致）。
+- **调优入库吞吐**：先用压测调整 `consumer_workers`，再评估 `flush_interval_ms` / `batch_count` / `max_buffer_rows`；`stream_shard_count` 必须与 Collector/Ingest 一致。
 - **新增可重试/坏数据错误码**：在 `tdengine_writer.py` 的 `_DATA_ERROR_KEYWORDS`（`tdengine_writer.py:60`）按 TDengine 错误码谨慎增补，务必区分瞬时错误与真坏数据。
 - 补充单测参考 `writer/tests/test_consumer_degrade.py`、`test_tdengine_writer.py`。
 

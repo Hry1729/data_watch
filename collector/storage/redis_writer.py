@@ -3,15 +3,23 @@
 from __future__ import annotations
 
 import time
-import zlib
 
 import msgspec
 import redis
 
+from data_watch_shared.stream_envelope import (
+    build_stream_fields,
+    encode_latest_mapping,
+    latest_key,
+    stream_key,
+)
 from monitor.performance import PerformanceMetrics
+from storage.redis_client import close_pool
 
 
 class RedisWriter:
+    storage_path = "redis_only"
+
     def __init__(
         self,
         r: redis.Redis,
@@ -24,6 +32,15 @@ class RedisWriter:
         self._metrics = metrics or PerformanceMetrics()
         self._clock = time.perf_counter
 
+    def ping(self) -> None:
+        self.r.ping()
+
+    def close(self) -> None:
+        close_pool()
+
+    def publish_stream_points(self, delta: int) -> None:
+        self.r.hincrby("rt:metrics:collector", "stream_points", delta)
+
     def write_latest(
         self,
         device_code: str,
@@ -31,13 +48,10 @@ class RedisWriter:
         fields: dict[str, dict],
     ) -> None:
         """写 latest Hash。fields: {var_id: {"v": str, "t": int, "q": int}}"""
-        key = f"rt:latest:{device_code}:{group_code}"
+        key = latest_key(device_code, group_code)
         started = self._clock()
         try:
-            mapping = {
-                str(k): msgspec.json.encode(v)
-                for k, v in fields.items()
-            }
+            mapping = encode_latest_mapping(fields)
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
 
@@ -89,33 +103,26 @@ class RedisWriter:
             qualities: v2 质量码映射 {var_id: quality_code}。None 时产 v1（兼容渐进迁移），
                 非 None 时产 v2（contract_version=2 + qualities 字段）。
         """
-        # 稳定哈希：内置 hash(str) 受 PYTHONHASHSEED 影响每进程不同，
-        # 会导致 collector 重启后同设备落到不同 shard。crc32 进程间稳定。
-        shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
-        stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
+        key = stream_key(device_code, device_type, group_code, self.shard_count)
         started = self._clock()
         try:
-            encoded_values = msgspec.json.encode(values)
-            encoded_qualities = msgspec.json.encode(qualities) if qualities is not None else None
+            fields = build_stream_fields(
+                device_code=device_code,
+                device_type=device_type,
+                group_code=group_code,
+                scan_rate_ms=scan_rate_ms,
+                ts=ts,
+                config_version=config_version,
+                values=values,
+                qualities=qualities,
+            )
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
 
         started = self._clock()
         try:
-            fields = {
-                "device_code": device_code,
-                "device_type": device_type,
-                "group_code": group_code,
-                "scan_rate": str(scan_rate_ms),
-                "ts": str(ts),
-                "config_version": str(config_version),
-                "values": encoded_values,
-            }
-            if qualities is not None:
-                fields["contract_version"] = "2"
-                fields["qualities"] = encoded_qualities
             self.r.xadd(
-                stream_key,
+                key,
                 fields,
                 maxlen=self._maxlen,
                 approximate=True,
@@ -147,11 +154,19 @@ class RedisWriter:
         started = self._clock()
         try:
             encoded_frame = msgspec.json.encode(frame)
-            encoded_values = (
-                msgspec.json.encode(stream_values) if stream_values else None
-            )
-            encoded_qualities = (
-                msgspec.json.encode(stream_qualities) if stream_qualities is not None else None
+            stream_fields = (
+                build_stream_fields(
+                    device_code=device_code,
+                    device_type=device_type,
+                    group_code=group_code,
+                    scan_rate_ms=scan_rate_ms,
+                    ts=ts,
+                    config_version=config_version,
+                    values=stream_values,
+                    qualities=stream_qualities,
+                )
+                if stream_values
+                else None
             )
         finally:
             self._metrics.record_timing("json_ms", (self._clock() - started) * 1000)
@@ -161,24 +176,11 @@ class RedisWriter:
         try:
             pipe.lpush(window_key, encoded_frame)
             pipe.ltrim(window_key, 0, 9)
-            if encoded_values is not None:
-                shard_no = zlib.crc32(device_code.encode("utf-8")) % self.shard_count
-                stream_key = f"rt:stream:{device_type}:{group_code}:{shard_no}"
-                fields = {
-                    "device_code": device_code,
-                    "device_type": device_type,
-                    "group_code": group_code,
-                    "scan_rate": str(scan_rate_ms),
-                    "ts": str(ts),
-                    "config_version": str(config_version),
-                    "values": encoded_values,
-                }
-                if stream_qualities is not None:
-                    fields["contract_version"] = "2"
-                    fields["qualities"] = encoded_qualities
+            if stream_fields is not None:
+                key = stream_key(device_code, device_type, group_code, self.shard_count)
                 pipe.xadd(
-                    stream_key,
-                    fields,
+                    key,
+                    stream_fields,
                     maxlen=self._maxlen,
                     approximate=True,
                 )

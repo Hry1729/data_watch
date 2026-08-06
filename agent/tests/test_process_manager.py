@@ -6,6 +6,7 @@ agent 此前无测试。本文件记录现状 ProcessManager 的可观察行为�
 import asyncio
 import os
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -64,6 +65,16 @@ async def test_stop_force_kills_stubborn_child(make_pm):
     # 短超时后应 terminate/kill，不应一直挂着
     assert time.time() - t0 < 8.0
     assert not pm._pid_file(name).exists()
+
+
+async def test_stop_skips_flag_wait_for_unsupported_module(make_pm):
+    pm, name = make_pm(child_args=["--ignore-flag"])
+    pm.modules[name] = replace(pm.modules[name], supports_shutdown_flag=False)
+    await pm.start(name)
+    t0 = time.time()
+    info = await pm.stop(name)
+    assert info.status == "stopped"
+    assert time.time() - t0 < 5.0
 
 
 async def test_status_reports_crashed_on_nonzero_exit(make_pm):

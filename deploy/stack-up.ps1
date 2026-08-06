@@ -6,9 +6,8 @@
 .DESCRIPTION
   Idempotent bring-up helper for a center side where docker compose manages the
   WHOLE stack. Run after a fresh deploy or accidental container deletion.
-    - all image tar files are loaded from ..\docker-images\, including
-      data-watch-python314t.tar — backend is built FROM it, and compose may
-      (re)build backend on first up, so the base image must be present.
+    - runtime image tar files are loaded from ..\docker-images\. Backend and
+      frontend are prebuilt release images; target machines do not rebuild them.
     - redis config is pinned via redis.conf (mounted by docker-compose.yml).
     - tdengine schema (device_data + supertables) is auto-created by writer on
       first write, or manually via scripts/init_tdengine_v2.py.
@@ -43,7 +42,6 @@ $BackendEnv   = Join-Path $DeployDir 'backend.env'
 $Images = @(
     @{ Name = 'redis';                 Tar = Join-Path $AppImagesDir 'redis.tar' },
     @{ Name = 'tdengine';              Tar = Join-Path $AppImagesDir 'tdengine.tar' },
-    @{ Name = 'data-watch-python314t'; Tar = Join-Path $AppImagesDir 'data-watch-python314t.tar' },
     @{ Name = 'data-watch-backend';    Tar = Join-Path $AppImagesDir 'data-watch-backend.tar' },
     @{ Name = 'data-watch-frontend';   Tar = Join-Path $AppImagesDir 'data-watch-frontend.tar' }
 )

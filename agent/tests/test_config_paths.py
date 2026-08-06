@@ -24,3 +24,17 @@ def test_data_root_dev_is_agent_dir(monkeypatch):
     root = config.data_root()
     assert root.name == "agent"
     assert (root / "app").is_dir()
+
+
+def test_data_root_frozen_isolated_by_role(monkeypatch):
+    monkeypatch.delenv("DATAWATCH_DATA_ROOT", raising=False)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("DATAWATCH_ROLE", "edge")
+    assert config.data_root() == Path(r"C:\ProgramData\DataWatch Edge")
+    monkeypatch.setenv("DATAWATCH_ROLE", "distributed-center")
+    assert config.data_root() == Path(r"C:\ProgramData\DataWatch Distributed Center")
+
+
+def test_default_runtime_dir_follows_data_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
+    assert config._default_config()["agent"]["runtime_dir"] == str(tmp_path / "runtime")

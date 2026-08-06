@@ -11,6 +11,7 @@ const methods = [
   "dashboardTrend",
   "dashboardDeviceTypeDistribution",
   "dashboardConnectionHealth",
+  "dashboardEdgePipelineHealth",
   "dashboardRecentEvents",
 ];
 
@@ -27,10 +28,16 @@ test("dashboard client uses the existing authenticated backend routes", () => {
     "/api/device-monitor/dashboard/trend",
     "/api/device-monitor/dashboard/device-type-distribution",
     "/api/device-monitor/dashboard/device-connection-health",
+    "/api/device-monitor/dashboard/edge-pipeline-health",
     "/api/device-monitor/dashboard/recent-events",
   ]) {
     assert.match(clientSource, new RegExp(path.replaceAll("/", "\\/")));
   }
+});
+
+test("dashboard trend requests online device count for the composed chart", () => {
+  assert.match(clientSource, /"collectCount", "alarmCount", "onlineDeviceCount"/);
+  assert.match(mockSource, /metricKey: "onlineDeviceCount"/);
 });
 
 test("dashboard response contracts are represented by explicit TypeScript interfaces", () => {
@@ -39,6 +46,7 @@ test("dashboard response contracts are represented by explicit TypeScript interf
     "DashboardTrend",
     "DashboardDeviceTypeDistribution",
     "DashboardConnectionHealth",
+    "DashboardEdgePipelineHealth",
     "DashboardRecentEventList",
   ]) {
     assert.match(typeSource, new RegExp(`export interface ${typeName}`));

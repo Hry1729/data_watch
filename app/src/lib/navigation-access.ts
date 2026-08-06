@@ -3,17 +3,43 @@ import {
   navigationGroups,
   type NavigationGroup,
 } from "@/config/navigation";
+import { BUILD_ROLE } from "@/config/build-role";
 
 /** 桌面专有页：任意登录用户可见（方案 A） */
 export const DESKTOP_ALWAYS_PATHS = [
   "/collection/collector",
   "/collection/writer",
 ] as const;
+export const DISTRIBUTED_CENTER_ALWAYS_PATHS = [
+  "/collection/ingest",
+  "/collection/writer",
+] as const;
+const EDGE_ALWAYS_PATHS = [
+  "/edge/operations",
+  "/edge/collector",
+  "/edge/uploader",
+  "/device/points",
+  "/device/realtime",
+  "/device/history",
+] as const;
+const activeAlwaysPaths: readonly string[] = BUILD_ROLE === "edge"
+  ? EDGE_ALWAYS_PATHS
+  : BUILD_ROLE === "distributed-center"
+    ? DISTRIBUTED_CENTER_ALWAYS_PATHS
+    : DESKTOP_ALWAYS_PATHS;
 
 /** 管理员及以上额外可见页（控制台等） */
 export const ADMIN_ROLES = ["R_SUPER", "R_ADMIN"] as const;
 export const ADMIN_EXTRA_PATHS = ["/dashboard/console", "/settings"] as const;
-
+const DISTRIBUTED_CENTER_ADMIN_EXTRA_PATHS = [
+  ...ADMIN_EXTRA_PATHS,
+  "/distributed/nodes",
+] as const;
+const activeAdminExtraPaths: readonly string[] = BUILD_ROLE === "edge"
+  ? ["/edge/console", "/settings"]
+  : BUILD_ROLE === "distributed-center"
+    ? DISTRIBUTED_CENTER_ADMIN_EXTRA_PATHS
+    : ADMIN_EXTRA_PATHS;
 function isAdminRole(roles: string[] | undefined): boolean {
   if (!roles?.length) return false;
   return roles.some((role) => (ADMIN_ROLES as readonly string[]).includes(role));
@@ -76,10 +102,10 @@ function collectDesktopPathsFromMenus(menus: MenuTreeItem[], out: Set<string>) {
 
 /** 根据后端菜单树生成桌面可访问 path（含桌面专有页；管理员另含控制台） */
 export function buildAllowedPaths(menus: MenuTreeItem[], roles: string[] = []): string[] {
-  const paths = new Set<string>(DESKTOP_ALWAYS_PATHS);
+  const paths = new Set<string>(activeAlwaysPaths);
   collectDesktopPathsFromMenus(menus, paths);
   if (isAdminRole(roles)) {
-    for (const path of ADMIN_EXTRA_PATHS) paths.add(path);
+    for (const path of activeAdminExtraPaths) paths.add(path);
   }
   return Array.from(paths);
 }
@@ -90,11 +116,11 @@ export function canAccessPath(
   roles?: string[],
 ): boolean {
   if (!allowedPaths) return true;
-  if (DESKTOP_ALWAYS_PATHS.includes(pathname as (typeof DESKTOP_ALWAYS_PATHS)[number])) {
+  if (activeAlwaysPaths.includes(pathname)) {
     return true;
   }
   if (
-    (ADMIN_EXTRA_PATHS as readonly string[]).includes(pathname)
+    activeAdminExtraPaths.includes(pathname)
     && isAdminRole(roles)
   ) {
     return true;
@@ -103,10 +129,12 @@ export function canAccessPath(
 }
 
 export function pickFallbackPath(allowedPaths: string[] | undefined): string {
-  if (!allowedPaths?.length) return "/dashboard/workbench";
+  const defaultPath = BUILD_ROLE === "edge" ? "/edge/operations" : "/dashboard/workbench";
+  if (!allowedPaths?.length) return defaultPath;
   if (allowedPaths.includes("/dashboard/workbench")) return "/dashboard/workbench";
   if (allowedPaths.includes("/collection/collector")) return "/collection/collector";
-  return allowedPaths[0] ?? "/dashboard/workbench";
+  if (allowedPaths.includes("/collection/ingest")) return "/collection/ingest";
+  return allowedPaths[0] ?? defaultPath;
 }
 
 /** 按权限过滤侧栏分组；空分组丢弃 */

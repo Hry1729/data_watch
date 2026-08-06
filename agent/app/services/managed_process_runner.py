@@ -169,12 +169,28 @@ class ManagedProcessRunner:
         return popen.pid, create_time
 
     def force_stop(self, proc: psutil.Process) -> None:
-        """terminate → 等 2s → kill 强制结束。"""
+        """Terminate a managed process and every descendant it has already spawned."""
         try:
-            proc.terminate()
+            descendants = proc.children(recursive=True)
+        except psutil.Error:
+            descendants = []
+
+        processes = [proc, *descendants]
+        for target in processes:
             try:
-                proc.wait(timeout=2.0)
-            except psutil.TimeoutExpired:
-                proc.kill()
-        except psutil.Error as exc:
-            logger.error("force_stop failed for pid=%s: %s", getattr(proc, "pid", "?"), exc)
+                target.terminate()
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.Error as exc:
+                logger.error("force_stop terminate failed for pid=%s: %s", target.pid, exc)
+
+        _, alive = psutil.wait_procs(processes, timeout=2.0)
+        for target in alive:
+            try:
+                target.kill()
+            except psutil.NoSuchProcess:
+                pass
+            except psutil.Error as exc:
+                logger.error("force_stop kill failed for pid=%s: %s", target.pid, exc)
+        if alive:
+            psutil.wait_procs(alive, timeout=2.0)

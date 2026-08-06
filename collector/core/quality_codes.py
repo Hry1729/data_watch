@@ -38,7 +38,7 @@ _VALID_QUALITY_CODES = _KNOWN_BUSINESS_CODES | RESERVED_QUALITY_CODES
 
 
 def is_valid_quality(code: object) -> bool:
-    """业务码 ∪ 保留码；严格为非 bool 的 int（拒绝 True/False/浮点）。"""
+    """存储契约允许 0..255；严格为非 bool 的 int。"""
     if type(code) is not int:
         return False
-    return code in _VALID_QUALITY_CODES
+    return 0 <= code <= 255

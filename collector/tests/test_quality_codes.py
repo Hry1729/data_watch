@@ -93,13 +93,13 @@ class TestIsKnownQuality:
 class TestIsValidQuality:
     """is_valid_quality：业务∪保留；严格非 bool 的 int。"""
 
-    @pytest.mark.parametrize("code", [0, 1, 2, 3, 4, 5, 6, 7, 8])
+    @pytest.mark.parametrize("code", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 192, 255])
     def test_valid_codes(self, code, writer_qc, backend_qc):
         assert collector_qc.is_valid_quality(code) is True
         assert writer_qc.is_valid_quality(code) is True
         assert backend_qc.is_valid_quality(code) is True
 
-    @pytest.mark.parametrize("code", [0.9, 5.9, True, False, "0", 9, None])
+    @pytest.mark.parametrize("code", [0.9, 5.9, True, False, "0", -1, 256, None])
     def test_invalid_codes(self, code, writer_qc, backend_qc):
         assert collector_qc.is_valid_quality(code) is False
         assert writer_qc.is_valid_quality(code) is False

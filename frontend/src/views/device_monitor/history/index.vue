@@ -395,6 +395,7 @@ const confirmDeviceSelection = async () => {
   searchForm.value.varSeqs = []
   deviceDrawerVisible.value = false
   await loadPointList(selectedDeviceId.value)
+  saveHistoryCache()
 }
 
 const filteredPointList = computed(() => {
@@ -467,6 +468,7 @@ const confirmPointSelection = () => {
   }
   searchForm.value.varSeqs = [...tempSelectedVarSeqs.value]
   pointDrawerVisible.value = false
+  saveHistoryCache()
 }
 
 const exportDialogVisible = ref(false)
@@ -1225,6 +1227,9 @@ onBeforeRouteLeave(async (to, from, next) => {
 })
 
 onUnmounted(() => {
+  if (searchForm.value.deviceId) {
+    saveHistoryCache()
+  }
   window.removeEventListener('resize', handleResize)
   if (exportTimer) {
     clearInterval(exportTimer)

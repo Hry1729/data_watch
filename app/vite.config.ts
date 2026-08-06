@@ -2,12 +2,26 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
+import roleManifest from "../installer/roles.json";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const buildRole = process.env.VITE_DATAWATCH_ROLE || "centralized";
+const allowedRoles = new Set(["centralized", "edge", "distributed-center"]);
+if (!allowedRoles.has(buildRole)) {
+  throw new Error("Unsupported VITE_DATAWATCH_ROLE: " + buildRole);
+}
+
+const role = buildRole as keyof typeof roleManifest.roles;
+const agentPort = roleManifest.roles[role].agentPort;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  define: {
+    __DATAWATCH_ROLE__: JSON.stringify(buildRole),
+    __DATAWATCH_AGENT_PORT__: JSON.stringify(agentPort),
+  },
   plugins: [react(), tailwindcss()],
 
   resolve: {

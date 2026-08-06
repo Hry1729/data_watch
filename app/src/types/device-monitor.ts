@@ -4,6 +4,7 @@ export interface PaginatedResult<T> {
   pageNo?: number;
   pageSize?: number;
   availableCount?: number;
+  source?: "center" | "local";
 }
 
 export interface DriverListItem {
@@ -39,6 +40,8 @@ export interface DeviceListItem {
   connectUpdateTime: string;
   dataStatus: "normal" | "abnormal" | "nodata";
   dataUpdateTime: string;
+  endpoint: string;
+  endpointBackup: string;
   description?: string;
 }
 
@@ -69,6 +72,8 @@ export interface DeviceForm {
   deviceName: string;
   driverName: string;
   deviceStatus: "enabled" | "disabled";
+  endpoint: string;
+  endpointBackup?: string;
   description?: string;
 }
 

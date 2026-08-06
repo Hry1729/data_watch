@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from jose import JWTError, jwt
@@ -34,6 +35,20 @@ def dpapi_decrypt(ciphertext_b64: str) -> str:
 # ── 密码验证（PBKDF2-SHA256，与 backend/app/core/security.py 一致）────────────
 
 PBKDF2_ALGORITHM = "pbkdf2_sha256"
+PBKDF2_ITERATIONS = 600_000
+
+
+def hash_password(password: str) -> str:
+    if not password:
+        raise ValueError("password must not be empty")
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PBKDF2_ITERATIONS,
+    ).hex()
+    return "$".join((PBKDF2_ALGORITHM, str(PBKDF2_ITERATIONS), salt, digest))
 _MAX_PBKDF2_ITERATIONS = 10_000_000
 
 

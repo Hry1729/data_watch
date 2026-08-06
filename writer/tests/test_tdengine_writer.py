@@ -14,6 +14,7 @@ import pytest
 
 import tdengine_writer
 from tdengine_writer import BAD_DATA, LANDED, RETRY, TDengineWriter
+from quality_schema import QualitySchemaError
 
 
 def _make_writer(col_cache: dict[str, set[str]]) -> tuple[TDengineWriter, list[str]]:
@@ -252,7 +253,7 @@ async def test_ensure_quality_stable_creates_with_composite_key():
         return [
             ("ts", "TIMESTAMP", 8, ""),
             ("var_id", "BIGINT", 8, "COMPOSITE KEY"),
-            ("quality", "TINYINT", 1, ""),
+            ("quality", "TINYINT UNSIGNED", 1, ""),
             ("device_code", "VARCHAR", 32, "TAG"),
         ]
 
@@ -275,11 +276,12 @@ async def test_ensure_quality_stable_rejects_missing_composite_key():
         return [
             ("ts", "TIMESTAMP", 8, ""),
             ("var_id", "BIGINT", 8, ""),
-            ("quality", "TINYINT", 1, ""),
+            ("quality", "TINYINT UNSIGNED", 1, ""),
         ]
 
     writer._query = _fake_query  # type: ignore[method-assign]
-    await writer._ensure_quality_stable("sqqc")
+    with pytest.raises(QualitySchemaError):
+        await writer._ensure_quality_stable("sqqc")
     assert "sqqc" not in writer._quality_stable_ready
 
 
@@ -302,3 +304,21 @@ async def test_quality_fragment_allows_same_ts_multiple_var_ids():
     assert "(1720000000000, 1, 192)" in frag
     assert "(1720000000000, 2, 192)" in frag
     assert "(1720000000000, 3, 0)" in frag
+
+@pytest.mark.asyncio
+async def test_ensure_quality_stable_rejects_signed_quality_column():
+    writer, _ = _make_writer({})
+    writer._quality_stable_ready = set()
+
+    async def _fake_query(sql: str):
+        return [
+            ("ts", "TIMESTAMP", 8, ""),
+            ("var_id", "BIGINT", 8, "COMPOSITE KEY"),
+            ("quality", "TINYINT", 1, ""),
+            ("device_code", "VARCHAR", 32, "TAG"),
+        ]
+
+    writer._query = _fake_query  # type: ignore[method-assign]
+    with pytest.raises(QualitySchemaError):
+        await writer._ensure_quality_stable("sqqc")
+    assert "sqqc" not in writer._quality_stable_ready

@@ -26,7 +26,7 @@ backend 是一个基于 **TurboAPI** 的 ASGI 服务（自定义增强层 `Enhan
 | 目标 | 实现要点 |
 |------|----------|
 | 三数据源统一服务 | MySQL（SQLAlchemy async）/ TDengine（WebSocket）/ Redis（async）分层封装 |
-| 实时低延迟监控 | WebSocket 按设备分组订阅，0.1s diff 推送 |
+| 实时低延迟监控 | WebSocket 按设备分组订阅，Redis `rt:change` 事件驱动 diff 推送，1s 轮询兜底 |
 | 大体量历史查询可控 | 降采样聚合 + 分页 + 查询配额（点数/范围/记录数）保护 |
 | 安全可控 | JWT(HS256) + PBKDF2 口令哈希 + RBAC 权限码 |
 | 可观测 | 系统日志落库、速率采样、模块运行指标 |
@@ -41,7 +41,7 @@ backend 是一个基于 **TurboAPI** 的 ASGI 服务（自定义增强层 `Enhan
 |------|------|
 | **TurboAPI / EnhancedASGITurboAPI** | Web 框架；后者是项目自定义的 ASGI 增强层，统一处理 HTTP/WebSocket/lifespan/CORS/异常 |
 | **三数据源** | MySQL（配置/用户/权限/日志）、TDengine（历史时序）、Redis（实时态） |
-| **实时监控通道** | `ws_push`：按 (device_code, group_code) 订阅，轮询 Redis latest 做 diff 推送 |
+| **实时监控通道** | `ws_push`：按 (device_code, group_code) 订阅，`rt:change` 唤醒后读取 Redis latest 做 diff 推送 |
 | **历史快照通道** | Perspective：会话化管理，历史查询结果以 snapshot 经 WS 推送 |
 | **RBAC** | 用户→角色→权限码；接口按所需权限码校验交集 |
 | **降采样 interval** | 历史图表按时间桶聚合（avg/last 等），支持 auto 自适应 |
@@ -117,7 +117,8 @@ flowchart TD
 
 `backend/app/services/ws_push.py`。`WsPushManager` 按 `(device_code, group_code)` 维护订阅：
 
-- 每个订阅键起一个 0.1s 的推送循环，从 Redis 读 `rt:latest:{device}:{group}`；
+- 全局只创建一个 Redis Pub/Sub 监听，订阅 `rt:change`；消息只唤醒匹配的 `(device_code, group_code)` 推送循环；
+- 推送循环读取 `rt:latest:{device}:{group}` 计算 diff，并保留每 1 秒一次的兜底读取；
 - 首次发 `snapshot`，之后只发**变化点的 diff**；
 - 设备无数据时只在"在线→离线"跳变推一次 `offline`（去重防刷屏）；
 - 附带 TDengine 健康标志（30s TTL 缓存）。

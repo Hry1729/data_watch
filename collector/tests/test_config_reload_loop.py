@@ -99,6 +99,7 @@ def _make_app(fake_db, devices, variables):
     app._add_device = AsyncMock()
     app._replace_device_atomic = AsyncMock()
     app.device_manager = MagicMock()
+    app.device_manager.devices = {device.device_id: MagicMock() for device in devices}
     fake_db.app = app
     return app
 
@@ -110,6 +111,38 @@ async def _run_reload_loop(monkeypatch, app):
     monkeypatch.setattr(collector_main.asyncio, "sleep", _no_sleep)
     await app._config_reload_loop()
 
+
+@pytest.mark.asyncio
+async def test_runtime_add_installs_tasks_before_slow_connection_finishes():
+    app = CollectorApp.__new__(CollectorApp)
+    device = MagicMock()
+    device.scan_tasks = [MagicMock()]
+    device.status.value = "offline"
+    app.device_manager = MagicMock()
+    app.device_manager.add_device.return_value = device
+    app.device_manager.schedule_reconnect = AsyncMock()
+    app.scheduler = MagicMock()
+    app.scheduler.reload_device_tasks = AsyncMock()
+
+    connection_started = asyncio.Event()
+    release_connection = asyncio.Event()
+
+    async def slow_connect(_device):
+        connection_started.set()
+        await release_connection.wait()
+        return False
+
+    app.device_manager.connect_device = AsyncMock(side_effect=slow_connect)
+    add_task = asyncio.create_task(
+        app._add_device(_device(device_id="NEW_PLC"), [_variable("NEW_PLC")])
+    )
+    await asyncio.wait_for(connection_started.wait(), timeout=1)
+    try:
+        app.scheduler.reload_device_tasks.assert_awaited_once()
+    finally:
+        release_connection.set()
+    await add_task
+    app.device_manager.schedule_reconnect.assert_awaited_once_with(device)
 
 @pytest.mark.asyncio
 async def test_config_reload_version_only_uses_variable_rebuild(monkeypatch):
@@ -132,6 +165,21 @@ async def test_config_reload_version_only_uses_variable_rebuild(monkeypatch):
     app._remove_device.assert_not_awaited()
     app._add_device.assert_not_awaited()
     app._replace_device_atomic.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_config_reload_reconciles_runtime_device_removed_during_startup(monkeypatch):
+    active_device = _device(device_id="PLC001")
+    stale_device = _device(device_id="AGV801")
+    variables = [_variable("PLC001")]
+    current = {"PLC001": _signature()}
+    fake_db = _FakeConfigDB([current, current], [active_device], variables)
+    app = _make_app(fake_db, [active_device, stale_device], variables)
+
+    await _run_reload_loop(monkeypatch, app)
+
+    app._remove_device.assert_awaited_once_with("AGV801")
+    app._add_device.assert_not_awaited()
 
 
 @pytest.mark.asyncio

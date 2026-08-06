@@ -24,6 +24,18 @@ def _patch_pool(monkeypatch, *, connect_result):
 
 
 @pytest.mark.asyncio
+async def test_connect_applies_explicit_read_timeout_to_ipc_client(monkeypatch):
+    client = _patch_pool(monkeypatch, connect_result=True)
+    drv = OpcDaCenterDriver()
+    await drv.connect({
+        "opc_server": "ZPMC.OPCServer",
+        "vm_host": "172.27.18.221",
+        "read_timeout_ms": 850,
+    })
+    assert client.timeout == 0.85
+
+
+@pytest.mark.asyncio
 async def test_connect_failure_error_includes_endpoint_port_progid(monkeypatch):
     _patch_pool(monkeypatch, connect_result=False)
     drv = OpcDaCenterDriver()

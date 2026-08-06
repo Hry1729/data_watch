@@ -46,6 +46,7 @@ class DeviceConfig:
     device_pk: Optional[int] = None  # MySQL device.id
     opc_server: Optional[str] = None  # OPC DA ProgID，从 comm_protocol.server 获取
     config_version: int = 1  # device.variable_config_version，用于 Redis Stream entry
+    read_timeout_ms: Optional[int] = None  # None 保持协议驱动默认超时
 
 
 @dataclass

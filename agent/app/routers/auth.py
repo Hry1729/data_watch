@@ -35,6 +35,19 @@ async def login(body: LoginRequest):
     if not cfg["agent"].get("bootstrap_done", False):
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
+    roles = await _mysql_roles(cfg, body)
+
+    token = create_access_token(
+        subject=body.username,
+        secret=cfg["agent"]["jwt_secret"],
+        expire_hours=int(cfg["agent"].get("jwt_expire_hours", 8)),
+        roles=roles,
+    )
+    logger.info("login success: user=%s", body.username)
+    return LoginResponse(token=token, roles=roles)
+
+
+async def _mysql_roles(cfg: dict, body: LoginRequest) -> list[str]:
     try:
         conn = _get_mysql_conn(cfg)
     except Exception:
@@ -49,19 +62,15 @@ async def login(body: LoginRequest):
             )
             user = cur.fetchone()
 
-        # 用户不存在或已删除 → 401（不区分"不存在"与"密码错误"）
         if user is None or user["deleted"]:
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-        # 密码验证 → 401（必须先于 status 判断，避免账号枚举侧信道）
         if not verify_password(body.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="用户名或密码错误")
 
-        # 账号禁用 → 403
         if user["status"] != "1":
             raise HTTPException(status_code=403, detail="当前账号不可用，请联系管理员")
 
-        # 角色检查：至少一个启用角色，并把角色编码写入 Agent JWT。
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT r.role_code FROM sys_user_role ur"
@@ -72,16 +81,7 @@ async def login(body: LoginRequest):
             roles = [str(row["role_code"]) for row in cur.fetchall()]
             if not roles:
                 raise HTTPException(status_code=403, detail="当前账号未分配角色")
-
     finally:
         conn.close()
 
-    token = create_access_token(
-        subject=body.username,
-        secret=cfg["agent"]["jwt_secret"],
-        expire_hours=int(cfg["agent"].get("jwt_expire_hours", 8)),
-        roles=roles,
-    )
-    logger.info("login success: user=%s", body.username)
-    # 不 log token 值
-    return LoginResponse(token=token)
+    return roles

@@ -26,6 +26,7 @@ from collector.executor import TaskExecutor
 from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
+from core.exceptions import ReadError
 from device.manager import DeviceManager
 from monitor.performance import PerformanceMetrics
 
@@ -574,3 +575,37 @@ def test_normalize_driver_sample():
     value, quality, timestamp, protocol_quality = _normalize_driver_sample(sample4, default_ts)
     assert value is None
     assert quality == QUALITY_GOOD
+
+@pytest.mark.asyncio
+async def test_explicit_read_timeout_rejects_late_sample_after_driver_finishes():
+    config = _make_single_group_config("EXE_TIMEOUT")
+    config.devices[0].read_timeout_ms = 5
+    device_manager = DeviceManager(config)
+    device_manager.register_devices()
+    device = device_manager.devices["EXE_TIMEOUT"]
+
+    finished = asyncio.Event()
+
+    async def slow_read(_blocks):
+        await asyncio.sleep(0.02)
+        finished.set()
+        return {"DB100.DBB0": [0x00, 0x64]}
+
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(side_effect=slow_read)
+    device.driver = driver
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(redis_writer=redis_writer)
+    task = CollectTask(device=device, scan_task=device.scan_tasks[0])
+    started = asyncio.get_running_loop().time()
+
+    with pytest.raises(ReadError, match="configured timeout"):
+        await executor.execute(task)
+
+    assert finished.is_set()
+    assert asyncio.get_running_loop().time() - started >= 0.02
+    redis_writer.write_window_stream.assert_not_called()
+    redis_writer.write_latest.assert_not_called()
+    assert executor.stats["performance"]["counters"]["read_timeout_count"] == 1

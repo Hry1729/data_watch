@@ -90,7 +90,7 @@ def test_point_from_dict_rejects_invalid_quality_code():
             "device_id": "EXT001",
             "variable_id": "pressure",
             "value": 1.23,
-            "quality": 192,
+            "quality": 256,
         })
 
 

@@ -193,6 +193,10 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
                 await service._call_agent_uninstall("drv1", "token")
             self.assertEqual(ctx.exception.code, 503)
             self.assertIn("超时", ctx.exception.message)
+            self.assertEqual(
+                client.delete.await_args.kwargs["headers"]["X-DataWatch-Service-Token"],
+                "token",
+            )
 
     async def test_uninstall_timeout_persists_agent_phase_unknown(self):
         """DELETE 已发出但响应超时：记 unknown，供启动 reconcile，不可当 failed 清掉。"""
@@ -622,6 +626,7 @@ class TestDriverLifecycleReconcile(unittest.IsolatedAsyncioTestCase):
                 _rowcount_result(0),
                 _mapping_result([]),
                 _mapping_result([pending_row]),  # SELECT
+                _mapping_result([]),  # fetch installed driver
                 _mapping_result([]),  # fetch protocol
                 _mapping_result([{"max_id": 3}]),
                 _mapping_result([]),  # insert protocol

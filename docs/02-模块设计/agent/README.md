@@ -1,16 +1,16 @@
-# 边缘代理 agent 设计文档
+# Windows 本机代理 agent 设计文档
 <!-- xiaohu-illustration:agent-readme-01-workbench -->
 ![小狐配图：边缘工作台](../../images/xiaohu-agent-readme-01-workbench.png)
 
-> agent 是部署在边缘机上的本机中枢：以 Windows 服务常驻，负责 collector/writer 的进程管控、OPC DA 代理边车管理、数据库凭据的安全保管与下发，以及首次安装的引导配置。桌面端通过它远程观测与管控边缘进程。本文覆盖其框架与结构、三层接口、进程管控、凭据与路径契约、对外契约与扩展方式。
+> agent 是三个 Windows 固定角色共用的本机中枢，以角色独立的 Windows 服务常驻：中心式管理 Collector/Writer，分布式边缘管理 Edge Collector/Uploader，分布式中心管理 Ingest/Writer；只有包含 Collector 的角色管理 OPC DA proxy。
 >
-> 全局视图见《01-总体设计/系统架构总览》；它管控的对象见《02-模块设计/采集-collector》《入库-writer》。
+> 本文原有的 `collector/writer`、`:7070` 和数据库 DPAPI 章节描述中心式基线。分布式边缘差异见 [边缘运行时实现说明](../edge/边缘运行时实现说明.md)，分布式中心使用端口 7072；三角色完整边界见 [三角色安装包构建与隔离](../../04-运维部署/三角色安装包构建与隔离.md)。
 
 ---
 
 ## 1. 概述
 
-agent 是一个基于 **FastAPI** 的本机 HTTP 服务（默认 `127.0.0.1:7070`），以 Windows 服务方式开机自启。它是边缘机上唯一长期常驻的控制进程，职责：
+agent 是一个基于 **FastAPI** 的本机 HTTP 服务，以 Windows 服务方式开机自启；中心式、分布式边缘、分布式中心分别监听 `127.0.0.1:7070`、`:7071`、`:7072`。其公共职责与角色特定职责包括：
 
 - **进程管控**：启动/停止/重启 collector 与 writer，监控其存活、CPU、内存；
 - **边车管理**：管理 OPC DA 代理（sidecar）进程，认领重启前存活的代理；
@@ -122,7 +122,7 @@ flowchart TD
 
 ### 5.5 安全与凭据下发
 
-`agent/app/core/security.py` 提供 DPAPI 加解密与 JWT。agent 是边缘机 DB 凭据的**单一来源**：运行时解密 `password_enc`，经 `DATAWATCH_<DB>_<FIELD>` 环境变量注入 collector/writer 进程（`start(env=...)`），子进程据此连接数据库（见《采集-collector》《入库-writer》的 env 覆盖）。
+`agent/app/core/security.py` 提供 DPAPI 加解密与 JWT。在中心式基线中，agent 是本机 DB 凭据的**单一来源**：运行时解密 `password_enc`，经 `DATAWATCH_<DB>_<FIELD>` 环境变量注入 collector/writer 进程（`start(env=...)`），子进程据此连接数据库（见《采集-collector》《入库-writer》的 env 覆盖）。
 
 ---
 
@@ -207,7 +207,7 @@ sequenceDiagram
 > 仅记录，供后续评估。
 
 - **bootstrap 目标机实测待真机**：首装在真实目标机 + OPC 硬件环境下的端到端验证尚未完成（不可单元化）。
-- **单机 agent**：每边缘机一个 agent 实例，管控本机 collector/writer；无跨机编排。
+- **单机 agent**：每个 Windows 角色实例只有一个本机 agent，按构建角色管控对应进程；无跨机进程编排。
 - **DPAPI 绑定本机/账户**：迁移机器或更换服务账户后，`password_enc` 需重新配置。
 
 ---

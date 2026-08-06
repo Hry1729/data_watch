@@ -10,22 +10,21 @@ import {
 } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { TitleBar } from "@/components/TitleBar";
-import { BootstrapPage } from "@/pages/BootstrapPage";
+
 import { LoginPage } from "@/pages/LoginPage";
-import { OverviewPage } from "@/pages/OverviewPage";
-import { CollectorPage } from "@/pages/CollectorPage";
-import { WriterPage } from "@/pages/WriterPage";
-import { SettingsPage } from "@/pages/SettingsPage";
+
 import { PlaceholderPage } from "@/pages/PlaceholderPage";
 import { agentClient } from "@/lib/agent-client";
+import { AGENT_PORT, BUILD_ROLE } from "@/config/build-role";
 import { setBackendBaseUrl } from "@/lib/backend-client";
 import { Toaster } from "@/components/ui/sonner";
+
 import { legacyRedirects, placeholderPages } from "@/config/navigation";
 import { PageRefreshProvider } from "@/contexts/PageRefreshContext";
 
 /** 捕获懒加载页/布局渲染异常，避免整页白屏无提示 */
 class RouteErrorBoundary extends Component<
-  { children: ReactNode },
+  { children: ReactNode; onReturn: () => void },
   { error: Error | null }
 > {
   state: { error: Error | null } = { error: null };
@@ -49,7 +48,7 @@ class RouteErrorBoundary extends Component<
           <Button
             onClick={() => {
               this.setState({ error: null });
-              window.location.assign("/dashboard/workbench");
+              this.props.onReturn();
             }}
           >
             返回工作台
@@ -61,17 +60,75 @@ class RouteErrorBoundary extends Component<
   }
 }
 
-const WorkbenchPage = lazy(() => import("@/pages/WorkbenchPage"));
-const DeviceCommunicationPage = lazy(() => import("@/pages/DeviceCommunicationPage"));
-const DriverManagementPage = lazy(() => import("@/pages/DriverManagementPage"));
-const DeviceManagementPage = lazy(() => import("@/pages/DeviceManagementPage"));
-const PointManagementPage = lazy(() => import("@/pages/PointManagementPage"));
+function NavigableRouteErrorBoundary({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  return (
+    <RouteErrorBoundary onReturn={() => navigate("/dashboard/workbench", { replace: true })}>
+      {children}
+    </RouteErrorBoundary>
+  );
+}
+
+const CollectorPage = __DATAWATCH_ROLE__ === "centralized"
+  ? lazy(() => import("@/pages/CollectorPage").then((module) => ({
+      default: module.CollectorPage,
+    })))
+  : null;
+const IngestPage = __DATAWATCH_ROLE__ === "distributed-center"
+  ? lazy(() => import("@/pages/IngestPage").then((module) => ({
+      default: module.IngestPage,
+    })))
+  : null;
+const WriterPage = __DATAWATCH_ROLE__ !== "edge"
+  ? lazy(() => import("@/pages/WriterPage").then((module) => ({
+      default: module.WriterPage,
+    })))
+  : null;
+const EdgeConsolePage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeConsolePage"))
+  : null;
+const EdgeOperationsPage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeOperationsPage"))
+  : null;
+const EdgeCollectorPage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeModulePages").then((module) => ({ default: module.EdgeCollectorPage })))
+  : null;
+const EdgeUploaderPage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeModulePages").then((module) => ({ default: module.EdgeUploaderPage })))
+  : null;
+const OverviewPage = __DATAWATCH_ROLE__ !== "edge"
+  ? lazy(() => import("@/pages/OverviewPage").then((module) => ({ default: module.OverviewPage })))
+  : null;
+const SettingsPage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeSettingsPage"))
+  : lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })));
+const WorkbenchPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/WorkbenchPage")) : null;
+const DeviceCommunicationPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/DeviceCommunicationPage")) : null;
+const DriverManagementPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/DriverManagementPage")) : null;
+const DeviceManagementPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/DeviceManagementPage")) : null;
+const PointManagementPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/PointManagementPage")) : null;
+const EdgePointMonitorPage = __DATAWATCH_ROLE__ === "edge" ? lazy(() => import("@/pages/EdgePointMonitorPage")) : null;
 const RealtimeMonitorPage = lazy(() => import("@/pages/RealtimeMonitorPage"));
 const HistoryDataPage = lazy(() => import("@/pages/HistoryDataPage"));
-const SystemLogPage = lazy(() => import("@/pages/SystemLogPage"));
-const UserManagementPage = lazy(() => import("@/pages/UserManagementPage"));
-const RoleManagementPage = lazy(() => import("@/pages/RoleManagementPage"));
-const MenuManagementPage = lazy(() => import("@/pages/MenuManagementPage"));
+const SystemLogPage = __DATAWATCH_ROLE__ !== "edge" ? lazy(() => import("@/pages/SystemLogPage")) : null;
+const UserManagementPage = __DATAWATCH_ROLE__ !== "edge"
+  ? lazy(() => import("@/pages/UserManagementPage"))
+  : null;
+const RoleManagementPage = __DATAWATCH_ROLE__ !== "edge"
+  ? lazy(() => import("@/pages/RoleManagementPage"))
+  : null;
+const MenuManagementPage = __DATAWATCH_ROLE__ !== "edge"
+  ? lazy(() => import("@/pages/MenuManagementPage"))
+  : null;
+
+const DistributedNodesPage = __DATAWATCH_ROLE__ === "distributed-center"
+  ? lazy(() => import("@/pages/DistributedNodesPage"))
+  : null;
+const BootstrapRoutePage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeBootstrapPage"))
+  : lazy(() => import("@/pages/BootstrapPage").then((module) => ({
+      default: module.BootstrapPage,
+    })));
 
 const STARTUP_TIMEOUT_MS = 6_000;
 
@@ -161,7 +218,7 @@ function AgentErrorPage() {
     >
       <div className="text-center">
         <p className="text-lg font-semibold text-foreground">无法连接到 Agent</p>
-        <p className="mt-1 font-mono text-sm text-muted-foreground">127.0.0.1:7070</p>
+        <p className="mt-1 font-mono text-sm text-muted-foreground">127.0.0.1:{AGENT_PORT}</p>
         <p className="mt-2 text-xs text-muted-foreground/70">
           请确认 Data Watch Agent 服务已启动
         </p>
@@ -190,11 +247,11 @@ export default function App() {
       <AuthProvider>
         {/* AppStartup：启动检查，期间显示 loading 屏 */}
         <AppStartup>
-          <RouteErrorBoundary>
+          <NavigableRouteErrorBoundary>
           <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载页面…</div>}>
           <Routes>
             {/* 公开路由：无 AppLayout，无 AuthGuard */}
-            <Route path="/bootstrap" element={<BootstrapPage />} />
+            <Route path="/bootstrap" element={<BootstrapRoutePage />} />
             <Route
               path="/login"
               element={
@@ -217,21 +274,50 @@ export default function App() {
                 </AuthGuard>
               }
             >
-              <Route path="/dashboard/workbench" element={<WorkbenchPage />} />
-              <Route path="/dashboard/console" element={<OverviewPage />} />
-              <Route path="/collection/collector" element={<CollectorPage />} />
-              <Route path="/collection/writer" element={<WriterPage />} />
-              <Route path="/device/communication" element={<DeviceCommunicationPage />} />
-              <Route path="/device/drivers" element={<DriverManagementPage />} />
-              <Route path="/device/devices" element={<DeviceManagementPage />} />
-              <Route path="/device/points" element={<PointManagementPage />} />
+              {EdgeConsolePage && (
+                <Route path="/edge/console" element={<EdgeConsolePage />} />
+              )}
+              {EdgeOperationsPage && (
+                <Route path="/edge/operations" element={<EdgeOperationsPage />} />
+              )}
+              {EdgeCollectorPage && (
+                <Route path="/edge/collector" element={<EdgeCollectorPage />} />
+              )}
+              {EdgeUploaderPage && (
+                <Route path="/edge/uploader" element={<EdgeUploaderPage />} />
+              )}
+              {WorkbenchPage && (
+                <Route path="/dashboard/workbench" element={<WorkbenchPage />} />
+              )}
+              {OverviewPage && (
+                <Route path="/dashboard/console" element={<OverviewPage />} />
+              )}
+              {CollectorPage && (
+                <Route path="/collection/collector" element={<CollectorPage />} />
+              )}
+              {IngestPage && (
+                <Route path="/collection/ingest" element={<IngestPage />} />
+              )}
+              {WriterPage && (
+                <Route path="/collection/writer" element={<WriterPage />} />
+              )}
+              {DeviceCommunicationPage && <Route path="/device/communication" element={<DeviceCommunicationPage />} />}
+              {DriverManagementPage && <Route path="/device/drivers" element={<DriverManagementPage />} />}
+              {DeviceManagementPage && <Route path="/device/devices" element={<DeviceManagementPage />} />}
+              {EdgePointMonitorPage && <Route path="/device/points" element={<EdgePointMonitorPage />} />}
+              {PointManagementPage && <Route path="/device/points" element={<PointManagementPage />} />}
               <Route path="/device/realtime" element={<RealtimeMonitorPage />} />
               <Route path="/device/history" element={<HistoryDataPage />} />
-              <Route path="/logs/system" element={<SystemLogPage />} />
-              <Route path="/system/users" element={<UserManagementPage />} />
-              <Route path="/system/roles" element={<RoleManagementPage />} />
-              <Route path="/system/menus" element={<MenuManagementPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              {SystemLogPage && <Route path="/logs/system" element={<SystemLogPage />} />}
+              {UserManagementPage && RoleManagementPage && MenuManagementPage && (
+                <>
+                  <Route path="/system/users" element={<UserManagementPage />} />
+                  <Route path="/system/roles" element={<RoleManagementPage />} />
+                  <Route path="/system/menus" element={<MenuManagementPage />} />
+                </>
+              )}
+              {SettingsPage && <Route path="/settings" element={<SettingsPage />} />}
+              {DistributedNodesPage && <Route path="/distributed/nodes" element={<DistributedNodesPage />} />}
 
               {placeholderPages.map(({ path, title }) => (
                 <Route
@@ -259,10 +345,10 @@ export default function App() {
             </Route>
 
             {/* 未匹配路由：回到工作台入口（未登录时由 AuthGuard 再跳登录） */}
-            <Route path="*" element={<Navigate to="/dashboard/workbench" replace />} />
+            <Route path="*" element={<Navigate to={BUILD_ROLE === "edge" ? "/edge/operations" : "/dashboard/workbench"} replace />} />
           </Routes>
           </Suspense>
-          </RouteErrorBoundary>
+          </NavigableRouteErrorBoundary>
         </AppStartup>
       </AuthProvider>
     </BrowserRouter>

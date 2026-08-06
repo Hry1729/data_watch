@@ -134,7 +134,7 @@ async def process_metrics(
 
 @router.websocket("/viewer/logs/{name}/tail")
 async def tail_logs(name: str, websocket: WebSocket):
-    if name not in {"collector", "writer"}:
+    if name not in {"collector", "writer", "ingest", "uploader"}:
         await websocket.close(code=1008)
         return
 

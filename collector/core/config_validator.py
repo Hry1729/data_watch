@@ -112,6 +112,11 @@ class ConfigValidator:
         elif config.scan_rate > 3600:  # 最大1小时
             result.warnings.append(f"Scan rate is very large: {config.scan_rate}s")
 
+        if config.read_timeout_ms is not None and config.read_timeout_ms <= 0:
+            result.errors.append(
+                f"Invalid read timeout: {config.read_timeout_ms}ms"
+            )
+
         return result
 
     def _validate_mysql_config(self, config: MySQLConfig) -> ValidationResult:

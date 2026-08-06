@@ -149,7 +149,53 @@ def _resolve_runtime_dir(arg_value: str | None) -> Path:
     return Path(r"C:\ProgramData\DataWatch\runtime")
 
 
-async def _watch_shutdown_flag(consumer_task: asyncio.Task, flag_path: Path, interval: float = 1.0) -> None:
+def _partition_stream_keys(stream_keys: list[str], worker_count: int) -> list[list[str]]:
+    if worker_count <= 0:
+        raise ValueError("consumer_workers must be positive")
+    actual_count = min(worker_count, len(stream_keys))
+    return [stream_keys[index::actual_count] for index in range(actual_count)]
+
+
+def _open_mysql_connection(config: dict) -> pymysql.connections.Connection:
+    return pymysql.connect(
+        host=config["host"],
+        port=config["port"],
+        user=config["user"],
+        password=config["password"],
+        database=config["database"],
+        charset="utf8mb4",
+        autocommit=True,
+    )
+
+
+def _connect_mapper_connections(
+    config: dict,
+    first_connection: pymysql.connections.Connection,
+    count: int,
+) -> list[pymysql.connections.Connection]:
+    connections = [first_connection]
+    try:
+        for _ in range(1, count):
+            connections.append(_open_mysql_connection(config))
+    except Exception:
+        for connection in connections:
+            connection.close()
+        raise
+    return connections
+
+async def _connect_writers(config: dict, count: int, syslog) -> list[TDengineWriter]:
+    writers: list[TDengineWriter] = []
+    try:
+        for _ in range(count):
+            writer = TDengineWriter(syslog=syslog)
+            await writer.connect(config)
+            writers.append(writer)
+    except Exception:
+        await asyncio.gather(*(writer.close() for writer in writers), return_exceptions=True)
+        raise
+    return writers
+
+async def _watch_shutdown_flag(consumer_task: asyncio.Future, flag_path: Path, interval: float = 1.0) -> None:
     while not consumer_task.done():
         try:
             if flag_path.exists():
@@ -199,15 +245,7 @@ async def main() -> None:
 
     # --- MySQL 同步连接 ---
     try:
-        mysql_conn = pymysql.connect(
-            host=mc["host"],
-            port=mc["port"],
-            user=mc["user"],
-            password=mc["password"],
-            database=mc["database"],
-            charset="utf8mb4",
-            autocommit=True,
-        )
+        mysql_conn = _open_mysql_connection(mc)
         logger.info("MySQL connected: %s:%s db=%s", mc["host"], mc["port"], mc["database"])
     except Exception as exc:
         logger.error("Cannot connect to MySQL: %s", exc)
@@ -249,10 +287,37 @@ async def main() -> None:
     wc["stable_names"] = sorted({f"sd{device_type}" for device_type, _ in stream_scopes})
     logger.info("Discovered %d stream scope(s): %s", len(stream_scopes), stream_scopes)
 
-    # --- TDengine 写入器 ---
-    writer = TDengineWriter(syslog=syslog)
+    # 构建完整的流键集合并按消费 worker 分片。
+    stream_keys = [
+        f"rt:stream:{dt}:{gc}:{shard}"
+        for dt, gc in stream_scopes
+        for shard in range(rc["stream_shard_count"])
+    ]
+    logger.info("Consuming %d stream key(s): %s", len(stream_keys), stream_keys)
+    partitions = _partition_stream_keys(
+        stream_keys, int(wc.get("consumer_workers", 4))
+    )
+
     try:
-        await writer.connect(config)
+        mapper_connections = _connect_mapper_connections(
+            mc, mysql_conn, len(partitions)
+        )
+    except Exception as exc:
+        logger.error("Cannot create per-worker MySQL connections: %s", exc)
+        syslog.emit(
+            level="ERROR",
+            log_type="storage",
+            source="writer.main",
+            content="startup fatal error: cannot create per-worker MySQL connections",
+            exception_stack=traceback.format_exc(),
+        )
+        syslog.stop()
+        r.close()
+        sys.exit(1)
+
+    # 每个消费分片使用独立 TDengine 连接；TDengineWriter 内部锁只保护本连接。
+    try:
+        writers = await _connect_writers(config, len(partitions), syslog)
     except Exception as exc:
         logger.error("Cannot connect to TDengine: %s", exc)
         syslog.emit(
@@ -263,27 +328,36 @@ async def main() -> None:
             exception_stack=traceback.format_exc(),
         )
         syslog.stop()
+        for connection in mapper_connections:
+            connection.close()
+        r.close()
         sys.exit(1)
 
-    mapper = MysqlMapper(mysql_conn)
+    mappers = [MysqlMapper(connection) for connection in mapper_connections]
     performance_metrics = WriterPerformanceMetrics()
-    consumer = StreamConsumer(
-        config,
-        mapper,
-        writer,
-        r,
-        syslog=syslog,
-        metrics=performance_metrics,
-    )
-
-    # 构建完整的流键集合：
-    # 格式：rt:stream:{device_type}:{group_code}:{shard_no}
-    stream_keys = [
-        f"rt:stream:{dt}:{gc}:{shard}"
-        for dt, gc in stream_scopes
-        for shard in range(rc["stream_shard_count"])
-    ]
-    logger.info("Consuming %d stream key(s): %s", len(stream_keys), stream_keys)
+    base_consumer_name = str(rc["consumer_name"])
+    consumer_tasks = []
+    for index, (partition, writer, mapper) in enumerate(
+        zip(partitions, writers, mappers), start=1
+    ):
+        worker_config = {**config, "redis": {**rc}}
+        if len(partitions) > 1:
+            worker_config["redis"]["consumer_name"] = f"{base_consumer_name}-{index}"
+        consumer = StreamConsumer(
+            worker_config,
+            mapper,
+            writer,
+            r,
+            syslog=syslog,
+            metrics=performance_metrics,
+        )
+        consumer_tasks.append(
+            asyncio.create_task(
+                consumer.run_loop(partition),
+                name=f"writer-consumer-{index}",
+            )
+        )
+    logger.info("Started %d writer consumer worker(s)", len(consumer_tasks))
 
     syslog.emit(
         level="INFO",
@@ -292,7 +366,7 @@ async def main() -> None:
         content="writer started",
     )
 
-    consumer_task = asyncio.create_task(consumer.run_loop(stream_keys))
+    consumer_task = asyncio.gather(*consumer_tasks)
     watchdog_task = asyncio.create_task(_watch_shutdown_flag(consumer_task, flag_path))
     try:
         await consumer_task
@@ -301,6 +375,8 @@ async def main() -> None:
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received, shutting down")
     finally:
+        consumer_task.cancel()
+        await asyncio.gather(*consumer_tasks, return_exceptions=True)
         watchdog_task.cancel()
         try:
             await watchdog_task
@@ -317,8 +393,9 @@ async def main() -> None:
             "[performance] %s",
             json.dumps(performance_metrics.snapshot(), separators=(",", ":")),
         )
-        await writer.close()
-        mysql_conn.close()
+        await asyncio.gather(*(writer.close() for writer in writers), return_exceptions=True)
+        for connection in mapper_connections:
+            connection.close()
         r.close()
         logger.info("Writer process stopped")
 

@@ -18,7 +18,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
-import type { LogLevel, LogLine, WsStatus } from "@/types";
+import { AGENT_WS_ORIGIN } from "@/config/build-role";
+import type { LogLevel, LogLine, ModuleName, WsStatus } from "@/types";
 
 // ─── WS 工厂（动态 import 确保 mock 不进入生产包）────────────────────────────
 
@@ -39,7 +40,7 @@ function getWsFactory(): Promise<WsFactory> {
   } else {
     _factoryPromise = Promise.resolve(
       (name: string) =>
-        new WebSocket(`ws://127.0.0.1:7070/viewer/logs/${name}/tail`)
+        new WebSocket(`${AGENT_WS_ORIGIN}/viewer/logs/${name}/tail`)
     );
   }
   return _factoryPromise;
@@ -96,7 +97,7 @@ export interface UseWebSocketLogResult {
 }
 
 export function useWebSocketLog(
-  name: "collector" | "writer",
+  name: ModuleName,
   enabled = true
 ): UseWebSocketLogResult {
   const { auth } = useAuth();

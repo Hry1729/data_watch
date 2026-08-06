@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { agentClient } from "@/lib/agent-client";
-import type { AppError, ModuleStatus } from "@/types";
+import type { AppError, ModuleName, ModuleStatus } from "@/types";
 
 const POLL_INTERVAL = 3_000; // 3 秒
 
@@ -26,7 +26,7 @@ export interface UseModuleStatusResult {
 }
 
 export function useModuleStatus(
-  name: "collector" | "writer"
+  name: ModuleName
 ): UseModuleStatusResult {
   const { logout } = useAuth();
   const { refreshVersion } = usePageRefresh();
@@ -112,7 +112,7 @@ export interface UseProcessControlResult {
 }
 
 export function useProcessControl(
-  name: "collector" | "writer",
+  name: ModuleName,
   refresh: () => void
 ): UseProcessControlResult {
   const { logout } = useAuth();
@@ -152,7 +152,7 @@ export function useProcessControl(
 
 // ─── 辅助：当 data 为 null 时的 fallback 状态 ─────────────────────────────────
 
-export function fallbackStatus(name: "collector" | "writer"): ModuleStatus {
+export function fallbackStatus(name: ModuleName): ModuleStatus {
   return {
     name,
     status:          "unknown",

@@ -2,6 +2,9 @@ import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BellRing,
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -10,6 +13,11 @@ import {
   CircleCheck,
   Cpu,
   Database,
+  CloudUpload,
+  GitMerge,
+  Layers3,
+  RadioTower,
+  Save,
   ExternalLink,
   LoaderCircle,
   RefreshCw,
@@ -17,10 +25,11 @@ import {
 } from "lucide-react";
 import {
   Area,
-  AreaChart,
+  ComposedChart,
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
   XAxis,
   YAxis,
 } from "recharts";
@@ -69,12 +78,14 @@ import {
 } from "@/components/ui/tooltip";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { useDashboardData, type DashboardTrendRange } from "@/hooks/useDashboardData";
+import { usePipelineHealth, type PipelineStageHealth, type PipelineStageKey } from "@/hooks/usePipelineHealth";
 import { backendClient } from "@/lib/backend-client";
 import type { SystemLogItem } from "@/types/log";
 
 const trendConfig = {
   collectCount: { label: "采集量", color: "var(--chart-4)" },
   alarmCount: { label: "告警数", color: "var(--chart-2)" },
+  onlineDeviceCount: { label: "在线设备数", color: "var(--chart-3)" },
 } satisfies ChartConfig;
 
 const distributionConfig = {
@@ -211,9 +222,64 @@ function StatCard({
   );
 }
 
+
+const PIPELINE_STAGE_META: Record<PipelineStageKey, { label: string; icon: typeof Server }> = {
+  collector: { label: "Collector", icon: RadioTower },
+  uploader: { label: "Uploader", icon: CloudUpload },
+  ingest: { label: "Ingest", icon: GitMerge },
+  redis: { label: "Redis", icon: Layers3 },
+  writer: { label: "Writer", icon: Save },
+  tdengine: { label: "TDengine", icon: Database },
+};
+
+const PIPELINE_GRID_POSITIONS = [
+  "col-start-1 row-start-1",
+  "col-start-3 row-start-1",
+  "col-start-5 row-start-1",
+  "col-start-5 row-start-3",
+  "col-start-3 row-start-3",
+  "col-start-1 row-start-3",
+] as const;
+
+const PIPELINE_STATUS_CLASSES = {
+  healthy: { node: "border-emerald-200 bg-emerald-50/40", icon: "text-emerald-600", dot: "bg-emerald-500" },
+  warning: { node: "border-amber-200 bg-amber-50/50", icon: "text-amber-600", dot: "animate-pulse bg-amber-400" },
+  critical: { node: "border-red-200 bg-red-50/50", icon: "text-red-600", dot: "bg-red-500" },
+  unknown: { node: "border-border bg-muted/30", icon: "text-muted-foreground", dot: "bg-muted-foreground/60" },
+  inactive: { node: "border-border bg-muted/20", icon: "text-muted-foreground/60", dot: "bg-muted-foreground/35" },
+} as const;
+
+function PipelineStageNode({ stage }: { stage: PipelineStageHealth }) {
+  const meta = PIPELINE_STAGE_META[stage.key];
+  const styles = PIPELINE_STATUS_CLASSES[stage.status];
+  const Icon = meta.icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          tabIndex={0}
+          role="status"
+          aria-label={`${meta.label}：${stage.detail}`}
+          className={`relative z-10 flex h-20 min-w-0 flex-col items-center justify-center rounded-md border px-1.5 py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${styles.node}`}
+        >
+          <span className={`absolute right-1.5 top-1.5 size-2 rounded-full ${styles.dot}`} />
+          <Icon className={`mb-1 size-4 shrink-0 ${styles.icon}`} />
+          <span className="max-w-full truncate text-[10px] font-semibold">{meta.label}</span>
+          <span className="mt-0.5 max-w-full truncate text-[9px] text-muted-foreground">{stage.detail}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-56">
+        <p className="font-medium">{meta.label} · {stage.detail}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{stage.description}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function WorkbenchPage() {
   const navigate = useNavigate();
   const dashboard = useDashboardData();
+  const pipeline = usePipelineHealth();
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const [logPage, setLogPage] = useState(1);
   const [logPageSize, setLogPageSize] = useState(10);
@@ -234,6 +300,7 @@ export function WorkbenchPage() {
       time,
       collectCount: series.get("collectCount")?.[index] ?? 0,
       alarmCount: series.get("alarmCount")?.[index] ?? 0,
+      onlineDeviceCount: series.get("onlineDeviceCount")?.[index] ?? 0,
     }));
   }, [dashboard.trend]);
 
@@ -249,7 +316,7 @@ export function WorkbenchPage() {
 
   const distributionData = useMemo(
     () =>
-      (dashboard.distribution?.groups ?? []).slice(0, 8).map((group) => ({
+      (dashboard.distribution?.groups ?? []).slice(0, 6).map((group) => ({
         name: group.typeName,
         online: group.onlineCount,
         offline: Math.max(0, group.deviceCount - group.onlineCount),
@@ -292,8 +359,8 @@ export function WorkbenchPage() {
 
       <Card data-dashboard-section="trend" className="@container/card border border-border">
         <CardHeader>
-          <CardTitle>采集量 / 告警趋势</CardTitle>
-          <CardDescription>采集量与告警数量变化</CardDescription>
+          <CardTitle>采集量 / 在线设备 / 告警趋势</CardTitle>
+          <CardDescription>采集量、在线设备数与告警数量变化</CardDescription>
           <CardAction>
             <ToggleGroup
               type="single"
@@ -321,15 +388,11 @@ export function WorkbenchPage() {
         <CardContent className="px-2 pt-2 sm:px-6">
           {trendData.length ? (
             <ChartContainer config={trendConfig} className="h-[280px] w-full aspect-auto">
-              <AreaChart data={trendData} margin={{ left: 0, right: 0, top: 8 }} accessibilityLayer>
+              <ComposedChart data={trendData} margin={{ left: 0, right: 0, top: 8 }} accessibilityLayer barGap={0}>
                 <defs>
                   <linearGradient id="fillCollectCount" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="var(--color-collectCount)" stopOpacity={0.85} />
                     <stop offset="95%" stopColor="var(--color-collectCount)" stopOpacity={0.08} />
-                  </linearGradient>
-                  <linearGradient id="fillAlarmCount" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--color-alarmCount)" stopOpacity={0.62} />
-                    <stop offset="95%" stopColor="var(--color-alarmCount)" stopOpacity={0.06} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} />
@@ -342,7 +405,7 @@ export function WorkbenchPage() {
                   width={48}
                   tickFormatter={(value) => formatCompactNumber(Number(value))}
                 />
-                <YAxis yAxisId="alarm" domain={[0, "auto"]} orientation="right" allowDecimals={false} tickLine={false} axisLine={false} width={36} />
+                <YAxis yAxisId="count" domain={[0, "auto"]} orientation="right" allowDecimals={false} tickLine={false} axisLine={false} width={40} />
                 <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="dot" />} />
                 <Area
                   yAxisId="collect"
@@ -352,16 +415,23 @@ export function WorkbenchPage() {
                   stroke="var(--color-collectCount)"
                   strokeWidth={2}
                 />
-                <Area
-                  yAxisId="alarm"
+                <Bar
+                  yAxisId="count"
+                  dataKey="onlineDeviceCount"
+                  fill="var(--color-onlineDeviceCount)"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={30}
+                />
+                <Line
+                  yAxisId="count"
                   dataKey="alarmCount"
                   type="monotone"
-                  fill="url(#fillAlarmCount)"
                   stroke="var(--color-alarmCount)"
-                  strokeWidth={2}
+                  strokeWidth={2.5}
+                  dot={false}
                 />
                 <ChartLegend content={<ChartLegendContent />} />
-              </AreaChart>
+              </ComposedChart>
             </ChartContainer>
           ) : (
             <PanelFallback loading={dashboard.loading} error={dashboard.errors.trend} onRetry={dashboard.refresh} />
@@ -369,7 +439,7 @@ export function WorkbenchPage() {
         </CardContent>
       </Card>
 
-      <div data-dashboard-row="overview-charts" className="grid gap-4 lg:grid-cols-2">
+      <div data-dashboard-row="overview-charts" className="grid gap-4 lg:grid-cols-3">
         <Card data-dashboard-section="distribution" className="@container/card border border-border">
           <CardHeader>
             <CardTitle>设备类型分布</CardTitle>
@@ -377,7 +447,7 @@ export function WorkbenchPage() {
           </CardHeader>
           <CardContent>
             {distributionData.length ? (
-              <ChartContainer config={distributionConfig} className="h-[260px] w-full aspect-auto">
+              <ChartContainer config={distributionConfig} className="h-[220px] w-full aspect-auto">
                 <BarChart data={distributionData} margin={{ left: 0, right: 8, top: 8 }} accessibilityLayer>
                   <CartesianGrid vertical={false} />
                   <XAxis
@@ -412,7 +482,7 @@ export function WorkbenchPage() {
               </Button>
             </CardAction>
           </CardHeader>
-          <CardContent className="flex min-h-[260px] items-center justify-center">
+          <CardContent className="flex min-h-[220px] items-center justify-center">
             {dashboard.health ? (
               <div className="flex w-full max-w-lg flex-col items-center justify-center gap-5">
                 <PieChart
@@ -420,7 +490,7 @@ export function WorkbenchPage() {
                   hoveredIndex={hoveredIndex}
                   innerRadius={45}
                   onHoverChange={setHoveredIndex}
-                  size={180}
+                  size={150}
                 >
                   {healthData.map((_, index) => <PieSlice index={index} key={index} />)}
                   <PieCenter defaultLabel="设备" />
@@ -439,6 +509,57 @@ export function WorkbenchPage() {
               </div>
             ) : (
               <PanelFallback loading={dashboard.loading} error={dashboard.errors.health} onRetry={dashboard.refresh} />
+            )}
+          </CardContent>
+        </Card>
+        <Card data-dashboard-section="pipeline" className="@container/card border border-border">
+          <CardHeader>
+            <CardTitle>数据链路健康</CardTitle>
+            <CardDescription>采集到入库的全链路状态</CardDescription>
+          </CardHeader>
+          <CardContent className="flex min-h-[220px] flex-col justify-center gap-4">
+            {pipeline.loading && !pipeline.data ? (
+              <Skeleton className="h-20 w-full" />
+            ) : pipeline.error ? (
+              <PanelFallback loading={false} error={pipeline.error} onRetry={pipeline.refresh} />
+            ) : pipeline.data ? (
+              <TooltipProvider delayDuration={200}>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-[minmax(0,1fr)_18px_minmax(0,1fr)_18px_minmax(0,1fr)] grid-rows-[80px_18px_80px] items-center gap-x-1">
+                    {pipeline.data.stages.map((stage, index) => (
+                      <div key={stage.key} className={"min-w-0 " + (PIPELINE_GRID_POSITIONS[index] ?? "")}>
+                        <PipelineStageNode stage={stage} />
+                      </div>
+                    ))}
+                    <div aria-hidden className="col-start-2 row-start-1 flex items-center">
+                      <span className="h-px flex-1 bg-border" />
+                      <ArrowRight className="-ml-px size-3 shrink-0 text-muted-foreground/70" />
+                    </div>
+                    <div aria-hidden className="col-start-4 row-start-1 flex items-center">
+                      <span className="h-px flex-1 bg-border" />
+                      <ArrowRight className="-ml-px size-3 shrink-0 text-muted-foreground/70" />
+                    </div>
+                    <div aria-hidden className="col-start-5 row-start-2 flex h-full flex-col items-center">
+                      <span className="w-px flex-1 bg-border" />
+                      <ArrowDown className="-mt-px size-3 shrink-0 text-muted-foreground/70" />
+                    </div>
+                    <div aria-hidden className="col-start-4 row-start-3 flex items-center">
+                      <ArrowLeft className="-mr-px size-3 shrink-0 text-muted-foreground/70" />
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                    <div aria-hidden className="col-start-2 row-start-3 flex items-center">
+                      <ArrowLeft className="-mr-px size-3 shrink-0 text-muted-foreground/70" />
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between border-t pt-3 text-[10px] text-muted-foreground">
+                    <span>六级链路状态聚合</span>
+                    <span>更新 {formatTime(pipeline.data.generatedAt)}</span>
+                  </div>
+                </div>
+              </TooltipProvider>
+            ) : (
+              <PanelFallback loading={false} error={null} onRetry={pipeline.refresh} />
             )}
           </CardContent>
         </Card>

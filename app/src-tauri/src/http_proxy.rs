@@ -14,11 +14,12 @@ fn build_client(timeout: Duration) -> Result<Client, String> {
 pub async fn agent_request(
     method: String,
     path: String,
+    port: u16,
     body: Option<String>,
     token: Option<String>,
     timeout_secs: Option<u64>,
 ) -> Result<(u16, String), String> {
-    let url = format!("http://127.0.0.1:7070{}", path);
+    let url = format!("http://127.0.0.1:{}{}", port, path);
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
     let client = build_client(timeout)?;
 

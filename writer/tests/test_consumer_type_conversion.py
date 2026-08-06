@@ -36,8 +36,11 @@ def _mapping() -> GroupMapping:
 def _consumer(mapper=None):
     writer = MagicMock()
     redis_client = MagicMock()
-    mapper = mapper or MagicMock()
-    mapper.get_or_load.return_value = _mapping()
+    if mapper is None:
+        mapper = MagicMock()
+        mapping = _mapping()
+        mapper.get_cached.return_value = mapping
+        mapper.get_or_load.return_value = mapping
     return (
         StreamConsumer(
             _config(), mapper, writer, redis_client, metrics=WriterPerformanceMetrics()
@@ -158,3 +161,37 @@ async def test_valid_entry_buffered_unchanged():
     assert len(consumer._buffer) == 1
     assert consumer._buffer[0].columns == {"qc1": 12.5, "qc2": 3.0}
     assert consumer._buffer[0].qualities == {}
+
+@pytest.mark.asyncio
+async def test_mapping_cache_hit_avoids_executor_load():
+    mapper = MagicMock()
+    mapper.get_cached.return_value = _mapping()
+    consumer, _ = _consumer(mapper)
+
+    await consumer._handle_entry(
+        "rt:stream:qc:g001:0",
+        "1-0",
+        _entry_data({"v1": "12.5"}),
+        1,
+    )
+
+    mapper.get_or_load.assert_not_called()
+    assert len(consumer._buffer) == 1
+
+
+@pytest.mark.asyncio
+async def test_mapping_cache_miss_loads_mapping_in_executor():
+    mapper = MagicMock()
+    mapper.get_cached.return_value = None
+    mapper.get_or_load.return_value = _mapping()
+    consumer, _ = _consumer(mapper)
+
+    await consumer._handle_entry(
+        "rt:stream:qc:g001:0",
+        "1-0",
+        _entry_data({"v1": "12.5"}),
+        1,
+    )
+
+    mapper.get_or_load.assert_called_once_with("qc100", "g001", 0)
+    assert len(consumer._buffer) == 1

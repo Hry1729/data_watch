@@ -14,6 +14,7 @@ hiddenimports = [
     'app.routers.auth',
     'app.routers.viewer',
     'app.routers.admin',
+    'app.routers.local',
     'uvicorn.protocols.websockets.websockets_impl',
     'uvicorn.protocols.websockets.wsproto_impl',
     'uvicorn.protocols.http.httptools_impl',

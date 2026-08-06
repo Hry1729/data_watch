@@ -116,6 +116,41 @@ class TaskExecutor:
         self._device_warn_last_time: Dict[str, float] = {}
         self._executor_warn_last_time: Dict[str, float] = {}
 
+    async def _read_device(self, task: CollectTask) -> Dict[str, Any]:
+        """Apply a logical deadline without releasing the device before I/O exits."""
+        device = task.device
+        timeout_ms = device.connection_config.get("read_timeout_ms")
+        if timeout_ms is None:
+            return await device.driver.read(task.scan_task.read_blocks)
+
+        timeout_ms = int(timeout_ms)
+        read_task = asyncio.create_task(device.driver.read(task.scan_task.read_blocks))
+        try:
+            done, _ = await asyncio.wait({read_task}, timeout=timeout_ms / 1000.0)
+        except asyncio.CancelledError:
+            try:
+                await asyncio.shield(read_task)
+            except Exception:
+                pass
+            raise
+        if read_task in done:
+            return read_task.result()
+
+        self._metrics.increment("read_timeout_count")
+        logger.warning(
+            "Device %s read exceeded configured timeout %sms; draining underlying I/O",
+            device.device_id,
+            timeout_ms,
+        )
+        try:
+            await asyncio.shield(read_task)
+        except Exception:
+            pass
+        raise ReadError(
+            f"Read exceeded configured timeout {timeout_ms}ms "
+            f"for device {device.device_id}"
+        )
+
     async def execute(self, task: CollectTask) -> None:
         """
         执行单个采集任务
@@ -148,7 +183,7 @@ class TaskExecutor:
         # 批量读取（读失败：标记设备异常并向调度器抛出）
         start = self._clock()
         try:
-            result = await device.driver.read(scan_task.read_blocks)
+            result = await self._read_device(task)
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
                 raise ReadError(f"All read blocks failed for task {task.task_name}")
         except ExecutorSaturatedError as exc:

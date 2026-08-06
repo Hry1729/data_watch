@@ -16,10 +16,12 @@ from typing import Any, Mapping
 
 import psutil
 
-from app.core.config import load_config
+from app.core.config import data_root, load_config
+from app.core.role import build_role
 from app.services.opcda_detect import (
     assign_sticky_ports,
     detect_center_endpoints,
+    detect_edge_endpoints,
     load_port_mapping,
     save_port_mapping,
 )
@@ -287,7 +289,9 @@ class SidecarManager:
         return self._opcda_dir() / "port_mapping.json"
 
     def _detect_endpoints(self) -> list[str]:
-        """启动 collector 前读取最新 Agent MySQL 配置，避免 bootstrap 后仍用旧快照。"""
+        """Read endpoints from the role's authoritative configuration store."""
+        if build_role() == "edge":
+            return detect_edge_endpoints(data_root() / "edge" / "edge.db")
         return detect_center_endpoints(load_config().get("mysql", {}))
 
     @staticmethod

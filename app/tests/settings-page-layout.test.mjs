@@ -15,4 +15,11 @@ test("settings page leaves its header and section navigation to AppLayout", () =
   assert.doesNotMatch(source, /<ArrowLeft/);
   assert.doesNotMatch(source, /顶部返回行/);
 });
-
+test("settings save and restart actions follow the active tab", () => {
+  assert.ok(source.includes('activeTab === "database"'));
+  assert.ok(source.includes('["ingest", "writer"]'));
+  assert.ok(source.includes('activeTab === "collector"'));
+  assert.ok(source.includes('activeTab === "writer"'));
+  assert.ok(source.includes("{showSaveCard && ("));
+  assert.ok(!source.includes("primaryModule="));
+});

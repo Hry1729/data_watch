@@ -4,6 +4,8 @@
 检测用 monkeypatch 替身 pymysql.connect，不连真库。
 """
 
+import sqlite3
+
 import pytest
 
 from app.services import opcda_detect
@@ -89,6 +91,28 @@ def test_detect_normalizes_protocol_aliases(monkeypatch):
 def test_detect_empty_endpoint_becomes_localhost(monkeypatch):
     _patch_rows(monkeypatch, [("", "opcda_center")])
     assert opcda_detect.detect_center_endpoints(_MYSQL) == ["localhost"]
+
+
+def test_detect_edge_endpoints_reads_local_snapshot(tmp_path):
+    path = tmp_path / "edge.db"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE edge_device(endpoint TEXT, protocol TEXT, enabled INTEGER)"
+        )
+        connection.executemany(
+            "INSERT INTO edge_device VALUES(?, ?, ?)",
+            [
+                ("172.27.18.221", "opcda_center", 1),
+                ("10.0.0.9", "s7", 1),
+                ("172.27.18.222", "opcda-center", 0),
+            ],
+        )
+
+    assert opcda_detect.detect_edge_endpoints(path) == ["172.27.18.221"]
+
+
+def test_detect_edge_endpoints_without_snapshot_is_empty(tmp_path):
+    assert opcda_detect.detect_edge_endpoints(tmp_path / "missing.db") == []
 
 
 # ---------------------------------------------------------------------------

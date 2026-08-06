@@ -1,5 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all
+
+repo_root = str(Path(SPECPATH).resolve().parent)
 
 datas = [('drivers\\gesrtp-py-main', 'drivers\\gesrtp-py-main')]
 binaries = []
@@ -18,7 +22,7 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 a = Analysis(
     ['main.py'],
-    pathex=['.'],
+    pathex=['.', repo_root],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

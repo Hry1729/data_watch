@@ -328,6 +328,10 @@ class FakePduClient:
 
     def __init__(self, pdu_length):
         self.pdu_length = pdu_length
+        self.param_calls = []
+
+    def set_param(self, parameter, value):
+        self.param_calls.append((parameter, value))
 
     def connect(self, ip, rack, slot, port):
         # 真实 snap7 在此协商 PDU；测试里 pdu_length 由构造值表示协商结果。
@@ -353,3 +357,19 @@ async def test_connect_keeps_negotiated_pdu_at_240():
         driver = S7Driver()
         await driver.connect({"ip": "127.0.0.1", "rack": 0, "slot": 1})
     assert fake.pdu_length == 240
+
+@pytest.mark.asyncio
+async def test_connect_applies_explicit_read_timeout_only_when_configured():
+    from snap7.type import Parameter
+
+    fake = FakePduClient(pdu_length=480)
+    with patch("snap7.client.Client", return_value=fake):
+        driver = S7Driver()
+        await driver.connect(
+            {"ip": "127.0.0.1", "rack": 0, "slot": 1, "read_timeout_ms": 850}
+        )
+
+    assert fake.param_calls == [
+        (Parameter.SendTimeout, 850),
+        (Parameter.RecvTimeout, 850),
+    ]

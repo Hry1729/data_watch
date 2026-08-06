@@ -195,3 +195,22 @@ def test_validator_rejects_invalid_timer_counter_data_type():
     assert not result.valid
     assert any("Timer" in error for error in result.errors)
     assert any("Counter" in error for error in result.errors)
+
+def test_read_timeout_is_optional_positive_and_independent_from_scan_rate():
+    valid = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                "qc100", "QC", "s7", "127.0.0.1",
+                scan_rate=0.1, read_timeout_ms=900,
+            )
+        ],
+        variables=[
+            VariableConfig("1", "qc100", "%MD1304", "DINT", 0.1, True, 1)
+        ],
+    )
+    assert validate_config(valid).valid
+
+    valid.devices[0].read_timeout_ms = 0
+    result = validate_config(valid)
+    assert not result.valid
+    assert any("Invalid read timeout" in error for error in result.errors)

@@ -14,6 +14,7 @@ import { agentClient } from "@/lib/agent-client";
 import type { AppError, ConnectionHealth } from "@/types";
 
 const POLL_INTERVAL = 10_000;
+export const CONNECTION_HEALTH_REFRESH_EVENT = "datawatch:connection-health-refresh";
 
 export interface UseConnectionHealthResult {
   data: ConnectionHealth | null;
@@ -80,12 +81,15 @@ export function useConnectionHealth(): UseConnectionHealthResult {
       doFetch();
       startTimer();
     }
+    const onRequestedRefresh = () => { void doFetch(); };
     document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener(CONNECTION_HEALTH_REFRESH_EVENT, onRequestedRefresh);
 
     return () => {
       mountedRef.current = false;
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener(CONNECTION_HEALTH_REFRESH_EVENT, onRequestedRefresh);
     };
   }, [doFetch, refreshVersion]);
 

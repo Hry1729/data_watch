@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BUILD_ROLE } from "@/config/build-role";
+import { agentClient } from "@/lib/agent-client";
+import { getAgentAuthToken } from "@/lib/agent-auth-token";
 import { getBackendWebSocketUrl } from "@/lib/backend-client";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
+import type { AppError } from "@/types";
 import type { RealtimeWireValue } from "@/types/device-monitor";
 
 export type RealtimeConnectionStatus =
@@ -39,6 +43,7 @@ export function useRealtimeWebSocket({
   const { refreshVersion } = usePageRefresh();
   const [values, setValues] = useState<Record<string, RealtimeWireValue>>({});
   const [status, setStatus] = useState<RealtimeConnectionStatus>("idle");
+  const [source, setSource] = useState<"center" | "local">("center");
   const [deviceOffline, setDeviceOffline] = useState(false);
   const [tdengineConnected, setTdengineConnected] = useState<boolean | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
@@ -75,24 +80,70 @@ export function useRealtimeWebSocket({
       return;
     }
 
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
+    let localPollTimer: number | null = null;
+    let reconnectAttempts = 0;
+    let disposed = false;
+    let authRejected = false;
+    const edgeRole = BUILD_ROLE === "edge";
+    const localOnly = edgeRole && token === getAgentAuthToken();
+
+    const stopLocalPolling = () => {
+      if (localPollTimer !== null) window.clearInterval(localPollTimer);
+      localPollTimer = null;
+    };
+
+    const pollLocal = async () => {
+      try {
+        const snapshot = await agentClient.getLocalRealtimeLatest(deviceCode, groupCode);
+        if (disposed) return;
+        pendingRef.current = {};
+        setValues(snapshot.values ?? {});
+        setDeviceOffline(snapshot.deviceOffline);
+        setTdengineConnected(false);
+        setLastSyncTime(Date.now());
+        setStatus("connected");
+        setSource("local");
+        setError(null);
+      } catch (reason) {
+        if (disposed) return;
+        const appError = reason as AppError;
+        setStatus("disconnected");
+        setError(appError?.type === "unauthorized" ? "本机会话已失效" : "本机实时数据读取失败");
+      }
+    };
+
+    const startLocalPolling = () => {
+      if (!edgeRole || localPollTimer !== null || authRejected) return;
+      setSource("local");
+      void pollLocal();
+      localPollTimer = window.setInterval(() => void pollLocal(), Math.max(100, flushIntervalMs));
+    };
+
+    if (localOnly) {
+      startLocalPolling();
+      return () => {
+        disposed = true;
+        stopLocalPolling();
+      };
+    }
+
     if (import.meta.env.MODE !== "production" && import.meta.env.VITE_USE_MOCK === "true") {
       setStatus("connected");
+      setSource("center");
       setDeviceOffline(false);
       setError(null);
       return;
     }
-
-    let socket: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-    let heartbeatTimer: number | null = null;
-    let reconnectAttempts = 0;
-    let disposed = false;
 
     const clearTimers = () => {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
       reconnectTimer = null;
       heartbeatTimer = null;
+      stopLocalPolling();
     };
 
     const send = (message: object) => {
@@ -100,7 +151,7 @@ export function useRealtimeWebSocket({
     };
 
     const scheduleReconnect = () => {
-      if (disposed || reconnectTimer !== null) return;
+      if (disposed || authRejected || reconnectTimer !== null) return;
       const delay = Math.min(30_000, 1_000 * 2 ** reconnectAttempts);
       reconnectAttempts += 1;
       reconnectTimer = window.setTimeout(() => {
@@ -117,13 +168,17 @@ export function useRealtimeWebSocket({
         socket = new WebSocket(getBackendWebSocketUrl());
       } catch {
         setStatus("disconnected");
+        startLocalPolling();
         scheduleReconnect();
         return;
       }
 
       socket.onopen = () => {
         reconnectAttempts = 0;
+        stopLocalPolling();
         setStatus("connected");
+        setSource("center");
+        setTdengineConnected(null);
         send({ type: "auth", token });
         send({ action: "subscribe", device_code: deviceCode, group_code: groupCode });
         heartbeatTimer = window.setInterval(() => send({ action: "ping" }), 15_000);
@@ -140,8 +195,10 @@ export function useRealtimeWebSocket({
         if (message.device_code && message.device_code !== deviceCode) return;
         if (message.group_code && message.group_code !== groupCode) return;
         if (message.type === "error") {
+          authRejected = message.code === 401 || message.code === 403;
           setError(message.message ?? "实时订阅失败");
           setStatus("error");
+          if (authRejected) stopLocalPolling();
           return;
         }
         if (message.type === "offline") {
@@ -169,10 +226,8 @@ export function useRealtimeWebSocket({
         socket = null;
         if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
         heartbeatTimer = null;
-        if (!disposed) {
-          pendingRef.current = {};
-          setValues({});
-          setDeviceOffline(true);
+        if (!disposed && !authRejected) {
+          startLocalPolling();
           setStatus("disconnected");
           scheduleReconnect();
         }
@@ -195,11 +250,12 @@ export function useRealtimeWebSocket({
       socket?.close();
       socket = null;
     };
-  }, [deviceCode, enabled, groupCode, refreshVersion, token]);
+  }, [deviceCode, enabled, flushIntervalMs, groupCode, refreshVersion, token]);
 
   return {
     values,
     status,
+    source,
     deviceOffline,
     tdengineConnected,
     lastSyncTime,

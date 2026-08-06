@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "roles": {
+    "centralized": {
+      "displayName": "Data Watch 中心式",
+      "appIdentifier": "com.hry.datawatch.centralized",
+      "appId": "{8F3C2A91-4D2E-4B7A-9C1F-DA7AE0C3A1B1}",
+      "serviceName": "DataWatchCentralizedAgent",
+      "dataDir": "DataWatch",
+      "agentPort": 7070,
+      "installDir": "DataWatch Centralized",
+      "outputName": "DataWatch-Centralized-Setup",
+      "components": ["app", "agent", "collector", "writer", "opcda-sidecars"]
+    },
+    "edge": {
+      "displayName": "Data Watch 分布式边缘",
+      "appIdentifier": "com.hry.datawatch.edge",
+      "appId": "{62BE0E16-0E47-4A45-85B5-BF25A26F1072}",
+      "serviceName": "DataWatchEdgeAgent",
+      "dataDir": "DataWatch Edge",
+      "agentPort": 7071,
+      "installDir": "DataWatch Edge",
+      "outputName": "DataWatch-Edge-Setup",
+      "components": ["edge-app", "edge-agent", "edge-collector", "uploader", "sqlite", "opcda-sidecars"]
+    },
+    "distributed-center": {
+      "displayName": "Data Watch 分布式中心",
+      "appIdentifier": "com.hry.datawatch.distributed-center",
+      "appId": "{A9CE8CE0-D32D-4C25-AF16-8FD3D5F44D47}",
+      "serviceName": "DataWatchDistributedCenterAgent",
+      "dataDir": "DataWatch Distributed Center",
+      "agentPort": 7072,
+      "installDir": "DataWatch Distributed Center",
+      "outputName": "DataWatch-Distributed-Center-Setup",
+      "components": ["center-app", "agent", "ingest", "writer"]
+    }
+  }
+}

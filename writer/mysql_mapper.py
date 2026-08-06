@@ -21,15 +21,11 @@ import pymysql.cursors
 logger = logging.getLogger("writer.mysql_mapper")
 
 _SQL = """
-SELECT dv.id AS var_id, dv.td_column_name, dv.var_type,
-       dpg.config_version, dpg.group_code,
-       d.device_code, dt.type_code AS device_type_code
-FROM device_variable dv
-JOIN device_point_group dpg ON dv.point_group_id = dpg.id
-JOIN device d ON dpg.device_id = d.id
-JOIN device_type dt ON dt.id = d.type_id
-WHERE d.device_code = %s AND dpg.group_code = %s
-  AND dv.deleted = 0 AND dv.enable = 1
+SELECT point_id AS var_id, td_column_name, var_type,
+       group_code, device_code, device_type_code,
+       stable_name, child_table
+FROM point_storage_mapping
+WHERE device_code = %s AND group_code = %s
 """
 
 
@@ -49,39 +45,25 @@ class MysqlMapper:
         self._conn = mysql_conn
         self._cache: dict[str, GroupMapping] = {}  # key: "device_code:group_code"
 
+    def get_cached(self, device_code: str, group_code: str) -> GroupMapping | None:
+        return self._cache.get(f"{device_code}:{group_code}")
+
+
     def get_or_load(
         self,
         device_code: str,
         group_code: str,
         stream_config_version: int,
     ) -> GroupMapping | None:
-        """如果 config_version 匹配则返回缓存映射，否则重新加载。"""
+        """返回永久存储映射；stream_config_version 仅保留作接口兼容和日志上下文。"""
         key = f"{device_code}:{group_code}"
-        cached = self._cache.get(key)
-        if cached is not None and cached.config_version == stream_config_version:
+        cached = self.get_cached(device_code, group_code)
+        if cached is not None:
             return cached
         mapping = self.load(device_code, group_code)
         if mapping is None:
             return None
-        if mapping.config_version != stream_config_version:
-            logger.warning(
-                "[mapper] config_version mismatch device=%s group=%s stream=%s mysql=%s",
-                device_code,
-                group_code,
-                stream_config_version,
-                mapping.config_version,
-            )
-            # M2: 降级使用已缓存的旧映射（如果存在），避免条目永久卡 PEL → DLQ。
-            # TDengine schema 只增不减，旧映射的 td_column_name 必然仍存在，写入安全；
-            # 新增变量在 _handle_entry 中找不到 col_name 会静默跳过，可接受短期数据延迟。
-            if cached is not None:
-                logger.warning(
-                    "[mapper] falling back to cached mapping (version %s) for stream version %s",
-                    cached.config_version,
-                    stream_config_version,
-                )
-                return cached
-            return None
+        mapping.config_version = stream_config_version
         self._cache[key] = mapping
         return mapping
 
@@ -100,10 +82,9 @@ class MysqlMapper:
                 return None
 
             first = rows[0]
-            config_version = int(first["config_version"] or 0)
             device_type = str(first["device_type_code"] or "").lower()
-            child_table = device_code
-            stable = f"sd{device_type.lower()}"
+            child_table = str(first["child_table"] or device_code)
+            stable = str(first["stable_name"] or f"sd{device_type}")
 
             var_map: dict[str, str] = {}
             var_type: dict[str, str] = {}
@@ -116,7 +97,7 @@ class MysqlMapper:
                 var_type[var_id] = vtype
 
             return GroupMapping(
-                config_version=config_version,
+                config_version=0,
                 child_table=child_table,
                 stable=stable,
                 var_map=var_map,

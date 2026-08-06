@@ -2,9 +2,9 @@
 <!-- xiaohu-illustration:ops-deploy-01-crate -->
 ![小狐配图：发布包木箱](../images/xiaohu-ops-deploy-01-crate.png)
 
-> 本文覆盖平台的运行环境、开发启动、中心镜像部署、边缘机一体安装包、发版打包、离线镜像、升级回滚与验收。问题排查已拆到 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
+> 本文覆盖平台的运行环境、开发启动、中心镜像部署、发版打包、离线镜像、升级回滚与验收。三个固定角色安装包的最新构建与隔离契约见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)，交付验收见 [三角色安装包验收清单](三角色安装包验收清单.md)，Ingest 上线门禁见 [Ingest容量压测](Ingest容量压测.md)，问题排查见 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
 >
-> 部署形态分两侧：**中心侧**（backend + frontend + Redis + TDengine + 可外置 MySQL，支持镜像部署）与 **边缘机**（agent + collector + writer + app + OPC DA proxy，Windows 一体安装包）。
+> Windows 交付固定为三种角色包：中心式、分布式边缘、分布式中心。三个 EXE 只包含对应角色的 Windows 组件；Backend/Frontend 与 MySQL/Redis/TDengine 走独立 Docker 部署，不进入 Windows 安装包。边缘角色使用 Edge Agent + Collector + SQLite outbox + Uploader，不包含 Writer 或中心数据库。
 
 ---
 
@@ -18,12 +18,11 @@
   backend      Python 3.14t + uvicorn 镜像
   frontend     Nginx 静态资源 + /api 与 WS 反向代理镜像
 
-边缘侧（Windows 一体安装包）：
-  Data Watch Console app   Tauri 桌面端
-  DataWatch Agent          Windows 服务，127.0.0.1:7070
-  collector                采集进程
-  writer                   入库进程
-  OPC DA proxy             .NET Framework 4.8 / x86 sidecar
+Windows 角色安装包：
+  中心式                    App + Agent(:7070) + Collector + Writer
+  分布式边缘                Edge App + Edge Agent(:7071) + Edge Collector + Uploader
+  分布式中心                Center App + Agent(:7072) + Ingest + Writer
+  OPC DA proxy             仅随包含 Collector 的角色安装
 ```
 
 采集模块涉及 OPC DA、DCOM、PLC 网络和现场驱动环境，**不放进 Docker**；中心业务服务与 Web 前端支持镜像部署。
@@ -150,13 +149,13 @@ frontend 镜像要点：
 
 ### 4.3 导出应用镜像
 
-所有中心侧 Docker 镜像统一导出到发布目录的 `docker-images\`。文件名不用、也不能写 Docker tag 里的 `:latest`；统一使用固定 tar 文件名。`stack-up.ps1` 会逐个检查这些 tar 是否存在并执行 `docker load`，缺任一即报错（不检查或补齐 `:latest` tag）。`data-watch-python314t.tar` 也必须导出：backend 镜像以它为构建基础，目标机首次 `up` 时 compose 会按需构建 backend，缺它会失败。
+中心 Docker 镜像与 Windows 三角色安装包独立发布。离线场景把预构建的运行镜像导出到发布目录 `docker-images\`；文件名不写 Docker tag 里的 `:latest`，统一使用固定 tar 文件名。`data-watch-python314t:latest` 只在打包机构建 Backend 时使用，不导出到目标机，也不进入 Windows 安装包。
 
 ```powershell
 $ReleaseRoot = "D:\data_watch_release"
 New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
 
-docker save data-watch-python314t:latest -o "$ReleaseRoot\docker-images\data-watch-python314t.tar"
+
 docker save data-watch-backend:latest    -o "$ReleaseRoot\docker-images\data-watch-backend.tar"
 docker save data-watch-frontend:latest   -o "$ReleaseRoot\docker-images\data-watch-frontend.tar"
 ```
@@ -200,7 +199,7 @@ D:\data_watch_release\
 ├─ docker-images\
 │  ├─ data-watch-backend.tar
 │  ├─ data-watch-frontend.tar
-│  ├─ data-watch-python314t.tar          # backend 构建基础镜像，必带
+
 │  ├─ redis.tar
 │  └─ tdengine.tar
 └─ deploy\
@@ -213,7 +212,7 @@ D:\data_watch_release\
    └─ stack-up.ps1
 ```
 
-镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据。
+镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据；整个 `docker-images\` 目录独立于三个 Windows 安装包。
 
 ---
 
@@ -309,17 +308,17 @@ powershell.exe -ExecutionPolicy Bypass -File .\stack-up.ps1
 
 > 目标机离线且没有 PowerShell 7 时，用 Windows 自带的 `powershell.exe` 即可，不需要安装 `pwsh`。如果现场已经安装 PowerShell 7，也可以使用 `pwsh -File .\stack-up.ps1`。
 
-`stack-up.ps1` 会逐个检查并加载这 5 个 tar（路径统一在 `docker-images\` 下，固定文件名，缺任一即报错）：
+`stack-up.ps1` 会逐个检查并加载这 4 个运行镜像 tar（路径统一在 `docker-images\` 下，固定文件名，缺任一即报错）：
 
 - `..\docker-images\redis.tar`
 - `..\docker-images\tdengine.tar`
-- `..\docker-images\data-watch-python314t.tar`
+
 - `..\docker-images\data-watch-backend.tar`
 - `..\docker-images\data-watch-frontend.tar`
 
 脚本最后执行 `docker compose -f .\docker-compose.yml --profile infra up -d --pull never`，因此会同时拉起 redis、tdengine、backend、frontend。
 
-> backend / frontend 在 `docker-compose.yml` 里带 `build:` 段。目标机已 `docker load` 到对应镜像时 compose 直接复用；若未命中（镜像缺失/标签不符），compose 会按 `build:` 重建，此时需 `data-watch-python314t.tar` 已加载（backend 的构建基础镜像）且仓库源码目录在场。务必确保 4.3 的 5 个镜像都已正确导出、stack-up 成功 load。
+> 目标机使用预构建的 Backend/Frontend 运行镜像，不在现场重建。`stack-up.ps1` 在启动前强制检查并加载四个 tar；镜像缺失或标签不符时应重新生成 Docker 发布包，而不是把构建基础镜像塞进 Windows 安装器。
 
 ### 5.4 Redis 数据与 stream 容量
 
@@ -331,7 +330,7 @@ docker volume ls
 docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此前缀
 ```
 
-随包 `docker-images\redis.tar` 对应的 Redis 版本以发布包为准；`redis:latest` 是浮动标签，重新拉取不保证版本一致。`redis.conf` 的 `maxmemory 3gb` 是 12G 虚机下的内存保险丝，撞顶会拒写而非把 TDengine 一起拖垮。
+独立离线资源目录中的 `docker-images\redis.tar` 版本以 Docker 发布包为准；`redis:latest` 是浮动标签，重新拉取不保证版本一致。`redis.conf` 的 `maxmemory 3gb` 是 12G 虚机下的内存保险丝，撞顶会拒写而非把 TDengine 一起拖垮。
 
 **关于 `stream_maxlen`（stream 容量上限）**
 
@@ -382,13 +381,13 @@ frontend 容器内 nginx 负责：
 
 ---
 
-## 7. 边缘机部署（一体安装包）
+## 7. Windows 角色包部署
 
 ### 7.1 安装包内容
 
-Windows 一体安装包包含：app、agent、collector、writer、OPC DA proxy、NSSM、WebView2 安装器和配置模板。
+三个安装包的组件边界见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)。中心式包包含 App、Agent、Collector、Writer 和 OPC DA proxy；分布式边缘包包含 Edge App、Edge Agent、Edge Collector、SQLite outbox、Uploader 和 OPC DA proxy；分布式中心包包含 Center App、Agent、Ingest 和 Writer。Backend、Frontend、MySQL、Redis、TDengine 及所有 Docker tar 均不进入这三个 EXE。
 
-### 7.2 双根目录
+### 7.2 双根目录（中心式示例）
 
 ```text
 C:\Program Files\DataWatch\          # DATAWATCH_INSTALL_ROOT，只读安装根
@@ -417,9 +416,9 @@ DATAWATCH_INSTALL_ROOT
 DATAWATCH_DATA_ROOT
 ```
 
-agent、collector、writer 的实际路径由双根动态派生，不在 config.toml 固定绝对路径。
+各角色的 agent 和本角色子进程实际路径由双根动态派生，不在 config.toml 固定绝对路径；边缘与分布式中心使用各自独立的安装目录、ProgramData、服务名和 Agent 端口。
 
-### 7.3 bootstrap
+### 7.3 中心式 bootstrap
 
 首次打开 app：
 
@@ -435,9 +434,9 @@ agent、collector、writer 的实际路径由双根动态派生，不在 config.
 
 密码不要手工写入 config.toml；DPAPI 密文不可跨机器复制。
 
-**Agent 服务凭据配置**：Agent 在首次启动或 bootstrap 时会自动生成 `DATAWATCH_AGENT_SERVICE_TOKEN` 并保存到 `config.toml` 的 `[security]` 段。如果 Backend 需要调用 Agent（如卸载驱动、对账补偿），必须在 Backend 的 `backend.env` 中配置相同的 token。单机部署时，可从 `C:\ProgramData\DataWatch\config.toml` 中复制 `service_token` 值到 Backend 配置。
+**Agent 服务凭据配置**：安装器生成 `DATAWATCH_AGENT_SERVICE_TOKEN`，写入角色数据目录下的 `agent_service_token.txt`，并通过 NSSM 环境变量注入 Agent。Backend 需要调用中心本机 Agent 时，必须把同一值配置到独立 Docker 部署的 `backend.env`：中心式读取 `C:\ProgramData\DataWatch\agent_service_token.txt`，分布式中心读取 `C:\ProgramData\DataWatch Distributed Center\agent_service_token.txt`；`DATAWATCH_AGENT_BASE_URL` 分别使用宿主机端口 7070 或 7072。
 
-### 7.4 collector / writer 启停
+### 7.4 中心式 collector / writer 启停
 
 ```text
 app -> agent admin API -> ProcessManager -> collector/writer exe
@@ -454,7 +453,7 @@ agent 启动子进程时：
 
 停止时先写 `runtime/<name>.shutdown_flag`，超时后才强杀。
 
-### 7.5 OPC DA proxy 验收
+### 7.5 Collector 角色的 OPC DA proxy 验收
 
 有 OPC DA center 设备时，agent 启动 collector 前必须：
 
@@ -470,15 +469,18 @@ agent 启动子进程时：
 
 ## 8. 发版打包
 
-### 8.1 Windows 一体包
+### 8.1 Windows 三角色安装包
 
 ```powershell
 cd D:\python\device_alarm\data_watch
 pwsh -File installer\build.ps1
-pwsh -File installer\build.ps1 -Iscc "D:\path\to\ISCC.exe"
+pwsh -File installer\build.ps1 -Role edge
+pwsh -File installer\build.ps1 -Role distributed-center -Iscc "D:\path\to\ISCC.exe"
 ```
 
-`installer\build.ps1` 六步：
+`installer\build.ps1` 默认依次生成三个角色包；-Role 可只构建一个角色。详细组件矩阵、隔离值和 Docker 分轨发布策略见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)。
+
+旧六步构建表仅用于理解组件产物：
 
 | 阶段 | 动作 | 产物 |
 |------|------|------|
@@ -491,7 +493,7 @@ pwsh -File installer\build.ps1 -Iscc "D:\path\to\ISCC.exe"
 
 ### 8.2 Docker 镜像
 
-`installer\build.ps1` 不构建 Docker 镜像。镜像构建与导出走第 4 节，目标机部署走第 5 节。
+`installer\build.ps1` 只构建 Windows 三角色安装包，不调用 Docker，也不读取 `deploy\images`。Backend/Frontend 镜像按第 4 节单独构建与发布，目标机部署按第 5 节执行。
 
 ---
 
@@ -518,7 +520,7 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 2. 拷贝新的 `DataWatch-Setup-<版本>.exe` 到目标机；
 3. 管理员运行安装器覆盖安装；
 4. ProgramData 现场配置保留；
-5. 检查 `Get-Service DataWatchAgent` 与 `/bootstrap/status`。
+5. 按角色检查 `DataWatchCentralizedAgent`、`DataWatchEdgeAgent` 或 `DataWatchDistributedCenterAgent`，并访问对应端口的 `/bootstrap/status`。
 
 ### 9.3 回滚
 
@@ -537,7 +539,10 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 
 | 端口 | 组件 | 说明 |
 |------|------|------|
-| 7070 | agent | 本机 `127.0.0.1`，app 调用 |
+| 7070 | 中心式 Agent | 本机 `127.0.0.1`，中心式 App 调用 |
+| 7071 | 分布式边缘 Agent | 本机 `127.0.0.1`，Edge App 调用 |
+| 7072 | 分布式中心 Agent | 本机 `127.0.0.1`，Center App 调用 |
+| 8010 | Ingest | 分布式中心宿主机监听，nginx `/ingest/*` 代理目标 |
 | 8000 | backend | backend 直连端口 |
 | 8080 | frontend nginx | Web 入口，反代 `/api` 与 WS |
 | 5173 | frontend dev | Vite 开发服务 |
@@ -574,23 +579,21 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 - backend 能连 MySQL/Redis/TDengine；
 - TDengine 日志页在 compose 托管 TDengine 时可用，外部 TDengine 时优雅提示不可用。
 
-### 边缘部署
+### 分布式边缘部署
 
-- 桌面有 Data Watch Console；
-- `DataWatchAgent` 服务 running；
-- app 能进入 bootstrap 或登录页；
-- bootstrap 测 MySQL/Redis/TDengine 成功；
-- app 可启动/停止 collector 和 writer；
-- collector 有实时数据；
-- writer 消费 Redis Stream 并写入 TDengine；
+- 桌面安装 Edge App，`DataWatchEdgeAgent` 服务监听本机端口 7071；
+- 首次引导生成 node_uuid/Ed25519 密钥并完成 center_url、enrollment code 注册；
+- Edge App 的本机设备、采集状态、离线积压通过 localhost Edge Agent API 可查看，中心断网时仍可用；
+- App 可启动/停止 Edge Collector 和 Uploader，安装目录中不包含 Writer、Backend、MySQL、Redis 或 TDengine；
+- Collector 采集结果先落 SQLite outbox，Uploader 恢复联网后严格按序追赶；
 - OPC DA 场景下 proxy 自动启动且真实点位刷新；
-- 日志、模块状态、速率趋势可查看。
+- 中心节点页可看到心跳、配置修订、积压、磁盘水位和累计丢弃数。
 
 ---
 
 ## 相关文档
 
-- [问题排查](问题排查.md)
+- [Ingest容量压测](Ingest容量压测.md)
 - [系统架构总览](../01-总体设计/系统架构总览.md)
 - [架构决策记录](../01-总体设计/架构决策记录.md)
 - [agent 边缘进程编排与凭据](../02-模块设计/agent/边缘进程编排与凭据.md)

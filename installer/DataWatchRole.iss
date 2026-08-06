@@ -1,0 +1,302 @@
+; Shared Inno Setup body. Build only through one of the three role wrapper .iss files.
+#define SrcRoot SourcePath + ".."
+
+[Setup]
+AppId={#MyAppId}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher=hry
+DefaultDirName={autopf}\{#MyInstallDir}
+DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=commandline
+OutputDir={#SrcRoot}\installer\Output
+OutputBaseFilename={#MyOutputName}-{#MyAppVersion}
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+UninstallDisplayName={#MyAppName}
+SetupIconFile={#SrcRoot}\app\src-tauri\icons\icon.ico
+UninstallDisplayIcon={app}\app\app.exe
+
+[Languages]
+Name: "default"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+Source: "{#SrcRoot}\app\src-tauri\target\release\app.exe"; DestDir: "{app}\app"; Flags: ignoreversion
+Source: "{#SrcRoot}\app\src-tauri\target\release\resources\*"; DestDir: "{app}\app\resources"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#SrcRoot}\agent\dist\data-watch-agent\data-watch-agent.exe"; DestDir: "{app}\agent"; DestName: "{#MyAgentExe}"; Flags: ignoreversion
+Source: "{#SrcRoot}\agent\dist\data-watch-agent\_internal\*"; DestDir: "{app}\agent\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\installer\win64\nssm.exe"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "{#SrcRoot}\installer\webview2\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+
+#if BuildRole == "centralized"
+Source: "{#SrcRoot}\collector\dist\data-watch-collector\*"; DestDir: "{app}\collector"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\writer\dist\data-watch-writer\*"; DestDir: "{app}\writer"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\collector\sidecars\opcda_proxy_service\bin\*"; DestDir: "{app}\sidecars\opcda_proxy_service\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\installer\templates\collector-settings.toml.example"; DestDir: "{app}\templates"; Flags: ignoreversion
+Source: "{#SrcRoot}\installer\templates\writer-settings.toml.example"; DestDir: "{app}\templates"; Flags: ignoreversion
+#endif
+
+#if BuildRole == "edge"
+Source: "{#SrcRoot}\edge\dist\data-watch-edge-collector\*"; DestDir: "{app}\edge-collector"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\edge\dist\data-watch-uploader\*"; DestDir: "{app}\uploader"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\collector\sidecars\opcda_proxy_service\bin\*"; DestDir: "{app}\sidecars\opcda_proxy_service\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\installer\templates\collector-settings.toml.example"; DestDir: "{app}\templates"; Flags: ignoreversion
+#endif
+
+#if BuildRole == "distributed-center"
+Source: "{#SrcRoot}\ingest\dist\data-watch-ingest\*"; DestDir: "{app}\ingest"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\writer\dist\data-watch-writer\*"; DestDir: "{app}\writer"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SrcRoot}\installer\templates\writer-settings.toml.example"; DestDir: "{app}\templates"; Flags: ignoreversion
+#endif
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\agent"
+#if BuildRole == "centralized"
+Type: filesandordirs; Name: "{app}\collector"
+Type: filesandordirs; Name: "{app}\writer"
+#endif
+#if BuildRole == "edge"
+Type: filesandordirs; Name: "{app}\edge-collector"
+Type: filesandordirs; Name: "{app}\uploader"
+#endif
+#if BuildRole == "distributed-center"
+Type: filesandordirs; Name: "{app}\ingest"
+Type: filesandordirs; Name: "{app}\writer"
+#endif
+
+[Dirs]
+Name: "{commonappdata}\{#MyDataDir}"
+Name: "{commonappdata}\{#MyDataDir}\runtime"
+Name: "{commonappdata}\{#MyDataDir}\runtime\logs"
+#if BuildRole == "centralized"
+Name: "{commonappdata}\{#MyDataDir}\collector\config"
+Name: "{commonappdata}\{#MyDataDir}\writer\config"
+#endif
+#if BuildRole == "edge"
+Name: "{commonappdata}\{#MyDataDir}\collector\config"
+Name: "{commonappdata}\{#MyDataDir}\edge"
+Name: "{commonappdata}\{#MyDataDir}\uploader"
+#endif
+#if BuildRole == "distributed-center"
+Name: "{commonappdata}\{#MyDataDir}\ingest"
+Name: "{commonappdata}\{#MyDataDir}\writer\config"
+#endif
+
+[Icons]
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\app\app.exe"; WorkingDir: "{app}\app"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\app\app.exe"; WorkingDir: "{app}\app"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+
+[Run]
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Installing Microsoft WebView2 Runtime..."; Flags: waituntilterminated; Check: NeedsWebView2
+
+[Code]
+const
+  WV2_GUID = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+
+function WV2Present(RootKey: Integer; SubKey: String): Boolean;
+var
+  Value: String;
+begin
+  Result := RegQueryStringValue(RootKey, SubKey, 'pv', Value) and
+    (Value <> '') and (Value <> '0.0.0.0');
+end;
+
+function NeedsWebView2: Boolean;
+begin
+  Result := not (
+    WV2Present(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\' + WV2_GUID) or
+    WV2Present(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WV2_GUID) or
+    WV2Present(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + WV2_GUID));
+end;
+
+function Nssm(Params: String): Integer;
+var
+  ExitCode: Integer;
+begin
+  if not Exec(ExpandConstant('{app}\tools\nssm.exe'), Params, '', SW_HIDE,
+      ewWaitUntilTerminated, ExitCode) then
+    ExitCode := -1;
+  Result := ExitCode;
+end;
+
+function ServiceExists: Boolean;
+var
+  ExitCode: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\sc.exe'), 'query {#MyServiceName}', '', SW_HIDE,
+      ewWaitUntilTerminated, ExitCode) then
+    ExitCode := -1;
+  Result := ExitCode = 0;
+end;
+
+procedure StopRoleService;
+var
+  ExitCode: Integer;
+begin
+  if not ServiceExists then
+    Exit;
+  Nssm('stop {#MyServiceName}');
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#MyServiceName}', '', SW_HIDE,
+    ewWaitUntilTerminated, ExitCode);
+end;
+
+procedure RemoveRoleService;
+var
+  ExitCode: Integer;
+begin
+  if not ServiceExists then
+    Exit;
+  StopRoleService;
+  Nssm('remove {#MyServiceName} confirm');
+  if ServiceExists then
+    Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#MyServiceName}', '', SW_HIDE,
+      ewWaitUntilTerminated, ExitCode);
+end;
+
+procedure StopOrphanedRoleProcesses;
+var
+  ExitCode: Integer;
+begin
+#if BuildRole == "distributed-center"
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM data-watch-ingest.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ExitCode);
+#endif
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  NeedsRestart := False;
+  StopRoleService;
+  StopOrphanedRoleProcesses;
+  Result := '';
+end;
+
+procedure CopyIfAbsent(SourcePath, TargetPath: String);
+begin
+  if not FileExists(TargetPath) then
+    CopyFile(SourcePath, TargetPath, False);
+end;
+
+procedure ProvisionRoleConfig;
+var
+  InstallPath: String;
+  DataPath: String;
+begin
+  InstallPath := ExpandConstant('{app}');
+  DataPath := ExpandConstant('{commonappdata}\{#MyDataDir}');
+#if BuildRole == "centralized"
+  CopyIfAbsent(InstallPath + '\templates\collector-settings.toml.example', DataPath + '\collector\config\settings.toml');
+  CopyIfAbsent(InstallPath + '\templates\writer-settings.toml.example', DataPath + '\writer\config\settings.toml');
+#endif
+#if BuildRole == "edge"
+  CopyIfAbsent(InstallPath + '\templates\collector-settings.toml.example', DataPath + '\collector\config\settings.toml');
+#endif
+#if BuildRole == "distributed-center"
+  CopyIfAbsent(InstallPath + '\templates\writer-settings.toml.example', DataPath + '\writer\config\settings.toml');
+#endif
+end;
+
+function GenerateToken: String;
+var
+  Index: Integer;
+  Alphabet: String;
+begin
+  Alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  Result := '';
+  for Index := 1 to 64 do
+    Result := Result + Alphabet[Random(Length(Alphabet)) + 1];
+end;
+
+procedure RegisterRoleService;
+var
+  InstallPath: String;
+  DataPath: String;
+  AgentPath: String;
+  TokenPath: String;
+  Token: String;
+  Lines: TStringList;
+begin
+  InstallPath := ExpandConstant('{app}');
+  DataPath := ExpandConstant('{commonappdata}\{#MyDataDir}');
+  AgentPath := InstallPath + '\agent\{#MyAgentExe}';
+  TokenPath := DataPath + '\agent_service_token.txt';
+  Token := '';
+  if FileExists(TokenPath) then
+  begin
+    Lines := TStringList.Create;
+    try
+      Lines.LoadFromFile(TokenPath);
+      if Lines.Count > 0 then
+        Token := Trim(Lines[0]);
+    finally
+      Lines.Free;
+    end;
+  end;
+  if Token = '' then
+  begin
+    Token := GenerateToken;
+    Lines := TStringList.Create;
+    try
+      Lines.Add(Token);
+      Lines.SaveToFile(TokenPath);
+    finally
+      Lines.Free;
+    end;
+  end;
+
+
+  if not ServiceExists then
+    if Nssm('install {#MyServiceName} "' + AgentPath + '"') <> 0 then
+      RaiseException('Unable to install service {#MyServiceName}');
+  if Nssm('set {#MyServiceName} Application "' + AgentPath + '"') <> 0 then
+    RaiseException('Unable to set Agent executable');
+  if Nssm('set {#MyServiceName} AppDirectory "' + InstallPath + '\agent"') <> 0 then
+    RaiseException('Unable to set Agent working directory');
+  if Nssm('set {#MyServiceName} AppEnvironmentExtra ' +
+      '"DATAWATCH_ROLE={#BuildRole}" ' +
+      '"DATAWATCH_AGENT_PORT={#MyAgentPort}" ' +
+      '"DATAWATCH_INSTALL_ROOT=' + InstallPath + '" ' +
+      '"DATAWATCH_DATA_ROOT=' + DataPath + '" ' +
+      '"DATAWATCH_AGENT_SERVICE_TOKEN=' + Token + '"') <> 0 then
+    RaiseException('Unable to set Agent environment');
+  if Nssm('set {#MyServiceName} Start SERVICE_AUTO_START') <> 0 then
+    RaiseException('Unable to set Agent service startup type');
+  if Nssm('set {#MyServiceName} AppStdout "' + DataPath + '\runtime\logs\agent-service.out.log"') <> 0 then
+    RaiseException('Unable to set Agent stdout log');
+  if Nssm('set {#MyServiceName} AppStderr "' + DataPath + '\runtime\logs\agent-service.err.log"') <> 0 then
+    RaiseException('Unable to set Agent stderr log');
+  if Nssm('start {#MyServiceName}') <> 0 then
+    RaiseException('Unable to start service {#MyServiceName}');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    ProvisionRoleConfig;
+    RegisterRoleService;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataPath: String;
+begin
+  if CurUninstallStep = usUninstall then
+    RemoveRoleService
+  else if CurUninstallStep = usPostUninstall then
+  begin
+    DataPath := ExpandConstant('{commonappdata}\{#MyDataDir}');
+    if DirExists(DataPath) and
+       (MsgBox('是否同时删除该角色的配置与运行数据？' + #13#10 + DataPath,
+         mbConfirmation, MB_YESNO) = IDYES) then
+      DelTree(DataPath, True, True, True);
+  end;
+end;

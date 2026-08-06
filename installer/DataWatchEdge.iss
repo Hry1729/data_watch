@@ -1,0 +1,12 @@
+#define BuildRole "edge"
+#define MyAppName "Data Watch 分布式边缘"
+#define MyAppVersion "0.1.0"
+#define MyAppId "{{62BE0E16-0E47-4A45-85B5-BF25A26F1072}"
+#define MyServiceName "DataWatchEdgeAgent"
+#define MyAgentExe "data-watch-edge-agent.exe"
+#define MyDataDir "DataWatch Edge"
+#define MyInstallDir "DataWatch Edge"
+#define MyOutputName "DataWatch-Edge-Setup"
+#define MyAgentPort "7071"
+#include "DataWatchRole.iss"
+

@@ -22,7 +22,8 @@ test("realtime websocket authenticates, subscribes, heartbeats, and reconnects",
   assert.match(hookSource, /tdengineConnected/);
   assert.match(hookSource, /message\.type === "offline"/);
   assert.match(hookSource, /setDeviceOffline\(message\.deviceOffline \?\? false\)/);
-  assert.match(hookSource, /socket\.onclose = \(\) => \{[\s\S]*pendingRef\.current = \{\}[\s\S]*setValues\(\{\}\)[\s\S]*setDeviceOffline\(true\)/);
+  assert.match(hookSource, /agentClient\.getLocalRealtimeLatest/);
+  assert.match(hookSource, /socket\.onclose = \(\) => \{[\s\S]*startLocalPolling\(\)[\s\S]*scheduleReconnect\(\)/);
 });
 
 test("realtime page retains the original monitoring workflow", () => {
@@ -31,7 +32,8 @@ test("realtime page retains the original monitoring workflow", () => {
     "停止监控",
     "清空选择",
     "导出",
-    "WebSocket已连接",
+    "中心实时连接",
+    "本机数据",
     "0.1秒",
     "30秒",
     "折线图",
@@ -47,8 +49,17 @@ test("realtime page retains the original monitoring workflow", () => {
   assert.match(pageSource, /realtimePointGroups/);
   assert.match(pageSource, /saveDownload/);
 });
+
+test("realtime trend stays inside the viewport and compacts the bool chart", () => {
+  assert.match(pageSource, /flex h-full min-h-0[\s\S]*overflow-hidden/);
+  assert.match(pageSource, /grid-rows-\[minmax\(0,1fr\)_96px\]/);
+  assert.match(pageSource, /compact \? "h-16 max-h-16"/);
+  assert.match(pageSource, /chartType !== "status" && separateBoolChart/);
+  assert.match(pageSource, /compact className="h-full"/);
+  assert.doesNotMatch(pageSource, /h-\[420px\]/);
+});
 test("realtime page loads and switches point groups without hardcoding g001", () => {
-  assert.match(pageSource, /backendClient\.realtimePointGroups/);
+  assert.match(pageSource, /monitorClient\.realtimePointGroups/);
   assert.match(pageSource, /selectedGroupCode/);
   assert.match(pageSource, /realtimeInit\(backendToken,\s*selectedDeviceId,\s*selectedGroupCode\)/);
   assert.match(pageSource, /groupCode:\s*selectedGroupCode/);

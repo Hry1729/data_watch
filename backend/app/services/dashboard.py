@@ -33,6 +33,8 @@ FACT_TABLE_NAMES = {
     "operation_log",
     "system_log",
 }
+EDGE_HEARTBEAT_STALE_SECONDS = 30
+
 
 
 @dataclass(frozen=True)
@@ -67,11 +69,91 @@ class SyntheticAlarmRecord:
     offset_minutes: int
 
 
+
+def _edge_module_level(
+    row: Any,
+    module: str,
+    *,
+    now: datetime,
+) -> str:
+    last_seen = parse_local_datetime(row.get("last_seen_at"))
+    if last_seen is None or (now - last_seen).total_seconds() > EDGE_HEARTBEAT_STALE_SECONDS:
+        return "critical"
+    if str(row.get(f"{module}_status") or "unknown").strip().lower() != "running":
+        return "critical"
+    if module == "uploader":
+        watermark = str(row.get("outbox_watermark") or "normal").strip().lower()
+        if watermark in {"critical", "overflow"}:
+            return "critical"
+        if watermark == "warning":
+            return "warning"
+    return "healthy"
+
+
+def _summarize_edge_levels(levels: list[str]) -> dict[str, Any]:
+    total = len(levels)
+    healthy = levels.count("healthy")
+    warning = levels.count("warning")
+    critical = levels.count("critical")
+    if total == 0:
+        status = "unknown"
+    elif healthy == total:
+        status = "healthy"
+    elif healthy == 0:
+        status = "critical"
+    else:
+        status = "warning"
+    return {
+        "status": status,
+        "totalNodes": total,
+        "healthyNodes": healthy,
+        "warningNodes": warning,
+        "criticalNodes": critical,
+    }
+
+
+def build_edge_pipeline_health(
+    rows: list[Any],
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    checked_at = now or now_local()
+    collector_levels = [
+        _edge_module_level(row, "collector", now=checked_at) for row in rows
+    ]
+    uploader_levels = [
+        _edge_module_level(row, "uploader", now=checked_at) for row in rows
+    ]
+    return {
+        "heartbeatStaleSeconds": EDGE_HEARTBEAT_STALE_SECONDS,
+        "collector": _summarize_edge_levels(collector_levels),
+        "uploader": _summarize_edge_levels(uploader_levels),
+        "generatedAt": checked_at.isoformat(timespec="seconds"),
+    }
+
 class DashboardService:
     def __init__(self, session: AsyncSession, tdengine: TDengineClient):
         self.session = session
         self.tdengine = tdengine
         self._fact_tables: set[str] | None = None
+
+
+    async def get_edge_pipeline_health(self) -> dict[str, Any]:
+        result = await self.session.execute(
+            text(
+                """
+                SELECT collector_status, uploader_status, last_seen_at,
+                       outbox_watermark
+                FROM sys_node
+                WHERE status = 'approved'
+                ORDER BY node_uuid
+                """
+            )
+        )
+        return build_edge_pipeline_health(
+            list(result.mappings().all()),
+            now=now_local(),
+        )
 
     async def get_overview(self) -> dict[str, Any]:
         # 获取设备列表和最后采集时间，动态计算在线/风险/离线设备数
@@ -233,11 +315,14 @@ class DashboardService:
 
         trend_device_total = len(trend_devices)
         collect_series = [int(collect_count_by_bucket.get(bucket_start, 0)) for bucket_start in bucket_starts]
+        online_device_count_series = [
+            len(active_devices_by_bucket.get(bucket_start, set())) for bucket_start in bucket_starts
+        ]
         online_rate_series = [
-            round((len(active_devices_by_bucket.get(bucket_start, set())) / trend_device_total) * 100, 2)
+            round((online_device_count / trend_device_total) * 100, 2)
             if trend_device_total
             else 0
-            for bucket_start in bucket_starts
+            for online_device_count in online_device_count_series
         ]
         alarm_series = await self._build_alarm_series_from_logs(bucket_starts, granularity)
 
@@ -251,6 +336,11 @@ class DashboardService:
                 "metricName": "告警次数",
                 "unit": "次",
                 "data": alarm_series,
+            },
+            "onlineDeviceCount": {
+                "metricName": "在线设备数",
+                "unit": "台",
+                "data": online_device_count_series,
             },
             "onlineRate": {
                 "metricName": "在线率",
@@ -1195,7 +1285,7 @@ class DashboardService:
             values = [str(item).strip() for item in raw_value if str(item).strip()]
         else:
             values = [item.strip() for item in str(raw_value).split(",") if item.strip()]
-        filtered = [value for value in values if value in {"collectCount", "alarmCount", "onlineRate"}]
+        filtered = [value for value in values if value in {"collectCount", "alarmCount", "onlineRate", "onlineDeviceCount"}]
         return filtered or ["collectCount", "alarmCount", "onlineRate"]
 
     def _normalize_range_type(self, value: Any) -> str:

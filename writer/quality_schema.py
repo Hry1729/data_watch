@@ -81,12 +81,12 @@ QUALITY_NARROW_COMPOSITE_KEY_COL = "var_id"
 
 QUALITY_NARROW_STABLE_DDL = (
     "CREATE STABLE IF NOT EXISTS {db}.{stable} "
-    "(`ts` TIMESTAMP, `var_id` BIGINT COMPOSITE KEY, `quality` TINYINT) "
+    "(`ts` TIMESTAMP, `var_id` BIGINT COMPOSITE KEY, `quality` TINYINT UNSIGNED) "
     "TAGS (`device_code` VARCHAR(32))"
 )
 
 QUALITY_NARROW_MIGRATION_HINT = (
-    "质量窄表缺少 var_id COMPOSITE KEY，同时间戳多点质量会冲突。"
+    "质量窄表必须包含 var_id COMPOSITE KEY 且 quality 为 TINYINT UNSIGNED。"
     "请迁移：CREATE 新超级表（含 COMPOSITE KEY）→ INSERT SELECT → RENAME；"
     "详见 docs/审查修复指南-20260724.md P0-1。"
 )
@@ -124,4 +124,11 @@ def describe_has_var_id_composite_key(describe_rows: list) -> bool:
             return True
         if "COMPOSITE" in note and "KEY" in note:
             return True
+    return False
+
+def describe_has_unsigned_quality(describe_rows: list) -> bool:
+    """Return whether DESCRIBE reports the quality column as unsigned."""
+    for row in describe_rows or []:
+        if row and str(row[0] or "").strip().lower() == "quality":
+            return "UNSIGNED" in str(row[1] or "").upper()
     return False

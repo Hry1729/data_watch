@@ -5,12 +5,19 @@
 
 import types
 
-from app.routers.viewer import process_metrics
+from fastapi import WebSocketDisconnect
+
+from app.routers.viewer import process_metrics, tail_logs
 
 
 class _FakePM:
     def __init__(self):
-        self.modules = {"collector": object(), "writer": object()}
+        self.modules = {
+            "collector": object(),
+            "writer": object(),
+            "ingest": object(),
+            "uploader": object(),
+        }
 
     def status(self, name):
         return types.SimpleNamespace(
@@ -53,9 +60,67 @@ async def test_writer_metrics_has_log_path_and_empty_proxy_logs():
     assert resp.proxy_logs == []
 
 
+async def test_ingest_metrics_is_a_supported_module():
+    pm = _FakePM()
+    resp = await process_metrics("ingest", _req(pm), _user="u")
+    assert resp.name == "ingest"
+    assert resp.log_path == "/logs/ingest/current.log"
+    assert resp.proxy_logs == []
+
+
+async def test_uploader_metrics_is_a_supported_module():
+    pm = _FakePM()
+    resp = await process_metrics("uploader", _req(pm), _user="u")
+    assert resp.name == "uploader"
+    assert resp.log_path == "/logs/uploader/current.log"
+    assert resp.proxy_logs == []
+
+
 async def test_collector_metrics_no_proxies_empty_list():
     pm = _FakePM()
     sm = _sm([])
     resp = await process_metrics("collector", _req(pm, sidecar_manager=sm), _user="u")
     assert resp.log_path == "/logs/collector/current.log"
     assert resp.proxy_logs == []
+
+
+async def test_ingest_log_tail_is_allowed():
+    class FakeWebSocket:
+        def __init__(self):
+            self.accepted = False
+            self.closed_code = None
+
+        async def accept(self):
+            self.accepted = True
+
+        async def close(self, code):
+            self.closed_code = code
+
+        async def receive_json(self):
+            raise WebSocketDisconnect()
+
+    websocket = FakeWebSocket()
+    await tail_logs("ingest", websocket)
+    assert websocket.accepted is True
+    assert websocket.closed_code is None
+
+
+async def test_uploader_log_tail_is_allowed():
+    class FakeWebSocket:
+        def __init__(self):
+            self.accepted = False
+            self.closed_code = None
+
+        async def accept(self):
+            self.accepted = True
+
+        async def close(self, code):
+            self.closed_code = code
+
+        async def receive_json(self):
+            raise WebSocketDisconnect()
+
+    websocket = FakeWebSocket()
+    await tail_logs("uploader", websocket)
+    assert websocket.accepted is True
+    assert websocket.closed_code is None

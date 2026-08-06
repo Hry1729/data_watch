@@ -72,11 +72,17 @@ class OpcDaCenterDriver(BaseDriver):
         self._opc_server = config.get("opc_server", "")
         self._vm_host = config.get("vm_host", "")
         self._update_rate_ms = config.get("update_rate_ms", 500)
-        self._timeout = config.get("timeout", 10.0)
+        read_timeout_ms = config.get("read_timeout_ms")
+        self._timeout = (
+            int(read_timeout_ms) / 1000.0
+            if read_timeout_ms is not None
+            else config.get("timeout", 10.0)
+        )
 
         # 使用连接池获取客户端（同一代理端口共享连接）
         pool = get_ipc_pool()
         self._ipc_client = await pool.get_client(proxy_host, proxy_port)
+        self._ipc_client.timeout = self._timeout
         self._owns_client = False  # 标记客户端来自连接池，不要在 disconnect 时关闭
 
         # 验证必需配置

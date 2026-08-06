@@ -175,6 +175,24 @@ def test_detect_endpoints_reads_latest_mysql_config(monkeypatch):
     assert seen["mysql"] == fresh
 
 
+def test_edge_detect_endpoints_reads_local_sqlite(monkeypatch, tmp_path):
+    seen = {}
+    monkeypatch.setattr("app.services.sidecar_manager.build_role", lambda: "edge")
+    monkeypatch.setattr("app.services.sidecar_manager.data_root", lambda: tmp_path)
+
+    def fake_detect(path):
+        seen["path"] = path
+        return ["endpoint-a"]
+
+    monkeypatch.setattr(
+        "app.services.sidecar_manager.detect_edge_endpoints",
+        fake_detect,
+    )
+
+    assert SidecarManager()._detect_endpoints() == ["endpoint-a"]
+    assert seen["path"] == tmp_path / "edge" / "edge.db"
+
+
 # ---------------------------------------------------------------------------
 # T014-spawn + T015 — start_proxy 端口闸门三条件（矩阵：ready / never-listen / 外部占用）
 #

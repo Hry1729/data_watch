@@ -46,12 +46,16 @@ class WsPushManager:
         self._subscribers: dict[tuple, set] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
         self._snapshots: dict[tuple, dict] = {}
-        # 离线状态去重：仅在 在线→离线 跳变时推一次 offline，避免每 0.1s 刷屏。
         self._offline: dict[tuple, bool] = {}
+        self._events: dict[tuple, asyncio.Event] = {}
+        self._change_task: asyncio.Task | None = None
 
     async def subscribe(self, ws, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
         self._subscribers.setdefault(key, set()).add(ws)
+        self._events.setdefault(key, asyncio.Event())
+        if self._change_task is None or self._change_task.done():
+            self._change_task = asyncio.create_task(self._change_loop())
         if key not in self._tasks:
             self._tasks[key] = asyncio.create_task(
                 self._push_loop(device_code, group_code)
@@ -78,12 +82,16 @@ class WsPushManager:
         subs = self._subscribers.get(key, set())
         subs.discard(ws)
         if not subs:
-            t = self._tasks.pop(key, None)
-            if t:
-                t.cancel()
+            task = self._tasks.pop(key, None)
+            if task:
+                task.cancel()
             self._subscribers.pop(key, None)
             self._snapshots.pop(key, None)
             self._offline.pop(key, None)
+            self._events.pop(key, None)
+        if not self._subscribers and self._change_task is not None:
+            self._change_task.cancel()
+            self._change_task = None
 
     async def remove_all_subscriptions(self, ws) -> None:
         keys = list(self._subscribers.keys())
@@ -92,11 +100,12 @@ class WsPushManager:
                 await self.unsubscribe(ws, key[0], key[1])
 
     async def _read_latest(self, device_code: str, group_code: str) -> dict[str, Any] | None:
-        """从 Redis 读取最新哈希。当 Redis 不可用时返回 None（调用方应跳过更新周期）。当键不存在时返回 {}（设备无数据/离线）。"""
+        """Read latest values; None means Redis unavailable, {} means no data."""
         from app.db.redis import get_redis_client
+
         try:
-            r = await get_redis_client()
-            raw = await r.hgetall(f"rt:latest:{device_code}:{group_code}")
+            client = await get_redis_client()
+            raw = await client.hgetall(f"rt:latest:{device_code}:{group_code}")
             result: dict[str, Any] = {}
             for var_id, json_str in raw.items():
                 try:
@@ -107,30 +116,93 @@ class WsPushManager:
         except Exception as exc:
             logger.warning(
                 "Redis unavailable for device=%s group=%s: %s",
-                device_code, group_code, exc,
+                device_code,
+                group_code,
+                exc,
             )
             return None
 
+    async def _change_loop(self) -> None:
+        from app.db.redis import get_redis_client
+
+        while self._subscribers:
+            pubsub = None
+            try:
+                client = await get_redis_client()
+                pubsub = client.pubsub()
+                await pubsub.subscribe("rt:change")
+                while self._subscribers:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=1.0,
+                    )
+                    if message is not None:
+                        self._notify_change(message.get("data"))
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("Redis rt:change subscription unavailable: %s", exc)
+                await asyncio.sleep(1)
+            finally:
+                if pubsub is not None:
+                    try:
+                        await pubsub.aclose()
+                    except Exception:
+                        pass
+
+    def _notify_change(self, raw: Any) -> None:
+        try:
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            payload = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return
+
+        changes = payload if isinstance(payload, list) else [payload]
+        for change in changes:
+            try:
+                if not isinstance(change, dict):
+                    continue
+                key = (str(change["device_code"]), str(change["group_code"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            event = self._events.get(key)
+            if event is not None:
+                event.set()
+
     async def _push_loop(self, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
+        event = self._events.setdefault(key, asyncio.Event())
         while True:
-            await asyncio.sleep(0.1)
             try:
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+                event.clear()
                 latest = await self._read_latest(device_code, group_code)
                 if latest is None or _latest_is_stale(latest):
                     if not self._offline.get(key, False):
                         await self._broadcast(
                             key,
-                            {"type": "offline", "device_code": device_code, "group_code": group_code},
+                            {
+                                "type": "offline",
+                                "device_code": device_code,
+                                "group_code": group_code,
+                            },
                         )
                         self._offline[key] = True
                     self._snapshots[key] = {}
                     continue
-                prev = self._snapshots.get(key, {})
+                previous = self._snapshots.get(key, {})
                 self._offline[key] = False
-                diff = {k: v for k, v in latest.items() if v != prev.get(k)}
+                diff = {
+                    var_id: value
+                    for var_id, value in latest.items()
+                    if value != previous.get(var_id)
+                }
                 if diff:
-                    self._snapshots[key] = {**prev, **diff}
+                    self._snapshots[key] = {**previous, **diff}
                     await self._broadcast(
                         key,
                         {
@@ -145,7 +217,9 @@ class WsPushManager:
             except Exception as exc:
                 logger.warning(
                     "Unexpected error in push loop for device=%s group=%s: %s",
-                    device_code, group_code, exc,
+                    device_code,
+                    group_code,
+                    exc,
                 )
 
     async def _broadcast(self, key: tuple, msg: dict) -> None:
@@ -157,7 +231,6 @@ class WsPushManager:
                 dead.add(ws)
         for ws in dead:
             await self.unsubscribe(ws, key[0], key[1])
-
 
 _manager: WsPushManager | None = None
 

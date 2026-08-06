@@ -36,6 +36,7 @@ def test_quality_narrow_ddl_has_composite_key():
     assert "COMPOSITE KEY" in sql
     assert "`var_id` BIGINT COMPOSITE KEY" in sql
     assert "CREATE STABLE IF NOT EXISTS" in sql
+    assert "TINYINT UNSIGNED" in sql
 
 
 def test_describe_detects_var_id_composite_key():
@@ -53,3 +54,11 @@ def test_describe_detects_var_id_composite_key():
     assert qs.describe_has_var_id_composite_key(ok_rows) is True
     assert qs.describe_has_var_id_composite_key(bad_rows) is False
 
+def test_describe_detects_unsigned_quality_column():
+    rows = [
+        ("quality", "TINYINT UNSIGNED", 1, ""),
+    ]
+    assert qs.describe_has_unsigned_quality(rows) is True
+    assert qs.describe_has_unsigned_quality(
+        [("quality", "TINYINT", 1, "")]
+    ) is False

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.routers import bootstrap as bs
 from app.schemas.models import (
     BootstrapConfigRequest,
+    EdgeBootstrapRegisterRequest,
     HealthCheckResponse,
 )
 from app.schemas.models import TestConnectionRequest as ConnReq  # 避免 pytest 误收集
@@ -97,3 +98,37 @@ async def test_config_rejected_after_done(fake_cfg):
     with pytest.raises(HTTPException) as ei:
         await bs.bootstrap_config(BootstrapConfigRequest(backend={"base_url": "http://x"}))
     assert ei.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_edge_registration_persists_identity_without_local_admin(fake_cfg, monkeypatch):
+    monkeypatch.setenv("DATAWATCH_ROLE", "edge")
+    monkeypatch.setattr(bs, "dpapi_encrypt", lambda value: f"enc:{value}")
+    monkeypatch.setattr(bs, "dpapi_decrypt", lambda value: value.removeprefix("enc:"))
+
+    class FakeClient:
+        def __init__(self, center_url, identity):
+            assert center_url == "http://center:8000"
+            self.identity = identity
+
+        async def register(self, code, node_name):
+            assert code == "registration-code"
+            assert node_name == "edge-1"
+            return {"status": "pending"}
+
+    monkeypatch.setattr(bs, "CenterClient", FakeClient)
+
+    result = await bs.edge_register(
+        EdgeBootstrapRegisterRequest(
+            center_url="http://center:8000/",
+            node_name="edge-1",
+            registration_code="registration-code",
+        )
+    )
+
+    assert result["status"] == "pending"
+    assert fake_cfg["edge"]["registered"] is True
+    assert fake_cfg["edge"]["private_key_enc"].startswith(
+        "enc:-----BEGIN PRIVATE KEY-----"
+    )
+    assert "local_admin" not in fake_cfg

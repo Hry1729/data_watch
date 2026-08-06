@@ -32,6 +32,7 @@ class ModuleSpec:
     executable: str
     args: list[str]
     working_dir: str
+    supports_shutdown_flag: bool = True
 
 
 @dataclass
@@ -239,24 +240,30 @@ class ProcessManager:
                 )
 
             flag_path = self._flag_file(name)
-            try:
-                flag_path.write_text("", encoding="utf-8")
-            except OSError as exc:
-                raise ProcessManagerError(
-                    f"failed to write shutdown_flag for {name}: {exc}"
-                ) from exc
-            logger.info("module %s: wrote shutdown_flag at %s", name, flag_path)
+            if self.modules[name].supports_shutdown_flag:
+                try:
+                    flag_path.write_text("", encoding="utf-8")
+                except OSError as exc:
+                    raise ProcessManagerError(
+                        f"failed to write shutdown_flag for {name}: {exc}"
+                    ) from exc
+                logger.info("module %s: wrote shutdown_flag at %s", name, flag_path)
 
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                if not proc.is_running():
-                    break
-                await asyncio.sleep(_STOP_POLL_INTERVAL)
-
+                deadline = time.monotonic() + timeout
+                while time.monotonic() < deadline:
+                    if not proc.is_running():
+                        break
+                    await asyncio.sleep(_STOP_POLL_INTERVAL)
             if proc.is_running():
-                logger.warning("module %s: timeout, terminating pid=%s", name, proc.pid)
+                if self.modules[name].supports_shutdown_flag:
+                    logger.warning("module %s: timeout, terminating pid=%s", name, proc.pid)
+                else:
+                    logger.info(
+                        "module %s: shutdown_flag unsupported, terminating pid=%s",
+                        name,
+                        proc.pid,
+                    )
                 self._runner.force_stop(proc)
-
             self._delete_pid_file(name)
             try:
                 flag_path.unlink(missing_ok=True)

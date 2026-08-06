@@ -17,7 +17,12 @@ import asyncio
 import json
 import os
 import signal
+import sys
 import time
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if (_REPO_ROOT / "data_watch_shared").is_dir():
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from core.config import (
     CollectorConfig,
@@ -38,7 +43,7 @@ from collector.bounded_executor import BoundedExecutor, BoundedThreadPoolExecuto
 from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
-from storage.redis_client import get_redis, close_pool
+from storage.redis_client import get_redis
 from storage.redis_writer import RedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
@@ -87,7 +92,13 @@ async def _watch_shutdown_flag(app: "CollectorApp", flag_path: Path, interval: f
 class CollectorApp:
     """采集应用主类"""
 
-    def __init__(self, config: CollectorConfig, config_db_manager=None, port_mapping_file=None):
+    def __init__(
+        self,
+        config: CollectorConfig,
+        config_db_manager=None,
+        port_mapping_file=None,
+        writer_factory=None,
+    ):
         self.config = config
         self.config_db_manager = config_db_manager
         self._shutdown = asyncio.Event()
@@ -125,12 +136,15 @@ class CollectorApp:
             read_executor=self.plc_read_executor,
         )
         self.scheduler = TaskScheduler(metrics=self.performance_metrics)
-        redis_client = get_redis(config)
-        self.redis_writer = RedisWriter(
-            redis_client,
-            config,
-            metrics=self.performance_metrics,
-        )
+        if writer_factory is None:
+            redis_client = get_redis(config)
+            self.redis_writer = RedisWriter(
+                redis_client,
+                config,
+                metrics=self.performance_metrics,
+            )
+        else:
+            self.redis_writer = writer_factory(config, self.performance_metrics)
         parse_workers = max(2, min(32, os.cpu_count() or 4))
         self.parse_executor = BoundedExecutor(
             name="parse",
@@ -188,15 +202,12 @@ class CollectorApp:
                 },
             )
 
-        # 0. 检查 Redis 连通性
+        # 0. 检查当前安装包固定的数据写出路径
         try:
-            self.redis_writer.r.ping()
-            logger.info(
-                "Redis connected: %s:%s db=%s",
-                self.config.redis.host, self.config.redis.port, self.config.redis.db,
-            )
+            self.redis_writer.ping()
+            logger.info("Storage sink ready: %s", self.redis_writer.storage_path)
         except Exception as exc:
-            logger.warning("Redis ping failed: %s — realtime push will be unavailable", exc)
+            logger.warning("Storage sink check failed: %s", exc)
 
         # 1. 注册设备
         self.device_manager.register_devices()
@@ -272,7 +283,7 @@ class CollectorApp:
                     "tasks": len(self.scheduler.tasks),
                     "variables": len(self.config.variables),
                     "fake_mode": self.config.fake_mode_active,
-                    "storage_path": "redis_only",
+                    "storage_path": self.redis_writer.storage_path,
                 },
             )
 
@@ -346,7 +357,7 @@ class CollectorApp:
             logger.warning(
                 "Shutdown drain timed out with %d unfinished job(s)", unfinished_jobs
             )
-        close_pool()
+        self.redis_writer.close()
 
         self._log_status()
         logger.info(
@@ -363,7 +374,7 @@ class CollectorApp:
                 content="Collector stopped",
                 detail_json={
                     "executor": self.executor.stats,
-                    "storage_path": "redis_only",
+                    "storage_path": self.redis_writer.storage_path,
                 },
             )
             await self.system_logger.stop()
@@ -391,7 +402,7 @@ class CollectorApp:
                 delta = current - last_stream_points
                 if delta > 0:
                     try:
-                        self.redis_writer.r.hincrby("rt:metrics:collector", "stream_points", delta)
+                        self.redis_writer.publish_stream_points(delta)
                         last_stream_points = current  # 只在上报成功后推进；失败保留，下分钟补 delta
                     except Exception:
                         logger.debug("Failed to publish stream_points metrics", exc_info=True)
@@ -421,8 +432,11 @@ class CollectorApp:
                 current = await self.config_db_manager.get_device_config_versions()
                 current_ids = set(current.keys())
                 tracked_ids = set(tracked.keys())
-                added = current_ids - tracked_ids
-                removed = tracked_ids - current_ids
+                runtime_ids = set(self.device_manager.devices.keys())
+                # 启动连接设备期间配置源可能已更新。除签名差异外，同时对齐
+                # 真实运行集合，避免热加载基线已是新值、内存仍是旧值时漏删设备。
+                added = (current_ids - tracked_ids) | (current_ids - runtime_ids)
+                removed = (tracked_ids - current_ids) | (runtime_ids - current_ids)
                 changed = {
                     d for d in (current_ids & tracked_ids) if current[d] != tracked[d]
                 }
@@ -626,13 +640,13 @@ class CollectorApp:
         device = self.device_manager.add_device(dev_cfg, var_cfgs)
         if device is None:
             return
+        new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
+        if new_tasks:
+            await self.scheduler.reload_device_tasks(dev_cfg.device_id, new_tasks)
         # 与启动行为一致：新增设备自动连接 PLC（external-push 仅置 online）
         ok = await self.device_manager.connect_device(device)
         if not ok and device.status.value != "config_error":
             await self.device_manager.schedule_reconnect(device)
-        new_tasks = [CollectTask(device=device, scan_task=st) for st in device.scan_tasks]
-        if new_tasks:
-            await self.scheduler.reload_device_tasks(dev_cfg.device_id, new_tasks)
         logger.info(
             "Runtime added device %s: connected=%s tasks=%d",
             dev_cfg.device_id, ok, len(new_tasks),
@@ -732,7 +746,7 @@ def _build_fake_topology(config: CollectorConfig, reason: str) -> CollectorConfi
     return config
 
 
-async def main():
+async def main(writer_factory=None, config_manager_factory=None):
     """程序入口"""
     # 解析命令行参数
     parser = argparse.ArgumentParser(
@@ -788,41 +802,55 @@ async def main():
     logger.info("Using config file: %s", os.getenv("COLLECTOR_CONFIG", "config/settings.toml"))
 
     runtime_db_manager = None
-    try:
-        from core.config_db import ConfigDBManager, DatabaseConfig
-    except ModuleNotFoundError as e:
-        if config.enable_fake_bootstrap:
-            config = _build_fake_topology(config, f"MySQL loader import failed: {e}")
-        else:
-            raise ConfigError(
-                "MySQL config loader dependency is missing. "
-                "Please install requirements: pip install -r requirements.txt "
-                "or set runtime.enable_fake_bootstrap=true for temporary fake validation."
-            ) from e
-    else:
-        # 设备与点位配置以 MySQL 为准（覆盖 TOML 中 devices/variables）
-        db_manager = ConfigDBManager(DatabaseConfig.from_mysql_config(config.mysql))
+    if config_manager_factory is not None:
+        db_manager = config_manager_factory(config)
         try:
             config = await db_manager.load_config(base_config=config)
             runtime_db_manager = db_manager
             logger.info(
-                "Loaded topology from MySQL: devices=%s, variables=%s",
+                "Loaded topology from injected config source: devices=%s, variables=%s",
                 len(config.devices),
                 len(config.variables),
             )
         except Exception as e:
+            await db_manager.close()
+            raise ConfigError(f"Failed to load injected topology: {e}") from e
+    else:
+        try:
+            from core.config_db import ConfigDBManager, DatabaseConfig
+        except ModuleNotFoundError as e:
             if config.enable_fake_bootstrap:
-                await db_manager.close()
-                config = _build_fake_topology(config, f"MySQL topology load failed: {e}")
+                config = _build_fake_topology(config, f"MySQL loader import failed: {e}")
             else:
-                await db_manager.close()
-                logger.error(f"Failed to load devices/variables from MySQL: {e}")
                 raise ConfigError(
-                    "Device/variable config must be loaded from MySQL. "
-                    "Please check [mysql] in config/settings.toml and table data "
-                    "(device rows exist, device_variable is_storage=1). "
-                    "For temporary fake validation set runtime.enable_fake_bootstrap=true."
+                    "MySQL config loader dependency is missing. "
+                    "Please install requirements: pip install -r requirements.txt "
+                    "or set runtime.enable_fake_bootstrap=true for temporary fake validation."
                 ) from e
+        else:
+            # 设备与点位配置以 MySQL 为准（覆盖 TOML 中 devices/variables）
+            db_manager = ConfigDBManager(DatabaseConfig.from_mysql_config(config.mysql))
+            try:
+                config = await db_manager.load_config(base_config=config)
+                runtime_db_manager = db_manager
+                logger.info(
+                    "Loaded topology from MySQL: devices=%s, variables=%s",
+                    len(config.devices),
+                    len(config.variables),
+                )
+            except Exception as e:
+                if config.enable_fake_bootstrap:
+                    await db_manager.close()
+                    config = _build_fake_topology(config, f"MySQL topology load failed: {e}")
+                else:
+                    await db_manager.close()
+                    logger.error(f"Failed to load devices/variables from MySQL: {e}")
+                    raise ConfigError(
+                        "Device/variable config must be loaded from MySQL. "
+                        "Please check [mysql] in config/settings.toml and table data "
+                        "(device rows exist, device_variable is_storage=1). "
+                        "For temporary fake validation set runtime.enable_fake_bootstrap=true."
+                    ) from e
 
     validation = validate_config(config)
     for warning in validation.warnings:
@@ -847,6 +875,7 @@ async def main():
         config,
         config_db_manager=runtime_db_manager,
         port_mapping_file=port_mapping_file,
+        writer_factory=writer_factory,
     )
     runtime_dir = _resolve_runtime_dir(args.runtime_dir)
     flag_path = runtime_dir / "collector.shutdown_flag"

@@ -1,12 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getAgentAuthToken } from "@/lib/agent-auth-token";
+import { AGENT_PORT } from "@/config/build-role";
 import type {
   AppError,
   ConnectionConfig,
   ConnectionHealth,
   DbConfig,
+  ModuleName,
   ModuleStatus,
 } from "@/types";
+import type {
+  DeviceListItem,
+  DeviceListQuery,
+  DeviceRealtimeStatus,
+  DeviceTypeItem,
+  HistoryChartResponse,
+  HistoryDeviceItem,
+  HistoryPointItem,
+  HistoryQuery,
+  HistoryRawMatrixResponse,
+  PaginatedResult,
+  PointListItem,
+  PointListQuery,
+  RealtimePointGroup,
+  RealtimeWireValue,
+} from "@/types/device-monitor";
 
 export { setAgentAuthToken } from "@/lib/agent-auth-token";
 
@@ -39,6 +57,40 @@ export interface BootstrapTestPayload {
   database?: string;
 }
 
+export interface EdgeBootstrapRegisterPayload {
+  center_url: string;
+  node_name: string;
+  registration_code: string;
+
+
+}
+
+export interface EdgeBootstrapStatus {
+  nodeUuid: string;
+  nodeName: string;
+  centerUrl: string;
+  registered: boolean;
+  registrationStatus: string;
+  lastSyncError: string;
+}
+
+export interface EdgeLocalSettings {
+  node_uuid: string;
+  node_name: string;
+  center_url: string;
+  registered: boolean;
+  registration_status: string;
+  last_sync_error: string;
+  applied_revision: number;
+  max_offline_retention_days: number;
+  outbox_maintenance_seconds: number;
+}
+
+export interface EdgeLocalSettingsUpdate {
+  max_offline_retention_days: number;
+  outbox_maintenance_seconds: number;
+}
+
 // ─── 接口 ─────────────────────────────────────────────────────────────────────
 
 export interface AgentDriverInfo {
@@ -56,20 +108,97 @@ export interface AgentDriverInfo {
   updated_at?: string;
 }
 
+export interface EdgeDeviceStatus {
+  device_code: string;
+  device_type: string;
+  protocol: string;
+  endpoint: string;
+  scan_rate_ms: number;
+  config_version: number;
+  assignment_epoch: number;
+  enabled: number;
+  status: number | null;
+  message: string | null;
+  status_updated_at: number | null;
+}
+
+export interface EdgeOutboxStatus {
+  counts: Record<string, number>;
+  backlog_count: number;
+  oldest_backlog_at: number | null;
+  upload_session_id: string | null;
+  last_seq: number;
+  upload_interval_ms: number | null;
+  session_switch_pending: boolean;
+  database_bytes: number;
+  dropped_records: number;
+  sent_records_total: number;
+  disk_total_bytes: number;
+  disk_free_bytes: number;
+  disk_used_percent: number;
+  watermark: "normal" | "warning" | "critical" | "overflow";
+}
+
+export interface EdgeProcessStatus {
+  name: string;
+  status: string;
+  pid: number | null;
+  started_at: string | null;
+  uptime_seconds: number;
+  memory_mb: number;
+  cpu_percent: number;
+  restart_count: number;
+}
+
+export interface EdgeLocalDevices {
+  config: {
+    config_revision: number;
+    checksum: string;
+    read_timeout_ms: number | null;
+    applied_at: number;
+  } | null;
+  devices: EdgeDeviceStatus[];
+}
 export interface AgentClient {
   getBootstrapStatus():    Promise<{ in_bootstrap: boolean }>;
   getRuntimeConfig():      Promise<{ backend_base_url: string }>;
   putBootstrapConfig(cfg: BootstrapConfigPayload): Promise<void>;
   postBootstrapTestConnection(req: BootstrapTestPayload): Promise<{ success: boolean; message?: string }>;
   postBootstrapFinish():   Promise<void>;
-  agentLogin(u: string, p: string): Promise<{ token: string }>;
+  getEdgeBootstrapStatus(): Promise<EdgeBootstrapStatus>;
+  registerEdge(req: EdgeBootstrapRegisterPayload): Promise<{ nodeUuid: string; status: string }>;
+  agentLogin(u: string, p: string): Promise<{ token: string; roles: string[] }>;
   getViewerStatus():       Promise<{ agent: string }>;
+  getLocalDevices():      Promise<EdgeLocalDevices>;
+  getLocalCollector():    Promise<EdgeProcessStatus>;
+  getLocalOutbox():       Promise<EdgeOutboxStatus>;
+  getLocalUploader():     Promise<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>;
+  getLocalSettings():     Promise<EdgeLocalSettings>;
+  updateLocalSettings(settings: EdgeLocalSettingsUpdate): Promise<EdgeLocalSettings>;
+  getLocalMonitorDevices(query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
+  getLocalMonitorPoints(query: PointListQuery): Promise<PaginatedResult<PointListItem>>;
+  getLocalRealtimeGroups(deviceCode: string): Promise<RealtimePointGroup[]>;
+  getLocalRealtime(deviceId: number, groupCode: string): Promise<DeviceRealtimeStatus>;
+  getLocalRealtimeLatest(deviceCode: string, groupCode: string): Promise<{
+    values: Record<string, RealtimeWireValue>;
+    deviceOffline: boolean;
+  }>;
+  getLocalHistoryDevices(): Promise<HistoryDeviceItem[]>;
+  getLocalHistoryDeviceTypes(): Promise<DeviceTypeItem[]>;
+  getLocalHistoryPoints(deviceId: number): Promise<HistoryPointItem[]>;
+  getLocalHistoryChart(query: HistoryQuery): Promise<HistoryChartResponse>;
+  getLocalHistoryMatrix(query: HistoryQuery & {
+    alignGranularity?: "100ms" | "500ms" | "1s";
+    pageSize?: number;
+    cursorTs?: string;
+  }): Promise<HistoryRawMatrixResponse>;
+  rotateEdgeIdentity():     Promise<{ keyVersion: number; uploaderRestarted: boolean; warning?: string }>;
   getConnectionHealth():    Promise<ConnectionHealth>;
-  getProcessMetrics(name: "collector" | "writer"): Promise<ModuleStatus>;
-  getProcessStatus(name:  "collector" | "writer"): Promise<{ status: string }>;
-  startProcess(name:   "collector" | "writer"): Promise<void>;
-  stopProcess(name:    "collector" | "writer"): Promise<void>;
-  restartProcess(name: "collector" | "writer"): Promise<void>;
+  getProcessMetrics(name: ModuleName): Promise<ModuleStatus>;
+  getProcessStatus(name: ModuleName): Promise<{ status: string }>;
+  startProcess(name: ModuleName): Promise<void>;
+  stopProcess(name: ModuleName): Promise<void>;
+  restartProcess(name: ModuleName): Promise<void>;
   getConfig():   Promise<ConnectionConfig>;
   putConfig(cfg: Partial<ConnectionConfig>): Promise<void>;
   checkHealth(
@@ -85,8 +214,8 @@ export interface AgentClient {
 
 function sanitize(body: object): string {
   return JSON.stringify(body).replace(
-    /"password(_enc)?":"[^"]*"/g,
-    '"password":"[FILTERED]"'
+    /"(password(?:_enc)?|registration_code)":"[^"]*"/g,
+    '"$1":"[FILTERED]"'
   );
 }
 
@@ -101,6 +230,18 @@ function getApiErrorMessage(text: string, fallback: string): string {
   return fallback;
 }
 
+function toAgentQuery(params: object): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      value.forEach((item) => query.append(key, String(item)));
+      continue;
+    }
+    query.set(key, String(value));
+  }
+  return query.toString();
+}
 // ─── invoke 封装（realAgent 专用）────────────────────────────────────────────
 
 async function agentFetch<T>(
@@ -122,6 +263,7 @@ async function agentFetch<T>(
     result = await invoke<[number, string]>("agent_request", {
       method,
       path,
+      port: AGENT_PORT,
       body: bodyStr,
       token: token ?? getAgentAuthToken() ?? undefined,
       timeoutSecs: timeoutSecs ?? null,
@@ -164,14 +306,81 @@ function makeRealAgent(): AgentClient {
     postBootstrapFinish: () =>
       agentFetch<void>("POST", "/bootstrap/finish"),
 
+    getEdgeBootstrapStatus: () =>
+      agentFetch<EdgeBootstrapStatus>("GET", "/bootstrap/edge/status"),
+
+    registerEdge: (req) =>
+      agentFetch<{ nodeUuid: string; status: string }>(
+        "POST",
+        "/bootstrap/edge/register",
+        req,
+        undefined,
+        30,
+      ),
+
     agentLogin: (u, p) =>
-      agentFetch<{ token: string }>("POST", "/auth/login", {
+      agentFetch<{ token: string; roles: string[] }>("POST", "/auth/login", {
         username: u,
         password: p,
       }),
 
     getViewerStatus: () =>
       agentFetch<{ agent: string }>("GET", "/viewer/status"),
+
+    getLocalDevices: () =>
+      agentFetch<EdgeLocalDevices>("GET", "/local/devices"),
+
+    getLocalCollector: () =>
+      agentFetch<EdgeProcessStatus>("GET", "/local/collector"),
+
+    getLocalOutbox: () =>
+      agentFetch<EdgeOutboxStatus>("GET", "/local/outbox"),
+
+    getLocalUploader: () =>
+      agentFetch<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>("GET", "/local/uploader"),
+
+    getLocalSettings: () =>
+      agentFetch<EdgeLocalSettings>("GET", "/local/settings"),
+
+    updateLocalSettings: (settings) =>
+      agentFetch<EdgeLocalSettings>("PUT", "/local/settings", settings),
+    getLocalMonitorDevices: (query) =>
+      agentFetch<PaginatedResult<DeviceListItem>>("GET", `/local/monitor/devices?${toAgentQuery(query)}`),
+
+    getLocalMonitorPoints: (query) =>
+      agentFetch<PaginatedResult<PointListItem>>("GET", `/local/monitor/points?${toAgentQuery(query)}`),
+
+    getLocalRealtimeGroups: (deviceCode) =>
+      agentFetch<RealtimePointGroup[]>("GET", `/local/monitor/realtime/groups?${toAgentQuery({ deviceCode })}`),
+
+    getLocalRealtime: (deviceId, groupCode) =>
+      agentFetch<DeviceRealtimeStatus>("GET", `/local/monitor/realtime?${toAgentQuery({ deviceId, groupCode })}`),
+
+    getLocalRealtimeLatest: (deviceCode, groupCode) =>
+      agentFetch<{ values: Record<string, RealtimeWireValue>; deviceOffline: boolean }>(
+        "GET",
+        `/local/monitor/realtime/latest?${toAgentQuery({ deviceCode, groupCode })}`,
+      ),
+
+    getLocalHistoryDevices: () =>
+      agentFetch<HistoryDeviceItem[]>("GET", "/local/monitor/history/devices"),
+
+    getLocalHistoryDeviceTypes: () =>
+      agentFetch<DeviceTypeItem[]>("GET", "/local/monitor/history/device-types"),
+
+    getLocalHistoryPoints: (deviceId) =>
+      agentFetch<HistoryPointItem[]>("GET", `/local/monitor/history/points?${toAgentQuery({ deviceId })}`),
+
+    getLocalHistoryChart: (query) =>
+      agentFetch<HistoryChartResponse>("POST", "/local/monitor/history/chart", query),
+
+    getLocalHistoryMatrix: (query) =>
+      agentFetch<HistoryRawMatrixResponse>("POST", "/local/monitor/history/matrix", query),
+    rotateEdgeIdentity: () =>
+      agentFetch<{ keyVersion: number; uploaderRestarted: boolean; warning?: string }>(
+        "POST",
+        "/local/identity/rotate",
+      ),
 
     getConnectionHealth: () =>
       agentFetch<ConnectionHealth>("GET", "/viewer/health"),
@@ -250,8 +459,27 @@ export const agentClient: AgentClient = {
   putBootstrapConfig:          (cfg)     => via((c) => c.putBootstrapConfig(cfg)),
   postBootstrapTestConnection: (req)     => via((c) => c.postBootstrapTestConnection(req)),
   postBootstrapFinish:         ()        => via((c) => c.postBootstrapFinish()),
+  getEdgeBootstrapStatus:      ()        => via((c) => c.getEdgeBootstrapStatus()),
+  registerEdge:                (req)     => via((c) => c.registerEdge(req)),
   agentLogin:                  (u, p)    => via((c) => c.agentLogin(u, p)),
   getViewerStatus:             ()        => via((c) => c.getViewerStatus()),
+  getLocalDevices:             ()        => via((c) => c.getLocalDevices()),
+  getLocalCollector:           ()        => via((c) => c.getLocalCollector()),
+  getLocalOutbox:              ()        => via((c) => c.getLocalOutbox()),
+  getLocalUploader:            ()        => via((c) => c.getLocalUploader()),
+  getLocalSettings:             ()        => via((c) => c.getLocalSettings()),
+  updateLocalSettings:          (settings) => via((c) => c.updateLocalSettings(settings)),
+  getLocalMonitorDevices:       (query)    => via((c) => c.getLocalMonitorDevices(query)),
+  getLocalMonitorPoints:        (query)    => via((c) => c.getLocalMonitorPoints(query)),
+  getLocalRealtimeGroups:       (code)     => via((c) => c.getLocalRealtimeGroups(code)),
+  getLocalRealtime:             (id, group) => via((c) => c.getLocalRealtime(id, group)),
+  getLocalRealtimeLatest:       (code, group) => via((c) => c.getLocalRealtimeLatest(code, group)),
+  getLocalHistoryDevices:       ()         => via((c) => c.getLocalHistoryDevices()),
+  getLocalHistoryDeviceTypes:   ()         => via((c) => c.getLocalHistoryDeviceTypes()),
+  getLocalHistoryPoints:        (id)       => via((c) => c.getLocalHistoryPoints(id)),
+  getLocalHistoryChart:         (query)    => via((c) => c.getLocalHistoryChart(query)),
+  getLocalHistoryMatrix:        (query)    => via((c) => c.getLocalHistoryMatrix(query)),
+  rotateEdgeIdentity:           ()         => via((c) => c.rotateEdgeIdentity()),
   getConnectionHealth:         ()        => via((c) => c.getConnectionHealth()),
   getProcessMetrics:           (name)    => via((c) => c.getProcessMetrics(name)),
   getProcessStatus:            (name)    => via((c) => c.getProcessStatus(name)),

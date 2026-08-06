@@ -5,6 +5,7 @@ import type {
   CollectorConfig,
   CollectorModuleMetrics,
   DashboardConnectionHealth,
+  DashboardEdgePipelineHealth,
   DashboardDeviceTypeDistribution,
   DashboardOverview,
   DashboardRecentEventList,
@@ -59,6 +60,14 @@ import type {
   UserPayload,
   UserQuery,
 } from "@/types/system-management";
+import type {
+  AssignmentOccupancy,
+  AssignmentUpdateResult,
+  DeviceStatusSyncResult,
+  DistributedNode,
+  NodeAssignment,
+  RegistrationCodeResult,
+} from "@/types/distributed";
 
 // ─── 接口 ─────────────────────────────────────────────────────────────────────
 
@@ -95,7 +104,16 @@ export interface BackendClient {
   dashboardTrend(token: string, rangeType: "today" | "last24h" | "last7d"): Promise<DashboardTrend>;
   dashboardDeviceTypeDistribution(token: string): Promise<DashboardDeviceTypeDistribution>;
   dashboardConnectionHealth(token: string): Promise<DashboardConnectionHealth>;
+  dashboardEdgePipelineHealth(token: string): Promise<DashboardEdgePipelineHealth>;
   dashboardRecentEvents(token: string): Promise<DashboardRecentEventList>;
+  distributedNodes(token: string): Promise<DistributedNode[]>;
+  syncDistributedNodeDeviceStatuses(token: string): Promise<DeviceStatusSyncResult>;
+  createNodeRegistrationCode(token: string, nodeName: string, expiresMinutes: number): Promise<RegistrationCodeResult>;
+  updateDistributedNodeStatus(token: string, nodeUuid: string, status: "approved" | "revoked"): Promise<unknown>;
+  updateDistributedNodeSettings(token: string, nodeUuid: string, readTimeoutMs: number | null): Promise<unknown>;
+  distributedNodeAssignments(token: string, nodeUuid: string): Promise<NodeAssignment[]>;
+  distributedAssignmentOccupancy(token: string): Promise<AssignmentOccupancy[]>;
+  assignDistributedNodeDevices(token: string, nodeUuid: string, deviceIds: number[]): Promise<AssignmentUpdateResult>;
   driverList(token: string, query: { pageNo?: number; pageSize?: number; keyword?: string }): Promise<PaginatedResult<DriverListItem>>;
   driverOptions(token: string): Promise<{ driverName: string; driverDesc: string }[]>;
   registerDriver(
@@ -371,7 +389,7 @@ const realBackend: BackendClient = {
   },
   dashboardTrend(token, rangeType) {
     const qs = new URLSearchParams({ rangeType, granularity: "auto" });
-    ["collectCount", "alarmCount", "onlineRate"].forEach((key) => qs.append("metricKeys", key));
+    ["collectCount", "alarmCount", "onlineDeviceCount"].forEach((key) => qs.append("metricKeys", key));
     return backendFetch<DashboardTrend>(
       "GET",
       `/api/device-monitor/dashboard/trend?${qs.toString()}`,
@@ -395,12 +413,88 @@ const realBackend: BackendClient = {
       token
     );
   },
+  dashboardEdgePipelineHealth(token) {
+    return backendFetch<DashboardEdgePipelineHealth>(
+      "GET",
+      "/api/device-monitor/dashboard/edge-pipeline-health",
+      undefined,
+      token,
+    );
+  },
+
   dashboardRecentEvents(token) {
     return backendFetch<DashboardRecentEventList>(
       "GET",
       "/api/device-monitor/dashboard/recent-events?limit=8&eventType=alarm",
       undefined,
       token
+    );
+  },
+  async distributedNodes(token) {
+    const data = await backendFetch<{ items: DistributedNode[] }>(
+      "GET",
+      "/api/distributed/nodes",
+      undefined,
+      token,
+    );
+    return data.items;
+  },
+  syncDistributedNodeDeviceStatuses(token) {
+    return backendFetch<DeviceStatusSyncResult>(
+      "POST",
+      "/api/distributed/nodes/sync-device-status",
+      undefined,
+      token,
+    );
+  },
+  createNodeRegistrationCode(token, nodeName, expiresMinutes) {
+    return backendFetch<RegistrationCodeResult>(
+      "POST",
+      "/api/distributed/nodes/registration-codes",
+      { nodeName, expiresMinutes },
+      token,
+    );
+  },
+  updateDistributedNodeStatus(token, nodeUuid, status) {
+    return backendFetch(
+      "PATCH",
+      `/api/distributed/nodes/${nodeUuid}/status`,
+      { status },
+      token,
+    );
+  },
+  updateDistributedNodeSettings(token, nodeUuid, readTimeoutMs) {
+    return backendFetch(
+      "PATCH",
+      `/api/distributed/nodes/${nodeUuid}/settings`,
+      { readTimeoutMs },
+      token,
+    );
+  },
+  async distributedNodeAssignments(token, nodeUuid) {
+    const data = await backendFetch<{ items: NodeAssignment[] }>(
+      "GET",
+      `/api/distributed/nodes/${nodeUuid}/assignments`,
+      undefined,
+      token,
+    );
+    return data.items;
+  },
+  async distributedAssignmentOccupancy(token) {
+    const data = await backendFetch<{ items: AssignmentOccupancy[] }>(
+      "GET",
+      "/api/distributed/assignments/occupancy",
+      undefined,
+      token,
+    );
+    return data.items;
+  },
+  assignDistributedNodeDevices(token, nodeUuid, deviceIds) {
+    return backendFetch<AssignmentUpdateResult>(
+      "PUT",
+      `/api/distributed/nodes/${nodeUuid}/assignments`,
+      { deviceIds },
+      token,
     );
   },
   driverList(token, query) {
@@ -598,10 +692,22 @@ export const backendClient: BackendClient = {
     const c = await _implPromise;
     return c.dashboardConnectionHealth(token);
   },
+  async dashboardEdgePipelineHealth(token) {
+    const c = await _implPromise;
+    return c.dashboardEdgePipelineHealth(token);
+  },
   async dashboardRecentEvents(token) {
     const c = await _implPromise;
     return c.dashboardRecentEvents(token);
   },
+  async distributedNodes(token) { const c = await _implPromise; return c.distributedNodes(token); },
+  async syncDistributedNodeDeviceStatuses(token) { const c = await _implPromise; return c.syncDistributedNodeDeviceStatuses(token); },
+  async createNodeRegistrationCode(token, nodeName, expiresMinutes) { const c = await _implPromise; return c.createNodeRegistrationCode(token, nodeName, expiresMinutes); },
+  async updateDistributedNodeStatus(token, nodeUuid, status) { const c = await _implPromise; return c.updateDistributedNodeStatus(token, nodeUuid, status); },
+  async updateDistributedNodeSettings(token, nodeUuid, readTimeoutMs) { const c = await _implPromise; return c.updateDistributedNodeSettings(token, nodeUuid, readTimeoutMs); },
+  async distributedNodeAssignments(token, nodeUuid) { const c = await _implPromise; return c.distributedNodeAssignments(token, nodeUuid); },
+  async distributedAssignmentOccupancy(token) { const c = await _implPromise; return c.distributedAssignmentOccupancy(token); },
+  async assignDistributedNodeDevices(token, nodeUuid, deviceIds) { const c = await _implPromise; return c.assignDistributedNodeDevices(token, nodeUuid, deviceIds); },
   async driverList(token, query) { const c = await _implPromise; return c.driverList(token, query); },
   async driverOptions(token) { const c = await _implPromise; return c.driverOptions(token); },
   async registerDriver(token, payload) { const c = await _implPromise; return c.registerDriver(token, payload); },

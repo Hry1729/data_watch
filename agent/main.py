@@ -4,6 +4,7 @@ import signal
 import uvicorn
 
 from app.factory import create_app
+from app.core.config import load_config
 
 app = create_app()
 
@@ -33,9 +34,10 @@ if __name__ == "__main__":
     # 传 app 对象而非 "main:app" 字符串：PyInstaller frozen 下无独立 main 模块可重新导入，
     # 字符串形式会触发 ModuleNotFoundError。对象形式不依赖按名导入（也不支持 reload/workers，
     # Agent 单进程服务不需要）。
+    cfg = load_config()
     uvicorn.run(
         app,
         host="127.0.0.1",
-        port=7070,
+        port=int(cfg["agent"]["port"]),
         log_level="info",
     )

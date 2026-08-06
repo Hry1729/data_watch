@@ -14,7 +14,13 @@ import types
 import pytest
 from fastapi import HTTPException
 
-from app.routers.admin import _raise_driver_error, restart_process, start_process, stop_process
+from app.routers.admin import (
+    _raise_driver_error,
+    get_config,
+    restart_process,
+    start_process,
+    stop_process,
+)
 from app.services.driver_installer import DriverInstallError
 from app.services.driver_zip import DriverZipError
 from app.services.sidecar_manager import ProxyStartError
@@ -151,6 +157,25 @@ def _conn_cfg():
 
 def _decrypt_stub(value):
     return {"m-enc": "mpw", "r-enc": "rpw", "t-enc": "tpw"}.get(value, "")
+
+
+async def test_distributed_center_config_uses_ingest_instead_of_collector(monkeypatch):
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr(
+        "app.routers.admin.managed_module_names",
+        lambda: ("ingest", "writer"),
+    )
+    monkeypatch.setattr(
+        "app.routers.admin._process_config_out",
+        lambda name: {"executable": f"/{name}.exe", "working_dir": f"/{name}"},
+    )
+
+    result = await get_config(_user="u")
+
+    assert result.collector is None
+    assert result.ingest is not None
+    assert result.ingest.executable == "/ingest.exe"
+    assert result.writer is not None
 
 
 _COLLECTOR_ENV = {

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import toml
 
+from app.core.role import build_role
+
 
 def data_root() -> Path:
     """可写数据根：环境变量 DATAWATCH_DATA_ROOT 优先；frozen 默认 C:\\ProgramData\\DataWatch；
@@ -19,7 +21,8 @@ def data_root() -> Path:
     if env:
         return Path(env)
     if getattr(sys, "frozen", False):
-        return Path(r"C:\ProgramData\DataWatch")
+        names = {"centralized": "DataWatch", "edge": "DataWatch Edge", "distributed-center": "DataWatch Distributed Center"}
+        return Path(r"C:\ProgramData") / names[build_role()]
     return Path(__file__).parent.parent.parent
 
 
@@ -43,9 +46,10 @@ _CONFIG_LOCK = threading.RLock()
 
 DB_SECTIONS = ("redis", "mysql", "tdengine")
 
-_MODULE_EXE = {
-    "collector": "data-watch-collector.exe",
-    "writer": "data-watch-writer.exe",
+_MODULE_LAYOUT = {
+    "centralized": {"collector": ("collector", "data-watch-collector.exe"), "writer": ("writer", "data-watch-writer.exe")},
+    "edge": {"collector": ("edge-collector", "data-watch-edge-collector.exe"), "uploader": ("uploader", "data-watch-uploader.exe")},
+    "distributed-center": {"ingest": ("ingest", "data-watch-ingest.exe"), "writer": ("writer", "data-watch-writer.exe")},
 }
 
 
@@ -54,7 +58,11 @@ def module_paths(name: str) -> tuple[Path, Path]:
     (含 config/settings.toml)在可写数据根 <data_root>/<name>。据此 config.toml 不存绝对路径，
     按目标机动态派生。
     """
-    return install_root() / name / _MODULE_EXE[name], data_root() / name
+    try:
+        directory, executable = _MODULE_LAYOUT[build_role()][name]
+    except KeyError as exc:
+        raise ValueError(f"module {name!r} is not available for role {build_role()!r}") from exc
+    return install_root() / directory / executable, data_root() / name
 EMPTY_PASSWORD_DETAIL = "password 不允许为空串；如需保留原密码请省略 password 字段"
 
 
@@ -124,12 +132,12 @@ def _default_config() -> dict:
     return {
         "agent": {
             "host": "127.0.0.1",
-            "port": 7070,
+            "port": int(os.environ.get("DATAWATCH_AGENT_PORT") or {"centralized": 7070, "edge": 7071, "distributed-center": 7072}[build_role()]),
             "jwt_secret": secrets.token_hex(32),
             "jwt_expire_hours": 8,
             "bootstrap_done": False,
             "log_level": "INFO",
-            "runtime_dir": r"C:\ProgramData\DataWatch\runtime",
+            "runtime_dir": str(data_root() / "runtime"),
         },
         "redis": {"host": "127.0.0.1", "port": 6379, "password_enc": ""},
         "mysql": {
@@ -149,6 +157,26 @@ def _default_config() -> dict:
         # 后端地址运行期可配（引导页录入），不再打包进 app 前端；app 启动时经
         # GET /bootstrap/runtime-config 读取。base_url 无密码，明文存储。
         "backend": {"base_url": "http://127.0.0.1:8000"},
+        "edge": {
+            "center_url": "",
+            "node_uuid": "",
+            "node_name": "",
+            "private_key_enc": "",
+            "registered": False,
+            "registration_status": "not_registered",
+            "applied_revision": 0,
+            "last_sync_error": "",
+            "max_offline_retention_days": 7,
+            "outbox_maintenance_seconds": 60,
+        },
+
         "collector": {"executable": "", "args": [], "working_dir": ""},
         "writer": {"executable": "", "args": [], "working_dir": ""},
+        "uploader": {"executable": "", "args": [], "working_dir": ""},
+        "ingest": {
+            "executable": "",
+            "args": [],
+            "working_dir": "",
+            "max_offline_retention_days": 7,
+        },
     }

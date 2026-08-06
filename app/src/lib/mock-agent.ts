@@ -16,6 +16,7 @@ import type {
   ModuleStatusValue,
 } from "@/types";
 import type { MenuTreeItem, RoleGrant, RoleListItem, UserListItem } from "@/types/system-management";
+import type { DistributedNode } from "@/types/distributed";
 
 // ─── 辅助 ─────────────────────────────────────────────────────────────────────
 
@@ -25,10 +26,23 @@ const delay = (ms = Math.random() * 500 + 300) =>
 // ─── 可变内部状态 ─────────────────────────────────────────────────────────────
 
 let _inBootstrap = true;
+let _edgeBootstrap = {
+  nodeUuid: "",
+  nodeName: "",
+  centerUrl: "",
+  registered: false,
+  registrationStatus: "not_registered",
+  lastSyncError: "",
+};
 
+let _edgeLocalSettings = {
+  max_offline_retention_days: 7,
+  outbox_maintenance_seconds: 60,
+};
 const _processStatus: Record<string, ModuleStatusValue> = {
   collector: "running",
   writer:    "stopped",
+  uploader:  "running",
 };
 
 // password 字段省略：模拟真实 Agent 行为（GET /admin/config 不返回密码）
@@ -76,16 +90,133 @@ export const mockAgent: AgentClient = {
     _inBootstrap = false;
   },
 
+  async getEdgeBootstrapStatus() {
+    await delay();
+    return { ..._edgeBootstrap };
+  },
+
+  async registerEdge(req) {
+    await delay(800);
+    _edgeBootstrap = {
+      nodeUuid: _edgeBootstrap.nodeUuid || "mock-edge-node-01",
+      nodeName: req.node_name,
+      centerUrl: req.center_url,
+      registered: true,
+      registrationStatus: "pending",
+      lastSyncError: "",
+    };
+    return { nodeUuid: _edgeBootstrap.nodeUuid, status: "pending" };
+  },
+
   async agentLogin(u, _p) {
     await delay();
     // 只要 username 非空即成功（mock 不验证密码）
     if (!u) throw { type: "unauthorized" as const };
-    return { token: "mock-agent-jwt-dev" };
+    return { token: "mock-agent-jwt-dev", roles: ["R_ADMIN"] };
   },
 
   async getViewerStatus() {
     await delay();
     return { agent: "running" };
+  },
+
+  async getLocalDevices() {
+    await delay(120);
+    return {
+      config: { config_revision: 12, checksum: "mock", read_timeout_ms: null, applied_at: Date.now() },
+      devices: [
+        { device_code: "QC01", device_type: "QC", protocol: "s7", endpoint: "10.0.0.11:102", scan_rate_ms: 100, config_version: 8, assignment_epoch: 2, enabled: 1, status: 1, message: "connected", status_updated_at: Date.now() },
+        { device_code: "QC02", device_type: "QC", protocol: "s7", endpoint: "10.0.0.12:102", scan_rate_ms: 100, config_version: 8, assignment_epoch: 1, enabled: 1, status: 1, message: "connected", status_updated_at: Date.now() },
+      ],
+    };
+  },
+
+  async getLocalCollector() {
+    await delay(100);
+    return { name: "collector", status: "running", pid: 4820, started_at: "2026-08-01 08:00:00", uptime_seconds: 3600, memory_mb: 128, cpu_percent: 2.1, restart_count: 0 };
+  },
+
+  async getLocalOutbox() {
+    await delay(100);
+    return { counts: { pending: 3, sent: 42190 }, backlog_count: 3, oldest_backlog_at: Date.now() - 300, upload_session_id: "mock-session", last_seq: 42193, upload_interval_ms: 100, session_switch_pending: false, database_bytes: 2_621_440, dropped_records: 0, sent_records_total: 42190, disk_total_bytes: 512_000_000_000, disk_free_bytes: 220_000_000_000, disk_used_percent: 57.03, watermark: "normal" as const };
+  },
+
+  async getLocalUploader() {
+    await delay(100);
+    return { name: "uploader", status: "running", pid: 4932, started_at: "2026-08-01 08:00:00", uptime_seconds: 3600, memory_mb: 42, cpu_percent: 0.4, restart_count: 0, outbox: await this.getLocalOutbox() };
+  },
+
+  async getLocalSettings() {
+    await delay(100);
+    return {
+      node_uuid: _edgeBootstrap.nodeUuid,
+      node_name: _edgeBootstrap.nodeName,
+      center_url: _edgeBootstrap.centerUrl,
+      registered: _edgeBootstrap.registered,
+      registration_status: _edgeBootstrap.registrationStatus,
+      last_sync_error: _edgeBootstrap.lastSyncError,
+      applied_revision: 12,
+      ..._edgeLocalSettings,
+    };
+  },
+
+  async updateLocalSettings(settings) {
+    await delay(200);
+    _edgeLocalSettings = { ...settings };
+    return this.getLocalSettings();
+  },
+  async getLocalMonitorDevices(query) {
+    return { ...(await mockBackend.deviceList("mock", query)), source: "local" as const };
+  },
+
+  async getLocalMonitorPoints(query) {
+    return { ...(await mockBackend.pointList("mock", query)), source: "local" as const };
+  },
+
+  async getLocalRealtimeGroups(deviceCode) {
+    return mockBackend.realtimePointGroups("mock", deviceCode);
+  },
+
+  async getLocalRealtime(deviceId, groupCode) {
+    const result = await mockBackend.realtimeInit("mock", deviceId, groupCode);
+    return { ...result, redisConnected: false, degraded: true };
+  },
+
+  async getLocalRealtimeLatest(deviceCode, groupCode) {
+    const deviceId = deviceCode === "METER-02" ? 2 : 1;
+    const result = await mockBackend.realtimeInit("mock", deviceId, groupCode);
+    return {
+      values: Object.fromEntries(result.data.map((point) => [String(point.pointId), {
+        v: point.value,
+        t: Date.now(),
+        q: point.quality ?? 192,
+      }])),
+      deviceOffline: false,
+    };
+  },
+
+  async getLocalHistoryDevices() {
+    return mockBackend.historyDevices("mock");
+  },
+
+  async getLocalHistoryDeviceTypes() {
+    return mockBackend.historyDeviceTypes("mock");
+  },
+
+  async getLocalHistoryPoints(deviceId) {
+    return mockBackend.historyPoints("mock", deviceId);
+  },
+
+  async getLocalHistoryChart(query) {
+    return mockBackend.historyChart("mock", query);
+  },
+
+  async getLocalHistoryMatrix(query) {
+    return mockBackend.historyRawMatrix("mock", query);
+  },
+  async rotateEdgeIdentity() {
+    await delay(400);
+    return { keyVersion: 2, uploaderRestarted: true };
   },
 
   async getConnectionHealth() {
@@ -269,6 +400,35 @@ let MOCK_MENUS: MenuTreeItem[] = [
 
 const MOCK_ROLE_GRANTS = new Map<number, RoleGrant>([[1, { menuIds: [10, 11, 20, 21, 22], permissionIds: [101, 201, 202], dataScopes: [] }], [2, { menuIds: [10, 11, 20, 21], permissionIds: [101], dataScopes: [] }], [3, { menuIds: [10, 11], permissionIds: [101], dataScopes: [] }]]);
 
+const MOCK_DISTRIBUTED_NODES: DistributedNode[] = [
+  {
+    nodeUuid: "3911959d-3e0d-45a4-880a-d3c7df3a2d65",
+    nodeName: "一号产线边缘机",
+    status: "approved",
+    configVersion: 12,
+    appliedRevision: 12,
+    outboxBacklog: 3,
+    outboxDatabaseBytes: 2_621_440,
+    outboxDiskUsedPercent: 57.03,
+    outboxWatermark: "normal",
+    outboxDroppedRecords: 0,
+    keyVersion: 1,
+    collectorStatus: "running",
+    uploaderStatus: "running",
+    clockSkewMs: 120,
+    clockAnomaly: false,
+    assignmentCount: 2,
+    readTimeoutMs: null,
+    lastSeenAt: new Date().toISOString(),
+    createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+const MOCK_NODE_ASSIGNMENTS = new Map<string, number[]>([
+  ["3911959d-3e0d-45a4-880a-d3c7df3a2d65", [1, 2]],
+]);
+
 export const mockBackend: BackendClient = {
   async login(u, _p) {
     await delay();
@@ -332,7 +492,7 @@ export const mockBackend: BackendClient = {
       series: [
         { metricKey: "collectCount", metricName: "采集量", unit: "点", data: [1820, 2060, 3180, 3460, 3290, 3720, 3510] },
         { metricKey: "alarmCount", metricName: "告警数", unit: "条", data: [2, 1, 4, 3, 5, 2, 1] },
-        { metricKey: "onlineRate", metricName: "在线率", unit: "%", data: [92, 93, 95, 94, 96, 95, 95] },
+        { metricKey: "onlineDeviceCount", metricName: "在线设备数", unit: "台", data: [34, 35, 36, 35, 37, 36, 36] },
       ],
       summary: { collectCountTotal: 21040, alarmCountTotal: 18, onlineRateAvg: 94.3 },
     };
@@ -361,6 +521,16 @@ export const mockBackend: BackendClient = {
       ],
     };
   },
+  async dashboardEdgePipelineHealth(_token) {
+    await delay(120);
+    return {
+      heartbeatStaleSeconds: 30,
+      collector: { status: "healthy" as const, totalNodes: 3, healthyNodes: 3, warningNodes: 0, criticalNodes: 0 },
+      uploader: { status: "warning" as const, totalNodes: 3, healthyNodes: 2, warningNodes: 1, criticalNodes: 0 },
+      generatedAt: new Date().toISOString(),
+    };
+  },
+
   async dashboardRecentEvents(_token) {
     await delay(200);
     const now = Date.now();
@@ -371,6 +541,77 @@ export const mockBackend: BackendClient = {
         { eventId: "evt-103", eventTime: new Date(now - 43 * 60_000).toISOString(), deviceId: 12, deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", eventType: "alarm", eventLevel: "WARN", content: "采集周期波动，当前已恢复", status: "resolved" },
         { eventId: "evt-104", eventTime: new Date(now - 74 * 60_000).toISOString(), deviceId: 15, deviceCode: "SENSOR-15", deviceName: "环境温度传感器", eventType: "alarm", eventLevel: "INFO", content: "点位数据质量由 Good 变为 Uncertain", status: "resolved" },
       ],
+    };
+  },
+  async distributedNodes(_token) {
+    await delay(120);
+    return MOCK_DISTRIBUTED_NODES.map((item) => ({ ...item }));
+  },
+  async syncDistributedNodeDeviceStatuses(_token) {
+    await delay(120);
+    const approvedNodes = MOCK_DISTRIBUTED_NODES.filter((node) => node.status === "approved");
+    for (const node of approvedNodes) node.configVersion += 1;
+    return { updatedNodeCount: approvedNodes.length };
+  },
+  async createNodeRegistrationCode(_token, nodeName, expiresMinutes) {
+    await delay(120);
+    return {
+      registrationCode: "mock-registration-code",
+      nodeName,
+      expiresAt: new Date(Date.now() + expiresMinutes * 60_000).toISOString(),
+    };
+  },
+  async updateDistributedNodeStatus(_token, nodeUuid, status) {
+    await delay(120);
+    const node = MOCK_DISTRIBUTED_NODES.find((item) => item.nodeUuid === nodeUuid);
+    if (node) node.status = status;
+    return {};
+  },
+  async updateDistributedNodeSettings(_token, nodeUuid, readTimeoutMs) {
+    await delay(120);
+    const node = MOCK_DISTRIBUTED_NODES.find((item) => item.nodeUuid === nodeUuid);
+    if (node) {
+      node.readTimeoutMs = readTimeoutMs;
+      node.configVersion += 1;
+    }
+    return {};
+  },
+  async distributedNodeAssignments(_token, nodeUuid) {
+    await delay(120);
+    const ids = MOCK_NODE_ASSIGNMENTS.get(nodeUuid) ?? [];
+    return ids.map((deviceId) => ({
+      deviceId,
+      deviceCode: `DEVICE-${deviceId}`,
+      deviceName: `设备 ${deviceId}`,
+      assignmentEpoch: 1,
+      status: "active",
+      effectiveAt: new Date().toISOString(),
+      cutoverAt: null,
+      graceUntil: null,
+    }));
+  },
+  async distributedAssignmentOccupancy(_token) {
+    await delay(120);
+    return [...MOCK_NODE_ASSIGNMENTS.entries()].flatMap(([nodeUuid, deviceIds]) => {
+      const node = MOCK_DISTRIBUTED_NODES.find((item) => item.nodeUuid === nodeUuid);
+      return deviceIds.map((deviceId) => ({
+        deviceId,
+        nodeUuid,
+        nodeName: node?.nodeName ?? nodeUuid,
+      }));
+    });
+  },
+  async assignDistributedNodeDevices(_token, nodeUuid, deviceIds) {
+    await delay(120);
+    MOCK_NODE_ASSIGNMENTS.set(nodeUuid, [...deviceIds]);
+    const node = MOCK_DISTRIBUTED_NODES.find((item) => item.nodeUuid === nodeUuid);
+    if (node) node.assignmentCount = deviceIds.length;
+    return {
+      nodeUuid,
+      deviceIds: [...deviceIds],
+      migratedDeviceIds: [],
+      removedDeviceIds: [],
+      cutoverAt: null,
     };
   },
   async driverList(_token, query) {
@@ -414,10 +655,10 @@ export const mockBackend: BackendClient = {
   async deviceList(_token, query) {
     await delay(160);
     const rows = [
-      { id: 1, deviceType: "PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", driverName: "Siemens S7", deviceStatus: "enabled" as const, connectStatus: "online" as const, connectUpdateTime: "2026-07-17 15:30:00", dataStatus: "normal" as const, dataUpdateTime: "2026-07-17 15:30:00", description: "主线控制器" },
-      { id: 2, deviceType: "仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", driverName: "Modbus TCP", deviceStatus: "enabled" as const, connectStatus: "unstable" as const, connectUpdateTime: "2026-07-17 15:29:41", dataStatus: "abnormal" as const, dataUpdateTime: "2026-07-17 15:29:40", description: "能耗计量" },
-      { id: 3, deviceType: "机器人", deviceCode: "ROBOT-07", deviceName: "七号装配机器人", driverName: "OPC UA", deviceStatus: "enabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-17 14:52:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-17 14:51:55", description: "装配工位" },
-      { id: 4, deviceType: "PLC", deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", driverName: "Siemens S7", deviceStatus: "disabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-16 11:10:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-16 11:10:00", description: "维护中" },
+      { id: 1, deviceType: "PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", driverName: "Siemens S7", endpoint: "192.168.1.10:102", endpointBackup: "192.168.1.11:102", deviceStatus: "enabled" as const, connectStatus: "online" as const, connectUpdateTime: "2026-07-17 15:30:00", dataStatus: "normal" as const, dataUpdateTime: "2026-07-17 15:30:00", description: "主线控制器" },
+      { id: 2, deviceType: "仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", driverName: "Modbus TCP", endpoint: "192.168.1.20:502", endpointBackup: "", deviceStatus: "enabled" as const, connectStatus: "unstable" as const, connectUpdateTime: "2026-07-17 15:29:41", dataStatus: "abnormal" as const, dataUpdateTime: "2026-07-17 15:29:40", description: "能耗计量" },
+      { id: 3, deviceType: "机器人", deviceCode: "ROBOT-07", deviceName: "七号装配机器人", driverName: "OPC UA", endpoint: "192.168.1.30:4840", endpointBackup: "", deviceStatus: "enabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-17 14:52:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-17 14:51:55", description: "装配工位" },
+      { id: 4, deviceType: "PLC", deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", driverName: "Siemens S7", endpoint: "192.168.1.40:102", endpointBackup: "", deviceStatus: "disabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-16 11:10:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-16 11:10:00", description: "维护中" },
     ];
     const list = rows.filter((item) => (!query.keyword || `${item.deviceCode} ${item.deviceName}`.toLowerCase().includes(query.keyword.toLowerCase())) && (!query.connectStatus || item.connectStatus === query.connectStatus) && (!query.deviceStatus || item.deviceStatus === query.deviceStatus));
     return { list, total: list.length, pageNo: query.pageNo ?? 1, pageSize: query.pageSize ?? 20 };

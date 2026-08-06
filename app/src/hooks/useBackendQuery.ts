@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { BUILD_ROLE } from "@/config/build-role";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import type { AppError } from "@/types";
 
@@ -9,7 +10,7 @@ export function useBackendQuery<T>(
 ) {
   const { auth, logout } = useAuth();
   const { refreshVersion } = usePageRefresh();
-  const token = auth?.backendToken ?? null;
+  const token = auth?.backendToken || (BUILD_ROLE === "edge" ? auth?.agentToken ?? null : null);
   const logoutRef = useRef(logout);
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);

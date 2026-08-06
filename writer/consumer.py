@@ -449,14 +449,16 @@ class StreamConsumer:
             self._ack_single(stream_key, entry_id)
             return
 
-        # --- Get variable mapping (M3: 把同步 MySQL 查询挪到 executor，避免阻塞事件循环) ---
-        mapping = await asyncio.get_running_loop().run_in_executor(
-            None,
-            self._mapper.get_or_load,
-            device_code,
-            group_code,
-            config_version,
-        )
+        # 缓存命中走事件循环内快路径；只有首次 MySQL 加载进入 executor。
+        mapping = self._mapper.get_cached(device_code, group_code)
+        if mapping is None:
+            mapping = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._mapper.get_or_load,
+                device_code,
+                group_code,
+                config_version,
+            )
         if mapping is None:
             logger.warning(
                 "[consumer] no current mapping for device=%s group=%s version=%s, leaving entry %s pending",

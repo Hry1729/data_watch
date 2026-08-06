@@ -8,10 +8,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { agentClient } from "@/lib/agent-client";
 import { backendClient } from "@/lib/backend-client";
 import { buildAllowedPaths, pickFallbackPath } from "@/lib/navigation-access";
+import { AGENT_HTTP_ORIGIN, BUILD_ROLE } from "@/config/build-role";
 import type { AppError } from "@/types";
 
-// Agent 地址为本机固定值，不可配置（spec §1.2）
-const AGENT_ADDRESS = "http://127.0.0.1:7070";
+function canUseEdgeOffline(error: unknown): boolean {
+  const appError = error as AppError;
+  return appError?.type === "network_error"
+    || (appError?.type === "api_error" && (appError.status ?? 0) >= 500);
+}
 
 export function LoginPage() {
   const navigate       = useNavigate();
@@ -34,30 +38,37 @@ export function LoginPage() {
     setError(null);
 
     try {
-      // Step 1：Agent 登录，获取 agentToken
-      // 密码不经 console（agent-client 内部 sanitize 仅 debug 脱敏 body）
-      const { token: agentToken } =
+      const { token: agentToken, roles: agentRoles } =
         await agentClient.agentLogin(username, password);
 
-      // Step 2：Backend 登录，获取 backendToken / refreshToken
-      const { token: backendToken, refreshToken: backendRefreshToken } =
-        await backendClient.login(username, password);
+      let backendToken = "";
+      let backendRefreshToken = "";
+      let user = {
+        userId: 0,
+        userName: username,
+        roles: agentRoles,
+        buttons: [] as string[],
+      };
+      let allowedPaths = buildAllowedPaths([], agentRoles);
 
-      // Step 3：拉取用户信息与可见菜单（按角色过滤）；失败时仅保留桌面专有页
-      let user;
-      let allowedPaths = buildAllowedPaths([]);
       try {
-        const [userInfo, menus] = await Promise.all([
-          backendClient.userInfo(backendToken),
-          backendClient.currentUserMenus(backendToken),
-        ]);
-        user = userInfo;
-        allowedPaths = buildAllowedPaths(menus, userInfo.roles);
-      } catch {
-        // 权限接口失败不阻断登录，侧栏只显示桌面专有页
+        const centerAuth = await backendClient.login(username, password);
+        backendToken = centerAuth.token;
+        backendRefreshToken = centerAuth.refreshToken;
+        try {
+          const [userInfo, menus] = await Promise.all([
+            backendClient.userInfo(backendToken),
+            backendClient.currentUserMenus(backendToken),
+          ]);
+          user = userInfo;
+          allowedPaths = buildAllowedPaths(menus, userInfo.roles);
+        } catch (centerProfileError) {
+          if ((centerProfileError as AppError)?.type === "unauthorized") throw centerProfileError;
+        }
+      } catch (centerError) {
+        if (BUILD_ROLE !== "edge" || !canUseEdgeOffline(centerError)) throw centerError;
       }
 
-      // Step 4：写入 AuthContext（仅内存，不持久化）
       login({
         agentToken,
         backendToken,
@@ -65,8 +76,6 @@ export function LoginPage() {
         user,
         allowedPaths,
       });
-
-      // Step 5：跳转有权限的首页
       navigate(pickFallbackPath(allowedPaths), { replace: true });
 
     } catch (err) {
@@ -103,7 +112,7 @@ export function LoginPage() {
             Data Watch Console
           </CardTitle>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            本机采集与入库控制台
+            {BUILD_ROLE === "edge" ? "边缘节点本机运维" : "本机采集与入库控制台"}
           </p>
         </CardHeader>
 
@@ -166,7 +175,7 @@ export function LoginPage() {
 
           {/* Agent 地址提示 */}
           <p className="mt-5 text-center text-xs text-muted-foreground">
-            Agent：{AGENT_ADDRESS}
+            Agent：{AGENT_HTTP_ORIGIN}
           </p>
         </CardContent>
       </Card>

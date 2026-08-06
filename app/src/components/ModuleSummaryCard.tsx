@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { ModuleStatus, ModuleStatusValue } from "@/types";
+import type { ModuleName, ModuleStatus, ModuleStatusValue } from "@/types";
 
 // ─── 运行时长格式化（HH:MM:SS）────────────────────────────────────────────────
 
@@ -30,6 +30,16 @@ const MODULE_META = {
     label: "Collector 采集模块",
     subtitle: "实时设备数据采集与流式入队",
     targetLabel: "Redis Stream",
+  },
+  ingest: {
+    label: "Ingest 数据汇聚模块",
+    subtitle: "边缘数据校验、汇聚与 Redis Stream 入队",
+    targetLabel: "Redis Stream",
+  },
+  uploader: {
+    label: "Uploader 上行同步模块",
+    subtitle: "本地离线队列严格按序同步至中心 Ingest",
+    targetLabel: "中心 Ingest",
   },
   writer: {
     label: "Writer 入库模块",
@@ -116,7 +126,7 @@ function ModuleHeader({
   loading,
   showPid,
 }: {
-  name: "collector" | "writer";
+  name: ModuleName;
   status: ModuleStatus;
   loading: boolean;
   showPid: boolean;
@@ -152,7 +162,7 @@ function ModuleHeader({
 // ─── ModuleHeaderCard（详情页专用，仅 header 内容）─────────────────────────────
 
 export interface ModuleHeaderCardProps {
-  name: "collector" | "writer";
+  name: ModuleName;
   status: ModuleStatus;
   loading?: boolean;
 }
@@ -180,7 +190,7 @@ export function ModuleHeaderCard({
 
 export interface ModuleSummaryCardProps {
   /** 模块标识，决定图标和标题 */
-  name: "collector" | "writer";
+  name: ModuleName;
   /** 运行状态快照 */
   status: ModuleStatus;
   /** 操作进行中 — 全部按钮禁用 */
@@ -282,7 +292,7 @@ export function ModuleSummaryCard({
             <RotateCcw className="mr-2 h-4 w-4" />
             重启
           </Button>
-          <Button variant="outline" className="h-11" disabled={disabled} onClick={onViewLog}>
+          <Button variant="outline" className="h-11" disabled={disabled || !onViewLog} onClick={onViewLog}>
             <ScrollText className="mr-2 h-4 w-4" />
             {logButtonLabel}
           </Button>
@@ -297,6 +307,6 @@ export function ModuleSummaryCard({
 // 详情页的"数据库"是 4-card 行中的一员（参考采集周期 / 设备连接...格式），
 // 这里导出一个工具函数，让 CollectorPage/WriterPage 直接拿到展示值。
 
-export function getDatabaseLabel(name: "collector" | "writer"): string {
+export function getDatabaseLabel(name: ModuleName): string {
   return MODULE_META[name].targetLabel;
 }

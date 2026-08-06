@@ -19,9 +19,10 @@ export interface AuthStore {
 }
 
 // 模块运行状态
+export type ModuleName = 'collector' | 'writer' | 'ingest' | 'uploader';
 export type ModuleStatusValue = 'running' | 'stopped' | 'crashed' | 'unknown';
 export interface ModuleStatus {
-  name: 'collector' | 'writer';
+  name: ModuleName;
   status: ModuleStatusValue;
   pid: number | null;
   uptime_seconds: number;
@@ -134,8 +135,9 @@ export interface ConnectionConfig {
   redis: DbConfig;
   mysql: DbConfig;
   tdengine: DbConfig;
-  collector: ProcessConfig;
-  writer: ProcessConfig;
+  collector?: ProcessConfig;
+  writer?: ProcessConfig;
+  ingest?: ProcessConfig;
 }
 
 // 统一应用错误
@@ -227,4 +229,21 @@ export interface DashboardConnectionHealth {
   query: { statRange: string; topN: number; includeOffline: boolean };
   overview: { onlineDevices: number; offlineDevices: number; riskDevices: number };
   list: DashboardConnectionHealthItem[];
+}
+
+export type PipelineHealthStatus = "healthy" | "warning" | "critical" | "unknown" | "inactive";
+
+export interface DashboardEdgePipelineModuleHealth {
+  status: Exclude<PipelineHealthStatus, "inactive">;
+  totalNodes: number;
+  healthyNodes: number;
+  warningNodes: number;
+  criticalNodes: number;
+}
+
+export interface DashboardEdgePipelineHealth {
+  heartbeatStaleSeconds: number;
+  collector: DashboardEdgePipelineModuleHealth;
+  uploader: DashboardEdgePipelineModuleHealth;
+  generatedAt: string;
 }

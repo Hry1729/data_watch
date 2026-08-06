@@ -36,7 +36,11 @@ class OPCUADriver(BaseDriver):
             ) from exc
 
         try:
-            self._client = Client(url=endpoint)
+            read_timeout_ms = config.get("read_timeout_ms")
+            kwargs = {}
+            if read_timeout_ms is not None:
+                kwargs["timeout"] = int(read_timeout_ms) / 1000.0
+            self._client = Client(url=endpoint, **kwargs)
             await self._client.connect()
             self._connected = True
             self._config = config

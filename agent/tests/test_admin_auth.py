@@ -136,4 +136,26 @@ async def test_login_embeds_enabled_role_codes_in_agent_token(monkeypatch):
     response = await login(LoginRequest(username="admin", password="password"))
 
     assert response.token == "token"
+    assert response.roles == ["R_ADMIN"]
     assert captured["roles"] == ["R_ADMIN"]
+
+
+async def test_edge_login_uses_center_mysql(monkeypatch):
+    cfg = _config()
+    opened = {"value": False}
+    monkeypatch.setenv("DATAWATCH_ROLE", "edge")
+    monkeypatch.setattr("app.routers.auth.load_config", lambda: cfg)
+
+    def connect(_cfg):
+        opened["value"] = True
+        return FakeConnection()
+
+    monkeypatch.setattr("app.routers.auth._get_mysql_conn", connect)
+    monkeypatch.setattr("app.routers.auth.verify_password", lambda _plain, _encoded: True)
+    monkeypatch.setattr("app.routers.auth.create_access_token", lambda **_kwargs: "edge-token")
+
+    response = await login(LoginRequest(username="edge-admin", password="password"))
+
+    assert response.token == "edge-token"
+    assert response.roles == ["R_ADMIN"]
+    assert opened["value"] is True

@@ -56,6 +56,7 @@ def build_connection_config(dev_cfg: DeviceConfig) -> Dict[str, Any]:
         "rack": dev_cfg.rack,
         "slot": dev_cfg.slot,
         "opc_server": dev_cfg.opc_server,
+        "read_timeout_ms": dev_cfg.read_timeout_ms,
     }
     if (dev_cfg.protocol or "").lower() == "modbus_tcp":
         config["unit_id"] = _modbus_unit_id_from_slot(dev_cfg.slot)
@@ -422,6 +423,7 @@ class DeviceManager:
                     "rack": dev_cfg.rack,
                     "slot": dev_cfg.slot,
                     "opc_server": dev_cfg.opc_server,
+        "read_timeout_ms": dev_cfg.read_timeout_ms,
                 }
                 config_error = str(exc)
             device = Device(

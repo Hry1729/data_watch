@@ -52,6 +52,34 @@ def test_force_stop_kills_process(runtime_dir):
     r.close_log("p")
 
 
+def test_force_stop_kills_descendant_processes(runtime_dir):
+    r = ManagedProcessRunner(runtime_dir)
+    pid, _ = r.launch(
+        "tree",
+        [sys.executable, DUMMY_CHILD, "--ignore-flag", "--spawn-child"],
+        cwd=os.path.dirname(DUMMY_CHILD),
+    )
+    proc = psutil.Process(pid)
+    end = time.time() + 5
+    children = []
+    while time.time() < end and not children:
+        children = proc.children(recursive=True)
+        time.sleep(0.05)
+
+    try:
+        assert children
+        r.force_stop(proc)
+        assert not proc.is_running()
+        assert all(not child.is_running() for child in children)
+    finally:
+        for target in [proc, *children]:
+            try:
+                target.kill()
+            except psutil.Error:
+                pass
+        r.close_log("tree")
+
+
 def test_verify_alive_rejects_stale_create_time(runtime_dir):
     r = ManagedProcessRunner(runtime_dir)
     # 用本进程 pid 但伪造的 create_time，应判为非同一进程

@@ -12,9 +12,9 @@ from typing import Literal, cast
 
 from app.schemas.models import LogLine
 
-LogSource = Literal["collector", "writer"]
+LogSource = Literal["collector", "writer", "uploader", "ingest"]
 
-_VALID_NAMES: set[str] = {"collector", "writer"}
+_VALID_NAMES: set[str] = {"collector", "writer", "uploader", "ingest"}
 _LEVEL_RE = re.compile(r"\b(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b")
 _QUEUE_MAXSIZE = 100
 _HISTORY_MAXLEN = 100
@@ -32,12 +32,10 @@ class _TailState:
 class LogManager:
     def __init__(self) -> None:
         self._history: dict[LogSource, deque[LogLine]] = {
-            "collector": deque(maxlen=_HISTORY_MAXLEN),
-            "writer": deque(maxlen=_HISTORY_MAXLEN),
+            name: deque(maxlen=_HISTORY_MAXLEN) for name in _VALID_NAMES
         }
         self._subscribers: dict[LogSource, set[asyncio.Queue[LogLine]]] = {
-            "collector": set(),
-            "writer": set(),
+            name: set() for name in _VALID_NAMES
         }
         self._states: dict[LogSource, _TailState] = {}
         self._lock = threading.RLock()

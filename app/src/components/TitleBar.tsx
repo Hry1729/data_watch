@@ -22,7 +22,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex h-8 shrink-0 select-none items-center justify-between bg-background pl-3 text-xs text-muted-foreground border-b border-border"
+      className="flex h-8 shrink-0 select-none items-center justify-between border-b border-border bg-white pl-3 text-xs text-muted-foreground dark:bg-card"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
         <img

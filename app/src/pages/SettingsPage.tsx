@@ -13,7 +13,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { normalizeSettingsTab } from "@/components/layout/settings-tabs";
-import type { AppError, ConnectionConfig, DbConfig } from "@/types";
+import { BUILD_ROLE } from "@/config/build-role";
+import type { AppError, ConnectionConfig, DbConfig, ModuleName } from "@/types";
 
 const ZH_TO_THEME = { "浅色": "light", "深色": "dark", "跟随系统": "system" } as const;
 const THEME_TO_ZH = { light: "浅色", dark: "深色", system: "跟随系统" } as const;
@@ -39,6 +40,7 @@ interface FormState {
   mysql:    DbForm;
   tdengine: DbForm;
   collector: ProcessForm;
+  ingest:    ProcessForm;
   writer:    ProcessForm;
 }
 
@@ -59,12 +61,16 @@ const DEFAULT_FORM: FormState = {
   mysql:    { host: "127.0.0.1", port: "3306", user: "root", password: "", database: "device_watch"  },
   tdengine: { host: "127.0.0.1", port: "6041", user: "root", password: "", database: "device_data"   },
   collector: { executable: "collector/data-watch-collector.exe", working_dir: "D:/data_watch_deploy/data-watch-collector" },
+  ingest:    { executable: "ingest/data-watch-ingest.exe",       working_dir: "D:/data_watch_deploy/data-watch-ingest"    },
   writer:    { executable: "writer/data-watch-writer.exe",       working_dir: "D:/data_watch_deploy/data-watch-writer"    },
 };
 
 function configToForm(cfg: ConnectionConfig): FormState {
   // password 字段在 GET /admin/config 中可能缺失（契约：不返回真实密码）；
   // 表单回退为空串，用户不输入则后续提交不带 password key（保留原密码）。
+  const collector = cfg.collector ?? DEFAULT_FORM.collector;
+  const ingest = cfg.ingest ?? DEFAULT_FORM.ingest;
+  const writer = cfg.writer ?? DEFAULT_FORM.writer;
   return {
     redis: {
       host:     cfg.redis.host,
@@ -88,12 +94,16 @@ function configToForm(cfg: ConnectionConfig): FormState {
       database: cfg.tdengine.database ?? "",
     },
     collector: {
-      executable:  cfg.collector.executable,
-      working_dir: cfg.collector.working_dir,
+      executable:  collector.executable,
+      working_dir: collector.working_dir,
+    },
+    ingest: {
+      executable:  ingest.executable,
+      working_dir: ingest.working_dir,
     },
     writer: {
-      executable:  cfg.writer.executable,
-      working_dir: cfg.writer.working_dir,
+      executable:  writer.executable,
+      working_dir: writer.working_dir,
     },
   };
 }
@@ -483,6 +493,30 @@ function CollectorTab({
   );
 }
 
+// ─── 标签内容：Ingest ─────────────────────────────────────────────────────────
+
+function IngestTab({ form }: { form: ProcessForm }) {
+  return (
+    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+      <CardHeader>
+        <CardTitle>Ingest 配置</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">进程路径由分布式中心安装目录自动派生。</p>
+        <div className="grid grid-cols-2 gap-x-8 gap-y-4">
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
+            <Input value={form.executable} readOnly className="h-8 text-sm font-mono" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label className="text-xs text-muted-foreground">工作目录</Label>
+            <Input value={form.working_dir} readOnly className="h-8 text-sm font-mono" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 // ─── 标签内容：Writer ─────────────────────────────────────────────────────────
 
 function WriterTab({
@@ -548,16 +582,24 @@ function WriterTab({
   );
 }
 
-// ─── 保存策略卡片（页面级，所有标签共用）──────────────────────────────────────
+// ─── 保存策略卡片 ─────────────────────────────────────────────────────────────
+
+function moduleLabel(name: ModuleName): string {
+  if (name === "collector") return "Collector";
+  if (name === "ingest") return "Ingest";
+  return "Writer";
+}
 
 function SaveCard({
   saving,
+  restartModules,
   onSave,
   onSaveAndRestart,
 }: {
   saving: boolean;
+  restartModules: ModuleName[];
   onSave: () => void;
-  onSaveAndRestart: (name: "collector" | "writer") => void;
+  onSaveAndRestart: (name: ModuleName) => void;
 }) {
   return (
     <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
@@ -565,26 +607,27 @@ function SaveCard({
         <CardTitle>保存策略</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-3">
           <Button variant="default" size="sm" className="gap-1.5" disabled={saving} onClick={onSave}>
             <Save className="h-3.5 w-3.5" />
             保存
           </Button>
-          <Button
-            variant="outline" size="sm" className="gap-1.5"
-            disabled={saving} onClick={() => onSaveAndRestart("collector")}
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            保存并重启 Collector
-          </Button>
-          <Button
-            variant="outline" size="sm" className="gap-1.5"
-            disabled={saving} onClick={() => onSaveAndRestart("writer")}
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            保存并重启 Writer
-          </Button>
-          <span className="text-xs text-muted-foreground/70 ml-1">重启后生效</span>
+          {restartModules.map((name) => (
+            <Button
+              key={name}
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={saving}
+              onClick={() => onSaveAndRestart(name)}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              保存并重启 {moduleLabel(name)}
+            </Button>
+          ))}
+          {restartModules.length > 0 && (
+            <span className="ml-1 text-xs text-muted-foreground/70">重启后生效</span>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -634,7 +677,7 @@ export function SettingsPage() {
 
   // 加载 collector 运行参数（stream_maxlen）
   useEffect(() => {
-    if (!backendToken) return;
+    if (BUILD_ROLE !== "centralized" || !backendToken) return;
     let active = true;
     backendClient
       .getCollectorConfig(backendToken)
@@ -678,8 +721,10 @@ export function SettingsPage() {
       redis:    dbSection(form.redis,    passwordDirty.redis),
       mysql:    dbSection(form.mysql,    passwordDirty.mysql),
       tdengine: dbSection(form.tdengine, passwordDirty.tdengine),
-      collector: { executable: form.collector.executable, working_dir: form.collector.working_dir },
-      writer:    { executable: form.writer.executable,    working_dir: form.writer.working_dir    },
+      ...(BUILD_ROLE === "distributed-center"
+        ? { ingest: { executable: form.ingest.executable, working_dir: form.ingest.working_dir } }
+        : { collector: { executable: form.collector.executable, working_dir: form.collector.working_dir } }),
+      writer: { executable: form.writer.executable, working_dir: form.writer.working_dir },
     };
   }
 
@@ -722,8 +767,8 @@ export function SettingsPage() {
     }
   }
 
-  async function handleSaveAndRestart(name: "collector" | "writer") {
-    const label = name === "collector" ? "Collector" : "Writer";
+  async function handleSaveAndRestart(name: ModuleName) {
+    const label = name === "collector" ? "Collector" : name === "ingest" ? "Ingest" : "Writer";
     setSaving(true);
 
     // 第一步：保存配置
@@ -764,6 +809,17 @@ export function SettingsPage() {
     formDirtyRef.current = true;
     setPasswordDirty((d) => ({ ...d, [db]: true }));
   }
+
+  const restartModules: ModuleName[] = activeTab === "database"
+    ? (BUILD_ROLE === "distributed-center" ? ["ingest", "writer"] : ["collector", "writer"])
+    : activeTab === "collector"
+      ? ["collector"]
+      : activeTab === "writer"
+        ? ["writer"]
+        : [];
+  const showSaveCard = activeTab === "database"
+    || activeTab === "collector"
+    || activeTab === "writer";
 
   // ─── 加载中 ────────────────────────────────────────────────────────────────
   if (configLoading) {
@@ -836,6 +892,10 @@ export function SettingsPage() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="ingest" className="space-y-4">
+          <IngestTab form={form.ingest} />
+        </TabsContent>
+
         <TabsContent value="writer" className="space-y-4">
           <WriterTab
             form={form.writer}
@@ -844,8 +904,14 @@ export function SettingsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* 保存策略卡片（页面级，所有标签共用） */}
-      <SaveCard saving={saving} onSave={handleSave} onSaveAndRestart={handleSaveAndRestart} />
+      {showSaveCard && (
+        <SaveCard
+          saving={saving}
+          restartModules={restartModules}
+          onSave={handleSave}
+          onSaveAndRestart={handleSaveAndRestart}
+        />
+      )}
     </div>
   );
 }

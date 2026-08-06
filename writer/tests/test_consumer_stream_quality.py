@@ -39,7 +39,9 @@ def _consumer():
     writer = MagicMock()
     redis_client = MagicMock()
     mapper = MagicMock()
-    mapper.get_or_load.return_value = _mapping()
+    mapping = _mapping()
+    mapper.get_cached.return_value = mapping
+    mapper.get_or_load.return_value = mapping
     return (
         StreamConsumer(
             _config(), mapper, writer, redis_client, metrics=WriterPerformanceMetrics()
@@ -189,7 +191,7 @@ async def test_v2_illegal_quality_whole_entry_dlq():
             _entry(
                 {"101": "1.0"},
                 contract_version=2,
-                qualities={"101": 99},
+                qualities={"101": 256},
             ),
             1,
         )

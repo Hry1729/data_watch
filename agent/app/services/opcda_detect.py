@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, List, Mapping
 
@@ -87,6 +88,32 @@ def detect_center_endpoints(mysql_config: Mapping[str, Any]) -> List[str]:
     finally:
         connection.close()
 
+    return _filter_center_endpoints(rows)
+
+
+def detect_edge_endpoints(edge_db_path: str | Path) -> List[str]:
+    """Read enabled OPC DA center endpoints from the edge configuration snapshot."""
+    path = Path(edge_db_path)
+    if not path.exists():
+        return []
+    try:
+        with sqlite3.connect(path, timeout=CONNECT_TIMEOUT_SECONDS) as connection:
+            rows = connection.execute(
+                """
+                SELECT endpoint, protocol
+                FROM edge_device
+                WHERE enabled = 1
+                ORDER BY rowid
+                """
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).lower():
+            return []
+        raise
+    return _filter_center_endpoints(rows)
+
+
+def _filter_center_endpoints(rows) -> List[str]:
     endpoints: List[str] = []
     seen = set()
     for endpoint, protocol in rows:

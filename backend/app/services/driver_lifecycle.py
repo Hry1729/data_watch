@@ -840,7 +840,7 @@ class DriverLifecycleService:
         """按 Manifest.id（安装目录名）删除；404 前先核实 Agent 列表。"""
         url = f"{_agent_base_url()}/admin/drivers/{driver_id}"
         headers = {
-            "X-DataWatch-Service-Token": "dummy",  # Agent 不再验证，保留 header 避免改动太大
+            "X-DataWatch-Service-Token": agent_token,
             "Accept": "application/json",
         }
         try:
@@ -893,7 +893,7 @@ class DriverLifecycleService:
     ) -> bool:
         url = f"{_agent_base_url()}/admin/drivers"
         headers = {
-            "X-DataWatch-Service-Token": "dummy",  # Agent 不再验证
+            "X-DataWatch-Service-Token": agent_token,
             "Accept": "application/json",
         }
 
@@ -931,7 +931,7 @@ class DriverLifecycleService:
         """拉取 Agent 驱动列表；不可达或响应异常时返回 None。"""
         url = f"{_agent_base_url()}/admin/drivers"
         headers = {
-            "X-DataWatch-Service-Token": "dummy",  # Agent 不再验证
+            "X-DataWatch-Service-Token": agent_token,
             "Accept": "application/json",
         }
         try:

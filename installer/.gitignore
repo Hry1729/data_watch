@@ -5,5 +5,11 @@
 !.gitignore
 !DataWatch.iss
 !build.ps1
+!roles.json
+!build-roles.ps1
+!DataWatchRole.iss
+!DataWatchCentralized.iss
+!DataWatchEdge.iss
+!DataWatchDistributedCenter.iss
 !templates/
 !templates/*.example

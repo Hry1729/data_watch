@@ -37,6 +37,39 @@ class TestWsPushFreshness(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ws.messages[0]["deviceOffline"])
         await manager.unsubscribe(ws, "PLC001", "g001")
 
+    async def test_change_notification_only_wakes_matching_subscription(self):
+        manager = WsPushManager()
+        matching = manager._events.setdefault(("PLC001", "g001"), __import__("asyncio").Event())
+        other = manager._events.setdefault(("PLC002", "g001"), __import__("asyncio").Event())
+
+        manager._notify_change('{"device_code":"PLC001","group_code":"g001"}')
+
+        self.assertTrue(matching.is_set())
+        self.assertFalse(other.is_set())
+
+    async def test_batched_change_notification_wakes_all_matching_subscriptions(self):
+        manager = WsPushManager()
+        first = manager._events.setdefault(("PLC001", "g001"), __import__("asyncio").Event())
+        second = manager._events.setdefault(("PLC002", "g001"), __import__("asyncio").Event())
+        other = manager._events.setdefault(("PLC003", "g001"), __import__("asyncio").Event())
+
+        manager._notify_change(
+            '[{"device_code":"PLC001","group_code":"g001"},'
+            '{"device_code":"PLC002","group_code":"g001"}]'
+        )
+
+        self.assertTrue(first.is_set())
+        self.assertTrue(second.is_set())
+        self.assertFalse(other.is_set())
+
+    async def test_invalid_change_notification_is_ignored(self):
+        manager = WsPushManager()
+        event = manager._events.setdefault(("PLC001", "g001"), __import__("asyncio").Event())
+
+        manager._notify_change("not-json")
+        manager._notify_change({"device_code": "PLC001"})
+
+        self.assertFalse(event.is_set())
 
 if __name__ == "__main__":
     unittest.main()

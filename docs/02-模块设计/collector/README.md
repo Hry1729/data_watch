@@ -132,6 +132,93 @@ TaskScheduler
 
 ---
 
+## 4.2 质量码体系
+
+collector 从 v0.1.0 起支持 **质量码（Quality Codes）** 端到端传递：驱动读取点位数据时，除了返回数值和时间戳，还返回该数据点的质量状态，经 Redis Stream 透传给 writer 入库到 TDengine。
+
+### 质量码定义
+
+质量码是 **13 个枚举常量**（定义在 `collector/drivers/base.py:10-23`），遵循 OPC UA 规范的三级分类（Good / Uncertain / Bad）：
+
+| 码值 | 常量名 | 含义 | 典型场景 |
+|------|--------|------|----------|
+| 0 | `Q_GOOD` | 正常数据 | 通信正常、设备正常、值有效 |
+| 64 | `Q_UNCERTAIN` | 不确定 | 传感器老化、信号飘移、配置不完整 |
+| 65 | `Q_UNCERTAIN_LAST_USABLE` | 使用上次值 | 当前通信失败，使用缓存的上一次有效值 |
+| 66 | `Q_UNCERTAIN_SENSOR_NOT_ACCURATE` | 传感器不准确 | 传感器超出校准范围 |
+| 67 | `Q_UNCERTAIN_SUB_NORMAL` | 低于正常工程单位 | 值在测量范围之外（低侧） |
+| 192 | `Q_BAD` | 通用坏值 | 无法获取有效数据 |
+| 193 | `Q_BAD_COMM_FAILURE` | 通信失败 | 网络断开、PLC 无响应、超时 |
+| 194 | `Q_BAD_DEVICE_FAILURE` | 设备故障 | 设备报错、硬件故障 |
+| 195 | `Q_BAD_SENSOR_FAILURE` | 传感器故障 | 传感器损坏、断线 |
+| 196 | `Q_BAD_OUT_OF_SERVICE` | 脱离服务 | 点位被禁用、设备维护中 |
+| 197 | `Q_BAD_CONFIGURATION_ERROR` | 配置错误 | 点位地址错误、数据类型不匹配 |
+| 198 | `Q_BAD_NOT_CONNECTED` | 未连接 | 驱动未建立连接 |
+| 199 | `Q_BAD_TIMEOUT` | 读取超时 | 单次请求超时 |
+
+### 数据结构
+
+驱动返回的采集样本由 `DriverSample` 表示（`collector/drivers/base.py:26-30`）：
+
+```python
+@dataclass
+class DriverSample:
+    var_id: int          # 点位 ID
+    value: Any           # 采集值（数值/字符串/布尔）
+    timestamp: float     # 采集时刻（UTC 秒级浮点）
+    quality: int = Q_GOOD  # 质量码（默认 0=GOOD）
+```
+
+驱动在读取失败时，应返回质量码 + `None` 值，而不是抛出异常。例如：
+
+```python
+# 通信超时
+return DriverSample(var_id=123, value=None, timestamp=time.time(), quality=Q_BAD_TIMEOUT)
+
+# 正常采集
+return DriverSample(var_id=123, value=42.5, timestamp=time.time(), quality=Q_GOOD)
+```
+
+### Redis Stream 契约
+
+collector 写入 Redis Stream 时，使用 **contract v2**（`collector/redis_writer.py:187`）：
+
+```json
+{
+  "contract_version": 2,
+  "device_code": "PLC001",
+  "timestamp": 1722349200.123,
+  "values": [123, 456],
+  "qualities": [0, 193]  // 新增字段：与 values 一一对应
+}
+```
+
+- `values` 和 `qualities` 数组长度必须相等；
+- 若驱动返回的 sample 未设置 quality，默认为 `0`（GOOD）；
+- writer 读取 stream 时，若 `contract_version < 2` 或缺少 `qualities` 字段，兼容填充 `0`。
+
+### 驱动实现指南
+
+**内置驱动** 已支持质量码：
+- **S7 驱动** (`s7_driver.py`)：通信失败返回 `Q_BAD_COMM_FAILURE`；
+- **GE SRTP 驱动** (`ge_srtp_driver.py`)：读取失败返回 `Q_BAD_TIMEOUT`；
+- **OPC UA/DA 驱动**：透传 OPC 质量状态码，映射到 13 个枚举。
+
+**外置驱动** 若需支持质量码：
+1. 导入 `from collector.drivers.base import DriverSample, Q_GOOD, Q_BAD_COMM_FAILURE, ...`；
+2. `read()` 方法返回 `List[DriverSample]`，为每个样本设置 `quality` 字段；
+3. 通信失败时返回 `quality=Q_BAD_*` + `value=None`，而不是抛异常或返回空列表。
+
+详见：[外置驱动包制作指南](./外置驱动包制作指南.md) § 质量码支持。
+
+### 下游传递
+
+- **Writer**：从 Redis Stream 读取 `qualities` 数组，写入 TDengine **质量窄表** `sq{device_type}`（schema: `ts TIMESTAMP, var_id BIGINT COMPOSITE KEY, quality TINYINT`），与值宽表 `sd{device_type}` 平行存储；
+- **Backend**：从 TDengine 质量窄表读取历史质量码，从 Redis `latest` 读取实时质量码（`{"v", "t", "q"}`），透传给前端；
+- **Frontend**：在实时监控、历史曲线、点位列表中显示质量状态（Good / Uncertain / Bad），用颜色或图标区分。
+
+---
+
 ## 5. 关键组件
 
 ### 5.1 CollectorApp（装配与生命周期）

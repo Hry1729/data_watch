@@ -1,0 +1,12 @@
+#define BuildRole "centralized"
+#define MyAppName "Data Watch 中心式"
+#define MyAppVersion "0.1.0"
+#define MyAppId "{{8F3C2A91-4D2E-4B7A-9C1F-DA7AE0C3A1B1}"
+#define MyServiceName "DataWatchCentralizedAgent"
+#define MyAgentExe "data-watch-centralized-agent.exe"
+#define MyDataDir "DataWatch"
+#define MyInstallDir "DataWatch Centralized"
+#define MyOutputName "DataWatch-Centralized-Setup"
+#define MyAgentPort "7070"
+#include "DataWatchRole.iss"
+

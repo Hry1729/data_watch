@@ -14,6 +14,7 @@ import {
   YAxis,
 } from "recharts";
 import { Download, Search } from "lucide-react";
+import { BUILD_ROLE } from "@/config/build-role";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,17 +43,37 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
-import { backendClient } from "@/lib/backend-client";
+import { monitorClient } from "@/lib/monitor-client";
 import { saveDownload } from "@/lib/save-download";
 import type { HistoryChartResponse, HistoryRawMatrixResponse } from "@/types/device-monitor";
 
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const QUERY_POINT_LIMIT = 10;
 const EXPORT_POINT_LIMIT = 20;
+const HISTORY_STATE_KEY = "datawatch-history-state";
 const INTERVALS = [["auto", "自动"], ["100ms", "100毫秒"], ["500ms", "500毫秒"], ["1s", "1秒"], ["5s", "5秒"], ["30s", "30秒"], ["1m", "1分钟"], ["5m", "5分钟"]] as const;
 
 type ChartType = "line" | "area" | "bar" | "scatter";
 type AlignGranularity = "100ms" | "500ms" | "1s";
+
+interface SavedHistoryState {
+  deviceId?: number;
+  selectedPoints?: number[];
+  startTime?: string;
+  endTime?: string;
+  interval?: string;
+  aggregate?: string;
+  chartType?: ChartType;
+  matrixAlign?: AlignGranularity;
+}
+
+function loadSavedHistoryState(): SavedHistoryState {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_STATE_KEY) ?? "{}") as SavedHistoryState;
+  } catch {
+    return {};
+  }
+}
 
 function localInput(date: Date) {
   const offset = date.getTimezoneOffset() * 60_000;
@@ -105,19 +126,20 @@ function HistoryChart({ chart, chartType }: { chart: HistoryChartResponse; chart
 }
 
 export default function HistoryDataPage() {
+  const savedState = useMemo(loadSavedHistoryState, []);
   const { auth, logout } = useAuth();
   const { refreshVersion } = usePageRefresh();
-  const token = auth?.backendToken ?? "";
-  const [deviceId, setDeviceId] = useState(0);
-  const [selectedPoints, setSelectedPoints] = useState<number[]>([]);
-  const [startTime, setStartTime] = useState(() => localInput(new Date(Date.now() - 24 * 60 * 60_000)));
-  const [endTime, setEndTime] = useState(() => localInput(new Date()));
-  const [interval, setIntervalValue] = useState("auto");
-  const [aggregate, setAggregate] = useState("avg");
-  const [chartType, setChartType] = useState<ChartType>("line");
+  const token = auth?.backendToken || (BUILD_ROLE === "edge" ? auth?.agentToken ?? "" : "");
+  const [deviceId, setDeviceId] = useState(savedState.deviceId ?? 0);
+  const [selectedPoints, setSelectedPoints] = useState<number[]>(savedState.selectedPoints ?? []);
+  const [startTime, setStartTime] = useState(() => savedState.startTime ?? localInput(new Date(Date.now() - 24 * 60 * 60_000)));
+  const [endTime, setEndTime] = useState(() => savedState.endTime ?? localInput(new Date()));
+  const [interval, setIntervalValue] = useState(savedState.interval ?? "auto");
+  const [aggregate, setAggregate] = useState(savedState.aggregate ?? "avg");
+  const [chartType, setChartType] = useState<ChartType>(savedState.chartType ?? "line");
   const [chart, setChart] = useState<HistoryChartResponse | null>(null);
   const [matrix, setMatrix] = useState<HistoryRawMatrixResponse | null>(null);
-  const [matrixAlign, setMatrixAlign] = useState<AlignGranularity>("1s");
+  const [matrixAlign, setMatrixAlign] = useState<AlignGranularity>(savedState.matrixAlign ?? "1s");
   const [loading, setLoading] = useState(false);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [pointDialogOpen, setPointDialogOpen] = useState(false);
@@ -137,9 +159,9 @@ export default function HistoryDataPage() {
   const lastQueryRef = useRef<{ query: ReturnType<typeof buildQuery> } | null>(null);
   const matrixAlignRef = useRef<AlignGranularity>(matrixAlign);
 
-  const loadDevices = useCallback((backendToken: string) => backendClient.historyDevices(backendToken), []);
-  const loadTypes = useCallback((backendToken: string) => backendClient.historyDeviceTypes(backendToken), []);
-  const loadPoints = useCallback((backendToken: string) => backendClient.historyPoints(backendToken, deviceId), [deviceId]);
+  const loadDevices = useCallback((backendToken: string) => monitorClient.historyDevices(backendToken), []);
+  const loadTypes = useCallback((backendToken: string) => monitorClient.historyDeviceTypes(backendToken), []);
+  const loadPoints = useCallback((backendToken: string) => monitorClient.historyPoints(backendToken, deviceId), [deviceId]);
   const devices = useBackendQuery(loadDevices);
   const types = useBackendQuery(loadTypes);
   const points = useBackendQuery(loadPoints, { enabled: deviceId > 0 });
@@ -161,14 +183,27 @@ export default function HistoryDataPage() {
   }, [matrixAlign]);
 
   useEffect(() => {
+    localStorage.setItem(HISTORY_STATE_KEY, JSON.stringify({
+      deviceId,
+      selectedPoints,
+      startTime,
+      endTime,
+      interval,
+      aggregate,
+      chartType,
+      matrixAlign,
+    } satisfies SavedHistoryState));
+  }, [aggregate, chartType, deviceId, endTime, interval, matrixAlign, selectedPoints, startTime]);
+
+  useEffect(() => {
     const snapshot = lastQueryRef.current;
     if (!token || !snapshot || refreshVersion === 0) return;
     let active = true;
     setLoading(true);
     setMatrixLoading(true);
     Promise.all([
-      backendClient.historyChart(token, snapshot.query),
-      backendClient.historyRawMatrix(token, {
+      monitorClient.historyChart(token, snapshot.query),
+      monitorClient.historyRawMatrix(token, {
         ...snapshot.query,
         alignGranularity: matrixAlignRef.current,
         pageSize: 200,
@@ -251,7 +286,7 @@ export default function HistoryDataPage() {
     if (!token || !effectiveQuery?.varSeqs.length) return;
     setMatrixLoading(true);
     try {
-      const result = await backendClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs });
+      const result = await monitorClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs });
       setMatrix((current) => reset || !current ? result : { ...result, rows: [...current.rows, ...result.rows] });
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
@@ -268,7 +303,7 @@ export default function HistoryDataPage() {
     setChart(null);
     setMatrix(null);
     try {
-      const result = await backendClient.historyChart(token, query);
+      const result = await monitorClient.historyChart(token, query);
       setChart(result);
       lastQueryRef.current = { query };
       await loadMatrix(matrixAlign, true, undefined, query);
@@ -295,24 +330,24 @@ export default function HistoryDataPage() {
     setExporting(true);
     setExportProgress(0);
     try {
-      const { taskId } = await backendClient.historyExport(token, { deviceId, varSeqs: exportPoints, startTime: apiTime(exportStart), endTime: apiTime(exportEnd) });
+      const { taskId } = await monitorClient.historyExport(token, { deviceId, varSeqs: exportPoints, startTime: apiTime(exportStart), endTime: apiTime(exportEnd) });
       let completed = false;
       for (let attempt = 0; attempt < 120; attempt += 1) {
-        const status = await backendClient.historyExportStatus(token, taskId);
+        const status = await monitorClient.historyExportStatus(token, taskId);
         setExportProgress(status.progress ?? 0);
         if (status.status === "completed") { completed = true; break; }
         if (status.status === "failed") throw new Error(status.error || "历史数据导出失败");
         await new Promise((resolve) => window.setTimeout(resolve, 750));
       }
       if (!completed) throw new Error("导出任务等待超时");
-      const file = await backendClient.historyExportDownload(token, taskId);
+      const file = await monitorClient.historyExportDownload(token, taskId);
       saveDownload(file.bytes, file.fileName, "text/csv;charset=utf-8");
       setExportProgress(100);
       toast.success("历史数据已导出");
       setExportDialogOpen(false);
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
-      else toast.error(reason instanceof Error ? reason.message : "历史数据导出失败");
+      else toast.error(reason instanceof Error ? reason.message : (reason as { message?: string })?.message ?? "历史数据导出失败");
     } finally {
       setExporting(false);
     }

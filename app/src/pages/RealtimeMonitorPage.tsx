@@ -23,6 +23,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { BUILD_ROLE } from "@/config/build-role";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,7 +54,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
-import { backendClient } from "@/lib/backend-client";
+import { monitorClient } from "@/lib/monitor-client";
 import { saveDownload } from "@/lib/save-download";
 import type { RealtimeDataItem } from "@/types/device-monitor";
 
@@ -131,11 +132,15 @@ function TrendChart({
   points,
   samples,
   chartType,
+  compact = false,
+  className = "",
 }: {
   title?: string;
   points: RealtimeDataItem[];
   samples: SampleRow[];
   chartType: ChartType;
+  compact?: boolean;
+  className?: string;
 }) {
   const config = useMemo(
     () => Object.fromEntries(points.map((point, index) => [
@@ -147,9 +152,9 @@ function TrendChart({
 
   if (title && points.length === 0) return null;
   if (chartType === "status") {
-    const rows = samples.slice(-8).reverse();
+    const rows = samples.slice(compact ? -3 : -6).reverse();
     return (
-      <div className="space-y-2">
+      <div className={["min-h-0 space-y-1.5", className].join(" ")}>
         {title && <p className="text-xs font-medium text-muted-foreground">{title}</p>}
         <div className="overflow-hidden rounded-md border">
           <Table>
@@ -163,9 +168,9 @@ function TrendChart({
 
   const Chart = chartType === "area" ? AreaChart : LineChart;
   return (
-    <div className="space-y-2">
+    <div className={["flex min-h-0 flex-col gap-1.5", className].join(" ")}>
       {title && <p className="text-xs font-medium text-muted-foreground">{title}</p>}
-      <ChartContainer config={config} className="h-[330px] w-full aspect-auto">
+      <ChartContainer config={config} className={[compact ? "h-16 max-h-16" : "h-full min-h-0 flex-1", "w-full aspect-auto"].join(" ")}>
         <Chart data={samples} accessibilityLayer>
           <CartesianGrid vertical={false} />
           <XAxis dataKey="time" tickLine={false} axisLine={false} minTickGap={28} />
@@ -186,7 +191,7 @@ function TrendChart({
 export default function RealtimeMonitorPage() {
   const savedState = useMemo(loadSavedState, []);
   const { auth } = useAuth();
-  const token = auth?.backendToken ?? "";
+  const token = auth?.backendToken || (BUILD_ROLE === "edge" ? auth?.agentToken ?? "" : "");
   const [searchParams, setSearchParams] = useSearchParams();
   const [frequency, setFrequency] = useState(savedState.refreshRate ?? 1000);
   const [running, setRunning] = useState(savedState.wasMonitoring ?? false);
@@ -201,7 +206,7 @@ export default function RealtimeMonitorPage() {
   const chartCardRef = useRef<HTMLDivElement>(null);
   const lastSampleRef = useRef("");
 
-  const loadDevices = useCallback((backendToken: string) => backendClient.deviceList(backendToken, { pageNo: 1, pageSize: 1000 }), []);
+  const loadDevices = useCallback((backendToken: string) => monitorClient.deviceList(backendToken, { pageNo: 1, pageSize: 1000 }), []);
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
   const [deviceSearch, setDeviceSearch] = useState("");
   const [draftDeviceType, setDraftDeviceType] = useState("all");
@@ -221,7 +226,7 @@ export default function RealtimeMonitorPage() {
   }), [availableDevices, deviceSearch, draftDeviceType]);
   const loadPointGroups = useCallback(
     (backendToken: string) => selectedDevice?.deviceCode
-      ? backendClient.realtimePointGroups(backendToken, selectedDevice.deviceCode)
+      ? monitorClient.realtimePointGroups(backendToken, selectedDevice.deviceCode)
       : Promise.resolve([]),
     [selectedDevice?.deviceCode],
   );
@@ -240,7 +245,7 @@ export default function RealtimeMonitorPage() {
   }, [pointGroups.data, selectedDeviceId]);
 
   const loadRealtime = useCallback(
-    (backendToken: string) => backendClient.realtimeInit(backendToken, selectedDeviceId, selectedGroupCode),
+    (backendToken: string) => monitorClient.realtimeInit(backendToken, selectedDeviceId, selectedGroupCode),
     [selectedDeviceId, selectedGroupCode],
   );
   const realtime = useBackendQuery(loadRealtime, { enabled: selectedDeviceId > 0 });
@@ -369,7 +374,7 @@ export default function RealtimeMonitorPage() {
   const hasData = samples.length > 0;
 
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-4 p-4 md:p-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden p-4 md:p-6">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">当前设备</span>
@@ -394,7 +399,7 @@ export default function RealtimeMonitorPage() {
           <Button variant="outline" onClick={exportRealtimeData} disabled={!hasData}><Download className="size-3.5" />导出</Button>
           <div className={`flex h-7 items-center gap-2 rounded-md border px-2.5 text-xs ${socketConnected ? "text-emerald-700 dark:text-emerald-300" : "text-muted-foreground"}`}>
             <span className={`size-2 rounded-full ${socketConnected ? "bg-emerald-500" : "bg-muted-foreground/50"}`} />
-            {socketConnected ? "WebSocket已连接" : realtimeSocket.status === "connecting" ? "WebSocket连接中" : "WebSocket未连接"}
+            {realtimeSocket.source === "local" ? "本机数据" : socketConnected ? "中心实时连接" : realtimeSocket.status === "connecting" ? "中心连接中" : "中心未连接"}
           </div>
           <Select value={String(frequency)} onValueChange={(value) => setFrequency(Number(value))}>
             <SelectTrigger className="w-20" aria-label="时间选择" title="刷新频率"><SelectValue /></SelectTrigger>
@@ -403,10 +408,10 @@ export default function RealtimeMonitorPage() {
         </div>
       </div>
 
-      {running && (!socketConnected || realtimeSocket.deviceOffline) && (
-        <Alert variant="destructive">
+      {running && (realtimeSocket.source === "local" || !socketConnected || realtimeSocket.deviceOffline) && (
+        <Alert variant={realtimeSocket.source === "local" ? "default" : "destructive"}>
           <WifiOff className="size-4" />
-          <AlertDescription>{!socketConnected ? realtimeSocket.error ?? "WebSocket 连接已断开，正在重连..." : "设备数据离线，等待采集恢复..."}</AlertDescription>
+          <AlertDescription>{realtimeSocket.source === "local" ? "中心不可达，正在显示本机 SQLite 实时值" : !socketConnected ? realtimeSocket.error ?? "中心实时连接已断开，正在重连..." : "设备数据离线，等待采集恢复..."}</AlertDescription>
         </Alert>
       )}
 
@@ -416,8 +421,8 @@ export default function RealtimeMonitorPage() {
         </CardContent>
       </Card>
 
-      <Card ref={chartCardRef} className="min-w-0 gap-3 py-0">
-        <CardHeader className="!flex items-center justify-between gap-3 border-b px-4 pb-2 pt-4">
+      <Card ref={chartCardRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0">
+        <CardHeader className="!flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5">
           <CardTitle>点位实时趋势</CardTitle>
           <CardAction>
             <div className="flex items-center gap-1">
@@ -427,8 +432,8 @@ export default function RealtimeMonitorPage() {
             </div>
           </CardAction>
         </CardHeader>
-        <CardContent>
-          {realtime.loading ? <Skeleton className="h-[360px]" /> : !selectedPointItems.length ? <div className="flex h-[360px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button size="sm" onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-[360px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-[360px] items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : separateBoolChart ? <div className="space-y-5"><TrendChart title="数值型点位" points={numericPoints} samples={samples} chartType={chartType} /><TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} /></div> : <TrendChart points={selectedPointItems} samples={samples} chartType={chartType} />}
+        <CardContent className="min-h-0 flex-1 p-3">
+          {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button size="sm" onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : chartType !== "status" && separateBoolChart && numericPoints.length > 0 && boolPoints.length > 0 ? <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_96px] gap-2"><TrendChart title="数值型点位" points={numericPoints} samples={samples} chartType={chartType} className="h-full" /><TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} compact className="h-full" /></div> : chartType !== "status" && separateBoolChart && boolPoints.length > 0 ? <TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} compact className="h-24" /> : <TrendChart points={selectedPointItems} samples={samples} chartType={chartType} className="h-full" />}
         </CardContent>
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
         <DialogContent className="max-w-md">
@@ -446,7 +451,7 @@ export default function RealtimeMonitorPage() {
 
       <div className="grid grid-cols-1 gap-x-6 gap-y-2 px-2 py-1 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
           <div className="flex min-w-0 items-center gap-2"><Activity className={`size-3.5 ${realtime.data?.connectStatus === "online" ? "text-emerald-500" : "text-muted-foreground"}`} /><span className="truncate">采集服务{realtime.data?.connectStatus === "online" ? "运行正常" : "等待设备在线"}</span></div>
-          <div className="flex min-w-0 items-center gap-2 xl:justify-self-center">{realtimeSocket.tdengineConnected === false ? <WifiOff className="size-3.5 text-destructive" /> : <Wifi className="size-3.5 text-emerald-500" />}<span className="truncate">TDengine {realtimeSocket.tdengineConnected === null ? "检测中" : realtimeSocket.tdengineConnected ? "已连接" : "未连接"}</span></div>
+          <div className="flex min-w-0 items-center gap-2 xl:justify-self-center">{realtimeSocket.source === "local" ? <><Wifi className="size-3.5 text-amber-600" /><span className="truncate">本机 SQLite</span></> : <>{realtimeSocket.tdengineConnected === false ? <WifiOff className="size-3.5 text-destructive" /> : <Wifi className="size-3.5 text-emerald-500" />}<span className="truncate">TDengine {realtimeSocket.tdengineConnected === null ? "检测中" : realtimeSocket.tdengineConnected ? "已连接" : "未连接"}</span></>}</div>
           <div className="flex min-w-0 items-center gap-2 xl:justify-self-center"><Activity className={`size-3.5 ${hasData ? "text-emerald-500" : "text-muted-foreground"}`} /><span className="truncate">图表绘制{hasData ? "更新正常" : "未就绪"}</span></div>
           <div className="flex min-w-0 items-center gap-2 xl:justify-self-end"><Activity className="size-3.5 shrink-0" /><span className="truncate" title={`最后同步时间：${formatSyncTime(realtimeSocket.lastSyncTime)}`}>最后同步时间：{formatSyncTime(realtimeSocket.lastSyncTime)}</span></div>
       </div>

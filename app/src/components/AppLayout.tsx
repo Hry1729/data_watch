@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   ChevronDown,
@@ -24,6 +25,7 @@ import {
   writeSidebarCollapsed,
 } from "@/components/layout/sidebar-state";
 import {
+  DEFAULT_SETTINGS_TAB,
   normalizeSettingsTab,
   SETTINGS_TABS,
 } from "@/components/layout/settings-tabs";
@@ -53,6 +55,12 @@ export function AppLayout() {
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     () => new Set(visibleGroups.map((group) => group.label)),
   );
+  const [collapsedFlyout, setCollapsedFlyout] = useState<{
+    groupLabel: string;
+    left: number;
+    top: number;
+  } | null>(null);
+  const flyoutCloseTimerRef = useRef<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const pageMeta = getPageMeta(location.pathname);
@@ -60,6 +68,10 @@ export function AppLayout() {
   const activeSettingsTab = normalizeSettingsTab(
     new URLSearchParams(location.search).get("tab"),
   );
+  const settingsPath = `/settings?tab=${DEFAULT_SETTINGS_TAB}`;
+  const collapsedFlyoutGroup = collapsedFlyout
+    ? visibleGroups.find((group) => group.label === collapsedFlyout.groupLabel)
+    : null;
 
   useEffect(() => {
     setOpenGroups((current) => {
@@ -71,7 +83,12 @@ export function AppLayout() {
 
   useEffect(() => {
     setUserMenuOpen(false);
-  }, [location.pathname]);
+    setCollapsedFlyout(null);
+    if (flyoutCloseTimerRef.current !== null) {
+      window.clearTimeout(flyoutCloseTimerRef.current);
+      flyoutCloseTimerRef.current = null;
+    }
+  }, [location.pathname, sidebarCollapsed]);
 
   useEffect(() => {
     if (!userMenuOpen) return;
@@ -94,6 +111,35 @@ export function AppLayout() {
     writeSidebarCollapsed(window.localStorage, collapsed);
   }
 
+  function cancelFlyoutClose() {
+    if (flyoutCloseTimerRef.current === null) return;
+    window.clearTimeout(flyoutCloseTimerRef.current);
+    flyoutCloseTimerRef.current = null;
+  }
+
+  function showCollapsedGroupFlyout(
+    groupLabel: string,
+    itemCount: number,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    if (!sidebarCollapsed) return;
+    cancelFlyoutClose();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const estimatedHeight = itemCount * 36 + 8;
+    setCollapsedFlyout({
+      groupLabel,
+      left: rect.right + 8,
+      top: Math.max(8, Math.min(rect.top, window.innerHeight - estimatedHeight - 8)),
+    });
+  }
+
+  function scheduleFlyoutClose() {
+    cancelFlyoutClose();
+    flyoutCloseTimerRef.current = window.setTimeout(() => {
+      setCollapsedFlyout(null);
+      flyoutCloseTimerRef.current = null;
+    }, 120);
+  }
   function handleGroupClick(groupLabel: string) {
     if (sidebarCollapsed) {
       updateSidebarCollapsed(false);
@@ -136,7 +182,7 @@ export function AppLayout() {
           variant="ghost"
           size="icon"
           className="h-8 w-8"
-          onClick={() => navigate("/settings?tab=database")}
+          onClick={() => navigate(settingsPath)}
           aria-label="设置"
           title="设置"
         >
@@ -151,7 +197,7 @@ export function AppLayout() {
     <div className="flex h-full min-w-0 overflow-hidden bg-background">
       <aside
         className={[
-          "flex shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200",
+          "flex shrink-0 flex-col border-r border-sidebar-border bg-white text-sidebar-foreground transition-[width] duration-200 dark:bg-sidebar",
           sidebarCollapsed ? "w-16" : "w-60",
         ].join(" ")}
       >
@@ -249,7 +295,13 @@ export function AppLayout() {
                 );
 
                 return (
-                  <div key={group.label}>
+                  <div
+                    key={group.label}
+                    onPointerEnter={(event) =>
+                      showCollapsedGroupFlyout(group.label, group.items.length, event)
+                    }
+                    onPointerLeave={scheduleFlyoutClose}
+                  >
                     <button
                       type="button"
                       onClick={() => handleGroupClick(group.label)}
@@ -320,7 +372,7 @@ export function AppLayout() {
                 {canOpenSettings && (
                   <button
                     type="button"
-                    onClick={() => navigate("/settings?tab=database")}
+                    onClick={() => navigate(settingsPath)}
                     className="mt-1 flex h-9 w-full items-center gap-2 rounded-sm px-2.5 text-sm transition-colors hover:bg-accent"
                   >
                     <Settings className="h-4 w-4" />
@@ -367,8 +419,43 @@ export function AppLayout() {
         </div>
       </aside>
 
+      {sidebarCollapsed && collapsedFlyout && collapsedFlyoutGroup && createPortal(
+        <div
+          className="fixed z-50 w-52 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+          style={{
+            left: collapsedFlyout.left,
+            top: collapsedFlyout.top,
+            maxHeight: "calc(100vh - 16px)",
+          }}
+          onPointerEnter={cancelFlyoutClose}
+          onPointerLeave={scheduleFlyoutClose}
+          aria-label={collapsedFlyoutGroup.label + "子菜单"}
+        >
+          {collapsedFlyoutGroup.items.map((item) => {
+            const ItemIcon = item.icon;
+            return (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                onClick={() => setCollapsedFlyout(null)}
+                className={({ isActive }) => [
+                  "flex h-9 items-center gap-2.5 rounded-sm px-2.5 text-sm transition-colors",
+                  isActive
+                    ? "bg-brand-soft font-medium text-brand"
+                    : "text-popover-foreground hover:bg-accent",
+                ].join(" ")}
+              >
+                <ItemIcon className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 truncate">{item.label}</span>
+              </NavLink>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+
       <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center border-b border-border bg-card px-4">
+        <header className="flex h-14 shrink-0 items-center border-b border-border bg-white px-4 dark:bg-card">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>

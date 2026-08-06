@@ -31,6 +31,7 @@ from quality_schema import (
     QUALITY_NARROW_MIGRATION_HINT,
     QualitySchemaError,
     describe_has_var_id_composite_key,
+    describe_has_unsigned_quality,
     quality_child_table_name,
     quality_narrow_create_sql,
     quality_stable_name,
@@ -291,6 +292,10 @@ class TDengineWriter:
                     stable_name,
                 )
 
+            await self._ensure_quality_stable(
+                _quality_stable_from_value_stable(stable_name)
+            )
+
     async def _ensure_stable(self, stable: str, initial_columns: list[str] | None = None) -> None:
         if stable in self._col_cache:
             return
@@ -398,7 +403,7 @@ class TDengineWriter:
             return False
 
     async def _ensure_quality_stable(self, q_stable: str) -> None:
-        """确保质量窄表超级表存在，且 var_id 为 COMPOSITE KEY（P0-1）。"""
+        """确保质量窄表含复合键，且 quality 可容纳 0..255。"""
         if q_stable in self._quality_stable_ready:
             return
 
@@ -406,12 +411,9 @@ class TDengineWriter:
         stbl = _quote(q_stable)
         sql = quality_narrow_create_sql(db, stbl)
         if not await self._execute(sql):
-            logger.error(
-                "[tdengine] failed to ensure quality stable: %s.%s",
-                self._database,
-                q_stable,
+            raise QualitySchemaError(
+                f"failed to ensure quality stable {self._database}.{q_stable}"
             )
-            return
 
         # CREATE IF NOT EXISTS 不会升级旧表：启动时校验复合主键
         try:
@@ -424,7 +426,7 @@ class TDengineWriter:
                 exc,
                 QUALITY_NARROW_MIGRATION_HINT,
             )
-            return
+            raise
 
         self._quality_stable_ready.add(q_stable)
         logger.info("[tdengine] quality stable ready: %s.%s", self._database, q_stable)
@@ -439,9 +441,12 @@ class TDengineWriter:
             raise QualitySchemaError(
                 f"DESCRIBE empty for quality stable {q_stable}"
             )
-        if not describe_has_var_id_composite_key(rows):
+        if (
+            not describe_has_var_id_composite_key(rows)
+            or not describe_has_unsigned_quality(rows)
+        ):
             raise QualitySchemaError(
-                f"{q_stable} missing var_id COMPOSITE KEY; {QUALITY_NARROW_MIGRATION_HINT}"
+                f"{q_stable} invalid quality schema; {QUALITY_NARROW_MIGRATION_HINT}"
             )
 
     def _quality_fragment_for_rows(self, rows: list[dict], idxs: list[int]) -> str | None:

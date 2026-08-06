@@ -167,6 +167,12 @@ export const docSections: DocSection[] = [
             title: '调用链与协议设计',
             intro: '启动链路、配置加载、并发模型、周期调度、协议读取、结果写出。',
             file: '02-模块设计/collector/调用链与协议设计.md'
+          },
+          {
+            slug: 'mod-collector-driver-guide',
+            title: '外置驱动包制作指南',
+            intro: '协议开发者指南：制作、打包、安装、升级可冷加载的 ZIP 驱动包。',
+            file: '02-模块设计/collector/外置驱动包制作指南.md'
           }
         ]
       },
@@ -284,10 +290,22 @@ export const docSections: DocSection[] = [
         file: '04-运维部署/README.md'
       },
       {
+        slug: 'ops-ingest-capacity',
+        title: 'Ingest 容量压测',
+        intro: '分布式中心稳态与突发压测、隔离环境、资源观测、对账和发布门禁。',
+        file: '04-运维部署/Ingest容量压测.md'
+      },
+      {
         slug: 'ops-troubleshooting',
         title: '问题排查',
         intro: 'Web/API/WS/agent/collector/writer/OPC DA 常见故障定位路径。',
         file: '04-运维部署/问题排查.md'
+      },
+      {
+        slug: 'ops-security',
+        title: '安全边界',
+        intro: '外置驱动安全信任边界、TOCTOU 限制、ACL 信任前提与已知风险。',
+        file: '04-运维部署/安全边界.md'
       }
     ]
   }

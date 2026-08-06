@@ -2,7 +2,7 @@
 <!-- xiaohu-illustration:app-readme-01-shell -->
 ![小狐配图：桌面壳与通道](../../images/xiaohu-app-readme-01-shell.png)
 
-> app 是面向运维的桌面监控台（Tauri + React）。它运行在边缘机上，通过本机 agent 完成首装配置与进程管控，通过中心 backend 获取业务数据、模块指标与日志。本文覆盖技术栈、双数据源、导航壳、角色菜单权限、启动流程与设计决策。
+> app 是面向运维的 Tauri + React 桌面监控台，由同一代码库构建为中心式、分布式边缘、分布式中心三种固定角色。每个 App 只连接本角色本机 Agent，并按构建角色裁剪进程页和导航；中心业务数据仍由独立 Docker Backend 提供。
 >
 > 它调用的服务见《02-模块设计/边缘代理-agent》《后端-backend》。
 
@@ -10,7 +10,7 @@
 
 ## 1. 概述
 
-app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebView 前端）。定位是**运维 + 设备监控控制台**，与面向业务用户的 Web 前端（frontend）互补；桌面端额外承担采集/入库进程管控与现场配置。核心特征：
+app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebView 前端）。定位是**运维 + 设备监控控制台**，与面向业务用户的 Web 前端（frontend）互补；本机管控对象由构建角色固定：中心式为 Collector/Writer，边缘为 Edge Collector/Uploader，分布式中心为 Ingest/Writer。核心特征：
 
 - **双数据源**：本机 `agent`（首装、进程管控、连接健康）+ 中心 `backend`（工作台、设备监控、系统管理、模块指标与日志）；
 - **Rust 壳转发**：HTTP 经 Tauri 命令（`agent_request` / `backend_request` / `backend_download`）在 Rust 侧发起，规避 WebView CORS；

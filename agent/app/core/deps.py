@@ -62,7 +62,12 @@ def get_driver_service(
         default=None, alias="X-DataWatch-Service-Token"
     ),
 ) -> str:
-    """Driver service 调用端点（Backend）；不再验证 token。"""
+    """Validate the dedicated Backend-to-Agent service credential."""
+    expected = os.environ.get(_SERVICE_TOKEN_ENV, "")
+    if not expected or not service_token or not secrets.compare_digest(
+        service_token, expected
+    ):
+        raise HTTPException(status_code=401, detail="Invalid service credential")
     return "service:backend"
 
 

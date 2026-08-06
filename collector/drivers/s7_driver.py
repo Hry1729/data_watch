@@ -58,6 +58,12 @@ class S7Driver(BaseDriver):
         port = config.get("port", 102)
 
         self._client = snap7.client.Client()
+        read_timeout_ms = config.get("read_timeout_ms")
+        if read_timeout_ms is not None:
+            from snap7.type import Parameter
+            timeout_ms = int(read_timeout_ms)
+            self._client.set_param(Parameter.SendTimeout, timeout_ms)
+            self._client.set_param(Parameter.RecvTimeout, timeout_ms)
         try:
             # snap7 是阻塞调用，用线程池执行
             loop = asyncio.get_event_loop()

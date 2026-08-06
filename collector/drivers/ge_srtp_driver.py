@@ -41,7 +41,11 @@ class GESRTPDriver(BaseDriver):
         port = config.get("port", 18245)
         slot = config.get("slot", 1)
 
-        self._driver = GE_SRTP_Driver(host=host, port=port, slot=slot)
+        read_timeout_ms = config.get("read_timeout_ms")
+        kwargs = {}
+        if read_timeout_ms is not None:
+            kwargs["timeout"] = int(read_timeout_ms) / 1000.0
+        self._driver = GE_SRTP_Driver(host=host, port=port, slot=slot, **kwargs)
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(self._read_executor, self._driver.connect)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import urllib.parse
 import logging
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from app.core.deps import (
     get_driver_service,
 )
 from app.core.security import dpapi_decrypt
+from app.core.role import build_role, managed_module_names
 from app.schemas.models import (
     ConnectionConfigIn,
     ConnectionConfigOut,
@@ -123,8 +125,14 @@ def _db_env(cfg: dict, section: str) -> dict[str, str]:
 
 
 def _collector_env() -> dict[str, str]:
-    """collector 需要 mysql + redis 连接（注入失败回退空，由 collector 报连接错）。"""
+    """中心式 Collector 用 MySQL/Redis；边缘 Collector 只用本地 SQLite。"""
     try:
+        if build_role() == "edge":
+            root = data_root()
+            return {
+                "DATAWATCH_DATA_ROOT": str(root),
+                "DATAWATCH_EDGE_DB": str(root / "edge" / "edge.db"),
+            }
         cfg = load_config()
         return {**_db_env(cfg, "mysql"), **_db_env(cfg, "redis")}
     except Exception:
@@ -143,6 +151,54 @@ def _writer_env() -> dict[str, str]:
     except Exception:
         return {}
 
+def _uploader_env() -> dict[str, str]:
+    cfg = load_config()
+    edge = cfg.get("edge") or {}
+    private_key = dpapi_decrypt(str(edge.get("private_key_enc") or ""))
+    encoded_key = base64.b64encode(private_key.encode("utf-8")).decode("ascii") if private_key else ""
+    return {
+        "DATAWATCH_DATA_ROOT": str(data_root()),
+        "DATAWATCH_EDGE_DB": str(data_root() / "edge" / "edge.db"),
+        "DATAWATCH_CENTER_URL": str(edge.get("center_url") or ""),
+        "DATAWATCH_NODE_UUID": str(edge.get("node_uuid") or ""),
+        "DATAWATCH_UPLOADER_PRIVATE_KEY_B64": encoded_key,
+        "DATAWATCH_MAX_OFFLINE_RETENTION_DAYS": str(
+            edge.get("max_offline_retention_days") or 7
+        ),
+        "DATAWATCH_OUTBOX_MAINTENANCE_SECONDS": str(
+            edge.get("outbox_maintenance_seconds") or 60
+        ),
+    }
+
+
+def _ingest_env() -> dict[str, str]:
+    cfg = load_config()
+    mysql = cfg.get("mysql") or {}
+    redis = cfg.get("redis") or {}
+    redis_password = dpapi_decrypt(str(redis.get("password_enc") or ""))
+    auth = ":" + urllib.parse.quote(redis_password, safe="") + "@" if redis_password else ""
+    return {
+        "MYSQL_HOST": str(mysql.get("host") or ""),
+        "MYSQL_PORT": str(mysql.get("port") or ""),
+        "MYSQL_USER": str(mysql.get("user") or ""),
+        "MYSQL_PASSWORD": dpapi_decrypt(str(mysql.get("password_enc") or "")),
+        "MYSQL_DATABASE": str(mysql.get("database") or ""),
+        "INGEST_REDIS_URL": f"redis://{auth}{redis.get('host') or '127.0.0.1'}:{redis.get('port') or 6379}/0",
+        "INGEST_MAX_OFFLINE_RETENTION_DAYS": str(
+            (cfg.get("ingest") or {}).get("max_offline_retention_days") or 7
+        ),
+    }
+
+
+def _process_env(name: str) -> dict[str, str] | None:
+    factories = {
+        "collector": _collector_env,
+        "writer": _writer_env,
+        "uploader": _uploader_env,
+        "ingest": _ingest_env,
+    }
+    factory = factories.get(name)
+    return factory() if factory is not None else None
 
 @router.post("/processes/{name}/start")
 async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
@@ -153,7 +209,7 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
     # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
     extra_args = _collector_extra_args(request) if name == "collector" else None
-    env = _collector_env() if name == "collector" else _writer_env() if name == "writer" else None
+    env = _process_env(name)
 
     try:
         await pm.start(name, extra_args=extra_args, env=env)
@@ -186,7 +242,7 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
     extra_args = _collector_extra_args(request) if name == "collector" else None
-    env = _collector_env() if name == "collector" else _writer_env() if name == "writer" else None
+    env = _process_env(name)
 
     try:
         await pm.restart(name, extra_args=extra_args, env=env)
@@ -203,12 +259,14 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 @router.get("/config", response_model=ConnectionConfigOut)
 async def get_config(_user: str = Depends(get_current_admin)):
     cfg = load_config()
+    modules = set(managed_module_names())
     return ConnectionConfigOut(
         redis=_db_config_out(cfg, "redis"),
         mysql=_db_config_out(cfg, "mysql"),
         tdengine=_db_config_out(cfg, "tdengine"),
-        collector=_process_config_out("collector"),
-        writer=_process_config_out("writer"),
+        collector=_process_config_out("collector") if "collector" in modules else None,
+        writer=_process_config_out("writer") if "writer" in modules else None,
+        ingest=_process_config_out("ingest") if "ingest" in modules else None,
     )
 
 

@@ -37,6 +37,14 @@ class BootstrapConfigRequest(BaseModel):
     tdengine: BootstrapDbIn | None = None
 
 
+class EdgeBootstrapRegisterRequest(BaseModel, extra="forbid"):
+    center_url: str = Field(min_length=1)
+    node_name: str = Field(min_length=1, max_length=128)
+    registration_code: str = Field(min_length=1)
+
+
+
+
 # 引导期连通性测试：内联传入待测配置，无需先保存。backend 用 base_url；
 # mysql/redis/tdengine 用 host/port/user/password/database。
 class TestConnectionRequest(BaseModel, extra="forbid"):
@@ -78,6 +86,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+    roles: list[str] = Field(default_factory=list)
 
 
 # ── 查看器 Viewer ──────────────────────────────────────────────────────────────
@@ -106,7 +115,7 @@ class ProxyLogItem(BaseModel):
 
 
 class ModuleStatusResponse(BaseModel):
-    name: Literal["collector", "writer"]
+    name: Literal["collector", "writer", "ingest", "uploader"]
     status: Literal["running", "stopped", "crashed", "unknown"]
     pid: int | None
     uptime_seconds: int
@@ -141,8 +150,9 @@ class ConnectionConfigOut(BaseModel):
     redis: DbConfigOut
     mysql: DbConfigOut
     tdengine: DbConfigOut
-    collector: ProcessConfigOut
-    writer: ProcessConfigOut
+    collector: ProcessConfigOut | None = None
+    writer: ProcessConfigOut | None = None
+    ingest: ProcessConfigOut | None = None
 
 
 # ── Config PUT（Partial，password 可选）──────────────────────────────────────
@@ -168,6 +178,7 @@ class ConnectionConfigIn(BaseModel):
     tdengine: DbConfigIn | None = None
     collector: ProcessConfigIn | None = None
     writer: ProcessConfigIn | None = None
+    ingest: ProcessConfigIn | None = None
 
 
 # ── 日志流 ──────────────────────────────────────────────────────────────────
@@ -175,5 +186,5 @@ class ConnectionConfigIn(BaseModel):
 class LogLine(BaseModel):
     timestamp: str
     level: Literal["DEBUG", "INFO", "WARN", "ERROR"]
-    source: Literal["collector", "writer"]
+    source: Literal["collector", "writer", "ingest", "uploader"]
     message: str

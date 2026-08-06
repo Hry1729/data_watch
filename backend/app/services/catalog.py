@@ -98,6 +98,8 @@ class CatalogService:
     def __init__(self, session: AsyncSession, tdengine: TDengineClient):
         self.session = session
         self.tdengine = tdengine
+        self._point_storage_mapping_available_cache: bool | None = None
+        self._distributed_node_tables_available_cache: bool | None = None
 
     async def list_drivers(self, params: dict[str, Any]) -> dict[str, Any]:
         # 附带 installed_driver 元数据，供前端区分内置 / 已注册外置包
@@ -414,6 +416,8 @@ class CatalogService:
         device_name = self._require_text(payload.get("deviceName"), field_name="deviceName", max_length=20)
         driver_name = self._require_text(payload.get("driverName"), field_name="driverName", max_length=50)
         device_status = self._normalize_device_status(payload.get("deviceStatus"))
+        endpoint = self._optional_text(payload.get("endpoint"), max_length=20)
+        endpoint_bkp = self._optional_text(payload.get("endpointBackup"), max_length=20)
         self._optional_text(payload.get("description"), max_length=255)
 
         existing = (
@@ -444,8 +448,8 @@ class CatalogService:
             "enable": 1 if device_status == "enabled" else 0,
             "status": 0,
             "protocol_id": int(protocol_row["id"]),
-            "endpoint": self._build_placeholder_endpoint(device_code),
-            "endpoint_bkp": None,
+            "endpoint": endpoint or self._build_placeholder_endpoint(device_code),
+            "endpoint_bkp": endpoint_bkp or None,
             "rack": int(reference_row["rack"]) if reference_row is not None else 0,
             "slot": int(reference_row["slot"]) if reference_row is not None else 1,
             "scan_cycle": int(reference_row["scan_cycle"]) if reference_row is not None else 1000,
@@ -520,7 +524,8 @@ class CatalogService:
                         d.rack,
                         d.slot,
                         d.scan_cycle,
-                        d.status
+                        d.status,
+                        d.type_id
                     FROM device AS d
                     WHERE d.id = :device_id
                     LIMIT 1
@@ -537,6 +542,16 @@ class CatalogService:
         device_name = self._require_text(payload.get("deviceName"), field_name="deviceName", max_length=20)
         driver_name = self._require_text(payload.get("driverName"), field_name="driverName", max_length=50)
         device_status = self._normalize_device_status(payload.get("deviceStatus"))
+        endpoint = (
+            self._optional_text(payload.get("endpoint"), max_length=20)
+            if "endpoint" in payload
+            else str(existing_row["endpoint"] or "")
+        )
+        endpoint_bkp = (
+            self._optional_text(payload.get("endpointBackup"), max_length=20)
+            if "endpointBackup" in payload
+            else str(existing_row["endpoint_bkp"] or "")
+        )
         self._optional_text(payload.get("description"), max_length=255)
 
         if device_code != str(existing_row["device_code"] or ""):
@@ -561,6 +576,21 @@ class CatalogService:
             raise ApiError(409, "deviceCode already exists")
 
         type_row = await self._resolve_device_type_row(device_type)
+        if int(type_row["id"]) != int(existing_row["type_id"]):
+            existing_point_id = (
+                await self.session.execute(
+                    text(
+                        "SELECT id FROM device_variable "
+                        "WHERE device_id = :device_id LIMIT 1"
+                    ),
+                    {"device_id": device_id},
+                )
+            ).scalar_one_or_none()
+            if existing_point_id is not None:
+                raise ApiError(
+                    400,
+                    "deviceType cannot be changed after points have been created",
+                )
         protocol_row = await self._resolve_protocol_row(driver_name)
         await self._lock_protocol_for_binding(
             protocol_id=int(protocol_row["id"]), protocol=str(protocol_row["protocol"])
@@ -572,7 +602,6 @@ class CatalogService:
         group_id = await self._resolve_group_id(type_row=type_row, reference_row=reference_row)
 
         old_device_code = str(existing_row["device_code"] or "")
-        endpoint = str(existing_row["endpoint"] or "")
         if not endpoint or endpoint == self._build_placeholder_endpoint(old_device_code):
             endpoint = self._build_placeholder_endpoint(device_code)
 
@@ -585,6 +614,7 @@ class CatalogService:
             "enable": 1 if device_status == "enabled" else 0,
             "protocol_id": int(protocol_row["id"]),
             "endpoint": endpoint,
+            "endpoint_bkp": endpoint_bkp or None,
             "rack": int(existing_row["rack"])
             if existing_row["rack"] is not None
             else int(reference_row["rack"]) if reference_row is not None else 0,
@@ -611,6 +641,7 @@ class CatalogService:
                         enable = :enable,
                         protocol_id = :protocol_id,
                         endpoint = :endpoint,
+                        endpoint_bkp = :endpoint_bkp,
                         rack = :rack,
                         slot = :slot,
                         scan_cycle = :scan_cycle,
@@ -621,6 +652,7 @@ class CatalogService:
                 ),
                 params,
             )
+            await self._bump_assigned_node_config_versions(device_id)
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
@@ -642,6 +674,8 @@ class CatalogService:
         ).scalar_one_or_none()
         if existing_id is None:
             raise ApiError(404, "Device not found")
+
+        await self._assert_devices_have_no_permanent_mappings([device_id])
 
         try:
             await self.session.execute(
@@ -675,6 +709,8 @@ class CatalogService:
             bindparam("ids", expanding=True)
         )
         delete_devices_stmt = text("DELETE FROM device WHERE id IN :ids").bindparams(bindparam("ids", expanding=True))
+
+        await self._assert_devices_have_no_permanent_mappings(existing_ids)
 
         try:
             await self.session.execute(delete_points_stmt, {"ids": existing_ids})
@@ -866,8 +902,10 @@ class CatalogService:
                         d.id AS device_id,
                         d.device_code AS device_code,
                         d.type_id AS device_type_id,
-                        d.template_id AS template_id
+                        d.template_id AS template_id,
+                        LOWER(COALESCE(dt.type_code, '')) AS type_code
                     FROM device AS d
+                    LEFT JOIN device_type AS dt ON dt.id = d.type_id
                     WHERE d.id = :device_id
                     LIMIT 1
                     """
@@ -988,6 +1026,11 @@ class CatalogService:
             """
             INSERT INTO device_variable (
                 device_id,
+                point_group_id,
+                group_index,
+                td_column_name,
+                enable,
+                deleted,
                 var_seq,
                 var_name,
                 io_type,
@@ -1005,6 +1048,11 @@ class CatalogService:
                 update_time
             ) VALUES (
                 :device_id,
+                :point_group_id,
+                :group_index,
+                :td_column_name,
+                1,
+                0,
                 :var_seq,
                 :var_name,
                 :io_type,
@@ -1038,14 +1086,24 @@ class CatalogService:
                 if normalized_address in existing_addresses:
                     raise ApiError(409, "IO地址已存在于当前设备")
 
-                await self.session.execute(
+                var_type = self._normalize_requested_data_type(row["var_type"])
+                point_slot = await self._allocate_point_slot_for_update(
+                    device_id=int(device_row["device_id"]),
+                    group_code="g001",
+                    actor=actor,
+                    type_code=str(device_row["type_code"] or "").lower(),
+                )
+                result = await self.session.execute(
                     insert_sql,
                     {
                         "device_id": int(device_row["device_id"]),
+                        "point_group_id": point_slot["point_group_id"],
+                        "group_index": point_slot["group_index"],
+                        "td_column_name": point_slot["td_column_name"],
                         "var_seq": var_seq,
                         "var_name": self._require_text(row["var_name"], field_name="点位名称", max_length=50),
                         "io_type": self._truncate_text(str(row["io_type"] or "").strip() or "INPUT", 10),
-                        "var_type": self._normalize_requested_data_type(row["var_type"]),
+                        "var_type": var_type,
                         "var_address": io_address,
                         "var_offset": row["var_offset"],
                         "var_bit": row["var_bit"],
@@ -1055,6 +1113,18 @@ class CatalogService:
                         "is_storage": 1 if self._to_bool(row["is_storage"], field_name="isStorage", default=True) else 0,
                         "actor": self._truncate_text(actor, 20),
                     },
+                )
+                await self._insert_point_storage_mapping(
+                    point_id=int(result.lastrowid or 0),
+                    device_code=str(device_row["device_code"]),
+                    device_type_code=str(device_row["type_code"] or "").lower(),
+                    point_slot=point_slot,
+                    var_type=var_type,
+                )
+                await self._mark_point_created(
+                    point_group_id=int(point_slot["point_group_id"]),
+                    device_id=int(device_row["device_id"]),
+                    actor=actor,
                 )
                 await self.session.commit()
                 existing_var_seqs.add(var_seq)
@@ -1281,6 +1351,13 @@ class CatalogService:
                     "td_column_name": point_slot["td_column_name"],
                 },
             )
+            await self._insert_point_storage_mapping(
+                point_id=int(result.lastrowid or 0),
+                device_code=device_code,
+                device_type_code=str(device_row["type_code"] or "").lower(),
+                point_slot=point_slot,
+                var_type=data_type,
+            )
             await self._mark_point_created(
                 point_group_id=point_slot["point_group_id"],
                 device_id=device_id,
@@ -1351,7 +1428,7 @@ class CatalogService:
                 text(
                     # 查询测点所属设备和组
                     """
-                    SELECT device_id, point_group_id
+                    SELECT device_id, point_group_id, var_type
                     FROM device_variable
                     WHERE id = :point_id
                       AND COALESCE(deleted, 0) = 0
@@ -1365,6 +1442,8 @@ class CatalogService:
             raise ApiError(404, "Point not found")
         if int(existing_point["device_id"]) != device_id:
             raise ApiError(400, "point device cannot be changed after creation")
+        if str(existing_point["var_type"] or "").strip().upper() != data_type.upper():
+            raise ApiError(400, "point dataType cannot be changed after creation")
 
         existing_address = (
             await self.session.execute(
@@ -1762,6 +1841,119 @@ class CatalogService:
             ),
             {"device_id": device_id},
         )
+        await self._bump_assigned_node_config_versions(device_id)
+
+    async def _bump_assigned_node_config_versions(self, device_id: int) -> None:
+        if not await self._distributed_node_tables_available():
+            return
+        await self.session.execute(
+            text(
+                """
+                UPDATE sys_node
+                SET config_version = config_version + 1
+                WHERE node_uuid IN (
+                    SELECT DISTINCT node_uuid
+                    FROM device_assignment
+                    WHERE device_id = :device_id
+                      AND status IN ('active', 'retired')
+                )
+                """
+            ),
+            {"device_id": device_id},
+        )
+
+    async def _distributed_node_tables_available(self) -> bool:
+        if self._distributed_node_tables_available_cache is None:
+            count = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT COUNT(DISTINCT TABLE_NAME)
+                        FROM information_schema.TABLES
+                        WHERE TABLE_SCHEMA = DATABASE()
+                          AND TABLE_NAME IN ('sys_node', 'device_assignment')
+                        """
+                    )
+                )
+            ).scalar_one()
+            self._distributed_node_tables_available_cache = int(count or 0) == 2
+        return self._distributed_node_tables_available_cache
+
+    async def _point_storage_mapping_available(self) -> bool:
+        if self._point_storage_mapping_available_cache is None:
+            count = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM information_schema.TABLES
+                        WHERE TABLE_SCHEMA = DATABASE()
+                          AND TABLE_NAME = 'point_storage_mapping'
+                        """
+                    )
+                )
+            ).scalar_one()
+            self._point_storage_mapping_available_cache = int(count or 0) > 0
+        return self._point_storage_mapping_available_cache
+
+    async def _insert_point_storage_mapping(
+        self,
+        *,
+        point_id: int,
+        device_code: str,
+        device_type_code: str,
+        point_slot: dict[str, Any],
+        var_type: str,
+    ) -> None:
+        if not await self._point_storage_mapping_available():
+            return
+        await self.session.execute(
+            text(
+                """
+                INSERT INTO point_storage_mapping (
+                    point_id, device_code, device_type_code, stable_name,
+                    child_table, group_code, td_column_name, var_type, created_at
+                ) VALUES (
+                    :point_id, :device_code, :device_type_code, :stable_name,
+                    :child_table, :group_code, :td_column_name, :var_type,
+                    CURRENT_TIMESTAMP(3)
+                )
+                """
+            ),
+            {
+                "point_id": point_id,
+                "device_code": device_code,
+                "device_type_code": device_type_code,
+                "stable_name": f"sd{device_type_code}",
+                "child_table": device_code,
+                "group_code": point_slot["group_code"],
+                "td_column_name": point_slot["td_column_name"],
+                "var_type": var_type,
+            },
+        )
+
+    async def _assert_devices_have_no_permanent_mappings(
+        self, device_ids: list[int]
+    ) -> None:
+        if not await self._point_storage_mapping_available():
+            return
+        stmt = text(
+            """
+            SELECT dv.device_id
+            FROM point_storage_mapping AS psm
+            JOIN device_variable AS dv ON dv.id = psm.point_id
+            WHERE dv.device_id IN :ids
+            LIMIT 1
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        mapped_device_id = (
+            await self.session.execute(stmt, {"ids": device_ids})
+        ).scalar_one_or_none()
+        if mapped_device_id is not None:
+            raise ApiError(
+                409,
+                "device with permanent point mappings cannot be physically deleted; disable it instead",
+            )
 
     async def _fetch_point_for_delete(self, point_id: int) -> dict[str, Any] | None:
         row = (

@@ -1,0 +1,12 @@
+#define BuildRole "distributed-center"
+#define MyAppName "Data Watch 分布式中心"
+#define MyAppVersion "0.1.0"
+#define MyAppId "{{A9CE8CE0-D32D-4C25-AF16-8FD3D5F44D47}"
+#define MyServiceName "DataWatchDistributedCenterAgent"
+#define MyAgentExe "data-watch-distributed-center-agent.exe"
+#define MyDataDir "DataWatch Distributed Center"
+#define MyInstallDir "DataWatch Distributed Center"
+#define MyOutputName "DataWatch-Distributed-Center-Setup"
+#define MyAgentPort "7072"
+#include "DataWatchRole.iss"
+
