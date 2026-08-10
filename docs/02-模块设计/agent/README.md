@@ -2,7 +2,7 @@
 <!-- xiaohu-illustration:agent-readme-01-workbench -->
 ![小狐配图：边缘工作台](../../images/xiaohu-agent-readme-01-workbench.png)
 
-> agent 是三个 Windows 固定角色共用的本机中枢，以角色独立的 Windows 服务常驻：中心式管理 Collector/Writer，分布式边缘管理 Edge Collector/Uploader，分布式中心管理 Ingest/Writer；只有包含 Collector 的角色管理 OPC DA proxy。
+> agent 是三个 Windows 固定角色共用的本机中枢，以角色独立的 Windows 服务常驻：中心式管理 Collector/Writer，分布式边缘管理 Storage/Edge Collector/Uploader，分布式中心管理 Ingest/Writer；只有包含 Collector 的角色管理 OPC DA proxy。
 >
 > 本文原有的 `collector/writer`、`:7070` 和数据库 DPAPI 章节描述中心式基线。分布式边缘差异见 [边缘运行时实现说明](../edge/边缘运行时实现说明.md)，分布式中心使用端口 7072；三角色完整边界见 [三角色安装包构建与隔离](../../04-运维部署/三角色安装包构建与隔离.md)。
 
@@ -12,7 +12,7 @@
 
 agent 是一个基于 **FastAPI** 的本机 HTTP 服务，以 Windows 服务方式开机自启；中心式、分布式边缘、分布式中心分别监听 `127.0.0.1:7070`、`:7071`、`:7072`。其公共职责与角色特定职责包括：
 
-- **进程管控**：启动/停止/重启 collector 与 writer，监控其存活、CPU、内存；
+- **进程管控**：按固定角色启动、停止、重启和监控本机模块；边缘角色按 Storage 依赖关系编排 Collector/Uploader；
 - **边车管理**：管理 OPC DA 代理（sidecar）进程，认领重启前存活的代理；
 - **凭据保管**：用 Windows DPAPI 加密保存数据库口令，运行时解密并注入子进程；
 - **首装引导**：通过 bootstrap 接口完成首次配置（DB 连接、后端地址等）。
@@ -34,7 +34,7 @@ agent 是一个基于 **FastAPI** 的本机 HTTP 服务，以 Windows 服务方�
 | 首装零绑定 | 后端地址、DB 连接运行期录入，不打包进二进制 |
 | 桌面端可观测可管控 | viewer（只读）/ admin（写）分层接口 |
 
-**不在本模块范围**：实际采集与入库逻辑（collector/writer 自身）、中心数据服务（backend）。
+**不在本模块范围**：实际采集、持久化、上传、汇聚与入库逻辑（子进程自身）、中心数据服务（backend）。
 
 ---
 
@@ -49,6 +49,15 @@ agent 是一个基于 **FastAPI** 的本机 HTTP 服务，以 Windows 服务方�
 | **shutdown_flag** | agent 写给子进程的优雅停机信号文件 |
 | **ManagedProcessRunner** | 进程监管内核：PID 文件、日志重定向、存活校验、强停 |
 | **sidecar / proxy** | OPC DA 代理进程，center 采集经其远程取数 |
+| **Storage** | 分布式边缘 SQLite 唯一写者，默认监听 `127.0.0.1:7073` |
+
+角色装配固定如下：
+
+| 角色 | Agent | 受管模块 | 数据库凭据 |
+|------|-------|----------|------------|
+| 中心式 | `127.0.0.1:7070` | Collector、Writer、按需 OPC DA proxy | DPAPI 保存并注入子进程 |
+| 分布式边缘 | `127.0.0.1:7071` | Storage、Edge Collector、Uploader、按需 OPC DA proxy | 不保存中心数据库密码；中心账号校验除外 |
+| 分布式中心 | `127.0.0.1:7072` | Ingest、Writer | DPAPI 保存并注入子进程 |
 
 ---
 
@@ -93,17 +102,19 @@ flowchart TD
 
 ### 5.1 应用装配与生命周期
 
-`agent/app/factory.py`。`create_app()` 创建 FastAPI 应用，注册异常处理器与四个路由（bootstrap/auth/viewer/admin）。`lifespan` 启动时：加载 config → 按 `module_paths` 解析 collector/writer 的 exe 与工作目录 → 构建 ProcessManager / LogManager / SidecarManager → **认领重启前仍存活的代理**（`claim_existing_proxies`）→ 启动健康检查循环；关闭时按序停子进程、detach 日志、取消健康任务。
+`agent/app/factory.py`。`create_app()` 创建 FastAPI 应用并按角色装配路由与服务。`lifespan` 启动时：加载 config → 按 `module_paths` 解析本角色 exe 与工作目录 → 构建 ProcessManager / LogManager / SidecarManager → **认领重启前仍存活的代理**（`claim_existing_proxies`）→ 启动健康检查和边缘同步循环；关闭时按依赖顺序停子进程、detach 日志、取消后台任务。
 
 ### 5.2 ProcessManager（进程管控）
 
-`agent/app/services/process_manager.py`。管控 collector/writer：
+`agent/app/services/process_manager.py`。公共监管内核管控本角色模块：
 
 - **start**（`process_manager.py:142`）：校验未在运行（PID 文件 + 存活校验）后，用 `spec.args + extra_args` 启动；`extra_args`（如 `--config`/`--port-mapping`）由 agent 运行期编排拼入、不写回 config。
 - **stop**（`process_manager.py:200`）：写 `shutdown_flag` 让子进程优雅退出，轮询超时后 `force_stop`。
 - **restart**：stop + start，并原子递增持久化 `restart_count`（`state/process_state.json`）。
 - **status**：基于 PID 文件与 `verify_alive` 返回 running/stopped/crashed。
 - **health_check_loop**（`process_manager.py:345`，2s）：崩溃检测 + CPU 采样。**CPU 归一化**：`cpu_percent / 逻辑核数`，换算为占整机 0–100%（`_sample_cpu` `process_manager.py:319`，复用同一 psutil.Process 对象做增量）。
+
+边缘角色启动 Collector 或 Uploader 前先确保 Storage 已运行且 `/healthz` 可达；单独停止 Storage 时必须先停止依赖它的 Collector/Uploader，避免界面显示运行而数据无法持久化或更新状态。
 
 进程监管的底层机制（PID 文件、日志重定向、launch、强停）委托 `ManagedProcessRunner`。
 
@@ -170,6 +181,7 @@ sequenceDiagram
 | viewer（只读） | `/viewer/status`、`/viewer/health`、`/viewer/processes/:name/status`、`/metrics` | 运行状态与指标观测 |
 | admin（写） | `/admin/processes/:name/start\|stop\|restart`、`/admin/config`、`/admin/health/check` | 进程管控与配置变更 |
 | auth | `/auth/login` | 登录获取令牌 |
+| edge local | `/local/collector`、`/local/storage`、`/local/outbox`、`/local/uploader`、`/local/logs` | 边缘本机状态、队列和日志 |
 
 其他契约：写 `runtime/<name>.shutdown_flag` 控制子进程停机；生成端口映射文件供 collector 只读消费；经环境变量向子进程注入解密后的 DB 连接。
 
@@ -182,9 +194,10 @@ sequenceDiagram
 - `[agent]`：host/port（默认 7070）、jwt_secret、jwt_expire_hours、bootstrap_done、log_level、runtime_dir；
 - `[redis]`/`[mysql]`/`[tdengine]`：host/port/user/database + `password_enc`；
 - `[backend]`：base_url（明文，桌面端经 `/bootstrap/runtime-config` 读取）；
-- `[collector]`/`[writer]`：args 等运行参数。
+- `[collector]`/`[writer]`/`[ingest]`/`[uploader]`：按角色存在的运行参数；
+- `[storage]`：边缘 Storage host、port（默认 7073）和有界队列容量。
 
-环境变量：`DATAWATCH_INSTALL_ROOT`、`DATAWATCH_DATA_ROOT`（安装器/NSSM 注入）。详见《05-运维部署》。
+环境变量：`DATAWATCH_INSTALL_ROOT`、`DATAWATCH_DATA_ROOT`（安装器/NSSM 注入）。详见《04-运维部署》。
 
 ---
 
@@ -226,4 +239,4 @@ sequenceDiagram
 - 《02-模块设计/采集-collector》《入库-writer》（被管控对象）
 - 《02-模块设计/agent-边缘进程编排与凭据》（bootstrap、DPAPI、env 注入、shutdown flag、OPC DA proxy）
 - 《02-模块设计/桌面端-app》（agent 的主要调用方）
-- 《05-运维部署》（双根路径、安装与 NSSM 注册）
+- 《04-运维部署》（双根路径、安装与 NSSM 注册）

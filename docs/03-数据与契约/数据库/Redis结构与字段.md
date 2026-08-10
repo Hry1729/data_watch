@@ -286,8 +286,8 @@ DLQ 是人工排查入口，不是自动重放机制。进入 DLQ 的常见原�
 
 ## 相关文档
 
-- [采集-collector](../02-模块设计/collector/README.md)
-- [collector 调用链与协议设计](../02-模块设计/collector/调用链与协议设计.md)
-- [入库-writer](../02-模块设计/writer/README.md)
-- [writer 可靠入库与 TDengine 写入](../02-模块设计/writer/可靠入库与TDengine写入.md)
-- [WebSocket 协议](WebSocket协议.md)
+- [采集 collector](../../02-模块设计/collector/README.md)
+- [collector 调用链与协议设计](../../02-模块设计/collector/调用链与协议设计.md)
+- [入库 writer](../../02-模块设计/writer/README.md)
+- [writer 可靠入库与 TDengine 写入](../../02-模块设计/writer/可靠入库与TDengine写入.md)
+- [WebSocket 协议](../契约/WebSocket协议.md)

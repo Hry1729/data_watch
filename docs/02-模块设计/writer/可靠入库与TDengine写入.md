@@ -235,7 +235,7 @@ rt:dlq:{device_type}:{group_code}
 
 ## 相关文档
 
-- [入库-writer](入库-writer.md)
-- [collector 调用链与协议设计](collector-调用链与协议设计.md)
+- [入库 writer](README.md)
+- [collector 调用链与协议设计](../collector/调用链与协议设计.md)
 - [数据库设计](../../03-数据与契约/数据库/MySQL结构与字段.md)
 - [Redis 流与点位分组](../../03-数据与契约/数据库/Redis结构与字段.md)

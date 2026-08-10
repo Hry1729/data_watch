@@ -10,7 +10,7 @@
 
 ## 1. 概述
 
-app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebView 前端）。定位是**运维 + 设备监控控制台**，与面向业务用户的 Web 前端（frontend）互补；本机管控对象由构建角色固定：中心式为 Collector/Writer，边缘为 Edge Collector/Uploader，分布式中心为 Ingest/Writer。核心特征：
+app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebView 前端）。定位是**运维 + 设备监控控制台**，与面向业务用户的 Web 前端（frontend）互补；本机管控对象由构建角色固定：中心式为 Collector/Writer，边缘为 Storage/Edge Collector/Uploader，分布式中心为 Ingest/Writer。核心特征：
 
 - **双数据源**：本机 `agent`（首装、进程管控、连接健康）+ 中心 `backend`（工作台、设备监控、系统管理、模块指标与日志）；
 - **Rust 壳转发**：HTTP 经 Tauri 命令（`agent_request` / `backend_request` / `backend_download`）在 Rust 侧发起，规避 WebView CORS；
@@ -26,10 +26,10 @@ app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebVie
 
 | 目标 | 实现要点 |
 |------|----------|
-| 边缘运维集中可视 | 控制台 / Collector / Writer 聚合状态、指标、日志 |
+| 本机运维集中可视 | 控制台按角色聚合 Collector/Storage/Uploader 或 Ingest/Writer 的状态、指标和日志 |
 | 设备与系统管理 | 驱动/设备/点位、实时与历史、用户/角色/菜单、系统日志 |
 | 首次安装零门槛 | Bootstrap 向导对接 agent 完成 DB/后端配置 |
-| 进程可管控 | 经 agent admin 启停/重启 collector/writer |
+| 进程可管控 | 经 agent admin 启停/重启本角色模块；边缘遵守 Storage 依赖顺序 |
 | 按角色显隐菜单 | 后端菜单树 → 桌面 path；管理员强制可见控制台 |
 | 一包多机 | 后端地址运行期注入 |
 | 规避 CORS / 桌面集成 | HTTP / 文件下载经 Tauri Rust 转发 |
@@ -43,10 +43,10 @@ app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebVie
 | 术语 | 含义 |
 |------|------|
 | **Tauri 壳** | Rust 外壳 + WebView；前端经 `invoke` 调 Rust 命令转发 HTTP |
-| **双数据源** | agent（本机 127.0.0.1:7070）+ backend（中心，地址运行期注入） |
+| **双数据源** | 本角色 agent（7070/7071/7072）+ backend（中心，地址运行期注入） |
 | **导航壳** | `AppLayout`：可折叠侧栏 + 顶栏；配置见 `src/config/navigation.ts` |
 | **allowedPaths** | 登录后写入 `AuthStore` 的可访问桌面 path 列表 |
-| **桌面专有页** | `/collection/collector`、`/collection/writer`、`/settings`，任意登录用户可见 |
+| **桌面专有页** | 本角色采集链路监控、控制台和 `/settings`，按构建目标裁剪 |
 | **管理员附加页** | `R_SUPER` / `R_ADMIN` 额外可见 `/dashboard/console` |
 | **设置态侧栏** | 进入 `/settings` 时侧栏替换为「返回 + 基础/数据库/Collector/Writer」 |
 | **双鉴权** | agent token（管控）与 backend token（业务/指标）各自维护 |
@@ -131,7 +131,7 @@ flowchart TD
 |------|------|------|-----------|
 | 仪表盘 | 工作台 | `/dashboard/workbench` | backend dashboard |
 | 仪表盘 | 控制台 | `/dashboard/console` | agent + backend rates（管理员+） |
-| 数据采集 | 采集/写入监控 | `/collection/*` | agent + backend module-monitor |
+| 数据采集 | 采集/存储/上行或汇聚/入库监控 | `/collection/*` | agent + 本机 Storage + backend module-monitor |
 | 设备监控 | 通讯/驱动/设备/点位/实时/历史 | `/device/*` | backend device-monitor |
 | 日志 | 系统日志 | `/logs/system` | backend log |
 | 系统管理 | 用户/角色/菜单 | `/system/*` | backend system |
@@ -176,7 +176,7 @@ sequenceDiagram
 
 ### 6.3 进程管控
 
-Collector/Writer 页启停 → agent `/admin/processes/:name/{start|stop|restart}` → viewer 刷新状态。
+模块页启停 → agent `/admin/processes/:name/{start|stop|restart}` → viewer 刷新状态。edge 角色中启动 Collector/Uploader 会先确保 Storage 可用，停止 Storage 会先处理依赖模块。
 
 ---
 

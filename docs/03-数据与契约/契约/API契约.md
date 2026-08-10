@@ -297,8 +297,8 @@ backend WebSocket 不在本文件展开，见 [WebSocket 协议](WebSocket协议
 
 ## 相关文档
 
-- [后端-backend](../02-模块设计/backend/README.md)
-- [backend 服务分层与实时历史通道](../02-模块设计/backend/服务分层与实时历史通道.md)
-- [边缘代理-agent](../02-模块设计/agent/README.md)
-- [agent 边缘进程编排与凭据](../02-模块设计/agent/边缘进程编排与凭据.md)
+- [后端 backend](../../02-模块设计/backend/README.md)
+- [backend 服务分层与实时历史通道](../../02-模块设计/backend/服务分层与实时历史通道.md)
+- [边缘代理 agent](../../02-模块设计/agent/README.md)
+- [agent 边缘进程编排与凭据](../../02-模块设计/agent/边缘进程编排与凭据.md)
 - [WebSocket 协议](WebSocket协议.md)

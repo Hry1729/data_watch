@@ -4,7 +4,7 @@
 
 > 本文覆盖平台的运行环境、开发启动、中心镜像部署、发版打包、离线镜像、升级回滚与验收。三个固定角色安装包的最新构建与隔离契约见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)，交付验收见 [三角色安装包验收清单](三角色安装包验收清单.md)，Ingest 上线门禁见 [Ingest容量压测](Ingest容量压测.md)，问题排查见 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
 >
-> Windows 交付固定为三种角色包：中心式、分布式边缘、分布式中心。三个 EXE 只包含对应角色的 Windows 组件；Backend/Frontend 与 MySQL/Redis/TDengine 走独立 Docker 部署，不进入 Windows 安装包。边缘角色使用 Edge Agent + Collector + SQLite outbox + Uploader，不包含 Writer 或中心数据库。
+> Windows 交付固定为三种角色包：中心式、分布式边缘、分布式中心。三个 EXE 只包含对应角色的 Windows 组件；Backend/Frontend 与 MySQL/Redis/TDengine 走独立 Docker 部署，不进入 Windows 安装包。边缘角色使用 Edge Agent + Storage + Collector + SQLite outbox + Uploader，不包含 Writer 或中心数据库。
 
 ---
 
@@ -16,11 +16,11 @@
   Redis        实时缓冲层 latest/window/stream/dlq
   TDengine     时序历史库 device_data
   backend      Python 3.14t + uvicorn 镜像
-  frontend     Nginx 静态资源 + /api 与 WS 反向代理镜像
+  frontend     Nginx 静态资源 + /api、WS 与 /ingest 统一入口镜像
 
 Windows 角色安装包：
   中心式                    App + Agent(:7070) + Collector + Writer
-  分布式边缘                Edge App + Edge Agent(:7071) + Edge Collector + Uploader
+  分布式边缘                Edge App + Edge Agent(:7071) + Storage(:7073) + Edge Collector + Uploader
   分布式中心                Center App + Agent(:7072) + Ingest + Writer
   OPC DA proxy             仅随包含 Collector 的角色安装
 ```
@@ -35,7 +35,7 @@ Windows 角色安装包：
 |------|---------------|
 | backend | free-threaded Python 3.14t，uvicorn，`backend/.env` 或 `deploy/backend.env` |
 | frontend | Node 22 构建，nginx 1.27-alpine 运行 |
-| collector / writer | free-threaded Python 3.14t，PyInstaller 打包 exe，Windows 边缘机运行 |
+| collector / storage / uploader / ingest / writer | free-threaded Python 3.14t，PyInstaller 打包 exe，按 Windows 角色运行 |
 | agent | Python/FastAPI 打包 exe，NSSM Windows 服务 |
 | app | Tauri + React + Rust + WebView2 |
 | OPC DA proxy | .NET Framework 4.8 / x86，Windows COM/DCOM |
@@ -63,6 +63,8 @@ Windows 角色安装包：
 | frontend dev server | `http://127.0.0.1:5173` |
 
 它不会启动 agent、collector、writer、app。
+
+Vite 开发服务只代理 `/api/* -> 127.0.0.1:8000`，当前不代理 `/ingest`。Docker Frontend/nginx 的 8080 端口才是分布式边缘使用的统一入口，同时承载 Web、`/api`、WebSocket 和 `/ingest`。因此开发页面可以使用 5173，但边缘 `center_url` 应继续指向 8080，并保持 `data-watch-frontend` 容器运行；关闭该容器会使所有边缘心跳和 Uploader 上传一并离线。
 
 ### 3.2 collector / writer
 
@@ -101,7 +103,7 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 | `backend/Dockerfile` | 构建 `data-watch-backend:latest`，复制 TDengine `libtaos.so`，运行 uvicorn |
 | `frontend/Dockerfile` | Node 22 构建 Vite，nginx 托管静态文件 |
 | `deploy/docker-compose.yml` | 定义 redis、tdengine、backend、frontend 服务 |
-| `deploy/nginx.conf` | frontend 容器内 nginx，反代 `/api/` 与 WebSocket |
+| `deploy/nginx.conf` | frontend 容器内 nginx，反代 `/api/`、WebSocket 与宿主机 Ingest `/ingest` |
 | `deploy/backend.env.example` | backend 容器环境变量模板 |
 | `deploy/taos.cfg` | TDengine 服务配置 |
 | `deploy/redis.conf` | Redis 服务配置：内存保险丝（maxmemory）+ 持久化策略，由 compose 挂载，容器重建可复现 |
@@ -364,8 +366,11 @@ frontend 容器内 nginx 负责：
 
 - `/api/` → `http://backend:8000/api/`；
 - `/api/device-monitor/ws/` → backend WebSocket，并保留 Upgrade/Connection；
+- `/ingest` → 宿主机 `Ingest :8010`；
 - `/healthz` → backend healthz；
 - 其他路径回退 `index.html`，支持前端路由刷新。
+
+该 nginx 是当前分布式统一入口，不只是静态前端。生产环境必须独立监控容器状态、8080、`/api` 和一次签名 `/ingest` 请求；不要因本地使用 Vite 开发页面而停止它。
 
 ---
 
@@ -385,7 +390,7 @@ frontend 容器内 nginx 负责：
 
 ### 7.1 安装包内容
 
-三个安装包的组件边界见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)。中心式包包含 App、Agent、Collector、Writer 和 OPC DA proxy；分布式边缘包包含 Edge App、Edge Agent、Edge Collector、SQLite outbox、Uploader 和 OPC DA proxy；分布式中心包包含 Center App、Agent、Ingest 和 Writer。Backend、Frontend、MySQL、Redis、TDengine 及所有 Docker tar 均不进入这三个 EXE。
+三个安装包的组件边界见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)。中心式包包含 App、Agent、Collector、Writer 和 OPC DA proxy；分布式边缘包包含 Edge App、Edge Agent、Storage、Edge Collector、SQLite outbox、Uploader 和 OPC DA proxy；分布式中心包包含 Center App、Agent、Ingest 和 Writer。Backend、Frontend、MySQL、Redis、TDengine 及所有 Docker tar 均不进入这三个 EXE。
 
 ### 7.2 双根目录（中心式示例）
 
@@ -465,6 +470,25 @@ agent 启动子进程时：
 
 现场验收不能只看 proxy 进程和端口，要确认服务账户具备 DCOM/OPCEnum/OPC Server 权限，并真实读到点位。
 
+### 7.6 分布式边缘启动与数据路径
+
+```text
+Edge Agent(:7071)
+  -> Storage(:7073) ready
+  -> Edge Collector
+  -> Uploader
+```
+
+Collector 和 Uploader 不直接执行 SQLite 写事务。Collector 将采集帧提交给 Storage；Uploader 经 Storage 领取 outbox 批次并提交 ACK/重试/永久失败状态。Storage 停止时，Agent 应先停止依赖模块；启动 Collector 或 Uploader 时应先恢复 Storage 并等待 `/healthz` 成功。
+
+本机检查：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:7073/healthz
+Invoke-RestMethod http://127.0.0.1:7073/v1/status
+Get-NetTCPConnection -LocalPort 7071,7073 -State Listen
+```
+
 ---
 
 ## 8. 发版打包
@@ -480,16 +504,15 @@ pwsh -File installer\build.ps1 -Role distributed-center -Iscc "D:\path\to\ISCC.e
 
 `installer\build.ps1` 默认依次生成三个角色包；-Role 可只构建一个角色。详细组件矩阵、隔离值和 Docker 分轨发布策略见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)。
 
-旧六步构建表仅用于理解组件产物：
+角色构建按目标裁剪组件，主要产物如下：
 
 | 阶段 | 动作 | 产物 |
 |------|------|------|
 | 1 | app：`pnpm tauri build` | Tauri app exe/resources |
 | 2 | agent：PyInstaller | `agent\dist\data-watch-agent\` |
-| 3 | collector：PyInstaller | `collector\dist\data-watch-collector\` |
-| 4 | writer：PyInstaller | `writer\dist\data-watch-writer\` |
-| 5 | OPC DA proxy：.NET 4.8 x86 build | `OpcDaProxyService.exe` |
-| 6 | Inno ISCC | `installer\Output\DataWatch-Setup-<版本>.exe` |
+| 3 | Python 模块：按角色构建 Collector/Storage/Uploader/Ingest/Writer | 各模块 `dist\` 目录 |
+| 4 | OPC DA proxy：仅包含 Collector 的角色执行 .NET 4.8 x86 build | `OpcDaProxyService.exe` |
+| 5 | Inno ISCC | `installer\output\DataWatch-<Role>-Setup-<版本>.exe` |
 
 ### 8.2 Docker 镜像
 
@@ -542,9 +565,10 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 | 7070 | 中心式 Agent | 本机 `127.0.0.1`，中心式 App 调用 |
 | 7071 | 分布式边缘 Agent | 本机 `127.0.0.1`，Edge App 调用 |
 | 7072 | 分布式中心 Agent | 本机 `127.0.0.1`，Center App 调用 |
+| 7073 | Edge Storage | 分布式边缘本机 `127.0.0.1`，Collector/Uploader/Agent 调用 |
 | 8010 | Ingest | 分布式中心宿主机监听，nginx `/ingest/*` 代理目标 |
 | 8000 | backend | backend 直连端口 |
-| 8080 | frontend nginx | Web 入口，反代 `/api` 与 WS |
+| 8080 | frontend nginx | 分布式统一入口，承载 Web、`/api`、WS 与 `/ingest` |
 | 5173 | frontend dev | Vite 开发服务 |
 | 1420 | app dev | Tauri dev WebView origin |
 | 6379 | Redis | 实时缓存/Stream |
@@ -564,7 +588,7 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 | MySQL `device_watch` | mysqldump / 恢复，包含用户、菜单、设备点位配置 |
 | TDengine `device_data` | TDengine 官方导出/数据目录/volume 迁移 |
 | Redis | 实时缓存通常不迁移；如果 Stream 中还有未落库数据，先停采集并等 writer 消费完成 |
-| ProgramData | 边缘配置和日志；DPAPI 密文不可跨机解密，迁移后需重新配置密码 |
+| ProgramData | 角色配置、日志和边缘 `edge.db`/outbox；DPAPI 密文不可跨机解密，迁移后需重新配置密码 |
 
 ---
 
@@ -583,9 +607,10 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 
 - 桌面安装 Edge App，`DataWatchEdgeAgent` 服务监听本机端口 7071；
 - 首次引导生成 node_uuid/Ed25519 密钥并完成 center_url、enrollment code 注册；
-- Edge App 的本机设备、采集状态、离线积压通过 localhost Edge Agent API 可查看，中心断网时仍可用；
-- App 可启动/停止 Edge Collector 和 Uploader，安装目录中不包含 Writer、Backend、MySQL、Redis 或 TDengine；
-- Collector 采集结果先落 SQLite outbox，Uploader 恢复联网后严格按序追赶；
+- Edge App 的本机设备、采集状态、Storage 状态、离线积压通过 localhost Edge Agent API 可查看，中心断网时仍可用；
+- App 可管控 Edge Collector、Storage 和 Uploader，安装目录中不包含 Writer、Backend、MySQL、Redis 或 TDengine；
+- Collector 采集结果经 Storage 先落 SQLite outbox，Uploader 恢复联网后严格按序追赶；
+- Storage `writer_queue_depth` 不持续增长，`errors_total` 无异常增加，`commit_p99_ms` 满足本机采集节拍；
 - OPC DA 场景下 proxy 自动启动且真实点位刷新；
 - 中心节点页可看到心跳、配置修订、积压、磁盘水位和累计丢弃数。
 

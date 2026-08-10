@@ -231,7 +231,7 @@ sequenceDiagram
 - Perspective 保护：会话数/TTL/查询点数/范围/记录数等上限；
 - 运行：`app_name`、`log_level`、`auth_auto_bootstrap`。
 
-运行时为 free-threaded Python 3.14t，`PYTHONPATH` 含 `.py314t-site`，经 uvicorn 启动。详见《05-运维部署》。
+运行时为 free-threaded Python 3.14t，`PYTHONPATH` 含 `.py314t-site`，经 uvicorn 启动。详见《04-运维部署》。
 
 ---
 

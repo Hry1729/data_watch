@@ -348,7 +348,7 @@ flowchart TD
 1. **运行参数**：`config/settings.toml`（或 `COLLECTOR_CONFIG`）——日志、Redis/MySQL 连接、扫描与池参数、`interface_ingest`、`enable_fake_bootstrap` 等。
 2. **设备与点位拓扑**：以 **MySQL 为准**，启动时由 `ConfigDBManager.load_config` 加载并**覆盖** TOML 中的 devices/variables。
 
-数据库凭据为单一来源，由 agent 经环境变量（`DATAWATCH_<DB>_<FIELD>`）注入；settings.toml 仅作开发期回退。详见《03-数据与契约/数据库/MySQL结构与字段》与《05-运维部署》。
+数据库凭据为单一来源，由 agent 经环境变量（`DATAWATCH_<DB>_<FIELD>`）注入；settings.toml 仅作开发期回退。详见《03-数据与契约/数据库/MySQL结构与字段》与《04-运维部署》。
 
 命令行：`--dry-run`（只做配置预检，输出设备/点位/合并块统计，不启动采集）、`--config`、`--runtime-dir`、`--port-mapping`。
 

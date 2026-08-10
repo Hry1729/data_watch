@@ -8,10 +8,10 @@
 
 ## 阅读路径
 
-- **第一次了解项目**：先读《01-总体设计/系统架构总览》建立全局认知，再读《01-总体设计/架构决策记录》理解关键取舍。
+- **第一次了解项目**：先读《01-总体设计/系统架构总览》建立全局认知；涉及分布式部署时继续读《01-总体设计/分布式系统技术架构》和《01-总体设计/分布式部署架构方案》；最后读《01-总体设计/架构决策记录》理解关键取舍。
 - **改某个模块**：读该模块目录下的 `README.md` + 同目录深度专题 + 相关《03-数据与契约》篇。
 - **改跨模块接口/数据**：以《03-数据与契约》为准。
-- **部署/发版/排障**：见《05-运维部署》，排障优先读《05-运维部署/问题排查》。
+- **部署/发版/排障**：见《04-运维部署》，排障优先读《04-运维部署/问题排查》。
 
 ---
 
@@ -21,6 +21,8 @@
 
 ### 01 总体设计
 - [系统架构总览](01-总体设计/系统架构总览.md) — 全局架构、数据流、模块协作、部署拓扑、设计决策摘要
+- [分布式系统技术架构](01-总体设计/分布式系统技术架构.md) — 三角色边界、控制面/数据面/查询面、关键技术架构与工程创新点
+- [分布式部署架构方案](01-总体设计/分布式部署架构方案.md) — 分布式契约基线、失败语义、容量口径与阶段实施记录
 - [架构决策记录](01-总体设计/架构决策记录.md) — 核心架构决策（背景、决策、放弃方案、后果）
 
 ### 02 模块设计（一个模块一个目录）
@@ -29,6 +31,8 @@
   - [外置驱动包制作指南](02-模块设计/collector/外置驱动包制作指南.md) — ZIP 清单、打包、安装与升级
 - [writer 入库端](02-模块设计/writer/README.md) — Stream 消费、TDengine 批写、二分降级、DLQ
   - [可靠入库与 TDengine 写入](02-模块设计/writer/可靠入库与TDengine写入.md)
+- [edge 边缘运行时](02-模块设计/edge/边缘运行时实现说明.md) — Storage 单写者、SQLite outbox、Uploader、配置快照与本地兜底
+- [ingest 中心汇聚端](02-模块设计/ingest/Central%20Ingest实现说明.md) — 节点认证、会话围栏、Redis 原子接纳与逐项 ACK
 - [backend 中心后端](02-模块设计/backend/README.md) — TurboAPI、鉴权权限、实时/历史两通道、三数据源
   - [服务分层与实时历史通道](02-模块设计/backend/服务分层与实时历史通道.md)
 - [agent 边缘代理](02-模块设计/agent/README.md) — 进程管控、DPAPI 凭据、双根路径、bootstrap
@@ -48,9 +52,12 @@
   - [Redis 结构与字段](03-数据与契约/数据库/Redis结构与字段.md) — latest/window/stream/dlq key 与字段
   - [TDengine 结构与字段](03-数据与契约/数据库/TDengine结构与字段.md) — `device_data` 时序库、超级表/子表/列规则
 
-### 05 运维部署
-- [运维部署总览](05-运维部署/README.md) — 运行环境、开发启动、中心镜像部署、边缘安装包、发版与验收
-- [问题排查](05-运维部署/问题排查.md) — Web/API/WS/agent/collector/writer/OPC DA 常见故障定位
+### 04 运维部署
+- [运维部署总览](04-运维部署/README.md) — 运行环境、开发启动、中心镜像部署、三角色安装包、发版与验收
+- [三角色安装包构建与隔离](04-运维部署/三角色安装包构建与隔离.md) — 角色裁剪、包体边界与并存隔离
+- [三角色安装包验收清单](04-运维部署/三角色安装包验收清单.md) — 安装、角色、断网恢复和端到端验收
+- [Ingest 容量压测](04-运维部署/Ingest容量压测.md) — 稳态吞吐、P99 和上线门禁
+- [问题排查](04-运维部署/问题排查.md) — Web/API/WS/Agent/Collector/Storage/Uploader/Ingest/Writer 常见故障定位
 
 ---
 
@@ -58,17 +65,25 @@
 
 ```mermaid
 flowchart LR
-    PLC[(PLC/OPC)] --> COL[collector]
-    COL --> RDS[(Redis)]
-    RDS --> WR[writer]
+    PLC[(PLC / OPC)] --> COL[Collector]
+    COL -->|中心式| RDS[(Redis)]
+    COL -->|分布式边缘| EST[Edge Storage]
+    EST --> EDB[(SQLite outbox)]
+    EDB --> UP[Uploader]
+    UP --> NG[nginx 统一入口]
+    NG --> ING[Ingest]
+    ING --> RDS
+    RDS --> WR[Writer]
     WR --> TD[(TDengine)]
-    WR --> MY[(MySQL)]
-    RDS --> BE[backend]
+    RDS --> BE[Backend]
     TD --> BE
-    MY --> BE
-    BE --> FE[frontend Web]
-    BE --> APP[app 桌面]
-    AG[agent] --> COL
+    MY[(MySQL)] --> BE
+    BE --> FE[Frontend Web]
+    BE --> APP[App 桌面]
+    AG[Agent] --> COL
+    AG --> EST
+    AG --> UP
+    AG --> ING
     AG --> WR
     APP --> AG
 ```

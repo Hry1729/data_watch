@@ -301,7 +301,7 @@ location /api/device-monitor/ws/ {
 
 ## 相关文档
 
-- [backend 服务分层与实时历史通道](../02-模块设计/backend/服务分层与实时历史通道.md)
-- [frontend 页面权限与实时历史设计](../02-模块设计/frontend/页面权限与实时历史设计.md)
-- [Redis 流与点位分组](Redis流与点位分组.md)
-- [运维部署](../05-运维部署/README.md)
+- [backend 服务分层与实时历史通道](../../02-模块设计/backend/服务分层与实时历史通道.md)
+- [frontend 页面权限与实时历史设计](../../02-模块设计/frontend/页面权限与实时历史设计.md)
+- [Redis 结构与字段](../数据库/Redis结构与字段.md)
+- [运维部署](../../04-运维部署/README.md)
