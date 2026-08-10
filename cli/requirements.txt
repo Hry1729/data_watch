@@ -1,0 +1,7 @@
+httpx>=0.27,<1
+keyring>=25,<26
+openpyxl>=3.1,<4
+pywin32>=311; sys_platform == "win32"
+rich>=13.7,<15
+typer>=0.16,<1
+websockets>=14,<18

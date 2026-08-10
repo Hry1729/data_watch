@@ -10,9 +10,9 @@ ROWS = [
     {
         "point_id": 11,
         "device_id": 1,
-        "device_code": "PLC001",
-        "device_name": "桥吊一号",
-        "device_group_name": "码头桥吊",
+        "device_code": "QC100",
+        "device_name": "QC100",
+        "device_group_name": "桥吊作业区",
         "device_type_name": "桥吊",
         "var_seq": 101,
         "point_name": "CraneID",
@@ -26,10 +26,10 @@ ROWS = [
     {
         "point_id": 22,
         "device_id": 2,
-        "device_code": "PLC002",
-        "device_name": "桥吊二号",
-        "device_group_name": "码头桥吊",
-        "device_type_name": "桥吊",
+        "device_code": "ASC701L",
+        "device_name": "ASC701L",
+        "device_group_name": "轨道吊作业区",
+        "device_type_name": "轨道吊",
         "var_seq": 101,
         "point_name": "CraneIdentifier",
         "io_address": "I101",
@@ -73,12 +73,12 @@ async def test_exact_business_name_wins_over_contains_match() -> None:
 async def test_io_address_requires_device_hint_when_ambiguous() -> None:
     ambiguous = await PointResolverService(FakeSession()).search("I101")
     narrowed = await PointResolverService(FakeSession()).search(
-        "I101", device_hint="桥吊二号"
+        "I101", device_hint="asc701l"
     )
 
     assert ambiguous["bestMatchCount"] == 2
     assert narrowed["bestMatchCount"] == 1
-    assert narrowed["items"][0]["deviceName"] == "桥吊二号"
+    assert narrowed["items"][0]["deviceName"] == "ASC701L"
     assert narrowed["items"][0]["pointId"] == 22
 
 
