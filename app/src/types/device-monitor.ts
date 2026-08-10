@@ -90,6 +90,7 @@ export interface PointListItem {
   driverName: string;
   createTime?: string;
   updateTime?: string;
+  pointStatus: "enabled" | "disabled";
 }
 
 export interface PointDeviceTreeNode {

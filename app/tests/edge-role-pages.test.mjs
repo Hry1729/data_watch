@@ -48,6 +48,7 @@ test("edge build exposes console, overview, collector, uplink, and settings rout
   assert.ok(navigation.includes('label: "控制台", path: "/edge/console"'));
   assert.ok(navigation.includes('label: "运行总览", path: "/edge/operations"'));
   assert.ok(navigation.includes('label: "采集监控", path: "/edge/collector"'));
+  assert.ok(navigation.includes('label: "存储监控", path: "/edge/storage"'));
   assert.ok(navigation.includes('label: "上行监控", path: "/edge/uploader"'));
   assert.ok(navigation.includes('label: "数据采集"'));
   assert.ok(access.includes('["/edge/console", "/settings"]'));
@@ -103,6 +104,9 @@ test("edge console owns controls and exposes collector and uplink trends", () =>
   assert.ok(consolePage.includes('title="本地采集入队趋势"'));
   assert.ok(consolePage.includes('title="中心确认上行趋势"'));
   assert.ok(consolePage.includes("<ModuleSummaryCard"));
+  assert.ok(consolePage.includes('className="grid grid-cols-2 gap-4"'));
+  assert.ok(consolePage.includes("style={{ maxWidth: 1400 }}"));
+  assert.ok(!consolePage.includes("        compact"));
 });
 
 test("edge monitor pages match writer layout without module header cards", () => {
@@ -111,6 +115,9 @@ test("edge monitor pages match writer layout without module header cards", () =>
   assert.ok(modules.includes('title="本地采集入队趋势"'));
   assert.ok(modules.includes('title="中心确认上行趋势"'));
   assert.ok(modules.includes("useWebSocketLog(name)"));
+  assert.ok(modules.includes("snapshot.data?.fastest_point_scan_rate_ms"));
+  assert.ok(modules.includes("设备默认周期"));
+  assert.ok(operations.includes("设备默认周期"));
   assert.ok(modules.includes("outbox?.counts.inflight"));
   assert.ok(modules.includes("grid-rows-[300px_minmax(0,1fr)]"));
   assert.ok(!modules.includes("配置修订 {snapshot.data"));

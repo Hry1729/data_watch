@@ -17,6 +17,7 @@ export const DISTRIBUTED_CENTER_ALWAYS_PATHS = [
 const EDGE_ALWAYS_PATHS = [
   "/edge/operations",
   "/edge/collector",
+  "/edge/storage",
   "/edge/uploader",
   "/device/points",
   "/device/realtime",

@@ -297,6 +297,7 @@ PERMISSION_SEEDS = [
     PermissionSeed("device_monitor:realtime:view", "实时监控查看", "page", "RealtimeMonitor", "device_monitor:realtime:view", sort=50),
     PermissionSeed("device_monitor:realtime:subscribe", "实时监控订阅", "action", "RealtimeMonitor", "device_monitor:realtime:subscribe", sort=51),
     PermissionSeed("device_monitor:realtime:refresh", "实时监控刷新", "action", "RealtimeMonitor", "device_monitor:realtime:refresh", sort=52),
+    PermissionSeed("device_monitor:collector_config:update", "采集配置编辑", "action", "RealtimeMonitor", "device_monitor:collector_config:update", sort=53),
     PermissionSeed("device_monitor:history:view", "历史数据查看", "page", "HistoryData", "device_monitor:history:view", sort=60),
     PermissionSeed("device_monitor:history:export", "历史数据导出", "action", "HistoryData", "device_monitor:history:export", sort=61),
     PermissionSeed("device_monitor:log:view", "系统日志查看", "page", "SystemLog", "device_monitor:log:view", sort=70),

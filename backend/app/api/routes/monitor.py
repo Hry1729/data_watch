@@ -11,6 +11,7 @@ from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
 from app.services.monitor import MonitorService
+from app.services.point_resolver import PointResolverService
 from app.services.ws_push import get_ws_manager
 
 
@@ -29,6 +30,29 @@ async def monitor_device_tree(
         data = await service.get_device_tree()
         return success_response(data=data)
 
+
+@router.get("/api/device-monitor/monitor/point-resolve")
+async def monitor_point_resolve(
+    query: str,
+    deviceHint: str | None = None,
+    limit: int = 20,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(
+        credentials,
+        {
+            "device_monitor:monitor:view",
+            "device_monitor:realtime:view",
+            "device_monitor:history:view",
+            "device_monitor:point:view",
+        },
+    )
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        data = await PointResolverService(session).search(
+            query, device_hint=deviceHint, limit=limit
+        )
+        return success_response(data=data)
 
 @router.get("/api/device-monitor/monitor/realtime-init")
 async def monitor_realtime_init(

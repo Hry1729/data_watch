@@ -7,8 +7,7 @@ import signal
 import sys
 from pathlib import Path
 
-from edge.app.outbox import OutboxStore
-from edge.app.paths import edge_database_path
+from edge.app.storage_client import EdgeStorageClient
 from edge.app.uploader import (
     RequestSigner,
     SingleInstanceLock,
@@ -65,7 +64,7 @@ def _positive_int_env(name: str, default: int) -> int:
 
 async def main() -> int:
     settings, signer = settings_from_env()
-    store = OutboxStore(edge_database_path())
+    store = EdgeStorageClient()
     uploader = Uploader(store, settings, signer=signer)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

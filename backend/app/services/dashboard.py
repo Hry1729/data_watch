@@ -15,6 +15,7 @@ from app.core.exceptions import ApiError
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import format_local_datetime, now_local, parse_local_datetime
 from app.db.tdengine import TDengineClient
+from app.services.device_activity import fetch_latest_collect_times
 
 logger = logging.getLogger("backend.dashboard")
 
@@ -119,7 +120,14 @@ def build_edge_pipeline_health(
 ) -> dict[str, Any]:
     checked_at = now or now_local()
     collector_levels = [
-        _edge_module_level(row, "collector", now=checked_at) for row in rows
+        max(
+            (
+                _edge_module_level(row, "collector", now=checked_at),
+                _edge_module_level(row, "storage", now=checked_at),
+            ),
+            key={"healthy": 0, "warning": 1, "critical": 2}.get,
+        )
+        for row in rows
     ]
     uploader_levels = [
         _edge_module_level(row, "uploader", now=checked_at) for row in rows
@@ -142,7 +150,7 @@ class DashboardService:
         result = await self.session.execute(
             text(
                 """
-                SELECT collector_status, uploader_status, last_seen_at,
+                SELECT collector_status, storage_status, uploader_status, last_seen_at,
                        outbox_watermark
                 FROM sys_node
                 WHERE status = 'approved'
@@ -1114,12 +1122,21 @@ class DashboardService:
         if not devices:
             return {}
 
+        redis_times, _redis_connected = await fetch_latest_collect_times(
+            device.device_code for device in devices
+        )
+        missing_devices = [
+            device for device in devices if device.device_code not in redis_times
+        ]
+        if not missing_devices:
+            return redis_times
+
         database_name = self._resolve_current_tdengine_database()
 
         # 按设备类型分组：一种类型查一次超级表（GROUP BY tbname），避免逐设备直查可能不存在的子表，
         # 导致 TDengine 服务端对每个缺失子表刷 "Table does not exist" 错误日志。
         devices_by_type: dict[str, list[DashboardDeviceItem]] = {}
-        for device in devices:
+        for device in missing_devices:
             raw_type = (device.device_type_code or "").strip()
             if not raw_type:
                 continue
@@ -1143,8 +1160,8 @@ class DashboardService:
                 continue
             last_ts_by_table.update(result)
 
-        out: dict[str, datetime] = {}
-        for device in devices:
+        out: dict[str, datetime] = dict(redis_times)
+        for device in missing_devices:
             tbname = self._resolve_current_child_table_name(device.device_code)
             latest_time = last_ts_by_table.get(tbname)
             if latest_time is not None:

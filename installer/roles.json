@@ -21,7 +21,7 @@
       "agentPort": 7071,
       "installDir": "DataWatch Edge",
       "outputName": "DataWatch-Edge-Setup",
-      "components": ["edge-app", "edge-agent", "edge-collector", "uploader", "sqlite", "opcda-sidecars"]
+      "components": ["edge-app", "edge-agent", "edge-storage", "edge-collector", "uploader", "sqlite", "opcda-sidecars"]
     },
     "distributed-center": {
       "displayName": "Data Watch 分布式中心",

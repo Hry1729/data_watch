@@ -8,6 +8,7 @@ import {
   Database,
   FileText,
   Gauge,
+  HardDrive,
   HardDriveDownload,
   History,
   LayoutDashboard,
@@ -107,6 +108,7 @@ const edgeNavigationGroups = [
     icon: Database,
     items: [
       { label: "采集监控", path: "/edge/collector", icon: Radio, kind: "existing" },
+      { label: "存储监控", path: "/edge/storage", icon: HardDrive, kind: "existing" },
       { label: "上行监控", path: "/edge/uploader", icon: Upload, kind: "existing" },
     ],
   },
@@ -135,7 +137,7 @@ const hiddenPathsByRole = {
 
 export function isRouteEnabled(path: string): boolean {
   if (BUILD_ROLE === "edge") {
-    return ["/edge/console", "/edge/operations", "/edge/collector", "/edge/uploader", "/device/points", "/device/realtime", "/device/history"].includes(path);
+    return ["/edge/console", "/edge/operations", "/edge/collector", "/edge/storage", "/edge/uploader", "/device/points", "/device/realtime", "/device/history"].includes(path);
   }
   return !hiddenPathsByRole[BUILD_ROLE].has(path);
 }

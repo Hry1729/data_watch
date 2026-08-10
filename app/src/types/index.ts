@@ -19,7 +19,7 @@ export interface AuthStore {
 }
 
 // 模块运行状态
-export type ModuleName = 'collector' | 'writer' | 'ingest' | 'uploader';
+export type ModuleName = 'collector' | 'writer' | 'ingest' | 'uploader' | 'storage';
 export type ModuleStatusValue = 'running' | 'stopped' | 'crashed' | 'unknown';
 export interface ModuleStatus {
   name: ModuleName;

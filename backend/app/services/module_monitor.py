@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
-import json
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.time_utils import LOCAL_TZ, to_local_naive
+from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
+from app.core.time_utils import now_local
 from app.core.writer_group import get_writer_group_name
 from app.db.redis import get_redis_client
-
-
-DEFAULT_POINT_GROUP_CODE = "g001"
+from app.services.device_activity import fetch_latest_collect_times
 
 
 class ModuleMonitorService:
@@ -24,8 +21,8 @@ class ModuleMonitorService:
 
     async def get_collector_metrics(self) -> dict[str, Any]:
         rows = await self._fetch_device_aggregates()
-        last_times = await asyncio.gather(
-            *(self._device_last_collect_time(str(row["device_code"])) for row in rows)
+        last_time_map, _redis_connected = await fetch_latest_collect_times(
+            str(row["device_code"]) for row in rows
         )
 
         tasks: list[dict[str, Any]] = []
@@ -33,8 +30,9 @@ class ModuleMonitorService:
         point_total = 0
         scan_rates: list[int] = []
 
-        for row, last_time in zip(rows, last_times, strict=True):
-            connect_status = self._connect_status_from_raw(int(row["device_status"] or 0))
+        for row in rows:
+            last_time = last_time_map.get(str(row["device_code"]))
+            connect_status = self._connect_status(last_time)
             if connect_status == "online":
                 online_devices += 1
 
@@ -64,6 +62,48 @@ class ModuleMonitorService:
             "totalDevices": len(rows),
             "pointTotal": point_total,
             "tasks": tasks,
+        }
+
+    async def get_device_statuses(self) -> dict[str, Any]:
+        rows = await self._fetch_device_status_rows()
+        last_time_map, activity_connected = await fetch_latest_collect_times(
+            str(row["device_code"]) for row in rows
+        )
+
+        items: list[dict[str, Any]] = []
+        counts = {"online": 0, "unstable": 0, "offline": 0, "unknown": 0}
+        status_source = (
+            "collector_metrics" if activity_connected else "collector_metrics_unavailable"
+        )
+        for row in rows:
+            device_code = str(row["device_code"])
+            last_time = last_time_map.get(device_code)
+            connect_status = (
+                self._connect_status(last_time) if activity_connected else "unknown"
+            )
+            counts[connect_status] += 1
+            items.append(
+                {
+                    "deviceId": int(row["device_id"]),
+                    "deviceCode": device_code,
+                    "deviceName": str(row["device_name"] or device_code),
+                    "deviceStatus": "enabled" if int(row["enable"] or 0) == 1 else "disabled",
+                    "connectStatus": connect_status,
+                    "lastCollectTime": self._format_datetime(last_time),
+                    "groupName": str(row["group_name"] or ""),
+                    "protocol": str(row["protocol"] or ""),
+                    "statusSource": status_source,
+                }
+            )
+
+        return {
+            "totalDevices": len(items),
+            "onlineDevices": counts["online"],
+            "unstableDevices": counts["unstable"],
+            "offlineDevices": counts["offline"],
+            "unknownDevices": counts["unknown"],
+            "statusSource": status_source,
+            "items": items,
         }
 
     async def get_writer_metrics(self) -> dict[str, Any]:
@@ -137,6 +177,28 @@ class ModuleMonitorService:
             "streams": streams,
         }
 
+    async def _fetch_device_status_rows(self) -> list[dict[str, Any]]:
+        rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT
+                        d.id AS device_id,
+                        d.device_code AS device_code,
+                        COALESCE(d.device_name, d.device_code) AS device_name,
+                        COALESCE(d.enable, 0) AS enable,
+                        COALESCE(dg.group_name, '') AS group_name,
+                        COALESCE(cp.protocol, '') AS protocol
+                    FROM device AS d
+                    LEFT JOIN device_group AS dg ON dg.id = d.group_id
+                    LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+                    ORDER BY d.id ASC
+                    """
+                )
+            )
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
     async def _fetch_device_aggregates(self) -> list[dict[str, Any]]:
         rows = (
             await self.session.execute(
@@ -149,7 +211,6 @@ class ModuleMonitorService:
                         COALESCE(d.device_name, d.device_code) AS device_name,
                         COALESCE(dg.group_name, '') AS group_name,
                         COALESCE(cp.protocol, '') AS protocol,
-                        d.status AS device_status,
                         MIN(
                             CASE
                                 WHEN dv.enable = 1 AND dv.deleted = 0
@@ -173,36 +234,14 @@ class ModuleMonitorService:
         ).mappings().all()
         return [dict(row) for row in rows]
 
-    async def _device_last_collect_time(self, device_code: str) -> datetime | None:
-        """读 rt:latest:{device_code}:g001 Hash，取各点位最大时间戳。"""
-        try:
-            r = await get_redis_client()
-            key = f"rt:latest:{device_code}:{DEFAULT_POINT_GROUP_CODE}"
-            raw = await r.hgetall(key)
-        except Exception:
-            return None
-
-        max_ts_ms: float | None = None
-        for json_str in raw.values():
-            try:
-                entry = json.loads(json_str)
-            except Exception:
-                continue
-            ts_ms = entry.get("t")
-            if isinstance(ts_ms, (int, float)):
-                if max_ts_ms is None or ts_ms > max_ts_ms:
-                    max_ts_ms = ts_ms
-
-        if max_ts_ms is None:
-            return None
-        return to_local_naive(datetime.fromtimestamp(max_ts_ms / 1000, tz=LOCAL_TZ))
-
     @staticmethod
-    def _connect_status_from_raw(raw_status: int) -> str:
-        """与 monitor.MonitorService._build_connect_status_from_raw 同口径：device.status 1=online 2=unstable 其余 offline。"""
-        if raw_status == 1:
+    def _connect_status(last_collect_time: datetime | None) -> str:
+        if last_collect_time is None:
+            return "offline"
+        age_seconds = max(0.0, (now_local() - last_collect_time).total_seconds())
+        if age_seconds <= ONLINE_MAX_AGE_SECONDS:
             return "online"
-        if raw_status == 2:
+        if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
             return "unstable"
         return "offline"
 

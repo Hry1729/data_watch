@@ -112,6 +112,7 @@ class AuthService:
     async def get_user_info(self, authorization: str | None) -> dict[str, Any]:
         principal = await self.resolve_principal(authorization)
         buttons = await self._fetch_user_auth_marks(principal["user_id"])
+        permissions = await self.fetch_user_permission_codes(principal["user_id"])
         return {
             "userId": principal["user_id"],
             "userName": principal["user_name"],
@@ -119,6 +120,7 @@ class AuthService:
             "avatar": principal["avatar"],
             "roles": principal["roles"],
             "buttons": buttons,
+            "permissions": permissions,
         }
 
     async def change_password(self, authorization: str | None, payload: ChangePasswordPayload) -> bool:

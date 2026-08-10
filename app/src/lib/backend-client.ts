@@ -136,6 +136,7 @@ export interface BackendClient {
   deviceList(token: string, query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
   createDevice(token: string, payload: DeviceForm): Promise<{ id: number }>;
   updateDevice(token: string, id: number, payload: DeviceForm): Promise<unknown>;
+  updateDeviceStatus(token: string, id: number, enabled: boolean): Promise<unknown>;
   deleteDevice(token: string, id: number): Promise<unknown>;
   batchDeleteDevices(token: string, ids: number[]): Promise<{ count: number }>;
   exportDevices(token: string, query: DeviceListQuery, template?: boolean): Promise<{ bytes: number[]; fileName: string }>;
@@ -144,6 +145,7 @@ export interface BackendClient {
   pointList(token: string, query: PointListQuery): Promise<PaginatedResult<PointListItem>>;
   createPoint(token: string, payload: PointForm): Promise<{ id: number }>;
   updatePoint(token: string, id: number, payload: PointForm): Promise<unknown>;
+  updatePointStatus(token: string, id: number, enabled: boolean, locator?: { deviceId?: number; varSeq?: number }): Promise<unknown>;
   deletePoint(token: string, id: number): Promise<unknown>;
   batchDeletePoints(token: string, ids: number[]): Promise<{ count: number }>;
   exportPoints(token: string, query: PointListQuery, template?: boolean): Promise<{ bytes: number[]; fileName: string }>;
@@ -252,15 +254,31 @@ async function backendFetch<T>(
   }
   const [status, text] = result;
   if (status === 401) throw { type: "unauthorized" } satisfies AppError;
-  if (status >= 500)
+  let json: { code?: number; msg?: string; data?: T };
+  try {
+    json = JSON.parse(text) as { code?: number; msg?: string; data?: T };
+  } catch {
+    if (status >= 400) {
+      throw {
+        type: "api_error",
+        status,
+        message: "后端服务异常",
+      } satisfies AppError;
+    }
     throw {
       type: "api_error",
       status,
-      message: "后端服务异常",
+      message: "后端响应格式异常",
     } satisfies AppError;
-
-  const json = JSON.parse(text) as { code?: number; msg?: string; data?: T };
+  }
   if (json.code === 401) throw { type: "unauthorized" } satisfies AppError;
+  if (status >= 400) {
+    throw {
+      type: "api_error",
+      status: json.code ?? status,
+      message: json.msg || "后端服务异常",
+    } satisfies AppError;
+  }
   if (json.code !== undefined && json.code !== 200) {
     throw {
       type: "api_error",
@@ -521,6 +539,9 @@ const realBackend: BackendClient = {
   updateDevice(token, id, payload) {
     return backendFetch("PUT", `/api/device-monitor/device/${id}`, payload, token);
   },
+  updateDeviceStatus(token, id, enabled) {
+    return backendFetch("PATCH", `/api/device-monitor/device/${id}/status`, { enabled }, token);
+  },
   deleteDevice(token, id) {
     return backendFetch("DELETE", `/api/device-monitor/device/${id}`, undefined, token);
   },
@@ -544,6 +565,18 @@ const realBackend: BackendClient = {
   },
   updatePoint(token, id, payload) {
     return backendFetch("PUT", `/api/device-monitor/point/${id}`, payload, token);
+  },
+  updatePointStatus(token, id, enabled, locator = {}) {
+    const suffix = toQuery({
+      locatorDeviceId: locator.deviceId,
+      locatorVarSeq: locator.varSeq,
+    });
+    return backendFetch(
+      "PATCH",
+      `/api/device-monitor/point/${id}/status${suffix ? `?${suffix}` : ""}`,
+      { enabled },
+      token,
+    );
   },
   deletePoint(token, id) {
     return backendFetch("DELETE", `/api/device-monitor/point/${id}`, undefined, token);
@@ -716,6 +749,7 @@ export const backendClient: BackendClient = {
   async deviceList(token, query) { const c = await _implPromise; return c.deviceList(token, query); },
   async createDevice(token, payload) { const c = await _implPromise; return c.createDevice(token, payload); },
   async updateDevice(token, id, payload) { const c = await _implPromise; return c.updateDevice(token, id, payload); },
+  async updateDeviceStatus(token, id, enabled) { const c = await _implPromise; return c.updateDeviceStatus(token, id, enabled); },
   async deleteDevice(token, id) { const c = await _implPromise; return c.deleteDevice(token, id); },
   async batchDeleteDevices(token, ids) { const c = await _implPromise; return c.batchDeleteDevices(token, ids); },
   async exportDevices(token, query, template) { const c = await _implPromise; return c.exportDevices(token, query, template); },
@@ -724,6 +758,7 @@ export const backendClient: BackendClient = {
   async pointList(token, query) { const c = await _implPromise; return c.pointList(token, query); },
   async createPoint(token, payload) { const c = await _implPromise; return c.createPoint(token, payload); },
   async updatePoint(token, id, payload) { const c = await _implPromise; return c.updatePoint(token, id, payload); },
+  async updatePointStatus(token, id, enabled, locator) { const c = await _implPromise; return c.updatePointStatus(token, id, enabled, locator); },
   async deletePoint(token, id) { const c = await _implPromise; return c.deletePoint(token, id); },
   async batchDeletePoints(token, ids) { const c = await _implPromise; return c.batchDeletePoints(token, ids); },
   async exportPoints(token, query, template) { const c = await _implPromise; return c.exportPoints(token, query, template); },

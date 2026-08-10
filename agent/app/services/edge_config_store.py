@@ -84,6 +84,7 @@ class EdgeConfigStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
 
     def revision(self) -> int:
         with self._connect() as connection:
@@ -180,13 +181,17 @@ class EdgeConfigStore:
             _refresh_schedule(connection, now)
             connection.commit()
 
+    def _initialize(self) -> None:
+        with sqlite3.connect(self.path, timeout=5) as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.executescript(SCHEMA)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
         connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=5000")
-        connection.executescript(SCHEMA)
         return connection
 
 

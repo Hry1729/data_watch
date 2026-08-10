@@ -11,7 +11,11 @@ export interface DistributedNode {
   outboxDroppedRecords: number;
   keyVersion: number;
   collectorStatus: string;
+  storageStatus: string;
   uploaderStatus: string;
+  storageQueueDepth: number;
+  storageCommitP99Ms: number;
+  storageErrorsTotal: number;
   clockSkewMs: number;
   clockAnomaly: boolean;
   assignmentCount: number;

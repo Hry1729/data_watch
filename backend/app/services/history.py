@@ -20,10 +20,8 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
 from app.core.time_utils import LOCAL_TZ, parse_local_datetime, to_local_naive
 from app.db.tdengine import TDengineClient
-from app.services.health import check_tdengine_health
 from app.services.perspective import get_perspective_session_manager
 from app.services.task_manager import get_export_task_manager
-
 
 DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -65,10 +63,36 @@ class HistoryService:
         self.settings = settings or get_settings()
 
     async def _raise_if_tdengine_unavailable(self, context: str, device_code: str) -> None:
-        if await check_tdengine_health():
+        try:
+            database_name = self._resolve_current_tdengine_database()
+            stable_rows = await self.tdengine.fetch_all(
+                "SHOW STABLES",
+                database=database_name,
+            )
+            if stable_rows:
+                raw_stable_name = stable_rows[0][0]
+                stable_name = (
+                    raw_stable_name.decode("utf-8")
+                    if isinstance(raw_stable_name, bytes)
+                    else str(raw_stable_name)
+                )
+                qualified_stable = self.tdengine.qualify_table(database_name, stable_name)
+                await self.tdengine.fetch_all(
+                    f"SELECT ts FROM {qualified_stable} LIMIT 1",
+                    database=database_name,
+                )
             return
-        logger.error("[history] TDengine unavailable during %s device=%s", context, device_code)
-        raise ApiError(503, "历史数据源不可用", status_code=503)
+        except Exception as exc:
+            logger.error(
+                "[history] TDengine unavailable during %s device=%s: %s",
+                context,
+                device_code,
+                exc,
+            )
+            message = "历史数据源不可用"
+            if "license expired" in str(exc).lower():
+                message = "TDengine 许可证已过期，请部署社区版镜像后重试"
+            raise ApiError(503, message, status_code=503) from exc
 
     async def get_devices(self) -> list[dict[str, Any]]:
         """获取设备列表（带类型和分组信息）"""

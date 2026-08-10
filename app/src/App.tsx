@@ -96,6 +96,9 @@ const EdgeCollectorPage = __DATAWATCH_ROLE__ === "edge"
 const EdgeUploaderPage = __DATAWATCH_ROLE__ === "edge"
   ? lazy(() => import("@/pages/EdgeModulePages").then((module) => ({ default: module.EdgeUploaderPage })))
   : null;
+const EdgeStoragePage = __DATAWATCH_ROLE__ === "edge"
+  ? lazy(() => import("@/pages/EdgeModulePages").then((module) => ({ default: module.EdgeStoragePage })))
+  : null;
 const OverviewPage = __DATAWATCH_ROLE__ !== "edge"
   ? lazy(() => import("@/pages/OverviewPage").then((module) => ({ default: module.OverviewPage })))
   : null;
@@ -285,6 +288,9 @@ export default function App() {
               )}
               {EdgeUploaderPage && (
                 <Route path="/edge/uploader" element={<EdgeUploaderPage />} />
+              )}
+              {EdgeStoragePage && (
+                <Route path="/edge/storage" element={<EdgeStoragePage />} />
               )}
               {WorkbenchPage && (
                 <Route path="/dashboard/workbench" element={<WorkbenchPage />} />

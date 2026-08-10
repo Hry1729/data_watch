@@ -6,7 +6,9 @@ from ingest.app.migrations import (
     MappingBackfillBlocked,
     _BACKFILL_CHECKS,
     _CREATE_TABLES,
+    _acquire_migration_lock,
     _backfill_mapping,
+    _migration_is_current,
     _upgrade_sys_node,
 )
 
@@ -28,15 +30,40 @@ class FakeConnection:
 
 
 class FakeCursor:
-    def __init__(self, fetches: list[list[dict]]) -> None:
+    def __init__(
+        self,
+        fetches: list[list[dict]],
+        fetchone_rows: list[dict | None] | None = None,
+    ) -> None:
         self.fetches = list(fetches)
+        self.fetchone_rows = list(fetchone_rows or [])
         self.executed: list[str] = []
 
     async def execute(self, query: str, params=None) -> None:
         self.executed.append(" ".join(query.split()))
 
+    async def fetchone(self) -> dict | None:
+        return self.fetchone_rows.pop(0)
+
     async def fetchall(self) -> list[dict]:
         return self.fetches.pop(0)
+
+@pytest.mark.asyncio
+async def test_migration_lock_retries_after_one_wait_slice() -> None:
+    cursor = FakeCursor([], [{"acquired": 0}, {"acquired": 1}])
+
+    await _acquire_migration_lock(cursor)
+
+    get_lock_queries = [
+        query for query in cursor.executed if query.startswith("SELECT GET_LOCK")
+    ]
+    assert len(get_lock_queries) == 2
+
+@pytest.mark.asyncio
+async def test_current_migration_version_skips_repeat_work() -> None:
+    cursor = FakeCursor([], [{"version": 2}])
+
+    assert await _migration_is_current(cursor) is True
 
 
 @pytest.mark.asyncio
@@ -49,7 +76,6 @@ async def test_upgrade_adds_only_missing_sys_node_columns() -> None:
     assert all("ADD COLUMN previous_public_key_pem " not in query for query in alters)
     assert any("ADD COLUMN key_version " in query for query in alters)
     assert any("ADD COLUMN read_timeout_ms " in query for query in alters)
-
 
 @pytest.mark.asyncio
 async def test_backfill_promotes_when_all_checks_are_clean() -> None:
@@ -65,7 +91,6 @@ async def test_backfill_promotes_when_all_checks_are_clean() -> None:
         query.startswith("INSERT INTO point_storage_mapping (")
         for query in cursor.executed
     )
-
 
 @pytest.mark.asyncio
 async def test_backfill_blocks_and_retains_staging_on_difference() -> None:

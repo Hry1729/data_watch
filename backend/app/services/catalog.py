@@ -17,6 +17,7 @@ from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workb
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.tdengine import TDengineClient
+from app.services.device_activity import fetch_latest_collect_times
 
 logger = logging.getLogger("backend.catalog")
 
@@ -92,6 +93,7 @@ class PointCatalogItem:
     is_readonly: bool
     group_id: int | None
     td_column_name: str | None
+    enabled: bool
 
 
 class CatalogService:
@@ -660,6 +662,46 @@ class CatalogService:
 
         return {"id": device_id}
 
+    async def update_device_status(
+        self,
+        device_id: int,
+        *,
+        enabled: bool,
+        actor: str,
+    ) -> dict[str, int]:
+        if device_id <= 0:
+            raise ApiError(400, "deviceId must be a positive integer")
+        current = (
+            await self.session.execute(
+                text("SELECT COALESCE(enable, 0) FROM device WHERE id=:device_id LIMIT 1"),
+                {"device_id": device_id},
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            raise ApiError(404, "Device not found")
+        if bool(current) == enabled:
+            return {"id": device_id}
+        result = await self.session.execute(
+            text(
+                """
+                UPDATE device
+                SET enable=:enabled, update_user=:actor, update_time=NOW()
+                WHERE id=:device_id
+                """
+            ),
+            {
+                "device_id": device_id,
+                "enabled": int(enabled),
+                "actor": self._truncate_text(actor, 20),
+            },
+        )
+        if result.rowcount != 1:
+            await self.session.rollback()
+            raise ApiError(409, "Device status update conflict")
+        await self._bump_assigned_node_config_versions(device_id)
+        await self.session.commit()
+        return {"id": device_id}
+
     async def delete_device(self, device_id: int, *, actor: str) -> dict[str, int]:
         del actor
 
@@ -824,7 +866,8 @@ class CatalogService:
                             ELSE 1
                         END AS is_readonly,
                         d.group_id AS group_id,
-                        dv.td_column_name AS td_column_name
+                        dv.td_column_name AS td_column_name,
+                        COALESCE(dv.enable, 0) AS enabled
                     FROM device_variable AS dv
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
@@ -1538,6 +1581,81 @@ class CatalogService:
 
         return {"id": point_id}
 
+    async def update_point_status(
+        self,
+        point_id: int,
+        *,
+        enabled: bool,
+        actor: str,
+        locator_device_id: Any = None,
+        locator_var_seq: Any = None,
+    ) -> dict[str, int]:
+        locator = await self._resolve_point_locator(
+            point_id=point_id,
+            device_id=locator_device_id,
+            var_seq=locator_var_seq,
+        )
+        point_id = locator["point_id"]
+        row = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT device_id, point_group_id, COALESCE(enable, 0) AS enabled
+                    FROM device_variable
+                    WHERE id=:point_id AND COALESCE(deleted, 0)=0
+                    LIMIT 1
+                    """
+                ),
+                {"point_id": point_id},
+            )
+        ).mappings().first()
+        if row is None:
+            raise ApiError(404, "Point not found")
+        old_enabled = bool(row["enabled"])
+        if old_enabled == enabled:
+            return {"id": point_id}
+
+        await self.session.execute(
+            text(
+                """
+                UPDATE device_variable
+                SET enable=:enabled, update_user=:actor, update_time=NOW()
+                WHERE id=:point_id
+                """
+            ),
+            {
+                "point_id": point_id,
+                "enabled": int(enabled),
+                "actor": self._truncate_text(actor, 20),
+            },
+        )
+        point_group_id = row["point_group_id"]
+        if point_group_id is not None:
+            await self.session.execute(
+                text(
+                    """
+                    UPDATE device_point_group
+                    SET active_point_count=GREATEST(active_point_count + :active_delta, 0),
+                        disabled_point_count=GREATEST(disabled_point_count + :disabled_delta, 0)
+                    WHERE id=:point_group_id
+                    """
+                ),
+                {
+                    "point_group_id": int(point_group_id),
+                    "active_delta": 1 if enabled else -1,
+                    "disabled_delta": -1 if enabled else 1,
+                },
+            )
+            await self._mark_point_config_changed(
+                point_group_id=int(point_group_id),
+                device_id=int(row["device_id"]),
+                actor=actor,
+            )
+        else:
+            await self._bump_device_variable_config(int(row["device_id"]))
+        await self.session.commit()
+        return {"id": point_id}
+
     async def delete_point(
         self,
         point_id: int,
@@ -2134,7 +2252,8 @@ class CatalogService:
                             ELSE 1
                         END AS is_readonly,
                         d.group_id AS group_id,
-                        dv.td_column_name AS td_column_name
+                        dv.td_column_name AS td_column_name,
+                        COALESCE(dv.enable, 0) AS enabled
                     FROM device_variable AS dv
                     JOIN device AS d ON d.id = dv.device_id
                     LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
@@ -2184,6 +2303,7 @@ class CatalogService:
             is_readonly=bool(int(row["is_readonly"] or 0)),
             group_id=int(row["group_id"]) if row["group_id"] is not None else None,
             td_column_name=row.get("td_column_name") or None,
+            enabled=bool(int(row["enabled"] or 0)),
         )
 
     def _serialize_device_item(
@@ -2243,6 +2363,7 @@ class CatalogService:
             "scanRate": point.scan_rate,
             "isAlarm": point.is_alarm,
             "isStorage": point.is_storage,
+            "pointStatus": "enabled" if point.enabled else "disabled",
         }
 
     def _matches_basic_device_filters(
@@ -2589,12 +2710,21 @@ class CatalogService:
         if not devices:
             return {}
 
+        redis_times, _redis_connected = await fetch_latest_collect_times(
+            device.device_code for device in devices
+        )
+        missing_devices = [
+            device for device in devices if device.device_code not in redis_times
+        ]
+        if not missing_devices:
+            return redis_times
+
         database_name = self._resolve_current_tdengine_database()
 
         # 按设备类型分组：一种类型查一次超级表（GROUP BY tbname），避免逐设备直查可能不存在的子表，
         # 导致 TDengine 服务端对每个缺失子表刷 "Table does not exist" 错误日志。
         devices_by_type: dict[str, list[DeviceCatalogItem]] = {}
-        for device in devices:
+        for device in missing_devices:
             raw_type = (device.device_type_code or "").strip()
             if not raw_type:
                 continue
@@ -2618,8 +2748,8 @@ class CatalogService:
                 continue
             last_ts_by_table.update(result)
 
-        out: dict[str, datetime] = {}
-        for device in devices:
+        out: dict[str, datetime] = dict(redis_times)
+        for device in missing_devices:
             tbname = self._resolve_current_child_table_name(device.device_code)
             latest_time = last_ts_by_table.get(tbname)
             if latest_time is not None:

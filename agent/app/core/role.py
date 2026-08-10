@@ -8,7 +8,7 @@ BuildRole = Literal["centralized", "edge", "distributed-center"]
 _VALID_ROLES = {"centralized", "edge", "distributed-center"}
 _MODULES: dict[BuildRole, tuple[str, ...]] = {
     "centralized": ("collector", "writer"),
-    "edge": ("collector", "uploader"),
+    "edge": ("storage", "collector", "uploader"),
     "distributed-center": ("ingest", "writer"),
 }
 

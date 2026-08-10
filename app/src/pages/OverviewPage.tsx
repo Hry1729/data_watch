@@ -18,9 +18,7 @@ import {
 } from "@/hooks/useModuleStatus";
 import { useModuleRates, rateTrendState } from "@/hooks/useModuleRates";
 import { BUILD_ROLE } from "@/config/build-role";
-import type { ModuleName } from "@/types";
-
-type OverviewModuleName = Exclude<ModuleName, "uploader">;
+type OverviewModuleName = "collector" | "ingest" | "writer";
 
 // ─── 确认 Dialog 文案 ─────────────────────────────────────────────────────────
 

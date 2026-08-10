@@ -41,3 +41,19 @@ test("history matrix keeps the last submitted query instead of mixing current co
   assert.match(historySource, /const effectiveQuery = query \?\? lastQueryRef\.current\?\.query/);
   assert.match(historySource, /historyRawMatrix\(token, \{\s*\.\.\.effectiveQuery,/);
 });
+
+test("history chart covers the submitted range and supports brush zoom", () => {
+  assert.match(historySource, /parseHistoryTime/);
+  assert.match(historySource, /rangeStart/);
+  assert.match(historySource, /dataKey="time"[\s\S]*type="number"[\s\S]*domain=\{axisDomain\}/);
+  assert.match(historySource, /<Brush[\s\S]*onChange=\{handleBrushChange\}/);
+  assert.match(historySource, /submittedQuery/);
+  assert.match(historySource, /重置缩放/);
+});
+
+test("history failures preserve the backend diagnostic message", () => {
+  assert.match(clientSource, /status >= 400[\s\S]*message: json\.msg \|\| "后端服务异常"/);
+  assert.match(historySource, /function historyErrorMessage/);
+  assert.match(historySource, /historyErrorMessage\(reason, "历史数据查询失败"\)/);
+  assert.match(historySource, /historyErrorMessage\(reason, "历史数据矩阵加载失败"\)/);
+});

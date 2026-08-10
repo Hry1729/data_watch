@@ -7,12 +7,14 @@ def _node(
     *,
     now: datetime,
     collector: str = "running",
+    storage: str = "running",
     uploader: str = "running",
     watermark: str = "normal",
     stale: bool = False,
 ) -> dict:
     return {
         "collector_status": collector,
+        "storage_status": storage,
         "uploader_status": uploader,
         "outbox_watermark": watermark,
         "last_seen_at": now - timedelta(seconds=31 if stale else 5),
@@ -46,6 +48,17 @@ def test_edge_pipeline_health_warns_when_any_edge_is_abnormal() -> None:
     }
 
 
+def test_edge_pipeline_health_includes_storage_status() -> None:
+    now = datetime(2026, 8, 6, 12, 0, 0)
+    result = build_edge_pipeline_health(
+        [_node(now=now), _node(now=now, storage="stopped")],
+        now=now,
+    )
+
+    assert result["collector"]["status"] == "warning"
+    assert result["collector"]["criticalNodes"] == 1
+
+
 def test_edge_pipeline_health_is_critical_when_all_edges_are_unavailable() -> None:
     now = datetime(2026, 8, 6, 12, 0, 0)
     result = build_edge_pipeline_health(
@@ -77,4 +90,3 @@ def test_edge_pipeline_health_is_unknown_without_approved_edges() -> None:
     assert result["collector"]["status"] == "unknown"
     assert result["uploader"]["status"] == "unknown"
     assert result["collector"]["totalNodes"] == 0
-

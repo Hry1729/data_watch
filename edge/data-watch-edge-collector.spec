@@ -14,7 +14,7 @@ hiddenimports = [
     'drivers.opcda_center_driver',
     'drivers.opcua_driver',
 ]
-for package in ('snap7', 'cryptography', 'pymysql', 'aiomysql', 'msgspec'):
+for package in ('snap7', 'cryptography', 'pymysql', 'aiomysql', 'httpx', 'msgspec'):
     package_data, package_binaries, package_hidden = collect_all(package)
     datas += package_data
     binaries += package_binaries

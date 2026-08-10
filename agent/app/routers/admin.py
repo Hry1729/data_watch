@@ -132,6 +132,7 @@ def _collector_env() -> dict[str, str]:
             return {
                 "DATAWATCH_DATA_ROOT": str(root),
                 "DATAWATCH_EDGE_DB": str(root / "edge" / "edge.db"),
+                "DATAWATCH_EDGE_STORAGE_URL": _edge_storage_url(),
             }
         cfg = load_config()
         return {**_db_env(cfg, "mysql"), **_db_env(cfg, "redis")}
@@ -159,6 +160,7 @@ def _uploader_env() -> dict[str, str]:
     return {
         "DATAWATCH_DATA_ROOT": str(data_root()),
         "DATAWATCH_EDGE_DB": str(data_root() / "edge" / "edge.db"),
+        "DATAWATCH_EDGE_STORAGE_URL": _edge_storage_url(),
         "DATAWATCH_CENTER_URL": str(edge.get("center_url") or ""),
         "DATAWATCH_NODE_UUID": str(edge.get("node_uuid") or ""),
         "DATAWATCH_UPLOADER_PRIVATE_KEY_B64": encoded_key,
@@ -168,6 +170,28 @@ def _uploader_env() -> dict[str, str]:
         "DATAWATCH_OUTBOX_MAINTENANCE_SECONDS": str(
             edge.get("outbox_maintenance_seconds") or 60
         ),
+    }
+
+
+def _edge_storage_url() -> str:
+    cfg = load_config()
+    storage = cfg.get("storage") or {}
+    host = str(storage.get("host") or "127.0.0.1")
+    port = int(storage.get("port") or 7073)
+    return f"http://{host}:{port}"
+
+
+def _storage_env() -> dict[str, str]:
+    cfg = load_config()
+    storage = cfg.get("storage") or {}
+    runtime_dir = (cfg.get("agent") or {}).get("runtime_dir") or data_root() / "runtime"
+    return {
+        "DATAWATCH_DATA_ROOT": str(data_root()),
+        "DATAWATCH_EDGE_DB": str(data_root() / "edge" / "edge.db"),
+        "DATAWATCH_RUNTIME_DIR": str(runtime_dir),
+        "DATAWATCH_EDGE_STORAGE_HOST": str(storage.get("host") or "127.0.0.1"),
+        "DATAWATCH_EDGE_STORAGE_PORT": str(storage.get("port") or 7073),
+        "DATAWATCH_EDGE_STORAGE_QUEUE_CAPACITY": str(storage.get("queue_capacity") or 2048),
     }
 
 
@@ -195,10 +219,25 @@ def _process_env(name: str) -> dict[str, str] | None:
         "collector": _collector_env,
         "writer": _writer_env,
         "uploader": _uploader_env,
+        "storage": _storage_env,
         "ingest": _ingest_env,
     }
     factory = factories.get(name)
     return factory() if factory is not None else None
+
+
+async def _ensure_edge_storage(request: Request) -> None:
+    pm = request.app.state.pm
+    if "storage" not in pm.modules:
+        return
+    if pm.status("storage").status != "running":
+        await pm.start("storage", env=_storage_env())
+        request.app.state.log_manager.attach(
+            "storage",
+            pm.log_file("storage"),
+            asyncio.get_running_loop(),
+        )
+    await asyncio.to_thread(request.app.state.edge_storage.wait_ready)
 
 @router.post("/processes/{name}/start")
 async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
@@ -206,6 +245,12 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     _require_known(pm, name)
     if pm.status(name).status == "running":
         raise HTTPException(status_code=409, detail=f"{name} is already running")
+
+    if name in {"collector", "uploader"}:
+        try:
+            await _ensure_edge_storage(request)
+        except ProcessManagerError as exc:
+            raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
     extra_args = _collector_extra_args(request) if name == "collector" else None
@@ -227,6 +272,13 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 async def stop_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
     pm = request.app.state.pm
     _require_known(pm, name)
+    if name == "storage":
+        for dependent in ("uploader", "collector"):
+            if dependent in pm.modules and pm.status(dependent).status == "running":
+                await pm.stop(dependent)
+                await asyncio.to_thread(request.app.state.log_manager.detach, dependent)
+                if dependent == "collector" and request.app.state.sidecar_manager is not None:
+                    request.app.state.sidecar_manager.on_collector_stop()
     await pm.stop(name)
     await asyncio.to_thread(request.app.state.log_manager.detach, name)
     # 停模块 → 停其关联 proxy（FR-P17）；writer 不碰 sidecar。重启不走这里、proxy 保留。
@@ -239,6 +291,12 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
 async def restart_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
     pm = request.app.state.pm
     _require_known(pm, name)
+
+    if name in {"collector", "uploader"}:
+        try:
+            await _ensure_edge_storage(request)
+        except ProcessManagerError as exc:
+            raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
     extra_args = _collector_extra_args(request) if name == "collector" else None

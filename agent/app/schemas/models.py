@@ -115,7 +115,7 @@ class ProxyLogItem(BaseModel):
 
 
 class ModuleStatusResponse(BaseModel):
-    name: Literal["collector", "writer", "ingest", "uploader"]
+    name: Literal["collector", "writer", "ingest", "uploader", "storage"]
     status: Literal["running", "stopped", "crashed", "unknown"]
     pid: int | None
     uptime_seconds: int
@@ -186,5 +186,5 @@ class ConnectionConfigIn(BaseModel):
 class LogLine(BaseModel):
     timestamp: str
     level: Literal["DEBUG", "INFO", "WARN", "ERROR"]
-    source: Literal["collector", "writer", "ingest", "uploader"]
+    source: Literal["collector", "writer", "ingest", "uploader", "storage"]
     message: str

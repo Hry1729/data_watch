@@ -15,7 +15,7 @@ import { useEdgeRates } from "@/hooks/useEdgeRates";
 import { fallbackStatus, useModuleStatus, useProcessControl } from "@/hooks/useModuleStatus";
 import { rateTrendState } from "@/hooks/useModuleRates";
 
-type EdgeModuleName = "collector" | "uploader";
+type EdgeModuleName = "collector" | "uploader" | "storage";
 
 const CONFIRM_TEXT = {
   collector: {
@@ -26,7 +26,17 @@ const CONFIRM_TEXT = {
     stop: { title: "确认停止 Uploader", description: "停止后数据会继续保存在本地 Outbox。" },
     restart: { title: "确认重启 Uploader", description: "重启期间上行同步会短暂重试。" },
   },
+  storage: {
+    stop: { title: "确认停止 Storage", description: "停止前会先停止 Collector 和 Uploader，避免产生未落盘状态。" },
+    restart: { title: "确认重启 Storage", description: "重启期间采集落盘和上行状态更新会短暂重试。" },
+  },
 } as const;
+
+function modulePath(name: EdgeModuleName): string {
+  if (name === "collector") return "/edge/collector";
+  if (name === "uploader") return "/edge/uploader";
+  return "/edge/storage";
+}
 
 function ModuleSection({ name }: { name: EdgeModuleName }) {
   const navigate = useNavigate();
@@ -46,7 +56,7 @@ function ModuleSection({ name }: { name: EdgeModuleName }) {
         onStart={control.onStart}
         onStop={control.onStop}
         onRestart={control.onRestart}
-        onViewLog={() => navigate(name === "collector" ? "/edge/collector" : "/edge/uploader")}
+        onViewLog={() => navigate(modulePath(name))}
       />
       {status.error && !status.data && (
         <p className="px-1 text-xs text-destructive" role="alert">{status.error}</p>
@@ -73,9 +83,10 @@ export default function EdgeConsolePage() {
   const rates = useEdgeRates();
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-4 overflow-auto p-4 md:p-6">
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+    <div className="space-y-4 overflow-auto px-6 py-6" style={{ maxWidth: 1400 }}>
+      <div className="grid grid-cols-2 gap-4">
         <ModuleSection name="collector" />
+        <ModuleSection name="storage" />
         <ModuleSection name="uploader" />
       </div>
       <TrendChart

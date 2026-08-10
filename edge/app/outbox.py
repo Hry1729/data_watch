@@ -85,6 +85,14 @@ class SessionSwitchState:
     new_session_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class OutboxCompletion:
+    record: OutboxRecord
+    state: str
+    error: str | None = None
+
+
+
 class OutboxStore:
     def __init__(self, path: str | Path, *, clock_ms=None) -> None:
         self.path = Path(path)
@@ -194,68 +202,72 @@ class OutboxStore:
         config_version: int,
         values: dict[str, str],
         qualities: dict[str, int] | None,
+        batch_id: str | None = None,
     ) -> OutboxRecord:
         now = self._clock_ms()
-        batch_id = str(uuid4())
+        batch_id = batch_id or str(uuid4())
         with self._transaction() as connection:
-            assignment = connection.execute(
-                """
-                SELECT assignment_epoch
-                FROM device_assignment
-                WHERE device_code = ? AND enabled = 1
-                """,
-                (device_code,),
-            ).fetchone()
-            if assignment is None:
-                raise ValueError(f"no active assignment for device {device_code}")
+            return self._append_envelope(
+                connection,
+                batch_id=batch_id,
+                device_code=device_code,
+                device_type=device_type,
+                group_code=group_code,
+                scan_rate_ms=scan_rate_ms,
+                ts=ts,
+                config_version=config_version,
+                values=values,
+                qualities=qualities,
+                now=now,
+            )
 
-            session_id = self._metadata(connection, "upload_session_id")
-            connection.execute(
-                "UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'last_seq'"
+    def commit_frame(
+        self,
+        *,
+        batch_id: str,
+        device_code: str,
+        device_type: str,
+        group_code: str,
+        scan_rate_ms: int,
+        ts: int,
+        config_version: int,
+        values: dict[str, str],
+        qualities: dict[str, int] | None,
+        latest_fields: dict[str, dict[str, Any]],
+    ) -> OutboxRecord:
+        """Persist the durable envelope and local latest values atomically."""
+        now = self._clock_ms()
+        with self._transaction() as connection:
+            record = self._append_envelope(
+                connection,
+                batch_id=batch_id,
+                device_code=device_code,
+                device_type=device_type,
+                group_code=group_code,
+                scan_rate_ms=scan_rate_ms,
+                ts=ts,
+                config_version=config_version,
+                values=values,
+                qualities=qualities,
+                now=now,
             )
-            local_seq = int(self._metadata(connection, "last_seq"))
-            payload: dict[str, Any] = {
-                "device_code": device_code,
-                "device_type": device_type,
-                "group_code": group_code,
-                "scan_rate": scan_rate_ms,
-                "ts": ts,
-                "config_version": config_version,
-                "values": values,
-            }
-            if qualities is not None:
-                payload["contract_version"] = 2
-                payload["qualities"] = qualities
-            encoded = msgspec.json.encode(payload)
-            connection.execute(
-                """
-                INSERT INTO outbox(
-                    batch_id, upload_session_id, local_seq,
-                    device_code, group_code, assignment_epoch,
-                    config_version, ts, payload, created_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    batch_id,
-                    session_id,
-                    local_seq,
-                    device_code,
-                    group_code,
-                    int(assignment["assignment_epoch"]),
-                    config_version,
-                    ts,
-                    encoded,
-                    now,
-                ),
-            )
-        return OutboxRecord(
-            batch_id,
-            session_id,
-            local_seq,
-            int(assignment["assignment_epoch"]),
-            encoded,
-            0,
-        )
+            rows = [
+                (device_code, group_code, str(var_id), msgspec.json.encode(value), now)
+                for var_id, value in latest_fields.items()
+            ]
+            if rows:
+                connection.executemany(
+                    """
+                    INSERT INTO local_latest(
+                        device_code, group_code, var_id, value_json, updated_at
+                    ) VALUES(?, ?, ?, ?, ?)
+                    ON CONFLICT(device_code, group_code, var_id) DO UPDATE SET
+                        value_json=excluded.value_json,
+                        updated_at=excluded.updated_at
+                    """,
+                    rows,
+                )
+            return record
 
     def write_local_latest(
         self,
@@ -335,7 +347,8 @@ class OutboxStore:
             rows = connection.execute(
                 """
                 SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
-                       payload, attempt_count, state, next_retry_at, lease_until
+                       payload, attempt_count, state, next_retry_at, lease_until,
+                       lease_owner
                 FROM outbox
                 WHERE upload_session_id = ?
                   AND local_seq <= ?
@@ -347,7 +360,7 @@ class OutboxStore:
             selected: list[sqlite3.Row] = []
             total_bytes = 0
             for row in rows:
-                if row["state"] == "inflight":
+                if row["state"] == "inflight" and row["lease_owner"] != lease_owner:
                     break
                 if row["state"] == "retry_wait" and int(row["next_retry_at"] or 0) > now:
                     break
@@ -389,7 +402,7 @@ class OutboxStore:
             ]
 
     def mark_sent(self, record: OutboxRecord, lease_owner: str) -> None:
-        self._finish(record, lease_owner, state="sent", timestamp_column="acked_at")
+        self.complete_batch([OutboxCompletion(record, "sent")], lease_owner)
 
     def mark_dead(
         self,
@@ -397,13 +410,59 @@ class OutboxStore:
         lease_owner: str,
         error: str | None,
     ) -> None:
-        self._finish(
-            record,
-            lease_owner,
-            state="dead",
-            timestamp_column="dead_at",
-            error=error,
-        )
+        self.complete_batch([OutboxCompletion(record, "dead", error)], lease_owner)
+
+    def complete_batch(
+        self,
+        completions: list[OutboxCompletion],
+        lease_owner: str,
+    ) -> None:
+        if not completions:
+            return
+        now = self._clock_ms()
+        sent_count = 0
+        with self._transaction() as connection:
+            for completion in completions:
+                if completion.state not in {"sent", "dead"}:
+                    raise ValueError("completion state must be sent or dead")
+                timestamp_column = "acked_at" if completion.state == "sent" else "dead_at"
+                record = completion.record
+                cursor = connection.execute(
+                    f"""
+                    UPDATE outbox
+                    SET state=?, {timestamp_column}=?, last_error=?,
+                        lease_owner=NULL, inflight_at=NULL, lease_until=NULL
+                    WHERE batch_id=? AND upload_session_id=? AND local_seq=?
+                      AND state='inflight' AND lease_owner=?
+                    """,
+                    (
+                        completion.state,
+                        now,
+                        completion.error,
+                        record.batch_id,
+                        record.upload_session_id,
+                        record.local_seq,
+                        lease_owner,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = connection.execute(
+                        "SELECT state FROM outbox WHERE batch_id=? AND upload_session_id=? AND local_seq=?",
+                        (record.batch_id, record.upload_session_id, record.local_seq),
+                    ).fetchone()
+                    if current and current["state"] == completion.state:
+                        continue
+                    raise RuntimeError("outbox terminal transition lost lease")
+                sent_count += int(completion.state == "sent")
+            if sent_count:
+                connection.execute(
+                    """
+                    UPDATE metadata
+                    SET value=CAST(CAST(value AS INTEGER) + ? AS TEXT)
+                    WHERE key='sent_records_total'
+                    """,
+                    (sent_count,),
+                )
 
     def mark_retry(
         self,
@@ -414,34 +473,58 @@ class OutboxStore:
         http_status: int | None,
         delay_ms: int,
     ) -> None:
+        self.mark_retry_batch(
+            [(record, delay_ms)],
+            lease_owner,
+            error=error,
+            http_status=http_status,
+        )
+
+    def mark_retry_batch(
+        self,
+        records: list[tuple[OutboxRecord, int]],
+        lease_owner: str,
+        *,
+        error: str,
+        http_status: int | None,
+    ) -> None:
+        if not records:
+            return
         now = self._clock_ms()
-        with self._lock:
-            cursor = self._connection.execute(
-                """
-                UPDATE outbox
-                SET state='retry_wait',
-                    attempt_count=attempt_count + 1,
-                    next_retry_at=?,
-                    last_error=?,
-                    http_status=?,
-                    lease_owner=NULL,
-                    inflight_at=NULL,
-                    lease_until=NULL
-                WHERE batch_id=? AND upload_session_id=? AND local_seq=?
-                  AND state='inflight' AND lease_owner=?
-                """,
-                (
-                    now + delay_ms,
-                    error[:1000],
-                    http_status,
-                    record.batch_id,
-                    record.upload_session_id,
-                    record.local_seq,
-                    lease_owner,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise RuntimeError("outbox retry transition lost lease")
+        with self._transaction() as connection:
+            for record, delay_ms in records:
+                cursor = connection.execute(
+                    """
+                    UPDATE outbox
+                    SET state='retry_wait',
+                        attempt_count=attempt_count + 1,
+                        next_retry_at=?,
+                        last_error=?,
+                        http_status=?,
+                        lease_owner=NULL,
+                        inflight_at=NULL,
+                        lease_until=NULL
+                    WHERE batch_id=? AND upload_session_id=? AND local_seq=?
+                      AND state='inflight' AND lease_owner=?
+                    """,
+                    (
+                        now + delay_ms,
+                        error[:1000],
+                        http_status,
+                        record.batch_id,
+                        record.upload_session_id,
+                        record.local_seq,
+                        lease_owner,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    current = connection.execute(
+                        "SELECT state FROM outbox WHERE batch_id=? AND upload_session_id=? AND local_seq=?",
+                        (record.batch_id, record.upload_session_id, record.local_seq),
+                    ).fetchone()
+                    if current and current["state"] == "retry_wait":
+                        continue
+                    raise RuntimeError("outbox retry transition lost lease")
 
     def prepare_session_switch(self) -> SessionSwitchState:
         new_session_id = str(uuid4())
@@ -650,47 +733,97 @@ class OutboxStore:
             **self._disk_status(),
         }
 
-    def _finish(
+    def _append_envelope(
         self,
-        record: OutboxRecord,
-        lease_owner: str,
+        connection: sqlite3.Connection,
         *,
-        state: str,
-        timestamp_column: str,
-        error: str | None = None,
-    ) -> None:
-        if timestamp_column not in {"acked_at", "dead_at"}:
-            raise ValueError("invalid timestamp column")
-        now = self._clock_ms()
-        with self._lock:
-            cursor = self._connection.execute(
-                f"""
-                UPDATE outbox
-                SET state=?, {timestamp_column}=?, last_error=?,
-                    lease_owner=NULL, inflight_at=NULL, lease_until=NULL
-                WHERE batch_id=? AND upload_session_id=? AND local_seq=?
-                  AND state='inflight' AND lease_owner=?
-                """,
-                (
-                    state,
-                    now,
-                    error,
-                    record.batch_id,
-                    record.upload_session_id,
-                    record.local_seq,
-                    lease_owner,
-                ),
+        batch_id: str,
+        device_code: str,
+        device_type: str,
+        group_code: str,
+        scan_rate_ms: int,
+        ts: int,
+        config_version: int,
+        values: dict[str, str],
+        qualities: dict[str, int] | None,
+        now: int,
+    ) -> OutboxRecord:
+        existing = connection.execute(
+            """
+            SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
+                   payload, attempt_count
+            FROM outbox WHERE batch_id=?
+            """,
+            (batch_id,),
+        ).fetchone()
+        if existing is not None:
+            return OutboxRecord(
+                batch_id=str(existing["batch_id"]),
+                upload_session_id=str(existing["upload_session_id"]),
+                local_seq=int(existing["local_seq"]),
+                assignment_epoch=int(existing["assignment_epoch"]),
+                payload=bytes(existing["payload"]),
+                attempt_count=int(existing["attempt_count"]),
             )
-            if cursor.rowcount != 1:
-                raise RuntimeError("outbox terminal transition lost lease")
-            if state == "sent":
-                self._connection.execute(
-                    """
-                    UPDATE metadata
-                    SET value=CAST(value AS INTEGER) + 1
-                    WHERE key='sent_records_total'
-                    """
-                )
+
+        assignment = connection.execute(
+            """
+            SELECT assignment_epoch
+            FROM device_assignment
+            WHERE device_code = ? AND enabled = 1
+            """,
+            (device_code,),
+        ).fetchone()
+        if assignment is None:
+            raise ValueError(f"no active assignment for device {device_code}")
+
+        session_id = self._metadata(connection, "upload_session_id")
+        connection.execute(
+            "UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'last_seq'"
+        )
+        local_seq = int(self._metadata(connection, "last_seq"))
+        payload: dict[str, Any] = {
+            "device_code": device_code,
+            "device_type": device_type,
+            "group_code": group_code,
+            "scan_rate": scan_rate_ms,
+            "ts": ts,
+            "config_version": config_version,
+            "values": values,
+        }
+        if qualities is not None:
+            payload["contract_version"] = 2
+            payload["qualities"] = qualities
+        encoded = msgspec.json.encode(payload)
+        connection.execute(
+            """
+            INSERT INTO outbox(
+                batch_id, upload_session_id, local_seq,
+                device_code, group_code, assignment_epoch,
+                config_version, ts, payload, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                batch_id,
+                session_id,
+                local_seq,
+                device_code,
+                group_code,
+                int(assignment["assignment_epoch"]),
+                config_version,
+                ts,
+                encoded,
+                now,
+            ),
+        )
+        return OutboxRecord(
+            batch_id,
+            session_id,
+            local_seq,
+            int(assignment["assignment_epoch"]),
+            encoded,
+            0,
+        )
 
     def _transaction(self):
         return _Transaction(self._connection, self._lock)
@@ -713,7 +846,11 @@ class _Transaction:
 
     def __enter__(self) -> sqlite3.Connection:
         self._lock.acquire()
-        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+        except Exception:
+            self._lock.release()
+            raise
         return self._connection
 
     def __exit__(self, exc_type, exc, tb) -> bool:

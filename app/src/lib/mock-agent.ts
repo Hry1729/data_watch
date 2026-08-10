@@ -43,6 +43,7 @@ const _processStatus: Record<string, ModuleStatusValue> = {
   collector: "running",
   writer:    "stopped",
   uploader:  "running",
+  storage:   "running",
 };
 
 // password 字段省略：模拟真实 Agent 行为（GET /admin/config 不返回密码）
@@ -124,6 +125,7 @@ export const mockAgent: AgentClient = {
     await delay(120);
     return {
       config: { config_revision: 12, checksum: "mock", read_timeout_ms: null, applied_at: Date.now() },
+      fastest_point_scan_rate_ms: 100,
       devices: [
         { device_code: "QC01", device_type: "QC", protocol: "s7", endpoint: "10.0.0.11:102", scan_rate_ms: 100, config_version: 8, assignment_epoch: 2, enabled: 1, status: 1, message: "connected", status_updated_at: Date.now() },
         { device_code: "QC02", device_type: "QC", protocol: "s7", endpoint: "10.0.0.12:102", scan_rate_ms: 100, config_version: 8, assignment_epoch: 1, enabled: 1, status: 1, message: "connected", status_updated_at: Date.now() },
@@ -144,6 +146,32 @@ export const mockAgent: AgentClient = {
   async getLocalUploader() {
     await delay(100);
     return { name: "uploader", status: "running", pid: 4932, started_at: "2026-08-01 08:00:00", uptime_seconds: 3600, memory_mb: 42, cpu_percent: 0.4, restart_count: 0, outbox: await this.getLocalOutbox() };
+  },
+
+  async getLocalStorage() {
+    await delay(100);
+    return {
+      name: "storage",
+      status: "running",
+      pid: 4876,
+      started_at: "2026-08-01 08:00:00",
+      uptime_seconds: 3600,
+      memory_mb: 36,
+      cpu_percent: 0.3,
+      restart_count: 0,
+      storage: {
+        ...(await this.getLocalOutbox()),
+        writer_queue_depth: 0,
+        writer_queue_capacity: 2048,
+        commands_total: 84621,
+        command_counts: { "frame.commit": 42193, "outbox.complete": 42190, "config.apply": 1 },
+        errors_total: 0,
+        commit_p99_ms: 2.4,
+        frames_per_second: 10,
+        points_per_second: 100,
+        storage_uptime_seconds: 3600,
+      },
+    };
   },
 
   async getLocalSettings() {
@@ -414,7 +442,11 @@ const MOCK_DISTRIBUTED_NODES: DistributedNode[] = [
     outboxDroppedRecords: 0,
     keyVersion: 1,
     collectorStatus: "running",
+    storageStatus: "running",
     uploaderStatus: "running",
+    storageQueueDepth: 0,
+    storageCommitP99Ms: 2.4,
+    storageErrorsTotal: 0,
     clockSkewMs: 120,
     clockAnomaly: false,
     assignmentCount: 2,
@@ -665,6 +697,7 @@ export const mockBackend: BackendClient = {
   },
   async createDevice(_token, _payload) { await delay(120); return { id: Date.now() }; },
   async updateDevice(_token, _id, _payload) { await delay(120); return {}; },
+  async updateDeviceStatus(_token, _id, enabled) { await delay(120); return { enabled }; },
   async deleteDevice(_token, _id) { await delay(120); return {}; },
   async batchDeleteDevices(_token, ids) { await delay(120); return { count: ids.length }; },
   async exportDevices(_token, _query, template = false) { return { bytes: Array.from(new TextEncoder().encode("mock workbook")), fileName: template ? "device-import-template.xlsx" : "device-export.xlsx" }; },
@@ -673,9 +706,9 @@ export const mockBackend: BackendClient = {
   async pointList(_token, query) {
     await delay(160);
     const rows = [
-      { id: 11, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", dataType: "BOOL" as const, description: "设备运行标志", isReadonly: true, driverName: "Siemens S7", updateTime: "2026-07-17 15:30:00" },
-      { id: 12, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", dataType: "REAL" as const, description: "rpm", isReadonly: true, driverName: "Siemens S7", updateTime: "2026-07-17 15:30:00" },
-      { id: 21, deviceId: 2, deviceCode: "METER-02", varSeq: 1, pointName: "A相电压", ioAddress: "40001", dataType: "REAL" as const, description: "V", isReadonly: true, driverName: "Modbus TCP", updateTime: "2026-07-17 15:29:40" },
+      { id: 11, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", dataType: "BOOL" as const, description: "设备运行标志", isReadonly: true, driverName: "Siemens S7", pointStatus: "enabled" as const, updateTime: "2026-07-17 15:30:00" },
+      { id: 12, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", dataType: "REAL" as const, description: "rpm", isReadonly: true, driverName: "Siemens S7", pointStatus: "enabled" as const, updateTime: "2026-07-17 15:30:00" },
+      { id: 21, deviceId: 2, deviceCode: "METER-02", varSeq: 1, pointName: "A相电压", ioAddress: "40001", dataType: "REAL" as const, description: "V", isReadonly: true, driverName: "Modbus TCP", pointStatus: "disabled" as const, updateTime: "2026-07-17 15:29:40" },
     ];
     const list = rows.filter((item) =>
       (!query.keyword || `${item.pointName} ${item.ioAddress}`.toLowerCase().includes(query.keyword.toLowerCase()))
@@ -687,6 +720,7 @@ export const mockBackend: BackendClient = {
   },
   async createPoint(_token, _payload) { await delay(120); return { id: Date.now() }; },
   async updatePoint(_token, _id, _payload) { await delay(120); return {}; },
+  async updatePointStatus(_token, _id, enabled, _locator) { await delay(120); return { enabled }; },
   async deletePoint(_token, _id) { await delay(120); return {}; },
   async batchDeletePoints(_token, ids) { await delay(120); return { count: ids.length }; },
   async exportPoints(_token, _query, template = false) { return { bytes: Array.from(new TextEncoder().encode("mock workbook")), fileName: template ? "point-import-template.xlsx" : "point-export.xlsx" }; },

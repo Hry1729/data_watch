@@ -1,11 +1,24 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from time import monotonic
 
 import aiomysql
 
 
 _MIGRATION_LOCK = "data_watch_distributed_schema_v1"
+_MIGRATION_LOCK_SLICE_SECONDS = 30
+_MIGRATION_LOCK_MAX_WAIT_SECONDS = 300
+_MIGRATION_COMPONENT = "distributed_ingest"
+_MIGRATION_VERSION = 2
+_MIGRATION_STATE_DDL = """
+CREATE TABLE IF NOT EXISTS data_watch_schema_migration (
+    component VARCHAR(64) NOT NULL,
+    version INT UNSIGNED NOT NULL,
+    completed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (component)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
 
 _CREATE_TABLES = (
     """
@@ -26,7 +39,11 @@ _CREATE_TABLES = (
         outbox_watermark VARCHAR(16) NOT NULL DEFAULT 'normal',
         outbox_dropped_records BIGINT UNSIGNED NOT NULL DEFAULT 0,
         collector_status VARCHAR(16) NOT NULL DEFAULT 'unknown',
+        storage_status VARCHAR(16) NOT NULL DEFAULT 'unknown',
         uploader_status VARCHAR(16) NOT NULL DEFAULT 'unknown',
+        storage_queue_depth BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        storage_commit_p99_ms DECIMAL(10,3) NOT NULL DEFAULT 0,
+        storage_errors_total BIGINT UNSIGNED NOT NULL DEFAULT 0,
         edge_time_ms BIGINT,
         clock_skew_ms BIGINT,
         clock_anomaly TINYINT(1) NOT NULL DEFAULT 0,
@@ -114,8 +131,12 @@ _SYS_NODE_COLUMNS = {
     "outbox_watermark": "VARCHAR(16) NOT NULL DEFAULT 'normal' AFTER outbox_disk_used_percent",
     "outbox_dropped_records": "BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER outbox_watermark",
     "collector_status": "VARCHAR(16) NOT NULL DEFAULT 'unknown' AFTER outbox_dropped_records",
-    "uploader_status": "VARCHAR(16) NOT NULL DEFAULT 'unknown' AFTER collector_status",
-    "edge_time_ms": "BIGINT AFTER uploader_status",
+    "storage_status": "VARCHAR(16) NOT NULL DEFAULT 'unknown' AFTER collector_status",
+    "uploader_status": "VARCHAR(16) NOT NULL DEFAULT 'unknown' AFTER storage_status",
+    "storage_queue_depth": "BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER uploader_status",
+    "storage_commit_p99_ms": "DECIMAL(10,3) NOT NULL DEFAULT 0 AFTER storage_queue_depth",
+    "storage_errors_total": "BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER storage_commit_p99_ms",
+    "edge_time_ms": "BIGINT AFTER storage_errors_total",
     "clock_skew_ms": "BIGINT AFTER edge_time_ms",
     "clock_anomaly": "TINYINT(1) NOT NULL DEFAULT 0 AFTER clock_skew_ms",
     "last_error": "VARCHAR(1000) AFTER clock_anomaly",
@@ -210,16 +231,55 @@ class MappingBackfillBlocked(RuntimeError):
 async def migrate_distributed_schema(pool: aiomysql.Pool) -> None:
     async with pool.acquire() as connection:
         async with connection.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute("SELECT GET_LOCK(%s, 30) AS acquired", (_MIGRATION_LOCK,))
-            row = await cursor.fetchone()
-            if not row or int(row.get("acquired") or 0) != 1:
-                raise RuntimeError("distributed schema migration lock timeout")
+            await _acquire_migration_lock(cursor)
             try:
+                await cursor.execute(_MIGRATION_STATE_DDL)
+                if await _migration_is_current(cursor):
+                    return
                 await _create_tables(cursor)
                 await _upgrade_sys_node(cursor)
                 await _backfill_mapping(connection, cursor)
+                await _record_migration(cursor)
             finally:
                 await cursor.execute("SELECT RELEASE_LOCK(%s)", (_MIGRATION_LOCK,))
+
+
+async def _acquire_migration_lock(cursor) -> None:
+    deadline = monotonic() + _MIGRATION_LOCK_MAX_WAIT_SECONDS
+    while True:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise RuntimeError("distributed schema migration lock timeout")
+        wait_seconds = min(_MIGRATION_LOCK_SLICE_SECONDS, max(1, int(remaining)))
+        await cursor.execute(
+            "SELECT GET_LOCK(%s, %s) AS acquired",
+            (_MIGRATION_LOCK, wait_seconds),
+        )
+        row = await cursor.fetchone()
+        if row and int(row.get("acquired") or 0) == 1:
+            return
+
+
+async def _migration_is_current(cursor) -> bool:
+    await cursor.execute(
+        "SELECT version FROM data_watch_schema_migration WHERE component=%s",
+        (_MIGRATION_COMPONENT,),
+    )
+    row = await cursor.fetchone()
+    return bool(row and int(row.get("version") or 0) >= _MIGRATION_VERSION)
+
+
+async def _record_migration(cursor) -> None:
+    await cursor.execute(
+        """
+        INSERT INTO data_watch_schema_migration(component, version, completed_at)
+        VALUES(%s, %s, CURRENT_TIMESTAMP(3))
+        ON DUPLICATE KEY UPDATE
+            version=VALUES(version),
+            completed_at=VALUES(completed_at)
+        """,
+        (_MIGRATION_COMPONENT, _MIGRATION_VERSION),
+    )
 
 
 async def _create_tables(cursor) -> None:

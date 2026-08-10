@@ -12,9 +12,9 @@ from typing import Literal, cast
 
 from app.schemas.models import LogLine
 
-LogSource = Literal["collector", "writer", "uploader", "ingest"]
+LogSource = Literal["collector", "writer", "uploader", "ingest", "storage"]
 
-_VALID_NAMES: set[str] = {"collector", "writer", "uploader", "ingest"}
+_VALID_NAMES: set[str] = {"collector", "writer", "uploader", "ingest", "storage"}
 _LEVEL_RE = re.compile(r"\b(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b")
 _QUEUE_MAXSIZE = 100
 _HISTORY_MAXLEN = 100

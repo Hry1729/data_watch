@@ -48,7 +48,11 @@ DB_SECTIONS = ("redis", "mysql", "tdengine")
 
 _MODULE_LAYOUT = {
     "centralized": {"collector": ("collector", "data-watch-collector.exe"), "writer": ("writer", "data-watch-writer.exe")},
-    "edge": {"collector": ("edge-collector", "data-watch-edge-collector.exe"), "uploader": ("uploader", "data-watch-uploader.exe")},
+    "edge": {
+        "storage": ("edge-storage", "data-watch-edge-storage.exe"),
+        "collector": ("edge-collector", "data-watch-edge-collector.exe"),
+        "uploader": ("uploader", "data-watch-uploader.exe"),
+    },
     "distributed-center": {"ingest": ("ingest", "data-watch-ingest.exe"), "writer": ("writer", "data-watch-writer.exe")},
 }
 
@@ -173,6 +177,14 @@ def _default_config() -> dict:
         "collector": {"executable": "", "args": [], "working_dir": ""},
         "writer": {"executable": "", "args": [], "working_dir": ""},
         "uploader": {"executable": "", "args": [], "working_dir": ""},
+        "storage": {
+            "executable": "",
+            "args": [],
+            "working_dir": "",
+            "host": "127.0.0.1",
+            "port": 7073,
+            "queue_capacity": 2048,
+        },
         "ingest": {
             "executable": "",
             "args": [],

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import type { ModuleName, ModuleStatus, ModuleStatusValue } from "@/types";
 
 // ─── 运行时长格式化（HH:MM:SS）────────────────────────────────────────────────
@@ -40,6 +41,11 @@ const MODULE_META = {
     label: "Uploader 上行同步模块",
     subtitle: "本地离线队列严格按序同步至中心 Ingest",
     targetLabel: "中心 Ingest",
+  },
+  storage: {
+    label: "Storage 本地存储模块",
+    subtitle: "边缘采集帧、实时快照与上行状态单写落盘",
+    targetLabel: "SQLite Outbox",
   },
   writer: {
     label: "Writer 入库模块",
@@ -76,14 +82,18 @@ const STATUS_META: Record<
   },
 };
 
-function StatusBadge({ status }: { status: ModuleStatusValue }) {
+function StatusBadge({ status, compact = false }: { status: ModuleStatusValue; compact?: boolean }) {
   const meta = STATUS_META[status];
   return (
     <Badge
       variant="secondary"
-      className={`gap-1.5 rounded-full px-3 py-1 ${meta.cls}`}
+      className={cn(
+        "gap-1.5 rounded-full px-3 py-1",
+        meta.cls,
+        compact && "gap-1 px-2 py-0.5 text-xs",
+      )}
     >
-      <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+      <span className={cn("size-2 rounded-full", meta.dot, compact && "size-1.5")} />
       {meta.label}
     </Badge>
   );
@@ -95,20 +105,25 @@ function MetricCard({
   label,
   value,
   loading,
+  compact = false,
 }: {
   label: string;
   value: string;
   loading?: boolean;
+  compact?: boolean;
 }) {
   return (
-    <div className="rounded-xl border p-4">
-      <div className="mb-3 text-sm text-muted-foreground">
+    <div className={cn("min-w-0 rounded-xl border p-4", compact && "rounded-lg p-3")}>
+      <div className={cn("mb-3 text-sm text-muted-foreground", compact && "mb-1.5 truncate text-xs")}>
         {label}
       </div>
       {loading ? (
-        <Skeleton className="h-7 w-24" />
+        <Skeleton className={cn("h-7 w-24", compact && "h-6 w-16")} />
       ) : (
-        <div className="text-2xl font-semibold tabular-nums text-foreground">
+        <div className={cn(
+          "text-2xl font-semibold tabular-nums text-foreground",
+          compact && "truncate whitespace-nowrap text-lg leading-6",
+        )}>
           {value}
         </div>
       )}
@@ -125,20 +140,22 @@ function ModuleHeader({
   status,
   loading,
   showPid,
+  compact = false,
 }: {
   name: ModuleName;
   status: ModuleStatus;
   loading: boolean;
   showPid: boolean;
+  compact?: boolean;
 }) {
   const { label, subtitle } = MODULE_META[name];
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className={cn("flex items-start justify-between gap-4", compact && "gap-2")}>
       {/* 左：标题 + 副标题 */}
       <div className="flex items-center gap-4 min-w-0">
         <div className="min-w-0">
-          <CardTitle className="text-xl text-foreground">{label}</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+          <CardTitle className={cn("text-xl text-foreground", compact && "text-lg leading-6")}>{label}</CardTitle>
+          <p className={cn("mt-1 text-sm text-muted-foreground", compact && "text-xs leading-5")}>{subtitle}</p>
         </div>
       </div>
 
@@ -152,7 +169,7 @@ function ModuleHeader({
         {loading ? (
           <Skeleton className="h-6 w-20 rounded-full" />
         ) : (
-          <StatusBadge status={status.status} />
+          <StatusBadge status={status.status} compact={compact} />
         )}
       </div>
     </div>
@@ -199,6 +216,8 @@ export interface ModuleSummaryCardProps {
   loading?: boolean;
   /** "日志"按钮文案 */
   logButtonLabel?: string;
+  /** 三列控制台使用的紧凑尺寸 */
+  compact?: boolean;
   // 回调
   onStart?:   () => void;
   onStop?:    () => void;
@@ -214,6 +233,7 @@ export function ModuleSummaryCard({
   operating = false,
   loading = false,
   logButtonLabel = "日志",
+  compact = false,
   onStart,
   onStop,
   onRestart,
@@ -239,61 +259,64 @@ export function ModuleSummaryCard({
 
   return (
     <Card
-      className="w-full bg-card border border-border"
+      className={cn("w-full border border-border bg-card", compact && "h-full")}
       style={{
         borderRadius: 12,
       }}
     >
-      <CardHeader className="pb-2">
-        <ModuleHeader name={name} status={status} loading={loading} showPid={false} />
+      <CardHeader className={cn("pb-2", compact && "min-h-[76px] px-4 pb-1 pt-4")}>
+        <ModuleHeader name={name} status={status} loading={loading} showPid={false} compact={compact} />
       </CardHeader>
 
-      <CardContent className="space-y-5">
+      <CardContent className={cn("space-y-5", compact && "flex flex-1 flex-col gap-4 space-y-0 px-4 pb-4 pt-0")}>
         {/* 3 个运行指标卡 */}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-3", compact && "gap-2")}>
           <MetricCard
             label="运行时长"
             value={uptimeStr}
             loading={loading}
+            compact={compact}
           />
           <MetricCard
             label="内存使用"
             value={memValueStr}
             loading={loading}
+            compact={compact}
           />
           <MetricCard
             label="CPU 使用率"
             value={cpuValueStr}
             loading={loading}
+            compact={compact}
           />
         </div>
 
         {/* 操作按钮 */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", compact && "mt-auto grid-cols-4 gap-2")}>
           <Button
             variant="outline"
-            className="h-11 border-brand/30 text-brand hover:bg-brand/10"
+            className={cn("h-11 border-brand/30 text-brand hover:bg-brand/10", compact && "h-9 gap-1 px-2 text-xs")}
             disabled={disabled}
             onClick={onStart}
           >
-            <Play className="mr-2 h-4 w-4" />
+            <Play data-icon="inline-start" />
             启动
           </Button>
           <Button
             variant="outline"
-            className="h-11 border-destructive/30 text-destructive hover:bg-destructive/10"
+            className={cn("h-11 border-destructive/30 text-destructive hover:bg-destructive/10", compact && "h-9 gap-1 px-2 text-xs")}
             disabled={disabled}
             onClick={onStop}
           >
-            <Square className="mr-2 h-4 w-4 fill-current" />
+            <Square data-icon="inline-start" className="fill-current" />
             停止
           </Button>
-          <Button variant="outline" className="h-11" disabled={disabled} onClick={onRestart}>
-            <RotateCcw className="mr-2 h-4 w-4" />
+          <Button variant="outline" className={cn("h-11", compact && "h-9 gap-1 px-2 text-xs")} disabled={disabled} onClick={onRestart}>
+            <RotateCcw data-icon="inline-start" />
             重启
           </Button>
-          <Button variant="outline" className="h-11" disabled={disabled || !onViewLog} onClick={onViewLog}>
-            <ScrollText className="mr-2 h-4 w-4" />
+          <Button variant="outline" className={cn("h-11", compact && "h-9 gap-1 px-2 text-xs")} disabled={disabled || !onViewLog} onClick={onViewLog}>
+            <ScrollText data-icon="inline-start" />
             {logButtonLabel}
           </Button>
         </div>

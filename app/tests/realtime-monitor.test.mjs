@@ -72,3 +72,21 @@ test("realtime page uses platform quality codes", () => {
   assert.doesNotMatch(pageSource, /point\.quality\s*>=\s*192/);
   assert.match(pageSource, /\[pointList, realtimeSocket\.deviceOffline, realtimeSocket\.values\]/);
 });
+
+test("desktop realtime sampling follows the selected cadence and retains five minutes", () => {
+  assert.match(hookSource, /setSampleVersion\(\(current\) => current \+ 1\)/);
+  assert.match(hookSource, /localPollInFlight/);
+  assert.match(pageSource, /REALTIME_WINDOW_MS = 5 \* 60_000/);
+  assert.match(pageSource, /MAX_REALTIME_SAMPLES = 3000/);
+  assert.match(pageSource, /REALTIME_VIEW_WINDOWS/);
+  assert.match(pageSource, /DEFAULT_REALTIME_VIEW_MS = 60_000/);
+  assert.match(pageSource, /const firstSampleAt/);
+  assert.match(pageSource, /const rightPadding/);
+  assert.match(pageSource, /Math\.max\(firstSampleAt, latestSampleAt - viewWindowMs \+ rightPadding\)/);
+  assert.match(pageSource, /dataKey="sampleAt"[\s\S]*type="number"[\s\S]*domain=\{viewDomain\}/);
+  assert.match(pageSource, /最大显示跨度/);
+  assert.match(pageSource, /viewWindowMs/);
+  assert.match(pageSource, /realtimeSocket\.sampleVersion/);
+  assert.match(pageSource, /padStart\(3, "0"\)/);
+  assert.doesNotMatch(pageSource, /lastSampleRef/);
+});

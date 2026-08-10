@@ -5,6 +5,7 @@ import {
   AreaChart,
   Bar,
   BarChart,
+  Brush,
   CartesianGrid,
   Line,
   LineChart,
@@ -13,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Download, Search } from "lucide-react";
+import { Download, RotateCcw, Search } from "lucide-react";
 import { BUILD_ROLE } from "@/config/build-role";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { monitorClient } from "@/lib/monitor-client";
 import { saveDownload } from "@/lib/save-download";
+import type { AppError } from "@/types";
 import type { HistoryChartResponse, HistoryRawMatrixResponse } from "@/types/device-monitor";
 
 const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
@@ -84,45 +86,160 @@ function apiTime(value: string) {
   return `${value.replace("T", " ")}:00`;
 }
 
+function historyErrorMessage(reason: unknown, fallback: string) {
+  const error = reason as AppError | undefined;
+  const message = error && "message" in error ? error.message.trim() : "";
+  return message || fallback;
+}
+
 function setRecentRange(hours: number, setStart: (value: string) => void, setEnd: (value: string) => void) {
   const end = new Date();
   setEnd(localInput(end));
   setStart(localInput(new Date(end.getTime() - hours * 60 * 60_000)));
 }
 
-function HistoryChart({ chart, chartType }: { chart: HistoryChartResponse; chartType: ChartType }) {
+function parseHistoryTime(value: string): number {
+  const timestamp = new Date(value.includes("T") ? value : value.replace(" ", "T")).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function formatHistoryAxisTime(timestamp: number, spanMs: number): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(date.getTime())) return "--";
+  if (spanMs >= 6 * 60 * 60_000) {
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function HistoryChart({
+  chart,
+  chartType,
+  rangeStart,
+  rangeEnd,
+}: {
+  chart: HistoryChartResponse;
+  chartType: ChartType;
+  rangeStart: string;
+  rangeEnd: string;
+}) {
+  const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
+  const [brushVersion, setBrushVersion] = useState(0);
   const chartRows = useMemo(() => {
-    const rows = new Map<string, Record<string, string | number | null>>();
+    const rows = new Map<string, Record<string, number | null>>();
     chart.series.forEach((series) => series.data.forEach(([time, value]) => {
-      const row = rows.get(time) ?? { time, label: new Date(time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) };
+      const row = rows.get(time) ?? { time: parseHistoryTime(time) };
       row[`v${series.varSeq}`] = value;
       rows.set(time, row);
     }));
-    return [...rows.values()].sort((left, right) => String(left.time).localeCompare(String(right.time)));
+    return [...rows.values()].sort((left, right) => Number(left.time) - Number(right.time));
   }, [chart]);
   const config = useMemo(() => Object.fromEntries(chart.series.map((series, index) => [`v${series.varSeq}`, { label: series.name, color: COLORS[index % COLORS.length] }])) as ChartConfig, [chart]);
-  const common = <><CartesianGrid vertical={false} /><XAxis dataKey="label" tickLine={false} axisLine={false} minTickGap={28} /><YAxis tickLine={false} axisLine={false} width={52} /><ChartTooltip content={<ChartTooltipContent indicator="line" />} /><ChartLegend content={<ChartLegendContent />} /></>;
+  const fullDomain = useMemo<[number, number]>(() => {
+    const requestedStart = parseHistoryTime(rangeStart);
+    const requestedEnd = parseHistoryTime(rangeEnd);
+    if (requestedStart > 0 && requestedEnd > requestedStart) return [requestedStart, requestedEnd];
+    const fallbackStart = Number(chartRows[0]?.time ?? Date.now() - 60_000);
+    const fallbackEnd = Number(chartRows[chartRows.length - 1]?.time ?? Date.now());
+    return fallbackEnd > fallbackStart ? [fallbackStart, fallbackEnd] : [fallbackStart, fallbackStart + 1000];
+  }, [chartRows, rangeEnd, rangeStart]);
+  const axisDomain = zoomDomain ?? fullDomain;
+  const axisSpan = axisDomain[1] - axisDomain[0];
+
+  function handleBrushChange(range: { startIndex?: number; endIndex?: number } | null) {
+    if (!range || chartRows.length < 2) return;
+    const startIndex = range.startIndex ?? 0;
+    const endIndex = range.endIndex ?? chartRows.length - 1;
+    if (startIndex <= 0 && endIndex >= chartRows.length - 1) {
+      setZoomDomain(null);
+      return;
+    }
+    const startTime = Number(chartRows[startIndex]?.time);
+    const endTime = Number(chartRows[endIndex]?.time);
+    if (Number.isFinite(startTime) && Number.isFinite(endTime) && endTime > startTime) {
+      setZoomDomain([startTime, endTime]);
+    }
+  }
+
+  function resetZoom() {
+    setZoomDomain(null);
+    setBrushVersion((current) => current + 1);
+  }
+
+  const timeAxis = (
+    <XAxis
+      dataKey="time"
+      type="number"
+      scale="time"
+      domain={axisDomain}
+      allowDataOverflow
+      tickLine={false}
+      axisLine={false}
+      minTickGap={28}
+      tickFormatter={(value) => formatHistoryAxisTime(Number(value), axisSpan)}
+    />
+  );
+  const tooltip = (
+    <ChartTooltip
+      labelFormatter={(value) => new Date(Number(value)).toLocaleString("zh-CN", { hour12: false })}
+      content={<ChartTooltipContent indicator="line" />}
+    />
+  );
+  const brush = chartRows.length > 1 ? (
+    <Brush
+      key={brushVersion}
+      dataKey="time"
+      height={24}
+      travellerWidth={8}
+      stroke="var(--border)"
+      fill="var(--muted)"
+      tickFormatter={(value) => formatHistoryAxisTime(Number(value), fullDomain[1] - fullDomain[0])}
+      onChange={handleBrushChange}
+    />
+  ) : null;
+  const common = <><CartesianGrid vertical={false} />{timeAxis}<YAxis tickLine={false} axisLine={false} width={52} />{tooltip}<ChartLegend content={<ChartLegendContent />} />{brush}</>;
+  const zoomReset = zoomDomain ? (
+    <Button className="absolute right-3 top-2" size="icon-sm" variant="outline" title="重置缩放" aria-label="重置缩放" onClick={resetZoom}>
+      <RotateCcw />
+    </Button>
+  ) : null;
 
   if (chartType === "scatter") {
     return (
-      <ChartContainer config={config} className="h-[420px] w-full aspect-auto">
-        <ScatterChart accessibilityLayer>
-          <CartesianGrid />
-          <XAxis type="number" dataKey="time" domain={["dataMin", "dataMax"]} tickFormatter={(value) => new Date(value).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} tickLine={false} axisLine={false} />
-          <YAxis type="number" dataKey="value" tickLine={false} axisLine={false} width={52} />
-          <ChartTooltip content={<ChartTooltipContent />} />
-          {chart.series.map((series, index) => <Scatter key={series.varSeq} name={series.name} fill={COLORS[index % COLORS.length]} data={series.data.filter(([, value]) => value != null).map(([time, value]) => ({ time: new Date(time).getTime(), value }))} />)}
-        </ScatterChart>
-      </ChartContainer>
+      <div className="relative">
+        <ChartContainer config={config} className="h-[420px] w-full aspect-auto">
+          <ScatterChart data={chartRows} accessibilityLayer>
+            <CartesianGrid />
+            {timeAxis}
+            <YAxis type="number" dataKey="value" tickLine={false} axisLine={false} width={52} />
+            {tooltip}
+            <ChartLegend content={<ChartLegendContent />} />
+            {chart.series.map((series, index) => <Scatter key={series.varSeq} name={series.name} fill={COLORS[index % COLORS.length]} data={series.data.filter(([, value]) => value != null).map(([time, value]) => ({ time: parseHistoryTime(time), value }))} />)}
+            {brush}
+          </ScatterChart>
+        </ChartContainer>
+        {zoomReset}
+      </div>
     );
   }
   if (chartType === "bar") {
-    return <ChartContainer config={config} className="h-[420px] w-full aspect-auto"><BarChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Bar key={series.varSeq} dataKey={`v${series.varSeq}`} fill={COLORS[index % COLORS.length]} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}</BarChart></ChartContainer>;
+    return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><BarChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Bar key={series.varSeq} dataKey={`v${series.varSeq}`} fill={COLORS[index % COLORS.length]} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}</BarChart></ChartContainer>{zoomReset}</div>;
   }
   if (chartType === "area") {
-    return <ChartContainer config={config} className="h-[420px] w-full aspect-auto"><AreaChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Area key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />)}</AreaChart></ChartContainer>;
+    return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><AreaChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Area key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />)}</AreaChart></ChartContainer>{zoomReset}</div>;
   }
-  return <ChartContainer config={config} className="h-[420px] w-full aspect-auto"><LineChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Line key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />)}</LineChart></ChartContainer>;
+  return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><LineChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Line key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />)}</LineChart></ChartContainer>{zoomReset}</div>;
 }
 
 export default function HistoryDataPage() {
@@ -217,7 +334,7 @@ export default function HistoryDataPage() {
       .catch((reason) => {
         if (!active) return;
         if ((reason as { type?: string })?.type === "unauthorized") logout();
-        else toast.error("历史数据刷新失败");
+        else toast.error(historyErrorMessage(reason, "历史数据刷新失败"));
       })
       .finally(() => {
         if (!active) return;
@@ -290,7 +407,7 @@ export default function HistoryDataPage() {
       setMatrix((current) => reset || !current ? result : { ...result, rows: [...current.rows, ...result.rows] });
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
-      else toast.error("历史数据矩阵加载失败");
+      else toast.error(historyErrorMessage(reason, "历史数据矩阵加载失败"));
     } finally {
       setMatrixLoading(false);
     }
@@ -304,12 +421,12 @@ export default function HistoryDataPage() {
     setMatrix(null);
     try {
       const result = await monitorClient.historyChart(token, query);
-      setChart(result);
       lastQueryRef.current = { query };
+      setChart(result);
       await loadMatrix(matrixAlign, true, undefined, query);
     } catch (reason) {
       if ((reason as { type?: string })?.type === "unauthorized") logout();
-      else toast.error("历史数据查询失败");
+      else toast.error(historyErrorMessage(reason, "历史数据查询失败"));
     } finally {
       setLoading(false);
     }
@@ -354,6 +471,7 @@ export default function HistoryDataPage() {
   }
 
   const pointSummary = selectedPointItems.length ? selectedPointItems.map((point) => point.pointName).join("、") : "点击选择查询点位";
+  const submittedQuery = lastQueryRef.current?.query;
 
   return (
     <div className="mx-auto w-full max-w-[1800px] space-y-4 p-4 md:p-6">
@@ -387,7 +505,7 @@ export default function HistoryDataPage() {
             <div className="flex items-center gap-1">{(["line", "area", "bar", "scatter"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : type === "bar" ? "柱状图" : "散点图"}</Button>)}</div>
           </CardAction>
         </CardHeader>
-        <CardContent>{loading ? <Skeleton className="h-[420px]" /> : chart?.series.length ? <HistoryChart chart={chart} chartType={chartType} /> : <div className="flex h-[420px] items-center justify-center text-sm text-muted-foreground">请选择设备、点位和时间范围后查询</div>}</CardContent>
+        <CardContent>{loading ? <Skeleton className="h-[420px]" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-[420px] items-center justify-center text-sm text-muted-foreground">请选择设备、点位和时间范围后查询</div>}</CardContent>
       </Card>
 
       <Card><CardHeader className="!flex flex-row items-center justify-between space-y-0"><CardTitle className="text-base">历史数据矩阵</CardTitle><CardAction><div className="flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div></CardAction></CardHeader><CardContent className="space-y-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent></Card>

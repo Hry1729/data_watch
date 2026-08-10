@@ -42,6 +42,7 @@ Source: "{#SrcRoot}\installer\templates\writer-settings.toml.example"; DestDir: 
 #endif
 
 #if BuildRole == "edge"
+Source: "{#SrcRoot}\edge\dist\data-watch-edge-storage\*"; DestDir: "{app}\edge-storage"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SrcRoot}\edge\dist\data-watch-edge-collector\*"; DestDir: "{app}\edge-collector"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SrcRoot}\edge\dist\data-watch-uploader\*"; DestDir: "{app}\uploader"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SrcRoot}\collector\sidecars\opcda_proxy_service\bin\*"; DestDir: "{app}\sidecars\opcda_proxy_service\bin"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -62,6 +63,7 @@ Type: filesandordirs; Name: "{app}\collector"
 Type: filesandordirs; Name: "{app}\writer"
 #endif
 #if BuildRole == "edge"
+Type: filesandordirs; Name: "{app}\edge-storage"
 Type: filesandordirs; Name: "{app}\edge-collector"
 Type: filesandordirs; Name: "{app}\uploader"
 #endif
@@ -81,6 +83,7 @@ Name: "{commonappdata}\{#MyDataDir}\writer\config"
 #if BuildRole == "edge"
 Name: "{commonappdata}\{#MyDataDir}\collector\config"
 Name: "{commonappdata}\{#MyDataDir}\edge"
+Name: "{commonappdata}\{#MyDataDir}\storage"
 Name: "{commonappdata}\{#MyDataDir}\uploader"
 #endif
 #if BuildRole == "distributed-center"
@@ -164,6 +167,14 @@ procedure StopOrphanedRoleProcesses;
 var
   ExitCode: Integer;
 begin
+#if BuildRole == "edge"
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM data-watch-edge-storage.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM data-watch-edge-collector.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ExitCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM data-watch-uploader.exe', '',
+    SW_HIDE, ewWaitUntilTerminated, ExitCode);
+#endif
 #if BuildRole == "distributed-center"
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM data-watch-ingest.exe', '',
     SW_HIDE, ewWaitUntilTerminated, ExitCode);

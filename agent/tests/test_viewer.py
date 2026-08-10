@@ -8,6 +8,7 @@ import types
 from fastapi import WebSocketDisconnect
 
 from app.routers.viewer import process_metrics, tail_logs
+from app.services.log_manager import LogManager
 
 
 class _FakePM:
@@ -124,3 +125,12 @@ async def test_uploader_log_tail_is_allowed():
     await tail_logs("uploader", websocket)
     assert websocket.accepted is True
     assert websocket.closed_code is None
+
+
+async def test_storage_log_manager_supports_subscriptions():
+    manager = LogManager()
+
+    queue = manager.subscribe("storage")
+
+    assert manager.get_history("storage") == []
+    manager.unsubscribe("storage", queue)

@@ -72,15 +72,31 @@ def _seed(path):
                 message TEXT,
                 updated_at INTEGER
             );
+            CREATE TABLE edge_variable (
+                device_code TEXT,
+                scan_rate_ms INTEGER
+            );
+            CREATE TABLE local_latest (
+                device_code TEXT,
+                group_code TEXT,
+                var_id TEXT,
+                value_json BLOB,
+                updated_at INTEGER
+            );
             CREATE TABLE outbox (state TEXT, created_at INTEGER);
             CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
-            CREATE TABLE device_assignment (scan_rate_ms INTEGER, enabled INTEGER);
+            CREATE TABLE device_assignment (
+                device_code TEXT,
+                scan_rate_ms INTEGER,
+                enabled INTEGER
+            );
             INSERT INTO edge_config_meta VALUES(1, 3, 'sum', NULL, 1000);
-            INSERT INTO edge_device VALUES('QC01', 'QC', 's7', '10.0.0.1:102', 100, 2, 1, 1);
+            INSERT INTO edge_device VALUES('QC01', 'QC', 's7', '10.0.0.1:102', 1000, 2, 1, 1);
+            INSERT INTO edge_variable VALUES('QC01', 100);
             INSERT INTO metadata VALUES('upload_session_id', 'session-1');
             INSERT INTO metadata VALUES('last_seq', '0');
             INSERT INTO metadata VALUES('sent_records_total', '9');
-            INSERT INTO device_assignment VALUES(100, 1);
+            INSERT INTO device_assignment VALUES('QC01', 1000, 1);
             """
         )
 
@@ -97,9 +113,23 @@ async def test_edge_local_api_reads_only_local_state(monkeypatch, tmp_path):
 
     assert device_result["config"]["config_revision"] == 3
     assert device_result["devices"][0]["device_code"] == "QC01"
+    assert device_result["devices"][0]["scan_rate_ms"] == 1000
+    assert device_result["fastest_point_scan_rate_ms"] == 100
     assert outbox_result["upload_interval_ms"] == 100
     assert outbox_result["sent_records_total"] == 9
     assert collector_result["status"] == "running"
+
+
+def test_devices_falls_back_before_collector_creates_latest_table(tmp_path):
+    path = tmp_path / "edge" / "edge.db"
+    _seed(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE local_latest")
+
+    result = EdgeLocalStore(path).devices()
+
+    assert result["devices"][0]["device_code"] == "QC01"
+    assert result["devices"][0]["status"] == 0
 
 
 @pytest.mark.asyncio
@@ -276,6 +306,7 @@ async def test_local_monitor_reads_catalog_latest_and_retained_history(monkeypat
     )
 
     assert devices["list"][0]["deviceCode"] == "QC01"
+    assert devices["list"][0]["connectStatus"] == "online"
     assert points["list"][0]["ioAddress"] == "%R00001"
     assert realtime["data"][0]["value"] == "12.5"
     assert chart["series"][0]["data"][0][1] == 12.5

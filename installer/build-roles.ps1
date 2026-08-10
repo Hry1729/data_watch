@@ -119,11 +119,12 @@ if ($needsCentralized) {
 }
 
 if ($needsEdge) {
-    Write-Host '[python] Edge Collector + Uploader' -ForegroundColor Cyan
+    Write-Host '[python] Edge Storage + Collector + Uploader' -ForegroundColor Cyan
     Install-Requirements $collectorPython (Join-Path $RepoRoot 'collector\requirements.txt')
     Install-Requirements $collectorPython (Join-Path $RepoRoot 'edge\requirements.txt')
     Build-PythonTarget $collectorPython $collectorPyi (Join-Path $RepoRoot 'edge') 'data-watch-edge-collector.spec'
     Build-PythonTarget $collectorPython $collectorPyi (Join-Path $RepoRoot 'edge') 'data-watch-uploader.spec'
+    Build-PythonTarget $collectorPython $collectorPyi (Join-Path $RepoRoot 'edge') 'data-watch-edge-storage.spec'
 }
 
 if ($needsCentralized -or $needsDistributedCenter) {

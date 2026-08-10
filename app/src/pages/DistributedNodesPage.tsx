@@ -52,14 +52,14 @@ function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "从未";
 }
 
-function processBadge(value: string) {
+function processBadge(label: string, value: string) {
   if (value === "running") {
-    return <Badge variant="outline" className="border-success/30 bg-success-soft text-success">运行中</Badge>;
+    return <Badge variant="outline" className="border-success/30 bg-success-soft text-success">{label} 运行</Badge>;
   }
   if (value === "unknown") {
-    return <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning">未知</Badge>;
+    return <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning">{label} 未知</Badge>;
   }
-  return <Badge variant="outline" className="border-border bg-muted text-muted-foreground">已停止</Badge>;
+  return <Badge variant="outline" className="border-border bg-muted text-muted-foreground">{label} 停止</Badge>;
 }
 
 function approvalBadge(status: DistributedNode["status"]) {
@@ -320,7 +320,7 @@ export default function DistributedNodesPage() {
                         </div>
                       </TableCell>
                       <TableCell className="max-w-0 overflow-hidden">
-                        <div className="flex flex-wrap justify-center gap-1">{processBadge(node.collectorStatus)}{processBadge(node.uploaderStatus)}</div>
+                        <div className="flex flex-wrap justify-center gap-1">{processBadge("C", node.collectorStatus)}{processBadge("S", node.storageStatus)}{processBadge("U", node.uploaderStatus)}</div>
                       </TableCell>
                       <TableCell className="text-center"><span className={node.configVersion === node.appliedRevision ? "" : "text-amber-600"}>{node.appliedRevision} / {node.configVersion}</span></TableCell>
                       <TableCell className="text-center"><div className="font-mono">{node.outboxBacklog}</div><Badge variant={node.outboxWatermark === "overflow" || node.outboxWatermark === "critical" ? "destructive" : node.outboxWatermark === "warning" ? "secondary" : "outline"}>{node.outboxDiskUsedPercent.toFixed(1)}%</Badge></TableCell>

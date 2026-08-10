@@ -47,31 +47,32 @@ export function useRealtimeWebSocket({
   const [deviceOffline, setDeviceOffline] = useState(false);
   const [tdengineConnected, setTdengineConnected] = useState<boolean | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null);
+  const [sampleVersion, setSampleVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const pendingRef = useRef<Record<string, RealtimeWireValue>>({});
 
   const flushPending = useCallback(() => {
     const pending = pendingRef.current;
-    if (Object.keys(pending).length === 0) return;
-    pendingRef.current = {};
-    setValues((current) => ({ ...current, ...pending }));
-    setLastSyncTime(Date.now());
+    if (Object.keys(pending).length > 0) {
+      pendingRef.current = {};
+      setValues((current) => ({ ...current, ...pending }));
+      setLastSyncTime(Date.now());
+    }
+    setSampleVersion((current) => current + 1);
   }, []);
 
   const clearValues = useCallback(() => {
     pendingRef.current = {};
     setValues({});
     setLastSyncTime(null);
+    setSampleVersion(0);
     setDeviceOffline(false);
   }, []);
 
   useEffect(() => {
     if (!enabled) return;
     const timer = window.setInterval(flushPending, Math.max(100, flushIntervalMs));
-    return () => {
-      window.clearInterval(timer);
-      flushPending();
-    };
+    return () => window.clearInterval(timer);
   }, [enabled, flushIntervalMs, flushPending]);
 
   useEffect(() => {
@@ -86,6 +87,7 @@ export function useRealtimeWebSocket({
     let localPollTimer: number | null = null;
     let reconnectAttempts = 0;
     let disposed = false;
+    let localPollInFlight = false;
     let authRejected = false;
     const edgeRole = BUILD_ROLE === "edge";
     const localOnly = edgeRole && token === getAgentAuthToken();
@@ -96,6 +98,8 @@ export function useRealtimeWebSocket({
     };
 
     const pollLocal = async () => {
+      if (localPollInFlight) return;
+      localPollInFlight = true;
       try {
         const snapshot = await agentClient.getLocalRealtimeLatest(deviceCode, groupCode);
         if (disposed) return;
@@ -112,6 +116,8 @@ export function useRealtimeWebSocket({
         const appError = reason as AppError;
         setStatus("disconnected");
         setError(appError?.type === "unauthorized" ? "本机会话已失效" : "本机实时数据读取失败");
+      } finally {
+        localPollInFlight = false;
       }
     };
 
@@ -259,6 +265,7 @@ export function useRealtimeWebSocket({
     deviceOffline,
     tdengineConnected,
     lastSyncTime,
+    sampleVersion,
     error,
     clearValues,
   };

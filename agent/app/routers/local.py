@@ -223,6 +223,17 @@ async def local_outbox(_user: str = Depends(get_current_user)):
     return _store().outbox_status()
 
 
+@router.get("/storage")
+async def local_storage(request: Request, _user: str = Depends(get_current_user)):
+    _require_edge()
+    process = _process(request, "storage")
+    try:
+        process["storage"] = await asyncio.to_thread(request.app.state.edge_storage.status)
+    except Exception as exc:
+        process["storage"] = {"error": str(exc)}
+    return process
+
+
 
 @router.get("/uploader")
 async def local_uploader(request: Request, _user: str = Depends(get_current_user)):
@@ -321,7 +332,7 @@ async def rotate_identity(
 @router.get("/logs")
 async def local_logs(
     request: Request,
-    module: Literal["collector", "uploader"] = Query(...),
+    module: Literal["collector", "uploader", "storage"] = Query(...),
     limit: int = Query(100, ge=1, le=500),
     _user: str = Depends(get_current_user),
 ):

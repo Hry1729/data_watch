@@ -10,6 +10,7 @@ import sqlite3
 import sys
 import time
 from typing import Iterable
+from uuid import uuid4
 import zlib
 
 
@@ -20,6 +21,7 @@ for source_root in (REPO_ROOT, COLLECTOR_ROOT):
         sys.path.insert(0, str(source_root))
 
 from edge.app.outbox import OutboxRecord, OutboxStore
+from edge.app.storage_client import EdgeStorageClient
 
 
 QUALITY_GOOD = 0
@@ -184,7 +186,7 @@ def generated_value(variable: SimulatedVariable, cycle: int, device_code: str) -
 
 
 def write_group(
-    store: OutboxStore,
+    store: OutboxStore | EdgeStorageClient,
     group: SimulatedGroup,
     *,
     cycle: int,
@@ -201,7 +203,8 @@ def write_group(
         for variable_id, value in values.items()
     }
 
-    record = store.append_envelope(
+    record = store.commit_frame(
+        batch_id=str(uuid4()),
         device_code=group.device_code,
         device_type=group.device_type,
         group_code=group.group_code,
@@ -210,8 +213,8 @@ def write_group(
         config_version=group.config_version,
         values=values,
         qualities=qualities,
+        latest_fields=fields,
     )
-    store.write_local_latest(group.device_code, group.group_code, fields)
     return record
 
 
@@ -264,7 +267,7 @@ def run_simulation(args: argparse.Namespace) -> int:
         print("dry-run complete; no outbox records were written")
         return 0
 
-    store = OutboxStore(path)
+    store = EdgeStorageClient()
     upload_interval_ms = store.upload_interval_ms()
     fastest_group_ms = min(group.scan_rate_ms for group in groups)
     if upload_interval_ms and upload_interval_ms > fastest_group_ms:

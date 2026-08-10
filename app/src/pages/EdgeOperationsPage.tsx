@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  Archive,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -28,6 +29,7 @@ import {
   type EdgeLocalDevices,
   type EdgeOutboxStatus,
   type EdgeProcessStatus,
+  type EdgeStorageStatus,
 } from "@/lib/agent-client";
 
 const PAGE_SIZE = 6;
@@ -35,6 +37,7 @@ const PAGE_SIZE = 6;
 type EdgeSnapshot = {
   devices: EdgeLocalDevices;
   collector: EdgeProcessStatus;
+  storage: EdgeProcessStatus & { storage: EdgeStorageStatus };
   uploader: EdgeProcessStatus & { outbox: EdgeOutboxStatus };
 };
 
@@ -86,13 +89,14 @@ export default function EdgeOperationsPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const [devices, collector, uploader] = await Promise.all([
+      const [devices, collector, storage, uploader] = await Promise.all([
         agentClient.getLocalDevices(),
         agentClient.getLocalCollector(),
+        agentClient.getLocalStorage(),
         agentClient.getLocalUploader(),
       ]);
       if (!mounted.current) return;
-      setSnapshot({ devices, collector, uploader });
+      setSnapshot({ devices, collector, storage, uploader });
       setError(null);
     } catch {
       if (mounted.current) setError("本机状态读取失败");
@@ -130,6 +134,7 @@ export default function EdgeOperationsPage() {
   }
 
   const outbox = snapshot?.uploader.outbox;
+  const storage = snapshot?.storage.storage;
   const enabled = snapshot?.devices.devices.filter((device) => device.enabled === 1).length ?? 0;
   const online = snapshot?.devices.devices.filter((device) => device.enabled === 1 && device.status === 1).length ?? 0;
   const total = snapshot?.devices.devices.length ?? 0;
@@ -147,13 +152,19 @@ export default function EdgeOperationsPage() {
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4">
       {error && <p className="text-xs text-destructive">{error}</p>}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="本机设备" value={`${online} / ${enabled}`} icon={Activity} detail="在线 / 已启用" />
         <StatCard
           label="Collector"
           value={processLabel(snapshot?.collector.status ?? "unknown")}
           icon={Database}
           detail={snapshot?.collector.pid ? `PID ${snapshot.collector.pid}` : "无运行进程"}
+        />
+        <StatCard
+          label="Storage"
+          value={processLabel(snapshot?.storage.status ?? "unknown")}
+          icon={HardDrive}
+          detail={storage ? `队列 ${storage.writer_queue_depth} / ${storage.writer_queue_capacity} · P99 ${storage.commit_p99_ms.toFixed(1)} ms` : "等待本地存储状态"}
         />
         <StatCard
           label="Uploader"
@@ -164,7 +175,7 @@ export default function EdgeOperationsPage() {
         <StatCard
           label="离线积压"
           value={String(outbox?.backlog_count ?? 0)}
-          icon={HardDrive}
+          icon={Archive}
           detail={`${formatBytes(outbox?.database_bytes ?? 0)} · 磁盘 ${(outbox?.disk_used_percent ?? 0).toFixed(1)}%`}
         />
       </div>
@@ -191,7 +202,7 @@ export default function EdgeOperationsPage() {
                   <TableHead className="w-[11%] text-center">类型</TableHead>
                   <TableHead className="w-[11%] text-center">协议</TableHead>
                   <TableHead className="w-[23%] text-center">端点</TableHead>
-                  <TableHead className="w-[11%] text-center">采集周期</TableHead>
+                  <TableHead className="w-[11%] text-center">设备默认周期</TableHead>
                   <TableHead className="w-[8%] text-center">版本</TableHead>
                   <TableHead className="w-[10%] text-center">设备状态</TableHead>
                   <TableHead className="w-[10%] text-center">采集状态</TableHead>

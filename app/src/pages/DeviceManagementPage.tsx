@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Edit3, MapPin, Plus, Search, Trash2, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Edit3, MapPin, Plus, Power, PowerOff, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,7 @@ export default function DeviceManagementPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [saving, setSaving] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [statusUpdatingId, setStatusUpdatingId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDevices = useCallback(
@@ -85,6 +86,21 @@ export default function DeviceManagementPage() {
   async function confirmDelete() {
     if (!auth?.backendToken || !deleting) return;
     try { await backendClient.deleteDevice(auth.backendToken, deleting.id); toast.success("设备已删除"); devices.refresh(); deviceCatalog.refresh(); } catch { toast.error("删除设备失败"); } finally { setDeleting(null); }
+  }
+  async function toggleDeviceStatus(row: DeviceListItem) {
+    if (!auth?.backendToken) return;
+    const enabled = row.deviceStatus !== "enabled";
+    setStatusUpdatingId(row.id);
+    try {
+      await backendClient.updateDeviceStatus(auth.backendToken, row.id, enabled);
+      toast.success(enabled ? "设备已启用" : "设备已停用");
+      devices.refresh();
+      deviceCatalog.refresh();
+    } catch {
+      toast.error(enabled ? "启用设备失败" : "停用设备失败");
+    } finally {
+      setStatusUpdatingId(null);
+    }
   }
   function toggleAll(checked: boolean) { setSelectedIds(checked ? rows.map((row) => row.id) : []); }
   function toggleRow(id: number, checked: boolean) { setSelectedIds((current) => checked ? [...new Set([...current, id])] : current.filter((value) => value !== id)); }
@@ -130,7 +146,7 @@ export default function DeviceManagementPage() {
         <CardHeader><CardTitle>设备管理</CardTitle><CardAction><div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增设备</Button><Button variant="outline" size="sm" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload data-icon="inline-start" />导入</Button><Button variant="outline" size="sm" onClick={() => exportWorkbook(false)} disabled={transferring}><Download data-icon="inline-start" />导出</Button><Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}><Trash2 data-icon="inline-start" />删除</Button></div></CardAction></CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
-            <Table className="h-full w-full table-fixed"><TableHeader><TableRow className="bg-muted/50"><TableHead className="w-12 text-center"><Checkbox aria-label="选择全部设备" checked={allSelected ? true : selectedIds.length ? "indeterminate" : false} onCheckedChange={(checked) => toggleAll(checked === true)} /></TableHead><TableHead className="w-[13%] text-center">设备编号</TableHead><TableHead className="text-center">设备名称</TableHead><TableHead className="w-[12%] text-center">类型</TableHead><TableHead className="w-[14%] text-center">关联驱动</TableHead><TableHead className="w-[12%] text-center">通讯状态</TableHead><TableHead className="w-[11%] text-center">数据状态</TableHead><TableHead className="w-32 text-center">操作</TableHead></TableRow></TableHeader><TableBody>{devices.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={8}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : rows.length ? rows.map((row) => <TableRow key={row.id} className="h-10" data-state={selectedIds.includes(row.id) ? "selected" : undefined}><TableCell className="text-center"><Checkbox aria-label={`选择设备 ${row.deviceName}`} checked={selectedIds.includes(row.id)} onCheckedChange={(checked) => toggleRow(row.id, checked === true)} /></TableCell><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.deviceName}</TableCell><TableCell className="truncate text-center">{row.deviceType}</TableCell><TableCell className="truncate text-center">{row.driverName}</TableCell><TableCell className="text-center"><Badge variant={row.connectStatus === "online" ? "outline" : row.connectStatus === "unstable" ? "secondary" : "destructive"}>{row.connectStatus === "online" ? "在线" : row.connectStatus === "unstable" ? "不稳定" : "离线"}</Badge></TableCell><TableCell className="text-center">{row.dataStatus === "normal" ? "正常" : row.dataStatus === "abnormal" ? "异常" : "无数据"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看点位" onClick={() => navigate(`/device/points?deviceId=${row.id}&deviceCode=${encodeURIComponent(row.deviceCode)}`)}><MapPin className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="编辑设备" onClick={() => openEdit(row)}><Edit3 className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="删除设备" onClick={() => setDeleting(row)}><Trash2 className="size-4 text-destructive" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{devices.error ?? "暂无设备"}</TableCell></TableRow>}</TableBody></Table>
+            <Table className="h-full w-full table-fixed"><TableHeader><TableRow className="bg-muted/50"><TableHead className="w-12 text-center"><Checkbox aria-label="选择全部设备" checked={allSelected ? true : selectedIds.length ? "indeterminate" : false} onCheckedChange={(checked) => toggleAll(checked === true)} /></TableHead><TableHead className="w-[13%] text-center">设备编号</TableHead><TableHead className="text-center">设备名称</TableHead><TableHead className="w-[12%] text-center">类型</TableHead><TableHead className="w-[14%] text-center">关联驱动</TableHead><TableHead className="w-[12%] text-center">通讯状态</TableHead><TableHead className="w-[11%] text-center">数据状态</TableHead><TableHead className="w-40 text-center">操作</TableHead></TableRow></TableHeader><TableBody>{devices.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={8}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : rows.length ? rows.map((row) => <TableRow key={row.id} className="h-10" data-state={selectedIds.includes(row.id) ? "selected" : undefined}><TableCell className="text-center"><Checkbox aria-label={`选择设备 ${row.deviceName}`} checked={selectedIds.includes(row.id)} onCheckedChange={(checked) => toggleRow(row.id, checked === true)} /></TableCell><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.deviceName}</TableCell><TableCell className="truncate text-center">{row.deviceType}</TableCell><TableCell className="truncate text-center">{row.driverName}</TableCell><TableCell className="text-center"><Badge variant={row.connectStatus === "online" ? "outline" : row.connectStatus === "unstable" ? "secondary" : "destructive"}>{row.connectStatus === "online" ? "在线" : row.connectStatus === "unstable" ? "不稳定" : "离线"}</Badge></TableCell><TableCell className="text-center">{row.dataStatus === "normal" ? "正常" : row.dataStatus === "abnormal" ? "异常" : "无数据"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看点位" onClick={() => navigate(`/device/points?deviceId=${row.id}&deviceCode=${encodeURIComponent(row.deviceCode)}`)}><MapPin className="size-4" /></Button><Button variant="ghost" size="icon-sm" title={row.deviceStatus === "enabled" ? "停用设备" : "启用设备"} disabled={statusUpdatingId === row.id} onClick={() => void toggleDeviceStatus(row)}>{row.deviceStatus === "enabled" ? <PowerOff className="size-4 text-warning" /> : <Power className="size-4 text-success" />}</Button><Button variant="ghost" size="icon-sm" title="编辑设备" onClick={() => openEdit(row)}><Edit3 className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="删除设备" onClick={() => setDeleting(row)}><Trash2 className="size-4 text-destructive" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{devices.error ?? "暂无设备"}</TableCell></TableRow>}</TableBody></Table>
           </div>
           <div className="flex flex-col gap-3 pt-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <span>共 {devices.data?.total ?? 0} 台设备</span>

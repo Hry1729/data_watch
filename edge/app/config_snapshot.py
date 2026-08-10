@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
@@ -14,6 +15,7 @@ from core.config import CollectorConfig, DeviceConfig, VariableConfig
 
 
 from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA, EDGE_SCHEDULE_SCHEMA
+from edge.app.storage_client import EdgeStorageClient
 
 
 class EdgeDeviceSignature(NamedTuple):
@@ -262,6 +264,50 @@ class ConfigSnapshotStore:
             int(row["applied_at"]),
         )
 
+    def revision(self) -> int:
+        snapshot = self.snapshot_info()
+        return snapshot.config_revision if snapshot is not None else 0
+
+    def apply(self, snapshot: dict[str, Any]) -> int:
+        info = self.apply_snapshot(
+            config_revision=int(snapshot["configRevision"]),
+            checksum=str(snapshot.get("checksum") or ""),
+            devices=list(snapshot.get("devices") or []),
+            read_timeout_ms=(
+                int(snapshot["readTimeoutMs"])
+                if snapshot.get("readTimeoutMs") is not None
+                else None
+            ),
+        )
+        return info.config_revision
+
+    def refresh_schedule(self, now_ms: int | None = None) -> None:
+        now = self._clock_ms() if now_ms is None else int(now_ms)
+        with self._transaction() as connection:
+            _refresh_schedule(connection, now)
+
+    def update_device_status(
+        self,
+        device_code: str,
+        status: int,
+        message: str = "",
+        event_type: str = "status_update",
+    ) -> None:
+        with self._transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO edge_device_status(
+                    device_code, status, message, event_type, updated_at
+                ) VALUES(?, ?, ?, ?, ?)
+                ON CONFLICT(device_code) DO UPDATE SET
+                    status=excluded.status,
+                    message=excluded.message,
+                    event_type=excluded.event_type,
+                    updated_at=excluded.updated_at
+                """,
+                (device_code, status, message, event_type, self._clock_ms()),
+            )
+
     def list_devices(self) -> list[dict[str, Any]]:
         with self._lock:
             _refresh_schedule(self._connection, self._clock_ms())
@@ -284,12 +330,20 @@ class ConfigSnapshotStore:
 class EdgeConfigManager:
     """Collector config manager backed only by the local edge snapshot."""
 
-    def __init__(self, path: str | Path, *, clock_ms=None) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        clock_ms=None,
+        storage: EdgeStorageClient | None = None,
+    ) -> None:
         self.path = Path(path)
         self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self._storage = storage
 
     async def close(self) -> None:
-        return None
+        if self._storage is not None:
+            await asyncio.to_thread(self._storage.close)
 
     async def load_config(self, base_config: CollectorConfig | None = None) -> CollectorConfig:
         config = base_config or CollectorConfig()
@@ -297,8 +351,8 @@ class EdgeConfigManager:
         return config
 
     async def load_devices_and_variables(self) -> tuple[list[DeviceConfig], list[VariableConfig]]:
+        await self._refresh_schedule()
         with self._connect() as connection:
-            _refresh_schedule(connection, self._clock_ms())
             meta = connection.execute(
                 "SELECT read_timeout_ms FROM edge_config_meta WHERE singleton=1"
             ).fetchone()
@@ -322,8 +376,8 @@ class EdgeConfigManager:
         return devices, variables
 
     async def get_device_config_versions(self) -> dict[str, EdgeDeviceSignature]:
+        await self._refresh_schedule()
         with self._connect() as connection:
-            _refresh_schedule(connection, self._clock_ms())
             meta = connection.execute(
                 "SELECT read_timeout_ms FROM edge_config_meta WHERE singleton=1"
             ).fetchone()
@@ -355,6 +409,15 @@ class EdgeConfigManager:
         message: str = "",
         event_type: str = "status_update",
     ) -> None:
+        if self._storage is not None:
+            await asyncio.to_thread(
+                self._storage.update_device_status,
+                device_code,
+                status,
+                message,
+                event_type,
+            )
+            return
         with self._connect() as connection:
             connection.execute(
                 """
@@ -374,11 +437,28 @@ class EdgeConfigManager:
         return None
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=5)
+        if self._storage is not None:
+            connection = sqlite3.connect(
+                f"file:{self.path.resolve().as_posix()}?mode=ro",
+                uri=True,
+                timeout=5,
+            )
+        else:
+            connection = sqlite3.connect(self.path, timeout=5)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=5000")
-        connection.executescript(EDGE_SCHEDULE_SCHEMA)
+        if self._storage is not None:
+            connection.execute("PRAGMA query_only=ON")
+        else:
+            connection.executescript(EDGE_SCHEDULE_SCHEMA)
         return connection
+
+    async def _refresh_schedule(self) -> None:
+        if self._storage is not None:
+            await asyncio.to_thread(self._storage.refresh_schedule, self._clock_ms())
+            return
+        with self._connect() as connection:
+            _refresh_schedule(connection, self._clock_ms())
 
 
 class _Transaction:
@@ -388,7 +468,11 @@ class _Transaction:
 
     def __enter__(self) -> sqlite3.Connection:
         self._lock.acquire()
-        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+        except Exception:
+            self._lock.release()
+            raise
         return self._connection
 
     def __exit__(self, exc_type, exc, traceback) -> bool:

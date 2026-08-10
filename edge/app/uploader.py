@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 import time
 from contextlib import AbstractContextManager
@@ -18,7 +19,11 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from ingest.app.security import canonical_json, signing_message
 
-from .outbox import OutboxRecord, OutboxStore, SessionSwitchState
+from .outbox import OutboxCompletion, OutboxRecord, OutboxStore, SessionSwitchState
+from .storage_client import EdgeStorageClient, StorageUnavailable
+
+
+logger = logging.getLogger(__name__)
 
 
 class UploaderPaused(RuntimeError):
@@ -83,7 +88,7 @@ def startup_phase_seconds(node_uuid: str, interval_ms: int) -> float:
 class Uploader:
     def __init__(
         self,
-        store: OutboxStore,
+        store: OutboxStore | EdgeStorageClient,
         settings: UploaderSettings,
         *,
         client: httpx.AsyncClient | None = None,
@@ -116,8 +121,13 @@ class Uploader:
 
     async def run_forever(self) -> None:
         while not self._stopped.is_set():
-            self._maintain_if_due()
-            interval_ms = self._store.upload_interval_ms()
+            try:
+                self._maintain_if_due()
+                interval_ms = self._store.upload_interval_ms()
+            except StorageUnavailable as exc:
+                logger.warning("Edge Storage unavailable: %s", exc)
+                await self._sleep(1.0)
+                continue
             if interval_ms is None:
                 await self._sleep(1.0)
                 continue
@@ -133,6 +143,9 @@ class Uploader:
                 await self.run_cycle()
             except UploaderPaused:
                 await self._sleep(5.0)
+            except StorageUnavailable as exc:
+                logger.warning("Edge Storage unavailable during upload cycle: %s", exc)
+                await self._sleep(1.0)
             elapsed = time.monotonic() - started
             await self._sleep(max(0.0, interval_ms / 1000 - elapsed))
 
@@ -206,6 +219,7 @@ class Uploader:
             self._retry_records(records, f"malformed_ack:{exc}", 200)
             return False
 
+        completions: list[OutboxCompletion] = []
         for record in records:
             key = (record.batch_id, record.upload_session_id, record.local_seq)
             result = result_map.get(key)
@@ -214,12 +228,14 @@ class Uploader:
                 return False
             status = str(result.get("status") or "")
             if status in {"ack", "duplicate", "stale_config_warning"}:
-                self._store.mark_sent(record, self._lease_owner)
+                completions.append(OutboxCompletion(record, "sent"))
             elif status == "rejected_consumed":
-                self._store.mark_dead(
-                    record,
-                    self._lease_owner,
-                    str(result.get("reason") or "rejected_consumed"),
+                completions.append(
+                    OutboxCompletion(
+                        record,
+                        "dead",
+                        str(result.get("reason") or "rejected_consumed"),
+                    )
                 )
             elif status in {"seq_reject", "commit_unknown"}:
                 await self._abandon_and_switch()
@@ -234,6 +250,7 @@ class Uploader:
             else:
                 self._retry_records(records, f"unknown_ack:{status}", 200)
                 return False
+        self._store.complete_batch(completions, self._lease_owner)
         return True
 
     def _upload_payload(self, records: list[OutboxRecord]) -> dict[str, Any]:
@@ -265,18 +282,22 @@ class Uploader:
         error: str,
         http_status: int | None,
     ) -> None:
-        for record in records:
-            delay_ms = min(
-                self._settings.retry_base_ms * (2 ** record.attempt_count),
-                self._settings.retry_max_ms,
-            )
-            self._store.mark_retry(
+        retries = [
+            (
                 record,
-                self._lease_owner,
-                error=error,
-                http_status=http_status,
-                delay_ms=delay_ms,
+                min(
+                    self._settings.retry_base_ms * (2 ** record.attempt_count),
+                    self._settings.retry_max_ms,
+                ),
             )
+            for record in records
+        ]
+        self._store.mark_retry_batch(
+            retries,
+            self._lease_owner,
+            error=error,
+            http_status=http_status,
+        )
 
     async def _abandon_and_switch(self) -> None:
         state = self._store.prepare_session_switch()

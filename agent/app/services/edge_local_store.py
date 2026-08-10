@@ -4,9 +4,14 @@ import json
 import math
 import shutil
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+ONLINE_MAX_AGE_MS = 60_000
+UNSTABLE_MAX_AGE_MS = 120_000
 
 
 class EdgeLocalStore:
@@ -17,7 +22,11 @@ class EdgeLocalStore:
 
     def devices(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {"config": None, "devices": []}
+            return {
+                "config": None,
+                "fastest_point_scan_rate_ms": None,
+                "devices": [],
+            }
         with self._connect() as connection:
             meta = connection.execute(
                 """
@@ -25,20 +34,63 @@ class EdgeLocalStore:
                 FROM edge_config_meta WHERE singleton=1
                 """
             ).fetchone()
-            rows = connection.execute(
-                """
-                SELECT d.device_code, d.device_type, d.protocol, d.endpoint,
-                       d.scan_rate_ms, d.config_version, d.assignment_epoch,
-                       d.enabled, s.status, s.message,
-                       s.updated_at AS status_updated_at
-                FROM edge_device AS d
-                LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
-                ORDER BY d.device_code
-                """
-            ).fetchall()
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT d.device_code, d.device_type, d.protocol, d.endpoint,
+                           d.scan_rate_ms, d.config_version, d.assignment_epoch,
+                           d.enabled, s.status, s.message,
+                           s.updated_at AS status_updated_at,
+                           MAX(ll.updated_at) AS data_updated_at
+                    FROM edge_device AS d
+                    LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
+                    LEFT JOIN local_latest AS ll ON ll.device_code=d.device_code
+                    GROUP BY d.device_code, d.device_type, d.protocol, d.endpoint,
+                             d.scan_rate_ms, d.config_version, d.assignment_epoch,
+                             d.enabled, s.status, s.message, s.updated_at
+                    ORDER BY d.device_code
+                    """
+                ).fetchall()
+            except sqlite3.OperationalError as exc:
+                if "no such table: local_latest" not in str(exc):
+                    raise
+                rows = connection.execute(
+                    """
+                    SELECT d.device_code, d.device_type, d.protocol, d.endpoint,
+                           d.scan_rate_ms, d.config_version, d.assignment_epoch,
+                           d.enabled, s.status, s.message,
+                           s.updated_at AS status_updated_at,
+                           NULL AS data_updated_at
+                    FROM edge_device AS d
+                    LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
+                    ORDER BY d.device_code
+                    """
+                ).fetchall()
+            try:
+                fastest_point_rate = connection.execute(
+                    """
+                    SELECT MIN(v.scan_rate_ms) AS value
+                    FROM edge_variable AS v
+                    INNER JOIN edge_device AS d ON d.device_code=v.device_code
+                    WHERE d.enabled=1
+                    """
+                ).fetchone()
+            except sqlite3.OperationalError:
+                fastest_point_rate = None
+        devices = []
+        for row in rows:
+            item = dict(row)
+            item["status"] = self._runtime_connect_status(row)
+            devices.append(item)
         return {
             "config": dict(meta) if meta is not None else None,
-            "devices": [dict(row) for row in rows],
+            "fastest_point_scan_rate_ms": (
+                int(fastest_point_rate["value"])
+                if fastest_point_rate is not None
+                and fastest_point_rate["value"] is not None
+                else None
+            ),
+            "devices": devices,
         }
 
     def monitor_devices(
@@ -70,6 +122,8 @@ class EdgeLocalStore:
             if needle and needle not in f"{device_code} {row['device_type']}".lower():
                 continue
             data_updated_at = self._optional_int(row["data_updated_at"])
+            connect_status = self._runtime_connect_status(row)
+            data_age_ms = self._age_ms(data_updated_at)
             items.append(
                 {
                     "id": int(row["device_pk"]),
@@ -78,9 +132,9 @@ class EdgeLocalStore:
                     "deviceName": device_code,
                     "driverName": str(row["protocol"]),
                     "deviceStatus": "enabled" if bool(row["enabled"]) else "disabled",
-                    "connectStatus": "online" if int(row["status"] or 0) == 1 else "offline",
-                    "connectUpdateTime": self._format_ms(row["status_updated_at"]),
-                    "dataStatus": "normal" if data_updated_at is not None else "nodata",
+                    "connectStatus": {1: "online", 2: "unstable"}.get(connect_status, "offline"),
+                    "connectUpdateTime": self._format_ms(data_updated_at or row["status_updated_at"]),
+                    "dataStatus": "nodata" if data_age_ms is None else "normal" if data_age_ms <= ONLINE_MAX_AGE_MS else "abnormal",
                     "dataUpdateTime": self._format_ms(data_updated_at),
                     "description": "",
                 }
@@ -93,6 +147,30 @@ class EdgeLocalStore:
             "pageNo": page_no,
             "pageSize": page_size,
         }
+
+    def _runtime_connect_status(self, row: sqlite3.Row) -> int:
+        if not bool(row["enabled"]):
+            return 0
+        data_age_ms = self._age_ms(self._optional_int(row["data_updated_at"]))
+        if data_age_ms is not None:
+            if data_age_ms <= ONLINE_MAX_AGE_MS:
+                return 1
+            if data_age_ms <= UNSTABLE_MAX_AGE_MS:
+                return 2
+            return 0
+        status_age_ms = self._age_ms(self._optional_int(row["status_updated_at"]))
+        if int(row["status"] or 0) == 1 and status_age_ms is not None:
+            if status_age_ms <= ONLINE_MAX_AGE_MS:
+                return 1
+            if status_age_ms <= UNSTABLE_MAX_AGE_MS:
+                return 2
+        return 0
+
+    @staticmethod
+    def _age_ms(timestamp: int | None) -> int | None:
+        if timestamp is None:
+            return None
+        return max(0, int(time.time() * 1000) - timestamp)
 
     def monitor_points(
         self,
@@ -548,9 +626,29 @@ class EdgeLocalStore:
                         """
                     ).fetchall()
                 }
-                interval = connection.execute(
-                    "SELECT MIN(scan_rate_ms) AS value FROM device_assignment WHERE enabled=1"
-                ).fetchone()
+                try:
+                    interval = connection.execute(
+                        """
+                        SELECT COALESCE(
+                            (
+                                SELECT MIN(v.scan_rate_ms)
+                                FROM edge_variable AS v
+                                INNER JOIN device_assignment AS a
+                                    ON a.device_code=v.device_code
+                                WHERE a.enabled=1
+                            ),
+                            (
+                                SELECT MIN(scan_rate_ms)
+                                FROM device_assignment
+                                WHERE enabled=1
+                            )
+                        ) AS value
+                        """
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    interval = connection.execute(
+                        "SELECT MIN(scan_rate_ms) AS value FROM device_assignment WHERE enabled=1"
+                    ).fetchone()
         except sqlite3.OperationalError:
             return self._empty_outbox()
         oldest_at = (

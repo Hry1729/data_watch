@@ -10,9 +10,10 @@ from app.core.config import data_root, install_root, load_config, module_paths, 
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
-from app.routers.admin import _collector_env
+from app.routers.admin import _collector_env, _edge_storage_url, _storage_env
 from app.services.driver_installer import DriverInstaller
 from app.services.edge_sync import EdgeSyncService
+from app.services.edge_storage_client import EdgeStorageClient
 from app.services.log_manager import LogManager
 from app.services.managed_process_runner import ManagedProcessRunner
 from app.services.process_manager import ModuleSpec, ProcessManager
@@ -49,7 +50,12 @@ def build_sidecar_manager(cfg: dict, runtime_dir: Path) -> SidecarManager:
 
 
 async def _stop_child_processes(pm: ProcessManager) -> None:
-    for name in pm.modules:
+    ordered = [
+        name
+        for name in ("uploader", "collector", "ingest", "writer", "storage")
+        if name in pm.modules
+    ]
+    for name in ordered:
         try:
             await pm.stop(name)
         except Exception:
@@ -62,6 +68,27 @@ async def _detach_log_tails(pm: ProcessManager, log_manager: LogManager) -> None
             await asyncio.to_thread(log_manager.detach, name)
         except Exception:
             logger.exception("Failed to detach log tail for %s", name)
+
+
+async def _recover_edge_storage(app: FastAPI) -> None:
+    pm: ProcessManager = app.state.pm
+    while True:
+        await asyncio.sleep(2.0)
+        try:
+            if pm.status("storage").status != "crashed":
+                continue
+            await pm.restart("storage", env=_storage_env())
+            await asyncio.to_thread(app.state.edge_storage.wait_ready)
+            app.state.log_manager.attach(
+                "storage",
+                pm.log_file("storage"),
+                asyncio.get_running_loop(),
+            )
+            logger.warning("Edge Storage crashed and was restarted")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Failed to restart crashed Edge Storage")
 
 
 async def _recover_drivers_sync_collector(app: FastAPI) -> None:
@@ -128,7 +155,7 @@ async def lifespan(app: FastAPI):
             executable=str(exe),
             args=list(cfg.get(name, {}).get("args", [])),
             working_dir=str(working_dir),
-            supports_shutdown_flag=name in {"collector", "writer"},
+            supports_shutdown_flag=name in {"collector", "writer", "storage"},
         )
     pm = ProcessManager(runtime_dir=runtime_dir, modules=modules)
     app.state.pm = pm
@@ -141,6 +168,18 @@ async def lifespan(app: FastAPI):
     # 外置驱动安装根：DATAWATCH_DATA_ROOT/drivers
     app.state.driver_installer = DriverInstaller(data_root() / "drivers")
     app.state.driver_installer.ensure_layout()
+    if build_role() == "edge":
+        app.state.edge_storage = EdgeStorageClient(_edge_storage_url(), timeout_seconds=2.0)
+        try:
+            await pm.start("storage", env=_storage_env())
+            await asyncio.to_thread(app.state.edge_storage.wait_ready)
+            app.state.log_manager.attach(
+                "storage",
+                pm.log_file("storage"),
+                asyncio.get_running_loop(),
+            )
+        except Exception:
+            logger.exception("Edge Storage failed to start during Agent startup")
     # 崩溃补偿只属于包含 Collector 的角色。
     if "collector" in modules:
         await _recover_drivers_sync_collector(app)
@@ -148,7 +187,10 @@ async def lifespan(app: FastAPI):
     health_task = asyncio.create_task(pm.health_check_loop())
     edge_sync = None
     edge_sync_task = None
+    storage_recovery_task = None
     if build_role() == "edge":
+        storage_recovery_task = asyncio.create_task(_recover_edge_storage(app))
+
         def process_status(name: str) -> str:
             try:
                 return pm.status(name).status
@@ -161,6 +203,7 @@ async def lifespan(app: FastAPI):
             mutate_config=mutate_config,
             decrypt=dpapi_decrypt,
             process_status=process_status,
+            config_store=app.state.edge_storage,
         )
         app.state.edge_sync = edge_sync
         edge_sync_task = asyncio.create_task(edge_sync.run_forever())
@@ -171,6 +214,12 @@ async def lifespan(app: FastAPI):
         if edge_sync is not None and edge_sync_task is not None:
             edge_sync.stop()
             await edge_sync_task
+        if storage_recovery_task is not None:
+            storage_recovery_task.cancel()
+            try:
+                await storage_recovery_task
+            except asyncio.CancelledError:
+                pass
         try:
             await asyncio.wait_for(
                 _stop_child_processes(app.state.pm),

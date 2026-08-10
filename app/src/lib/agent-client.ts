@@ -139,6 +139,19 @@ export interface EdgeOutboxStatus {
   watermark: "normal" | "warning" | "critical" | "overflow";
 }
 
+export interface EdgeStorageStatus extends EdgeOutboxStatus {
+  writer_queue_depth: number;
+  writer_queue_capacity: number;
+  commands_total: number;
+  command_counts: Record<string, number>;
+  errors_total: number;
+  commit_p99_ms: number;
+  frames_per_second: number;
+  points_per_second: number;
+  storage_uptime_seconds: number;
+  error?: string;
+}
+
 export interface EdgeProcessStatus {
   name: string;
   status: string;
@@ -157,6 +170,7 @@ export interface EdgeLocalDevices {
     read_timeout_ms: number | null;
     applied_at: number;
   } | null;
+  fastest_point_scan_rate_ms: number | null;
   devices: EdgeDeviceStatus[];
 }
 export interface AgentClient {
@@ -173,6 +187,7 @@ export interface AgentClient {
   getLocalCollector():    Promise<EdgeProcessStatus>;
   getLocalOutbox():       Promise<EdgeOutboxStatus>;
   getLocalUploader():     Promise<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>;
+  getLocalStorage():      Promise<EdgeProcessStatus & { storage: EdgeStorageStatus }>;
   getLocalSettings():     Promise<EdgeLocalSettings>;
   updateLocalSettings(settings: EdgeLocalSettingsUpdate): Promise<EdgeLocalSettings>;
   getLocalMonitorDevices(query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
@@ -339,6 +354,9 @@ function makeRealAgent(): AgentClient {
     getLocalUploader: () =>
       agentFetch<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>("GET", "/local/uploader"),
 
+    getLocalStorage: () =>
+      agentFetch<EdgeProcessStatus & { storage: EdgeStorageStatus }>("GET", "/local/storage"),
+
     getLocalSettings: () =>
       agentFetch<EdgeLocalSettings>("GET", "/local/settings"),
 
@@ -467,6 +485,7 @@ export const agentClient: AgentClient = {
   getLocalCollector:           ()        => via((c) => c.getLocalCollector()),
   getLocalOutbox:              ()        => via((c) => c.getLocalOutbox()),
   getLocalUploader:            ()        => via((c) => c.getLocalUploader()),
+  getLocalStorage:             ()        => via((c) => c.getLocalStorage()),
   getLocalSettings:             ()        => via((c) => c.getLocalSettings()),
   updateLocalSettings:          (settings) => via((c) => c.updateLocalSettings(settings)),
   getLocalMonitorDevices:       (query)    => via((c) => c.getLocalMonitorDevices(query)),

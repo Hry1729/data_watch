@@ -150,7 +150,9 @@ class DistributedNodeService:
                        read_timeout_ms, applied_revision, outbox_backlog,
                        outbox_database_bytes, outbox_disk_used_percent,
                        outbox_watermark, outbox_dropped_records, key_version,
-                       collector_status, uploader_status, last_seen_at,
+                       collector_status, storage_status, uploader_status,
+                       storage_queue_depth, storage_commit_p99_ms,
+                       storage_errors_total, last_seen_at,
                        clock_skew_ms, clock_anomaly,
                        (SELECT COUNT(*) FROM device_assignment AS da
                         WHERE da.node_uuid=sys_node.node_uuid
@@ -536,7 +538,11 @@ class DistributedNodeService:
                     outbox_watermark=:outbox_watermark,
                     outbox_dropped_records=:outbox_dropped_records,
                     collector_status=:collector_status,
+                    storage_status=:storage_status,
                     uploader_status=:uploader_status,
+                    storage_queue_depth=:storage_queue_depth,
+                    storage_commit_p99_ms=:storage_commit_p99_ms,
+                    storage_errors_total=:storage_errors_total,
                     edge_time_ms=:edge_time_ms,
                     clock_skew_ms=:clock_skew_ms,
                     clock_anomaly=:clock_anomaly,
@@ -576,7 +582,25 @@ class DistributedNodeService:
                     default=0,
                 ),
                 "collector_status": str(payload.get("collectorStatus") or "unknown")[:16],
+                "storage_status": str(payload.get("storageStatus") or "unknown")[:16],
                 "uploader_status": str(payload.get("uploaderStatus") or "unknown")[:16],
+                "storage_queue_depth": _integer_field(
+                    payload.get("storageQueueDepth"),
+                    "storageQueueDepth",
+                    minimum=0,
+                    default=0,
+                ),
+                "storage_commit_p99_ms": _nonnegative_float_field(
+                    payload.get("storageCommitP99Ms"),
+                    "storageCommitP99Ms",
+                    maximum=9999999.999,
+                ),
+                "storage_errors_total": _integer_field(
+                    payload.get("storageErrorsTotal"),
+                    "storageErrorsTotal",
+                    minimum=0,
+                    default=0,
+                ),
                 "edge_time_ms": edge_time_ms,
                 "clock_skew_ms": clock_skew_ms,
                 "clock_anomaly": int(abs(clock_skew_ms) > 30_000),
@@ -866,6 +890,25 @@ def _percentage_field(value: Any, field: str) -> float:
     return round(parsed, 2)
 
 
+def _nonnegative_float_field(
+    value: Any,
+    field: str,
+    *,
+    maximum: float,
+) -> float:
+    if value is None or value == "":
+        return 0.0
+    if isinstance(value, bool):
+        raise ApiError(400, f"{field} 必须是非负数字")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ApiError(400, f"{field} 必须是非负数字") from exc
+    if parsed < 0 or parsed > maximum:
+        raise ApiError(400, f"{field} 超出允许范围")
+    return round(parsed, 3)
+
+
 def _watermark(value: Any) -> str:
     parsed = str(value or "normal")
     if parsed not in {"normal", "warning", "critical", "overflow"}:
@@ -912,7 +955,11 @@ def _node_row(row) -> dict[str, Any]:
         "outboxDroppedRecords": int(row["outbox_dropped_records"] or 0),
         "keyVersion": int(row["key_version"] or 1),
         "collectorStatus": str(row["collector_status"] or "unknown"),
+        "storageStatus": str(row.get("storage_status") or "unknown"),
         "uploaderStatus": str(row["uploader_status"] or "unknown"),
+        "storageQueueDepth": int(row.get("storage_queue_depth") or 0),
+        "storageCommitP99Ms": float(row.get("storage_commit_p99_ms") or 0),
+        "storageErrorsTotal": int(row.get("storage_errors_total") or 0),
         "clockSkewMs": int(row["clock_skew_ms"] or 0),
         "clockAnomaly": bool(row["clock_anomaly"]),
         "assignmentCount": int(row["assignment_count"] or 0),

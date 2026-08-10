@@ -277,6 +277,26 @@ async def update_device(
         return success_response(data=data)
 
 
+@router.patch("/api/device-monitor/device/{device_id}/status")
+async def update_device_status(
+    device_id: int,
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    principal = await require_permissions(credentials, "device_monitor:device:update")
+    if not isinstance(payload.get("enabled"), bool):
+        raise ApiError(400, "enabled must be boolean")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.update_device_status(
+            device_id,
+            enabled=payload["enabled"],
+            actor=principal["user_name"],
+        )
+        return success_response(data=data)
+
+
 @router.delete("/api/device-monitor/device/batch")
 async def batch_delete_devices(
     payload: dict[str, Any],
@@ -486,6 +506,30 @@ async def update_point(
         data = await service.update_point(
             point_id,
             payload,
+            actor=principal["user_name"],
+            locator_device_id=locatorDeviceId,
+            locator_var_seq=locatorVarSeq,
+        )
+        return success_response(data=data)
+
+
+@router.patch("/api/device-monitor/point/{point_id}/status")
+async def update_point_status(
+    point_id: int,
+    payload: dict[str, Any],
+    locatorDeviceId: str | None = None,
+    locatorVarSeq: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    principal = await require_permissions(credentials, "device_monitor:point:update")
+    if not isinstance(payload.get("enabled"), bool):
+        raise ApiError(400, "enabled must be boolean")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.update_point_status(
+            point_id,
+            enabled=payload["enabled"],
             actor=principal["user_name"],
             locator_device_id=locatorDeviceId,
             locator_var_seq=locatorVarSeq,

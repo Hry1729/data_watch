@@ -21,10 +21,13 @@ import {
   type EdgeLocalDevices,
   type EdgeOutboxStatus,
   type EdgeProcessStatus,
+  type EdgeStorageStatus,
 } from "@/lib/agent-client";
+import type { RatePoint } from "@/types";
 
-type EdgeModuleName = "collector" | "uploader";
+type EdgeModuleName = "collector" | "uploader" | "storage";
 type EdgeUploaderSnapshot = EdgeProcessStatus & { outbox: EdgeOutboxStatus };
+type EdgeStorageSnapshot = EdgeProcessStatus & { storage: EdgeStorageStatus };
 
 function useLocalSnapshot<T>(request: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
@@ -111,14 +114,35 @@ function ModulePage({
 
 const requestLocalDevices = () => agentClient.getLocalDevices();
 const requestLocalUploader = () => agentClient.getLocalUploader();
+const requestLocalStorage = () => agentClient.getLocalStorage();
+
+function useStorageSeries(storage: EdgeStorageStatus | undefined) {
+  const [series, setSeries] = useState<RatePoint[]>([]);
+
+  useEffect(() => {
+    if (!storage || storage.error) return;
+    const t = new Date().toLocaleTimeString("zh-CN", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    setSeries((current) => [
+      ...current,
+      { t, v: storage.frames_per_second ?? 0 },
+    ].slice(-121));
+  }, [storage]);
+
+  return series;
+}
 
 export function EdgeCollectorPage() {
   const snapshot = useLocalSnapshot<EdgeLocalDevices>(requestLocalDevices);
   const rates = useEdgeRates();
   const devices = snapshot.data?.devices ?? [];
   const online = devices.filter((device) => device.status === 1).length;
-  const scanRates = devices.filter((device) => device.enabled === 1).map((device) => device.scan_rate_ms);
-  const fastestRate = scanRates.length > 0 ? `${Math.min(...scanRates)} ms` : "—";
+  const fastestPointRate = snapshot.data?.fastest_point_scan_rate_ms;
+  const fastestRate = fastestPointRate != null ? `${fastestPointRate} ms` : "—";
 
   return (
     <ModulePage
@@ -146,7 +170,7 @@ export function EdgeCollectorPage() {
                     <TableHead className="w-[20%] text-center">设备编码</TableHead>
                     <TableHead className="w-[14%] text-center">协议</TableHead>
                     <TableHead className="w-[30%] text-center">端点</TableHead>
-                    <TableHead className="w-[18%] text-center">采集周期</TableHead>
+                    <TableHead className="w-[18%] text-center">设备默认周期</TableHead>
                     <TableHead className="w-[18%] text-center">状态</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -250,6 +274,91 @@ export function EdgeUploaderPage() {
           state={rateTrendState(rates.data.uploader, rates.loading, rates.error)}
           data={rates.data.uploader.series}
           current={rates.data.uploader.current}
+        />
+      </div>
+    </ModulePage>
+  );
+}
+
+export function EdgeStoragePage() {
+  const snapshot = useLocalSnapshot<EdgeStorageSnapshot>(requestLocalStorage);
+  const storage = snapshot.data?.storage;
+  const series = useStorageSeries(storage);
+  const commandRows = [
+    { label: "采集帧提交", value: storage?.command_counts?.["frame.commit"] ?? 0, detail: "Outbox 与实时快照原子落盘" },
+    { label: "上行批次领取", value: storage?.command_counts?.["outbox.claim"] ?? 0, detail: "严格按本地序号领取" },
+    { label: "上行状态确认", value: storage?.command_counts?.["outbox.complete"] ?? 0, detail: "批量更新成功或永久失败" },
+    { label: "配置快照应用", value: storage?.command_counts?.["config.apply"] ?? 0, detail: "设备和点位配置原子切换" },
+  ];
+
+  return (
+    <ModulePage
+      name="storage"
+      metrics={
+        <>
+          <MetricCard
+            label="单写队列"
+            value={`${storage?.writer_queue_depth ?? 0} / ${storage?.writer_queue_capacity ?? 0}`}
+            warning={(storage?.writer_queue_depth ?? 0) > 0}
+          />
+          <MetricCard
+            label="落盘 P99"
+            value={`${(storage?.commit_p99_ms ?? 0).toFixed(2)} ms`}
+            warning={(storage?.commit_p99_ms ?? 0) > 20}
+          />
+          <MetricCard label="采集帧速率" value={`${(storage?.frames_per_second ?? 0).toFixed(1)} 帧/s`} />
+          <MetricCard
+            label="点位落盘速率"
+            value={`${(storage?.points_per_second ?? 0).toFixed(1)} 点/s`}
+            warning={(storage?.errors_total ?? 0) > 0}
+          />
+        </>
+      }
+    >
+      <div className="grid h-full min-h-0 grid-rows-[300px_minmax(0,1fr)] gap-4 overflow-hidden">
+        <Card className="flex h-full min-h-0 flex-col gap-0 border border-border py-0">
+          <CardHeader className="px-4 py-3">
+            <CardTitle>本地单写事务</CardTitle>
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1 space-y-2 overflow-hidden px-4 pb-4">
+            {(snapshot.error || storage?.error) && (
+              <p className="text-xs text-destructive">{snapshot.error ?? storage?.error}</p>
+            )}
+            <div className="overflow-hidden rounded-lg border">
+              <Table className="w-full table-fixed">
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="h-10 hover:bg-transparent">
+                    <TableHead className="w-[28%] text-center">事务类型</TableHead>
+                    <TableHead className="w-[20%] text-center">累计次数</TableHead>
+                    <TableHead className="w-[52%] text-center">说明</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {commandRows.map((row) => (
+                    <TableRow key={row.label} className="h-10">
+                      <TableCell className="text-center font-medium">{row.label}</TableCell>
+                      <TableCell className="text-center font-mono tabular-nums">{row.value}</TableCell>
+                      <TableCell className="text-center text-xs text-muted-foreground">{row.detail}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant={(storage?.errors_total ?? 0) > 0 ? "destructive" : "outline"}>错误 {storage?.errors_total ?? 0}</Badge>
+              <span>累计命令 {storage?.commands_total ?? 0}</span>
+              <span>本地序号 {storage?.last_seq ?? 0}</span>
+              <span>数据库 {formatBytes(storage?.database_bytes ?? 0)}</span>
+            </div>
+          </CardContent>
+        </Card>
+        <TrendChart
+          fillHeight
+          title="采集帧落盘趋势"
+          unit="帧/s"
+          state={snapshot.error || storage?.error ? "error" : series.length > 0 ? "ready" : "loading"}
+          data={series}
+          current={storage?.frames_per_second ?? null}
         />
       </div>
     </ModulePage>

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
+from uuid import uuid4
 
 from edge.app.outbox import OutboxStore
+from edge.app.storage_client import EdgeStorageClient
 from monitor.performance import PerformanceMetrics
 
 
@@ -11,11 +14,12 @@ class EdgeOutboxWriter:
 
     def __init__(
         self,
-        store: OutboxStore,
+        store: OutboxStore | EdgeStorageClient,
         metrics: PerformanceMetrics | None = None,
     ) -> None:
         self.store = store
         self._metrics = metrics or PerformanceMetrics()
+        self._pending = threading.local()
 
     def ping(self) -> None:
         self.store.snapshot_target_seq()
@@ -32,7 +36,31 @@ class EdgeOutboxWriter:
         group_code: str,
         fields: dict[str, dict[str, Any]],
     ) -> None:
-        self.store.write_local_latest(device_code, group_code, fields)
+        pending = getattr(self._pending, "frame", None)
+        self._pending.frame = None
+        if (
+            pending is None
+            or pending["device_code"] != device_code
+            or pending["group_code"] != group_code
+        ):
+            self.store.write_local_latest(device_code, group_code, fields)
+            return
+        if not pending["values"]:
+            self.store.write_local_latest(device_code, group_code, fields)
+            return
+        self.store.commit_frame(
+            batch_id=pending["batch_id"],
+            device_code=device_code,
+            device_type=pending["device_type"],
+            group_code=group_code,
+            scan_rate_ms=pending["scan_rate_ms"],
+            ts=pending["ts"],
+            config_version=pending["config_version"],
+            values=pending["values"],
+            qualities=pending["qualities"],
+            latest_fields=fields,
+        )
+        self._metrics.increment("stream_points_written", len(pending["values"]))
 
     def write_window(
         self,
@@ -56,7 +84,16 @@ class EdgeOutboxWriter:
     ) -> None:
         if not values:
             return
-        self.store.append_envelope(
+        latest_fields = {
+            var_id: {
+                "v": value,
+                "t": ts,
+                "q": int((qualities or {}).get(var_id, 0)),
+            }
+            for var_id, value in values.items()
+        }
+        self.store.commit_frame(
+            batch_id=str(uuid4()),
             device_code=device_code,
             device_type=device_type,
             group_code=group_code,
@@ -65,6 +102,7 @@ class EdgeOutboxWriter:
             config_version=config_version,
             values=values,
             qualities=qualities,
+            latest_fields=latest_fields,
         )
         self._metrics.increment("stream_points_written", len(values))
 
@@ -80,13 +118,14 @@ class EdgeOutboxWriter:
         stream_values: dict[str, str],
         stream_qualities: dict[str, int] | None = None,
     ) -> None:
-        self.write_stream(
-            device_code,
-            device_type,
-            group_code,
-            scan_rate_ms,
-            ts,
-            config_version,
-            stream_values,
-            stream_qualities,
-        )
+        self._pending.frame = {
+            "batch_id": str(uuid4()),
+            "device_code": device_code,
+            "device_type": device_type,
+            "group_code": group_code,
+            "scan_rate_ms": scan_rate_ms,
+            "ts": ts,
+            "config_version": config_version,
+            "values": stream_values,
+            "qualities": stream_qualities,
+        }

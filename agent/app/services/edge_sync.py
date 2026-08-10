@@ -210,8 +210,9 @@ class EdgeSyncService:
         process_status: Callable[[str], str],
         transport: Transport | None = None,
         interval_seconds: float = 10.0,
+        config_store=None,
     ) -> None:
-        self._config_store = EdgeConfigStore(database_path)
+        self._config_store = config_store or EdgeConfigStore(database_path)
         self._local_store = EdgeLocalStore(database_path)
         self._load_config = load_config
         self._mutate_config = mutate_config
@@ -252,16 +253,26 @@ class EdgeSyncService:
             transport=self._transport,
         )
         outbox = self._local_store.outbox_status()
+        storage = (
+            await asyncio.to_thread(self._config_store.status)
+            if hasattr(self._config_store, "status")
+            else {}
+        )
+        applied = await asyncio.to_thread(self._config_store.revision)
         heartbeat = await client.heartbeat(
             {
-                "appliedRevision": self._config_store.revision(),
+                "appliedRevision": applied,
                 "outboxBacklog": outbox["backlog_count"],
                 "outboxDatabaseBytes": outbox["database_bytes"],
                 "outboxDiskUsedPercent": outbox["disk_used_percent"],
                 "outboxWatermark": outbox["watermark"],
                 "outboxDroppedRecords": outbox["dropped_records"],
                 "collectorStatus": self._process_status("collector"),
+                "storageStatus": self._process_status("storage"),
                 "uploaderStatus": self._process_status("uploader"),
+                "storageQueueDepth": int(storage.get("writer_queue_depth") or 0),
+                "storageCommitP99Ms": float(storage.get("commit_p99_ms") or 0),
+                "storageErrorsTotal": int(storage.get("errors_total") or 0),
                 "edgeTimeMs": int(time.time() * 1000),
                 "lastError": str(edge.get("last_sync_error") or ""),
             }
@@ -269,7 +280,6 @@ class EdgeSyncService:
         center_time_ms = int(heartbeat.get("centerTimeMs") or int(time.time() * 1000))
         await asyncio.to_thread(self._config_store.refresh_schedule, center_time_ms)
         desired = int(heartbeat.get("desiredRevision") or 0)
-        applied = self._config_store.revision()
         if desired != applied:
             snapshot = await client.config(applied)
             if snapshot.get("changed"):

@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -75,17 +75,38 @@ const FREQUENCIES = [
   [10000, "10秒"],
   [30000, "30秒"],
 ] as const;
+const REALTIME_WINDOW_MS = 5 * 60_000;
+const MAX_REALTIME_SAMPLES = 3000;
+const REALTIME_VIEW_WINDOWS = [
+  [30_000, "30秒"],
+  [60_000, "1分钟"],
+  [REALTIME_WINDOW_MS, "5分钟"],
+] as const;
+const DEFAULT_REALTIME_VIEW_MS = 60_000;
 
 type ChartType = "line" | "area" | "status";
 type SampleRow = Record<string, string | number>;
+
+function formatSampleTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
+  return date.toLocaleTimeString("zh-CN", { hour12: false }) + "." + milliseconds;
+}
 
 interface SavedMonitorState {
   deviceId?: number;
   selectedPoints?: number[];
   refreshRate?: number;
+  viewWindowMs?: number;
   chartType?: ChartType;
   separateBoolChart?: boolean;
   wasMonitoring?: boolean;
+}
+
+function normalizeViewWindow(value?: number): number {
+  return REALTIME_VIEW_WINDOWS.some(([duration]) => duration === value)
+    ? Number(value)
+    : DEFAULT_REALTIME_VIEW_MS;
 }
 
 function loadSavedState(): SavedMonitorState {
@@ -132,6 +153,7 @@ function TrendChart({
   points,
   samples,
   chartType,
+  viewWindowMs,
   compact = false,
   className = "",
 }: {
@@ -139,6 +161,7 @@ function TrendChart({
   points: RealtimeDataItem[];
   samples: SampleRow[];
   chartType: ChartType;
+  viewWindowMs: number;
   compact?: boolean;
   className?: string;
 }) {
@@ -167,15 +190,33 @@ function TrendChart({
   }
 
   const Chart = chartType === "area" ? AreaChart : LineChart;
+  const latestSampleAt = Number(samples[samples.length - 1]?.sampleAt ?? Date.now());
+  const firstSampleAt = Number(samples[0]?.sampleAt ?? latestSampleAt);
+  const observedSpan = Math.max(latestSampleAt - firstSampleAt, 1000);
+  const rightPadding = Math.min(2000, Math.max(250, observedSpan * 0.04));
+  const adaptiveStart = Math.max(firstSampleAt, latestSampleAt - viewWindowMs + rightPadding);
+  const viewDomain: [number, number] = [adaptiveStart, latestSampleAt + rightPadding];
   return (
     <div className={["flex min-h-0 flex-col gap-1.5", className].join(" ")}>
       {title && <p className="text-xs font-medium text-muted-foreground">{title}</p>}
       <ChartContainer config={config} className={[compact ? "h-16 max-h-16" : "h-full min-h-0 flex-1", "w-full aspect-auto"].join(" ")}>
         <Chart data={samples} accessibilityLayer>
           <CartesianGrid vertical={false} />
-          <XAxis dataKey="time" tickLine={false} axisLine={false} minTickGap={28} />
+          <XAxis
+            dataKey="sampleAt"
+            type="number"
+            domain={viewDomain}
+            allowDataOverflow
+            tickLine={false}
+            axisLine={false}
+            minTickGap={28}
+            tickFormatter={(value) => formatSampleTime(Number(value)).slice(0, 8)}
+          />
           <YAxis tickLine={false} axisLine={false} width={52} />
-          <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+          <ChartTooltip
+            labelFormatter={(value) => formatSampleTime(Number(value))}
+            content={<ChartTooltipContent indicator="line" />}
+          />
           <ChartLegend content={<ChartLegendContent />} />
           {points.map((point, index) => chartType === "area" ? (
             <Area key={point.varSeq} type="monotone" dataKey={`v${point.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />
@@ -194,6 +235,7 @@ export default function RealtimeMonitorPage() {
   const token = auth?.backendToken || (BUILD_ROLE === "edge" ? auth?.agentToken ?? "" : "");
   const [searchParams, setSearchParams] = useSearchParams();
   const [frequency, setFrequency] = useState(savedState.refreshRate ?? 1000);
+  const [viewWindowMs, setViewWindowMs] = useState(() => normalizeViewWindow(savedState.viewWindowMs));
   const [running, setRunning] = useState(savedState.wasMonitoring ?? false);
   const [selectedPoints, setSelectedPoints] = useState<number[]>(savedState.selectedPoints ?? []);
   const [samples, setSamples] = useState<SampleRow[]>([]);
@@ -204,7 +246,6 @@ export default function RealtimeMonitorPage() {
   const [pointSearch, setPointSearch] = useState("");
   const [draftPoints, setDraftPoints] = useState<number[]>([]);
   const chartCardRef = useRef<HTMLDivElement>(null);
-  const lastSampleRef = useRef("");
 
   const loadDevices = useCallback((backendToken: string) => monitorClient.deviceList(backendToken, { pageNo: 1, pageSize: 1000 }), []);
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
@@ -268,37 +309,49 @@ export default function RealtimeMonitorPage() {
     };
   }), [pointList, realtimeSocket.deviceOffline, realtimeSocket.values]);
 
-  const selectedPointItems = resolvedPoints.filter((point) => selectedPoints.includes(point.varSeq));
+  const selectedPointItems = useMemo(
+    () => resolvedPoints.filter((point) => selectedPoints.includes(point.varSeq)),
+    [resolvedPoints, selectedPoints],
+  );
+  const selectedPointItemsRef = useRef(selectedPointItems);
   const numericPoints = selectedPointItems.filter((point) => (point.dataType ?? "").toUpperCase() !== "BOOL");
   const boolPoints = selectedPointItems.filter((point) => (point.dataType ?? "").toUpperCase() === "BOOL");
   const filteredPoints = pointList.filter((point) => `${point.pointName} ${point.ioAddress}`.toLowerCase().includes(pointSearch.trim().toLowerCase()));
 
   useEffect(() => {
-    if (!running || !selectedPointItems.length) return;
-    const signature = selectedPointItems.map((point) => `${point.varSeq}:${String(point.value)}:${point.updateTime}`).join("|");
-    if (!signature || signature === lastSampleRef.current) return;
-    lastSampleRef.current = signature;
-    const row: SampleRow = { time: new Date().toLocaleTimeString("zh-CN", { hour12: false }) };
-    selectedPointItems.forEach((point) => { row[`v${point.varSeq}`] = chartValue(point.value); });
-    setSamples((current) => [...current.slice(-599), row]);
-  }, [running, selectedPointItems]);
+    selectedPointItemsRef.current = selectedPointItems;
+  }, [selectedPointItems]);
 
+  useEffect(() => {
+    if (!running || realtimeSocket.sampleVersion === 0) return;
+    const points = selectedPointItemsRef.current;
+    if (!points.length) return;
+    const sampleAt = Date.now();
+    const row: SampleRow = { time: formatSampleTime(sampleAt), sampleAt };
+    points.forEach((point) => { row[`v${point.varSeq}`] = chartValue(point.value); });
+    setSamples((current) => [
+      ...current
+        .filter((sample) => Number(sample.sampleAt ?? 0) >= sampleAt - REALTIME_WINDOW_MS)
+        .slice(-(MAX_REALTIME_SAMPLES - 1)),
+      row,
+    ]);
+  }, [realtimeSocket.sampleVersion, running]);
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       deviceId: selectedDeviceId,
       selectedPoints,
       refreshRate: frequency,
+      viewWindowMs,
       chartType,
       separateBoolChart,
       wasMonitoring: running,
     } satisfies SavedMonitorState));
-  }, [chartType, frequency, running, selectedDeviceId, selectedPoints, separateBoolChart]);
+  }, [chartType, frequency, running, selectedDeviceId, selectedPoints, separateBoolChart, viewWindowMs]);
 
   function resetMonitorState() {
     setRunning(false);
     setSelectedPoints([]);
     setSamples([]);
-    lastSampleRef.current = "";
     realtimeSocket.clearValues();
   }
 
@@ -336,14 +389,12 @@ export default function RealtimeMonitorPage() {
   function confirmPointSelection() {
     setSelectedPoints(draftPoints);
     setSamples([]);
-    lastSampleRef.current = "";
     setPointDialogOpen(false);
   }
 
   function clearSelection() {
     setSelectedPoints([]);
     setSamples([]);
-    lastSampleRef.current = "";
     realtimeSocket.clearValues();
   }
 
@@ -426,6 +477,14 @@ export default function RealtimeMonitorPage() {
           <CardTitle>点位实时趋势</CardTitle>
           <CardAction>
             <div className="flex items-center gap-1">
+              <Select value={String(viewWindowMs)} onValueChange={(value) => setViewWindowMs(Number(value))}>
+                <SelectTrigger className="w-24" aria-label="最大显示跨度" title="最大显示跨度"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {REALTIME_VIEW_WINDOWS.map(([value, label]) => <SelectItem key={value} value={String(value)}>{label}</SelectItem>)}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
               {(["line", "area", "status"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : "状态图"}</Button>)}
               <Button size="icon" variant="ghost" title="全屏" aria-label="全屏" onClick={() => void toggleFullscreen()}><Expand className="size-4" /></Button>
               <Button size="icon" variant="ghost" title="图表设置" aria-label="图表设置" onClick={() => setSettingsOpen(true)}><Settings2 className="size-4" /></Button>
@@ -433,7 +492,7 @@ export default function RealtimeMonitorPage() {
           </CardAction>
         </CardHeader>
         <CardContent className="min-h-0 flex-1 p-3">
-          {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button size="sm" onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : chartType !== "status" && separateBoolChart && numericPoints.length > 0 && boolPoints.length > 0 ? <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_96px] gap-2"><TrendChart title="数值型点位" points={numericPoints} samples={samples} chartType={chartType} className="h-full" /><TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} compact className="h-full" /></div> : chartType !== "status" && separateBoolChart && boolPoints.length > 0 ? <TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} compact className="h-24" /> : <TrendChart points={selectedPointItems} samples={samples} chartType={chartType} className="h-full" />}
+          {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button size="sm" onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : chartType !== "status" && separateBoolChart && numericPoints.length > 0 && boolPoints.length > 0 ? <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_96px] gap-2"><TrendChart title="数值型点位" points={numericPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} className="h-full" /><TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} compact className="h-full" /></div> : chartType !== "status" && separateBoolChart && boolPoints.length > 0 ? <TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} compact className="h-24" /> : <TrendChart points={selectedPointItems} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} className="h-full" />}
         </CardContent>
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
         <DialogContent className="max-w-md">

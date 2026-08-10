@@ -30,6 +30,17 @@ async def module_monitor_collector(
         return success_response(data=data)
 
 
+@router.get("/api/device-monitor/module-monitor/device-status")
+async def module_monitor_device_status(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, {"device_monitor:monitor:view", "device_monitor:realtime:view"})
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = ModuleMonitorService(session=session)
+        data = await service.get_device_statuses()
+        return success_response(data=data)
+
 @router.get("/api/device-monitor/module-monitor/writer")
 async def module_monitor_writer(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
@@ -68,8 +79,7 @@ async def update_collector_config(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    # TODO: 改配置应使用 edit 级权限；项目暂无 collector config 专用权限码，沿用 monitor:view
-    await require_permissions(credentials, {"device_monitor:monitor:view", "device_monitor:realtime:view"})
+    await require_permissions(credentials, "device_monitor:collector_config:update")
     config_payload = CollectorConfigPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
