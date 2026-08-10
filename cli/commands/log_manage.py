@@ -56,7 +56,7 @@ def install_log_management(
     @debug_app.command("enable")
     def log_debug_enable(
         ctx: typer.Context,
-        minutes: int = typer.Option(30, "--minutes", min=1),
+        minutes: int = typer.Option(30, "--minutes", min=5, max=480),
         reason: Optional[str] = typer.Option(None, "--reason"),
     ) -> None:
         run_authorized(

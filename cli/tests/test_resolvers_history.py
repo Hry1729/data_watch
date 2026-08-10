@@ -12,7 +12,7 @@ class RouteSession:
     def request(self, method: str, path: str, *, params=None, json_body=None) -> Any:
         self.requests.append(path)
         if path.endswith("/devices"):
-            return [{"id": 7, "deviceCode": "ASC701L", "deviceName": "ASC701L 轨道吊"}]
+            return [{"id": 7, "deviceCode": "ASC7011", "deviceName": "轨道吊701L"}]
         if path.endswith("/points"):
             return [
                 {"varSeq": 1, "pointName": "TEMP001", "ioAddress": "DB1.DBW0"},
@@ -26,7 +26,7 @@ class RouteSession:
                         {
                             "nodeType": "device",
                             "deviceId": 7,
-                            "deviceCode": "ASC701L",
+                            "deviceCode": "ASC7011",
                         }
                     ],
                 }
@@ -53,5 +53,5 @@ def test_monitor_tree_resolution_is_cached() -> None:
     resolver = Resolver(session)
 
     assert resolver.resolve_monitor_device("轨道吊701L")["deviceId"] == 7
-    assert resolver.resolve_monitor_device("7")["deviceCode"] == "ASC701L"
+    assert resolver.resolve_monitor_device("7")["deviceCode"] == "ASC7011"
     assert session.requests.count("/api/device-monitor/monitor/device-tree") == 1

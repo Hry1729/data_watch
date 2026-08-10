@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 from cli.errors import CliError, EXIT_API, EXIT_USAGE
@@ -377,6 +378,10 @@ def device_lookup_key(value: Any) -> str:
         ("海侧", "s"),
     ):
         normalized = normalized.replace(source, replacement)
+    side_match = re.fullmatch(r"asc(\d+)([ls])", normalized)
+    if side_match:
+        side_code = "1" if side_match.group(2) == "l" else "2"
+        return f"asc{side_match.group(1)}{side_code}"
     return normalized
 
 

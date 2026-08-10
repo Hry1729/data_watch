@@ -81,7 +81,7 @@ def test_business_point_device_hint_uses_terminal_device_alias() -> None:
                     device_id=1,
                     device_name="ASC701L",
                     point_name="Ready",
-                    device_code="ASC701L",
+                    device_code="ASC7011",
                     io_address="I101",
                 )
             ]
@@ -92,7 +92,7 @@ def test_business_point_device_hint_uses_terminal_device_alias() -> None:
         ["I101"], device_hint="轨道吊701陆侧"
     )
 
-    assert session.requests[0][2]["deviceHint"] == "asc701l"
+    assert session.requests[0][2]["deviceHint"] == "asc7011"
 
 
 def test_ambiguous_io_address_returns_business_candidates() -> None:

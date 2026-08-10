@@ -86,7 +86,7 @@ def test_device_list_normalizes_terminal_business_keyword(monkeypatch) -> None:
 
     assert result.exit_code == 0
     params = FakeAuthorizedSession.requests[0][2]
-    assert params["keyword"] == "asc701s"
+    assert params["keyword"] == "asc7012"
 
 
 def test_invalid_connect_status_uses_json_usage_error(monkeypatch) -> None:
@@ -102,3 +102,16 @@ def test_invalid_connect_status_uses_json_usage_error(monkeypatch) -> None:
     error = json.loads(result.stderr)
     assert error["error"]["type"] == "usage_error"
     assert FakeAuthorizedSession.requests == []
+
+
+def test_dashboard_defaults_use_backend_range_values(monkeypatch) -> None:
+    FakeAuthorizedSession.requests = []
+    monkeypatch.setattr(common_module, "AuthorizedSession", FakeAuthorizedSession)
+
+    trend = runner.invoke(main_module.app, ["dashboard", "trend"])
+    connection = runner.invoke(main_module.app, ["dashboard", "connection-health"])
+
+    assert trend.exit_code == 0
+    assert connection.exit_code == 0
+    assert FakeAuthorizedSession.requests[0][2]["rangeType"] == "last24h"
+    assert FakeAuthorizedSession.requests[1][2]["statRange"] == "last24h"

@@ -988,6 +988,7 @@ class HistoryService:
                 "start_time": start_time,
                 "end_time": end_time,
                 "device_name": device.device_name,
+                "device_code": device.device_code,
             }
         )
 

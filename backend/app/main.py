@@ -467,7 +467,8 @@ class EnhancedASGITurboAPI(TurboAPI):
 
         for param_name, value in query_params.to_handler_dict().items():
             if param_name not in call_args and param_name in sig.parameters:
-                call_args[param_name] = value
+                annotation = type_hints.get(param_name)
+                call_args[param_name] = self._coerce_scalar_value(value, annotation)
 
         header_values = HeaderParser.parse_headers(dict(headers), sig)
         for param_name, value in header_values.items():
@@ -607,7 +608,17 @@ class EnhancedASGITurboAPI(TurboAPI):
             return content
         if isinstance(content, str):
             return content.encode("utf-8")
-        return json.dumps(content, ensure_ascii=False).encode("utf-8")
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            default=self._json_default,
+        ).encode("utf-8")
+
+    @staticmethod
+    def _json_default(value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 @asynccontextmanager

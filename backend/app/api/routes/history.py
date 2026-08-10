@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from typing import Any
 
@@ -251,9 +252,10 @@ async def history_export_download(
     if not task.file_path or not os.path.exists(task.file_path):
         raise ApiError(404, "Export file not found or expired")
 
-    # 从元数据中获取设备名称作为文件名的一部分
-    device_name = task.metadata.get("device_name", "device")
-    filename = f"历史数据_{device_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+    # 使用 ASCII 设备编码，避免 Content-Disposition 响应头编码失败。
+    device_code = str(task.metadata.get("device_code") or task.metadata.get("device_id") or "device")
+    safe_device_code = re.sub(r"[^A-Za-z0-9._-]+", "_", device_code).strip("._-") or "device"
+    filename = f"history_data_{safe_device_code}_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
 
     return FileResponse(
         path=task.file_path,

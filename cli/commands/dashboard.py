@@ -31,7 +31,7 @@ def install_dashboard_commands(
     @dashboard_app.command("trend")
     def trend(
         ctx: typer.Context,
-        range_type: str = typer.Option("24h", "--range"),
+        range_type: str = typer.Option("last24h", "--range"),
         granularity: str = typer.Option("1h", "--granularity"),
         metrics: Optional[list[str]] = typer.Option(None, "--metric"),
     ) -> None:
@@ -71,7 +71,7 @@ def install_dashboard_commands(
     @dashboard_app.command("connection-health")
     def connection_health(
         ctx: typer.Context,
-        range_type: str = typer.Option("24h", "--range"),
+        range_type: str = typer.Option("last24h", "--range"),
         top: int = typer.Option(10, "--top", min=1, max=100),
         include_offline: bool = typer.Option(True, "--include-offline/--online-only"),
     ) -> None:

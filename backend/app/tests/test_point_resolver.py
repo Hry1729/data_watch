@@ -100,3 +100,56 @@ async def test_point_resolve_route_accepts_read_permissions(monkeypatch) -> None
 
     with pytest.raises(PermissionChecked):
         await monitor.monitor_point_resolve("I101", credentials=None)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_route_coerces_typed_query_parameters() -> None:
+    from types import SimpleNamespace
+
+    from app.main import (
+        CaseInsensitiveHeaders,
+        CompatQueryParams,
+        CompatRequest,
+        EnhancedASGITurboAPI,
+    )
+
+    async def handler(limit: int = 20, enabled: bool = False):
+        return {"limit": limit, "enabled": enabled}
+
+    query_params = CompatQueryParams([("limit", "20"), ("enabled", "true")])
+    request = CompatRequest(
+        method="GET",
+        path="/test",
+        query_string="limit=20&enabled=true",
+        headers=CaseInsensitiveHeaders({}),
+        path_params={},
+        query_params=query_params,
+        body=b"",
+    )
+
+    result = await EnhancedASGITurboAPI._dispatch_route(
+        object.__new__(EnhancedASGITurboAPI),
+        route=SimpleNamespace(handler=handler, path_params=[]),
+        path_params={},
+        query_params=query_params,
+        query_string="limit=20&enabled=true",
+        headers=CaseInsensitiveHeaders({}),
+        body=b"",
+        request=request,
+    )
+
+    assert result == {"limit": 20, "enabled": True}
+
+
+def test_response_encoder_serializes_datetime() -> None:
+    import json
+    from datetime import datetime
+
+    from app.main import EnhancedASGITurboAPI
+
+    encoded = EnhancedASGITurboAPI._encode_content(
+        object.__new__(EnhancedASGITurboAPI),
+        {"createdAt": datetime(2026, 8, 10, 17, 5, 12)},
+    )
+
+    assert json.loads(encoded) == {"createdAt": "2026-08-10T17:05:12"}

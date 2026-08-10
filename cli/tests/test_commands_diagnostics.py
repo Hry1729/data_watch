@@ -188,3 +188,16 @@ def test_node_policy_requires_admin_or_super_role() -> None:
         policy,
         {"roles": ["R_ADMIN"], "permissions": []},
     ) is True
+
+def test_debug_duration_matches_backend_range() -> None:
+    too_short = runner.invoke(
+        main_module.app,
+        ["logs", "debug", "enable", "--minutes", "1"],
+    )
+    too_long = runner.invoke(
+        main_module.app,
+        ["logs", "debug", "enable", "--minutes", "481"],
+    )
+
+    assert too_short.exit_code == 2
+    assert too_long.exit_code == 2
