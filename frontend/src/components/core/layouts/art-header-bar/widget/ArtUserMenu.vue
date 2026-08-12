@@ -60,7 +60,6 @@
   import { useRouter } from 'vue-router'
   import { ElMessageBox } from 'element-plus'
   import { useUserStore } from '@/store/modules/user'
-  import { WEB_LINKS } from '@/utils/constants'
   import { mittBus } from '@/utils/sys'
 
   defineOptions({ name: 'ArtUserMenu' })
@@ -81,10 +80,10 @@
   }
 
   /**
-   * 打开文档页面
+   * 打开项目文档总览页
    */
   const toDocs = (): void => {
-    window.open(WEB_LINKS.DOCS)
+    router.push('/project-docs/overview')
   }
 
   /**

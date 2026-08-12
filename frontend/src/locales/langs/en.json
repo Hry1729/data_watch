@@ -124,19 +124,6 @@
       "resetFailed": "Reset failed, please refresh the page and try again"
     }
   },
-  "notice": {
-    "title": "Notice",
-    "btnRead": "Mark as read",
-    "bar": [
-      "Notice",
-      "Message",
-      "Todo"
-    ],
-    "text": [
-      "No"
-    ],
-    "viewAll": "View all"
-  },
   "worktab": {
     "btn": {
       "refresh": "Refresh",
@@ -241,6 +228,9 @@
     },
     "outside": {
       "title": "Outside"
+    },
+    "monitorScreen": {
+      "title": "Command Center"
     },
     "dashboard": {
       "title": "Dashboard",

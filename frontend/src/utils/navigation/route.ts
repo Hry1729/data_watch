@@ -69,6 +69,11 @@ export const getFirstMenuPath = (menuList: AppRouteRecord[]): string => {
       continue
     }
 
+    // 侧栏可见的全屏页（如监控大屏）不作为登录后默认首页
+    if (menuItem.meta?.isFullPage && !menuItem.meta?.isHide) {
+      continue
+    }
+
     // 如果有子菜单，优先查找子菜单
     if (menuItem.children?.length) {
       const childPath = getFirstMenuPath(menuItem.children)

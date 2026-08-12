@@ -22,7 +22,7 @@ Windows 角色安装包：
   中心式                    App + Agent(:7070) + Collector + Writer
   分布式边缘                Edge App + Edge Agent(:7071) + Storage(:7073) + Edge Collector + Uploader
   分布式中心                Center App + Agent(:7072) + Ingest + Writer
-  OPC DA proxy             仅随包含 Collector 的角色安装
+OPC DA proxy             仅随包含 Collector 的角色安装
 
 独立工具包：
   DataWatch CLI            Windows x64 one-folder ZIP，不进入三角色安装包，目标机无需 Python
