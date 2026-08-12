@@ -36,3 +36,16 @@ async def device_monitor_ping():
         },
         msg="device-monitor backend reachable",
     )
+
+
+@router.get("/api/cli/compatibility")
+async def cli_compatibility():
+    settings = get_settings()
+    return success_response(
+        data={
+            "backendVersion": settings.app_version,
+            "apiVersion": settings.cli_api_version,
+            "minCliVersion": settings.cli_min_version,
+            "maxCliVersion": settings.cli_max_version,
+        }
+    )

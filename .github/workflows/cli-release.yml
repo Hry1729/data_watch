@@ -1,0 +1,45 @@
+name: CLI release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-sign:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build dependencies
+        run: python -m pip install -e . pytest pyinstaller
+
+      - name: Test CLI
+        run: python -m pytest cli\tests -q
+
+      - name: Build one-folder package
+        shell: powershell
+        run: .\packaging\build-cli.ps1 -SkipTests
+
+      - name: Configure release signing key
+        shell: powershell
+        env:
+          CLI_RELEASE_PRIVATE_KEY_B64: ${{ secrets.CLI_RELEASE_PRIVATE_KEY_B64 }}
+        run: |
+          if (-not $env:CLI_RELEASE_PRIVATE_KEY_B64) { throw "Missing signing key" }
+          New-Item -ItemType Directory -Path packaging\keys -Force | Out-Null
+          Set-Content packaging\keys\cli-release-private.key $env:CLI_RELEASE_PRIVATE_KEY_B64 -Encoding ascii
+
+      - name: Sign release manifest
+        shell: powershell
+        run: .\packaging\publish-cli-release.ps1 -SkipBuild -SkipTests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-watch-cli-release
+          path: |
+            artifacts/data-watch-cli-*-windows-x64.zip
+            artifacts/data-watch-cli-*-windows-x64.zip.sha256.json
+            backend/cli-releases/stable/windows-x64/**

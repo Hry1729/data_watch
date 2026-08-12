@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,12 @@ DEVICE_FIELDS = {
     "设备状态": "deviceStatus",
     "描述": "description",
 }
+_CONFIRMATION_BYPASS: ContextVar[bool] = ContextVar(
+    "data_watch_confirmation_bypass",
+    default=False,
+)
+
+
 POINT_FIELDS = {
     "设备编号": "deviceCode",
     "点位序号": "varSeq",
@@ -31,11 +39,13 @@ POINT_FIELDS = {
 
 
 def load_json_object(path_value: str) -> dict[str, Any]:
-    path = _input_file(path_value)
+    path = None if path_value == "-" else _input_file(path_value)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        content = sys.stdin.read() if path is None else path.read_text(encoding="utf-8-sig")
+        payload = json.loads(content)
     except (OSError, ValueError) as exc:
-        raise CliError("file_error", f"无法读取 JSON 文件: {path}", EXIT_USAGE) from exc
+        source = "标准输入" if path is None else str(path)
+        raise CliError("file_error", f"无法读取 JSON: {source}", EXIT_USAGE) from exc
     if not isinstance(payload, dict):
         raise CliError("file_error", "JSON 文件根节点必须是对象", EXIT_USAGE)
     return payload
@@ -107,8 +117,12 @@ def write_download(
     }
 
 
+def set_confirmation_bypass(enabled: bool) -> None:
+    _CONFIRMATION_BYPASS.set(enabled)
+
+
 def require_confirmation(value: str, expected: str) -> None:
-    if value != expected:
+    if not _CONFIRMATION_BYPASS.get() and value != expected:
         raise CliError(
             "confirmation_required",
             f"--confirm 必须精确等于 {expected}",

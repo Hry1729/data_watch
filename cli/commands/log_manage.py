@@ -93,7 +93,7 @@ def install_log_management(
     def log_cleanup(
         ctx: typer.Context,
         before: str = typer.Option(..., "--before"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
         force: bool = typer.Option(False, "--force"),
     ) -> None:
         def operation(session) -> Any:

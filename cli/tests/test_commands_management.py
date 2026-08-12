@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from typer.testing import CliRunner
@@ -62,9 +63,15 @@ class FakeAuthorizedSession:
             return {"taskId": "task-1"}
         return {"deleted": True}
 
-    def download(self, path: str, *, params=None):
+    def download_to(self, path: str, output: str, *, params=None):
         type(self).requests.append(("GET", path, params))
-        return b"xlsx", "device-export.xlsx"
+        target = Path(output)
+        target.write_bytes(b"xlsx")
+        return {
+            "output": str(target.resolve()),
+            "fileName": "device-export.xlsx",
+            "bytes": 4,
+        }
 
 
 def test_wrong_device_confirmation_never_sends_delete(monkeypatch) -> None:

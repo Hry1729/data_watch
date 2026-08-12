@@ -2,6 +2,7 @@ from turboapi import APIRouter
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.catalog import router as catalog_router
+from app.api.routes.cli_releases import router as cli_releases_router
 from app.api.routes.dashboard import router as dashboard_router
 from app.api.routes.distributed_nodes import router as distributed_nodes_router
 from app.api.routes.history import router as history_router
@@ -15,6 +16,7 @@ from app.api.routes.system import router as system_router
 api_router = APIRouter()
 api_router.include_router(auth_router)
 api_router.include_router(system_router)
+api_router.include_router(cli_releases_router)
 api_router.include_router(catalog_router)
 api_router.include_router(dashboard_router)
 api_router.include_router(distributed_nodes_router)

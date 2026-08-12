@@ -103,6 +103,39 @@ class ConfigStore:
         self.save(document)
         return self.public_document(document)
 
+    def update_profile(
+        self,
+        name: str,
+        *,
+        url: str | None = None,
+        timeout_seconds: float | None = None,
+    ) -> dict:
+        document = self.load()
+        if name not in document["profiles"]:
+            raise CliError("config_error", f"Profile 不存在: {name}", EXIT_USAGE)
+        if url is None and timeout_seconds is None:
+            raise CliError("config_error", "请至少提供 --url 或 --timeout", EXIT_USAGE)
+        profile = document["profiles"][name]
+        if url is not None:
+            profile["baseUrl"] = self.normalize_base_url(url)
+        if timeout_seconds is not None:
+            profile["timeoutSeconds"] = self.validate_timeout(timeout_seconds)
+        self.save(document)
+        return self.public_document(document)
+
+    def delete_profile(self, name: str) -> dict:
+        document = self.load()
+        profiles = document["profiles"]
+        if name not in profiles:
+            raise CliError("config_error", f"Profile 不存在: {name}", EXIT_USAGE)
+        if len(profiles) == 1:
+            raise CliError("config_error", "不能删除唯一的 Profile", EXIT_USAGE)
+        del profiles[name]
+        if document["currentProfile"] == name:
+            document["currentProfile"] = sorted(profiles)[0]
+        self.save(document)
+        return self.public_document(document)
+
     def use_profile(self, name: str) -> dict:
         document = self.load()
         if name not in document["profiles"]:
@@ -203,3 +236,6 @@ class ConfigStore:
                 }
             },
         }
+
+def is_insecure_transport(base_url: str) -> bool:
+    return urlsplit(base_url).scheme.lower() == "http"

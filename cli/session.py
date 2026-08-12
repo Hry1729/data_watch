@@ -27,13 +27,18 @@ class AuthorizedSession:
 
     def __enter__(self) -> "AuthorizedSession":
         self.runtime = self.state.runtime()
-        self.credentials = self.state.credential_store.load(self.runtime.profile)
+        self.credentials = self.state.credential_store.load(
+            self.runtime.profile,
+            expected_base_url=self.runtime.base_url,
+        )
         if self.credentials is None:
             raise CliError("auth_required", "请先执行 auth login", EXIT_AUTH_REQUIRED)
         self.client = BackendClient(
             self.runtime.base_url,
             token=self.credentials.token,
             timeout_seconds=self.runtime.timeout_seconds,
+            refresh_token=self.credentials.refresh_token,
+            token_refreshed=self._store_refreshed_credentials,
         )
         return self
 
@@ -56,12 +61,112 @@ class AuthorizedSession:
     ) -> Any:
         if self.client is None:
             raise CliError("internal_error", "认证会话未初始化", EXIT_API)
+        normalized_method = method.upper()
+        idempotency_key = getattr(self.state, "idempotency_key", None)
+        if getattr(self.state, "dry_run", False) and normalized_method not in {"GET", "HEAD"}:
+            return {
+                "dryRun": True,
+                "request": {
+                    "method": normalized_method,
+                    "path": path,
+                    "params": params,
+                    "jsonBody": _redact(json_body),
+                    "idempotencyKey": idempotency_key,
+                },
+            }
+        headers = (
+            {"X-Idempotency-Key": idempotency_key}
+            if idempotency_key and normalized_method not in {"GET", "HEAD"}
+            else None
+        )
+        if (
+            normalized_method == "GET"
+            and getattr(self.state, "all_pages", False)
+            and isinstance(params, dict)
+            and (
+                {"pageNo", "pageSize"}.issubset(params)
+                or {"current", "size"}.issubset(params)
+            )
+        ):
+            return self._request_all(path, params=params)
         return self.client.request(
-            method,
+            normalized_method,
             path,
             params=params,
             json_body=json_body,
+            headers=headers,
         )
+
+    def _request_all(self, path: str, *, params: dict[str, Any]) -> Any:
+        if self.client is None:
+            raise CliError("internal_error", "认证会话未初始化", EXIT_API)
+        page_key, size_key = (
+            ("pageNo", "pageSize")
+            if "pageNo" in params
+            else ("current", "size")
+        )
+        page = 1
+        max_items = int(getattr(self.state, "max_items", 10000))
+        collected: list[Any] = []
+        first: dict[str, Any] | None = None
+        item_key: str | None = None
+        truncated = False
+        while True:
+            page_params = {**params, page_key: page}
+            payload = self.client.request("GET", path, params=page_params)
+            if not isinstance(payload, dict):
+                return payload
+            if first is None:
+                first = payload
+                item_key = next(
+                    (
+                        key
+                        for key in ("list", "records", "items")
+                        if isinstance(payload.get(key), list)
+                    ),
+                    None,
+                )
+                if item_key is None:
+                    return payload
+            items = payload.get(item_key)
+            if not isinstance(items, list):
+                raise CliError("api_error", "分页响应格式错误", EXIT_API)
+            remaining = max_items - len(collected)
+            collected.extend(items[:remaining])
+            total = int(payload.get("total") or len(collected))
+            if len(items) > remaining or len(collected) < total and len(collected) >= max_items:
+                truncated = True
+                break
+            if not items or len(collected) >= total:
+                break
+            page += 1
+
+        result = {**(first or {})}
+        for key in ("list", "records", "items"):
+            if isinstance(result.get(key), list):
+                result[key] = collected
+        result.update(
+            {
+                "total": int((first or {}).get("total") or len(collected)),
+                "fetched": len(collected),
+                "allPages": True,
+                "truncated": truncated,
+                page_key: 1,
+                size_key: len(collected),
+            }
+        )
+        return result
+
+    def download_to(
+        self,
+        path: str,
+        output: str,
+        *,
+        params: Any = None,
+    ) -> dict[str, Any]:
+        if self.client is None:
+            raise CliError("internal_error", "认证会话未初始化", EXIT_API)
+        return self.client.download_to(path, output, params=params)
 
     def download(self, path: str, *, params: Any = None) -> tuple[bytes, str]:
         if self.client is None:
@@ -104,6 +209,30 @@ class AuthorizedSession:
             self._resolver = Resolver(self)
         return self._resolver
 
+    def _store_refreshed_credentials(
+        self,
+        token: str,
+        refresh_token: str | None,
+    ) -> None:
+        if self.runtime is None or self.credentials is None:
+            return
+        source = self.credentials.source
+        self.credentials = StoredCredentials(
+            token=token,
+            refresh_token=refresh_token,
+            user_name=self.credentials.user_name,
+            base_url=self.runtime.base_url,
+            source=source,
+        )
+        if source == "keyring":
+            self.state.credential_store.save(
+                self.runtime.profile,
+                token=token,
+                refresh_token=refresh_token,
+                user_name=self.credentials.user_name,
+                base_url=self.runtime.base_url,
+            )
+
     @staticmethod
     def _permission_error(policy: CommandPolicy) -> CliError:
         return CliError(
@@ -116,3 +245,16 @@ class AuthorizedSession:
                 "requiredRolesAny": sorted(policy.roles_any),
             },
         )
+
+_SENSITIVE_FIELDS = {"password", "token", "refreshtoken", "secret", "authorization"}
+
+
+def _redact(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): "***" if str(key).lower() in _SENSITIVE_FIELDS else _redact(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact(item) for item in value]
+    return value

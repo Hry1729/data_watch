@@ -42,3 +42,20 @@ def test_download_strips_path_components_from_server_filename() -> None:
         _, filename = client.download("/download")
 
     assert filename == "history.csv"
+
+def test_download_to_streams_file_to_disk(tmp_path) -> None:
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            content=b"x" * 2048,
+            headers={"Content-Disposition": 'attachment; filename="release.zip"'},
+        )
+    )
+    output = tmp_path / "download.zip"
+
+    with BackendClient("http://backend.local", transport=transport) as client:
+        result = client.download_to("/download", output, authenticated=False, chunk_size=128)
+
+    assert output.read_bytes() == b"x" * 2048
+    assert result["bytes"] == 2048
+    assert result["fileName"] == "release.zip"

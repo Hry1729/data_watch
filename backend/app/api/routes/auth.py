@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -32,6 +32,19 @@ async def login(
             password=login_payload.password,
             client_ip=_resolve_client_ip(x_forwarded_for, x_real_ip),
         )
+        return success_response(data=data)
+
+
+@router.post("/api/auth/refresh")
+async def refresh(payload: dict[str, Any]):
+    refresh_token = str(payload.get("refreshToken") or "").strip()
+    if not refresh_token:
+        from app.core.exceptions import ApiError
+
+        raise ApiError(400, "refreshToken is required")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        data = await AuthService(session).refresh(refresh_token)
         return success_response(data=data)
 
 

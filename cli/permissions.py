@@ -37,12 +37,23 @@ M1_COMMAND_POLICIES = (
     CommandPolicy("config set-url"),
     CommandPolicy("config profile list"),
     CommandPolicy("config profile create"),
+    CommandPolicy("config profile update"),
+    CommandPolicy("config profile delete"),
     CommandPolicy("config profile use"),
     CommandPolicy("auth login"),
+    CommandPolicy("auth refresh", authenticated=True),
     CommandPolicy("auth whoami", authenticated=True),
     CommandPolicy("auth capabilities", authenticated=True),
     CommandPolicy("auth logout", authenticated=True),
     CommandPolicy("system health"),
+    CommandPolicy("system compatibility"),
+    CommandPolicy("doctor"),
+    CommandPolicy("commands list"),
+    CommandPolicy("commands schema"),
+    CommandPolicy("update check"),
+    CommandPolicy("update download"),
+    CommandPolicy("update apply"),
+    CommandPolicy("update rollback"),
     CommandPolicy("version"),
 )
 
@@ -90,7 +101,7 @@ M2_B_COMMAND_POLICIES = _permission_policies(
     ),
     *HISTORY_VIEW,
 ) + _permission_policies(
-    ("realtime tree", "realtime get", "realtime watch"), *MONITOR_VIEW
+    ("realtime tree", "realtime get", "realtime window", "realtime watch"), *MONITOR_VIEW
 )
 
 M2_C_COMMAND_POLICIES = (
@@ -167,6 +178,8 @@ M3_B_COMMAND_POLICIES = tuple(
     CommandPolicy(command, authenticated=True, roles_any=NODE_ADMIN_ROLES)
     for command in (
         "nodes assign",
+        "nodes unassign",
+        "nodes assign-set",
         "nodes enable",
         "nodes disable",
         "nodes settings",

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
@@ -108,6 +108,42 @@ class AuthService:
         )
 
         return {"token": access_token, "refreshToken": refresh_token}
+
+    async def refresh(self, refresh_token: str) -> dict[str, str]:
+        try:
+            claims = decode_signed_token(
+                refresh_token,
+                secret_key=self.settings.auth_secret_key,
+            )
+        except ValueError as exc:
+            raise ApiError(401, str(exc)) from exc
+        if claims.get("type") != "refresh":
+            raise ApiError(401, "Invalid refresh token")
+
+        user = await self._fetch_user_by_id(int(claims.get("uid", 0)))
+        if user is None or user.deleted:
+            raise ApiError(401, "当前登录状态无效")
+        if user.status != "1":
+            raise ApiError(403, "当前账号不可用，请联系管理员")
+        roles = await self._fetch_user_roles(user.id)
+        if not roles:
+            raise ApiError(403, "当前账号未分配角色")
+
+        payload = {"uid": user.id, "userName": user.user_name, "roles": roles}
+        return {
+            "token": create_signed_token(
+                payload,
+                secret_key=self.settings.auth_secret_key,
+                expires_in_seconds=self.settings.auth_access_token_expire_seconds,
+                token_type="access",
+            ),
+            "refreshToken": create_signed_token(
+                payload,
+                secret_key=self.settings.auth_secret_key,
+                expires_in_seconds=self.settings.auth_refresh_token_expire_seconds,
+                token_type="refresh",
+            ),
+        }
 
     async def get_user_info(self, authorization: str | None) -> dict[str, Any]:
         principal = await self.resolve_principal(authorization)
@@ -228,4 +264,3 @@ class AuthService:
         )
         rows = (await self.session.execute(stmt)).scalars().all()
         return list(dict.fromkeys([row for row in rows if row]))
-

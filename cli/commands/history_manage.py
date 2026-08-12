@@ -7,7 +7,7 @@ import typer
 
 from cli.commands.common import run_authorized
 from cli.commands.history import history_app
-from cli.files import write_download
+
 
 
 def install_history_management(
@@ -74,10 +74,10 @@ def install_history_management(
         output: str = typer.Option(..., "--output"),
     ) -> None:
         def operation(session) -> dict[str, Any]:
-            content, filename = session.download(
-                f"/api/device-monitor/history/export/{quote(task_id, safe='')}/download"
+            return session.download_to(
+                f"/api/device-monitor/history/export/{quote(task_id, safe='')}/download",
+                output,
             )
-            return write_download(output, content, filename)
 
         run_authorized(
             ctx,

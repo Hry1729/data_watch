@@ -20,23 +20,15 @@ def install_node_management(
         ctx: typer.Context,
         node_uuid: str = typer.Argument(...),
         devices: list[str] = typer.Option(..., "--device"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
-            require_confirmation(confirm, node_uuid)
-            current = session.request(
-                "GET", f"/api/distributed/nodes/{node_uuid}/assignments"
-            )
-            existing_ids = _assignment_device_ids(current)
-            requested_ids = {
-                int(session.resolver.resolve_catalog_device(device)["id"])
-                for device in devices
-            }
-            device_ids = sorted(existing_ids | requested_ids)
-            return session.request(
-                "PUT",
-                f"/api/distributed/nodes/{node_uuid}/assignments",
-                json_body={"deviceIds": device_ids},
+            return _replace_assignments(
+                session,
+                node_uuid=node_uuid,
+                devices=devices,
+                confirm=confirm,
+                mode="add",
             )
 
         run_authorized(
@@ -47,11 +39,53 @@ def install_node_management(
             operation=operation,
         )
 
+    @nodes_app.command("unassign")
+    def node_unassign(
+        ctx: typer.Context,
+        node_uuid: str = typer.Argument(...),
+        devices: list[str] = typer.Option(..., "--device"),
+        confirm: str = typer.Option("", "--confirm"),
+    ) -> None:
+        run_authorized(
+            ctx,
+            "nodes unassign",
+            execute=execute,
+            get_context=get_context,
+            operation=lambda session: _replace_assignments(
+                session,
+                node_uuid=node_uuid,
+                devices=devices,
+                confirm=confirm,
+                mode="remove",
+            ),
+        )
+
+    @nodes_app.command("assign-set")
+    def node_assign_set(
+        ctx: typer.Context,
+        node_uuid: str = typer.Argument(...),
+        devices: list[str] = typer.Option([], "--device"),
+        confirm: str = typer.Option("", "--confirm"),
+    ) -> None:
+        run_authorized(
+            ctx,
+            "nodes assign-set",
+            execute=execute,
+            get_context=get_context,
+            operation=lambda session: _replace_assignments(
+                session,
+                node_uuid=node_uuid,
+                devices=devices,
+                confirm=confirm,
+                mode="set",
+            ),
+        )
+
     @nodes_app.command("enable")
     def node_enable(
         ctx: typer.Context,
         node_uuid: str = typer.Argument(...),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         _set_node_status(
             ctx,
@@ -67,7 +101,7 @@ def install_node_management(
     def node_disable(
         ctx: typer.Context,
         node_uuid: str = typer.Argument(...),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         _set_node_status(
             ctx,
@@ -118,7 +152,7 @@ def install_node_management(
     @nodes_app.command("sync-device-status")
     def node_sync_device_status(
         ctx: typer.Context,
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, "sync")
@@ -134,6 +168,39 @@ def install_node_management(
             operation=operation,
         )
 
+
+
+
+def _replace_assignments(
+    session,
+    *,
+    node_uuid: str,
+    devices: list[str],
+    confirm: str,
+    mode: str,
+) -> Any:
+    require_confirmation(confirm, node_uuid)
+    requested_ids = {
+        int(session.resolver.resolve_catalog_device(device)["id"])
+        for device in devices
+    }
+    if mode == "set":
+        device_ids = requested_ids
+    else:
+        current = session.request(
+            "GET", f"/api/distributed/nodes/{node_uuid}/assignments"
+        )
+        existing_ids = _assignment_device_ids(current)
+        device_ids = (
+            existing_ids | requested_ids
+            if mode == "add"
+            else existing_ids - requested_ids
+        )
+    return session.request(
+        "PUT",
+        f"/api/distributed/nodes/{node_uuid}/assignments",
+        json_body={"deviceIds": sorted(device_ids)},
+    )
 
 def _set_node_status(
     ctx: typer.Context,

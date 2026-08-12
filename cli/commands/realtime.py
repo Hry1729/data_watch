@@ -70,6 +70,65 @@ def install_realtime_commands(
             operation=operation,
         )
 
+    @realtime_app.command("window")
+    def window(
+        ctx: typer.Context,
+        point: Optional[str] = typer.Option(None, "--point"),
+        device: Optional[str] = typer.Option(None, "--device"),
+        group: Optional[str] = typer.Option(
+            None, "--group", hidden=True, help="Advanced group override."
+        ),
+        seconds: float = typer.Option(10.0, "--seconds", min=0.1, max=300),
+        max_events: int = typer.Option(1000, "--max-events", min=1, max=10000),
+    ) -> None:
+        def operation(session) -> dict[str, Any]:
+            resolved_device, resolved_point, group_code = _resolve_realtime_target(
+                session,
+                point=point,
+                device=device,
+                group=group,
+            )
+            if session.runtime is None or session.credentials is None:
+                raise CliError("internal_error", "认证会话未初始化", EXIT_API)
+            watcher = RealtimeWatcher(
+                session.runtime.base_url,
+                session.credentials.token,
+                timeout_seconds=session.runtime.timeout_seconds,
+            )
+            events = list(
+                watcher.events(
+                    str(resolved_device["deviceCode"]),
+                    group_code,
+                    point_id=(
+                        int(resolved_point["pointId"])
+                        if resolved_point is not None
+                        else None
+                    ),
+                    max_events=max_events,
+                    duration_seconds=seconds,
+                )
+            )
+            return {
+                "windowSeconds": seconds,
+                "eventCount": len(events),
+                "device": {
+                    "deviceCode": resolved_device.get("deviceCode"),
+                    "deviceName": resolved_device.get("deviceName"),
+                },
+                "resolvedTarget": (
+                    _public_target(resolved_point) if resolved_point is not None else None
+                ),
+                "events": events,
+            }
+
+        run_authorized(
+            ctx,
+            "realtime window",
+            execute=execute,
+            get_context=get_context,
+            operation=operation,
+        )
+
     @realtime_app.command("watch")
     def watch(
         ctx: typer.Context,

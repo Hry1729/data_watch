@@ -122,7 +122,7 @@ def _install_user_commands(*, execute: Callable, get_context: Callable) -> None:
     def user_disable(
         ctx: typer.Context,
         user_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(user_id))
@@ -143,7 +143,7 @@ def _install_user_commands(*, execute: Callable, get_context: Callable) -> None:
         ctx: typer.Context,
         user_id: int = typer.Argument(..., min=1),
         password_stdin: bool = typer.Option(False, "--password-stdin"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(user_id))
@@ -166,7 +166,7 @@ def _install_user_commands(*, execute: Callable, get_context: Callable) -> None:
     def user_delete(
         ctx: typer.Context,
         user_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(user_id))
@@ -278,7 +278,7 @@ def _install_role_commands(*, execute: Callable, get_context: Callable) -> None:
     def role_disable(
         ctx: typer.Context,
         role_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(role_id))
@@ -300,7 +300,7 @@ def _install_role_commands(*, execute: Callable, get_context: Callable) -> None:
     def role_delete(
         ctx: typer.Context,
         role_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(role_id))
@@ -333,7 +333,7 @@ def _install_role_commands(*, execute: Callable, get_context: Callable) -> None:
         ctx: typer.Context,
         role_id: int = typer.Argument(..., min=1),
         file: str = typer.Option(..., "--file"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(role_id))
@@ -409,7 +409,7 @@ def _install_menu_commands(*, execute: Callable, get_context: Callable) -> None:
     def menu_delete(
         ctx: typer.Context,
         menu_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(menu_id))
@@ -479,7 +479,7 @@ def _install_menu_commands(*, execute: Callable, get_context: Callable) -> None:
         ctx: typer.Context,
         menu_id: int = typer.Argument(..., min=1),
         permission_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(permission_id))

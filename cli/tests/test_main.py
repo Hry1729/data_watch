@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 
 import cli.main as main_module
@@ -51,10 +53,15 @@ def test_version_outputs_compact_json() -> None:
     result = runner.invoke(main_module.app, ["version"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == {
-        "ok": True,
-        "command": "version",
-        "data": {"version": main_module.CLI_VERSION},
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["command"] == "version"
+    assert payload["schemaVersion"] == main_module.OUTPUT_SCHEMA_VERSION
+    assert payload["cliVersion"] == main_module.CLI_VERSION
+    assert payload["requestId"]
+    assert payload["data"] == {
+        "version": main_module.CLI_VERSION,
+        "outputSchemaVersion": main_module.OUTPUT_SCHEMA_VERSION,
     }
 
 
@@ -68,6 +75,20 @@ def test_config_show_uses_isolated_config_file(tmp_path, monkeypatch) -> None:
     payload = json.loads(result.stdout)
     assert payload["data"]["runtime"]["baseUrl"] == "http://127.0.0.1:8000"
     assert payload["data"]["configPath"] == str(path)
+
+
+def test_config_set_url_reports_unknown_profile_as_config_error(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("DATAWATCH_CONFIG_FILE", str(tmp_path / "cli-config.json"))
+
+    result = runner.invoke(
+        main_module.app,
+        ["--profile", "missing", "config", "set-url", "https://backend.example.com"],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.stderr)
+    assert payload["error"]["type"] == "config_error"
+    assert payload["error"]["message"] == "Profile 不存在: missing"
 
 
 def test_login_reads_password_from_stdin_and_never_outputs_tokens(
@@ -91,3 +112,16 @@ def test_login_reads_password_from_stdin_and_never_outputs_tokens(
     assert json.loads(result.stdout)["data"]["user"]["userName"] == "operator"
     assert FakeCredentialStore.saved is not None
     assert FakeCredentialStore.saved["token"] == "Bearer hidden-token"
+    assert FakeCredentialStore.saved["base_url"] == "http://127.0.0.1:8000"
+
+def test_production_entrypoint_outputs_json_for_usage_errors(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["data-watch", "devices", "get"])
+
+    with pytest.raises(SystemExit) as captured:
+        main_module.main()
+
+    assert captured.value.code == 2
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["ok"] is False
+    assert payload["schemaVersion"] == main_module.OUTPUT_SCHEMA_VERSION
+    assert payload["error"]["type"] == "usage_error"

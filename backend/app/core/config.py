@@ -97,6 +97,10 @@ class Settings:
     # Backend→Agent 驱动编排服务凭据（不使用用户 JWT）
     agent_base_url: str
     agent_token: str
+    cli_api_version: str
+    cli_min_version: str
+    cli_max_version: str
+    cli_release_dir: str
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -179,4 +183,13 @@ def get_settings() -> Settings:
             read_setting("DATAWATCH_AGENT_BASE_URL", "http://127.0.0.1:7070")
         ).rstrip("/"),
         agent_token=str(read_setting("DATAWATCH_AGENT_SERVICE_TOKEN", "")),
+        cli_api_version=str(read_setting("CLI_API_VERSION", "1.0")),
+        cli_min_version=str(read_setting("CLI_MIN_VERSION", "0.2.0")),
+        cli_max_version=str(read_setting("CLI_MAX_VERSION", "0.x")),
+        cli_release_dir=str(
+            read_setting(
+                "CLI_RELEASE_DIR",
+                str(Path(__file__).resolve().parents[2] / "cli-releases"),
+            )
+        ),
     )

@@ -4,6 +4,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Any, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from cli.errors import CliError, EXIT_API
 
@@ -16,6 +17,7 @@ class StoredCredentials:
     token: str
     refresh_token: str | None = None
     user_name: str | None = None
+    base_url: str | None = None
     source: str = "keyring"
 
 
@@ -29,12 +31,18 @@ class CredentialStore:
         self.environ = environ if environ is not None else os.environ
         self._keyring_backend = keyring_backend
 
-    def load(self, profile: str) -> StoredCredentials | None:
+    def load(
+        self,
+        profile: str,
+        *,
+        expected_base_url: str | None = None,
+    ) -> StoredCredentials | None:
         environment_token = str(self.environ.get("DATAWATCH_TOKEN") or "").strip()
         if environment_token:
             return StoredCredentials(
                 token=environment_token,
                 refresh_token=self.environ.get("DATAWATCH_REFRESH_TOKEN"),
+                base_url=expected_base_url,
                 source="environment",
             )
 
@@ -52,11 +60,14 @@ class CredentialStore:
         token = str(payload.get("token") or "").strip()
         if not token:
             return None
-        return StoredCredentials(
+        credentials = StoredCredentials(
             token=token,
             refresh_token=str(payload.get("refreshToken") or "").strip() or None,
             user_name=str(payload.get("userName") or "").strip() or None,
+            base_url=str(payload.get("baseUrl") or "").strip() or None,
         )
+        self._validate_scope(credentials, expected_base_url)
+        return credentials
 
     def save(
         self,
@@ -65,6 +76,7 @@ class CredentialStore:
         token: str,
         refresh_token: str | None,
         user_name: str | None,
+        base_url: str,
     ) -> None:
         normalized_token = token.strip()
         if not normalized_token:
@@ -74,6 +86,7 @@ class CredentialStore:
                 "token": normalized_token,
                 "refreshToken": refresh_token,
                 "userName": user_name,
+                "baseUrl": _credential_scope(base_url),
             },
             ensure_ascii=False,
         )
@@ -106,3 +119,37 @@ class CredentialStore:
             ) from exc
         self._keyring_backend = keyring
         return self._keyring_backend
+
+    @staticmethod
+    def _validate_scope(
+        credentials: StoredCredentials,
+        expected_base_url: str | None,
+    ) -> None:
+        if not expected_base_url:
+            return
+        expected = _credential_scope(expected_base_url)
+        actual = _credential_scope(credentials.base_url) if credentials.base_url else None
+        if actual == expected:
+            return
+        raise CliError(
+            "credential_scope_mismatch",
+            "登录凭据与当前 Backend 地址不匹配，请重新登录",
+            EXIT_API,
+            details={"credentialBaseUrl": actual, "currentBaseUrl": expected},
+        )
+
+
+def _credential_scope(base_url: str) -> str:
+    parsed = urlsplit(str(base_url).strip().rstrip("/"))
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    if not scheme or not host:
+        return str(base_url).strip().rstrip("/")
+    port = parsed.port
+    if scheme == "http" and port == 80:
+        port = None
+    elif scheme == "https" and port == 443:
+        port = None
+    netloc = host if port is None else f"{host}:{port}"
+    path = parsed.path.rstrip("/")
+    return urlunsplit((scheme, netloc, path, "", ""))

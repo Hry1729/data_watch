@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from email.message import Message
 from email.utils import collapse_rfc2231_value
-from typing import Any
+from pathlib import Path
+import time
+from typing import Any, Callable
 
 import httpx
 
@@ -24,9 +26,17 @@ class BackendClient:
         token: str | None = None,
         timeout_seconds: float = 15.0,
         transport: httpx.BaseTransport | None = None,
+        refresh_token: str | None = None,
+        token_refreshed: Callable[[str, str | None], None] | None = None,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.2,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self.refresh_token = refresh_token
+        self.token_refreshed = token_refreshed
+        self.max_retries = max(0, int(max_retries))
+        self.retry_backoff_seconds = max(0.0, float(retry_backoff_seconds))
         self._client = httpx.Client(
             base_url=self.base_url,
             timeout=timeout_seconds,
@@ -53,6 +63,23 @@ class BackendClient:
             raise CliError("api_error", "登录响应缺少访问令牌", EXIT_API)
         return data
 
+    def refresh(self) -> dict[str, Any]:
+        if not self.refresh_token:
+            raise CliError("auth_required", "没有可用的刷新令牌，请重新登录", EXIT_AUTH_REQUIRED)
+        data = self.request(
+            "POST",
+            "/api/auth/refresh",
+            json_body={"refreshToken": self.refresh_token},
+            authenticated=False,
+        )
+        if not isinstance(data, dict) or not str(data.get("token") or "").strip():
+            raise CliError("api_error", "刷新令牌响应格式错误", EXIT_API)
+        self.token = str(data["token"])
+        self.refresh_token = str(data.get("refreshToken") or "").strip() or self.refresh_token
+        if self.token_refreshed is not None:
+            self.token_refreshed(self.token, self.refresh_token)
+        return data
+
     def logout(self) -> Any:
         return self.request("POST", "/api/auth/logout")
 
@@ -68,6 +95,12 @@ class BackendClient:
             raise CliError("api_error", "健康检查响应格式错误", EXIT_API)
         return data
 
+    def compatibility(self) -> dict[str, Any]:
+        data = self.request("GET", "/api/cli/compatibility", authenticated=False)
+        if not isinstance(data, dict):
+            raise CliError("api_error", "兼容性响应格式错误", EXIT_API)
+        return data
+
     def request(
         self,
         method: str,
@@ -76,6 +109,7 @@ class BackendClient:
         params: Any = None,
         json_body: dict[str, Any] | None = None,
         authenticated: bool = True,
+        headers: dict[str, str] | None = None,
     ) -> Any:
         response = self._send(
             method,
@@ -83,9 +117,22 @@ class BackendClient:
             params=params,
             json_body=json_body,
             authenticated=authenticated,
+            extra_headers=headers,
         )
         payload = self._json_payload(response)
         code = self._coerce_code(payload.get("code"), response.status_code)
+        if authenticated and (response.status_code == 401 or code == 401) and self.refresh_token:
+            self.refresh()
+            response = self._send(
+                method,
+                path,
+                params=params,
+                json_body=json_body,
+                authenticated=True,
+                extra_headers=headers,
+            )
+            payload = self._json_payload(response)
+            code = self._coerce_code(payload.get("code"), response.status_code)
         self._raise_for_error(response, payload, code)
         return payload.get("data")
 
@@ -94,8 +141,14 @@ class BackendClient:
         path: str,
         *,
         params: Any = None,
+        authenticated: bool = True,
     ) -> tuple[bytes, str]:
-        response = self._send("GET", path, params=params, authenticated=True)
+        response = self._send(
+            "GET",
+            path,
+            params=params,
+            authenticated=authenticated,
+        )
         if response.is_error:
             try:
                 payload = response.json()
@@ -117,6 +170,69 @@ class BackendClient:
             self._raise_for_error(response, payload, code)
         return response.content, self._response_filename(response)
 
+    def download_to(
+        self,
+        path: str,
+        output: str | Path,
+        *,
+        params: Any = None,
+        authenticated: bool = True,
+        chunk_size: int = 1024 * 1024,
+    ) -> dict[str, Any]:
+        refreshed = False
+        while True:
+            headers: dict[str, str] = {"Accept": "application/octet-stream"}
+            if authenticated:
+                if not self.token:
+                    raise CliError("auth_required", "请先登录", EXIT_AUTH_REQUIRED)
+                headers["Authorization"] = self._authorization_value(self.token)
+            try:
+                with self._client.stream("GET", path, params=params, headers=headers) as response:
+                    if (
+                        authenticated
+                        and response.status_code == 401
+                        and self.refresh_token
+                        and not refreshed
+                    ):
+                        response.read()
+                        self.refresh()
+                        refreshed = True
+                        continue
+                    if response.is_error:
+                        response.read()
+                        payload = self._json_payload(response)
+                        code = self._coerce_code(payload.get("code"), response.status_code)
+                        self._raise_for_error(response, payload, code)
+                    filename = self._response_filename(response)
+                    target = Path(output).expanduser()
+                    if target.exists() and target.is_dir():
+                        target = target / filename
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = target.with_suffix(target.suffix + ".tmp")
+                    written = 0
+                    try:
+                        with temporary.open("wb") as handle:
+                            for chunk in response.iter_bytes(chunk_size=chunk_size):
+                                handle.write(chunk)
+                                written += len(chunk)
+                        temporary.replace(target)
+                    except OSError as exc:
+                        temporary.unlink(missing_ok=True)
+                        raise CliError(
+                            "file_error",
+                            f"无法写入文件: {target}",
+                            EXIT_API,
+                        ) from exc
+                    return {
+                        "output": str(target.resolve()),
+                        "fileName": filename,
+                        "bytes": written,
+                    }
+            except httpx.TimeoutException as exc:
+                raise CliError("timeout", "Backend 下载超时", EXIT_TIMEOUT) from exc
+            except httpx.RequestError as exc:
+                raise CliError("network_error", "Backend 下载连接失败", EXIT_NETWORK) from exc
+
     def _send(
         self,
         method: str,
@@ -125,24 +241,45 @@ class BackendClient:
         params: Any = None,
         json_body: dict[str, Any] | None = None,
         authenticated: bool,
+        extra_headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        headers: dict[str, str] = {"Accept": "application/json"}
+        headers: dict[str, str] = {"Accept": "application/json", **(extra_headers or {})}
         if authenticated:
             if not self.token:
                 raise CliError("auth_required", "请先登录", EXIT_AUTH_REQUIRED)
             headers["Authorization"] = self._authorization_value(self.token)
-        try:
-            return self._client.request(
-                method,
-                path,
-                params=params,
-                json=json_body,
-                headers=headers,
-            )
-        except httpx.TimeoutException as exc:
-            raise CliError("timeout", "Backend 请求超时", EXIT_TIMEOUT) from exc
-        except httpx.RequestError as exc:
-            raise CliError("network_error", "无法连接到 Backend 服务", EXIT_NETWORK) from exc
+
+        retryable = method.upper() in {"GET", "HEAD"}
+        attempts = self.max_retries + 1 if retryable else 1
+        for attempt in range(attempts):
+            try:
+                response = self._client.request(
+                    method,
+                    path,
+                    params=params,
+                    json=json_body,
+                    headers=headers,
+                )
+            except httpx.TimeoutException as exc:
+                if attempt + 1 < attempts:
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise CliError("timeout", "Backend 请求超时", EXIT_TIMEOUT) from exc
+            except httpx.RequestError as exc:
+                if attempt + 1 < attempts:
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise CliError("network_error", "无法连接到 Backend 服务", EXIT_NETWORK) from exc
+            if response.status_code in {429, 502, 503, 504} and attempt + 1 < attempts:
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = min(float(retry_after), 5.0) if retry_after else 0.0
+                except ValueError:
+                    delay = 0.0
+                time.sleep(max(delay, self.retry_backoff_seconds * (2**attempt)))
+                continue
+            return response
+        raise CliError("network_error", "无法连接到 Backend 服务", EXIT_NETWORK)
 
     @staticmethod
     def _json_payload(response: httpx.Response) -> dict[str, Any]:

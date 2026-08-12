@@ -36,7 +36,7 @@ def install_driver_management(
         ctx: typer.Context,
         name: str = typer.Argument(...),
         driver_id: Optional[str] = typer.Option(None, "--driver-id"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, name)

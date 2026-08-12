@@ -76,3 +76,49 @@ def test_websocket_auth_error_maps_to_auth_exit_code() -> None:
 
     assert captured.value.exit_code == EXIT_AUTH_REQUIRED
     assert captured.value.status == 401
+
+def test_watch_reconnects_and_reauthenticates_after_connection_loss() -> None:
+    first = FakeWebSocket([])
+    second = FakeWebSocket(
+        [json.dumps({"type": "update", "device_code": "QC100", "values": {}})]
+    )
+
+    def failed_recv(timeout=None):
+        raise OSError("connection lost")
+
+    first.recv = failed_recv
+    sockets = iter([first, second])
+    delays: list[float] = []
+    watcher = RealtimeWatcher(
+        "http://backend.local",
+        "Bearer token",
+        timeout_seconds=5,
+        connect_factory=lambda *_args, **_kwargs: next(sockets),
+        max_reconnects=1,
+        reconnect_backoff_seconds=0.1,
+        sleep=delays.append,
+    )
+
+    events = list(watcher.events("QC100", "g001", max_events=1))
+
+    assert events[0]["type"] == "update"
+    assert first.sent[0]["type"] == "auth"
+    assert second.sent[0]["type"] == "auth"
+    assert delays == [0.1]
+
+
+def test_window_timeout_returns_collected_events_without_error() -> None:
+    socket = FakeWebSocket([])
+
+    def timeout_recv(timeout=None):
+        raise TimeoutError()
+
+    socket.recv = timeout_recv
+    watcher = RealtimeWatcher(
+        "http://backend.local",
+        "Bearer token",
+        timeout_seconds=5,
+        connect_factory=lambda *_args, **_kwargs: socket,
+    )
+
+    assert list(watcher.events("QC100", "g001", duration_seconds=0.01)) == []

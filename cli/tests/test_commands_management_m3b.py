@@ -213,3 +213,54 @@ def test_node_and_system_policies_distinguish_three_levels() -> None:
     assert is_command_allowed(node_policy, superuser)
     assert is_command_allowed(user_policy, regular)
     assert not is_command_allowed(user_policy, admin)
+
+def test_node_unassign_removes_only_requested_devices(monkeypatch) -> None:
+    _use_fake_session(monkeypatch)
+    node_uuid = "11111111-1111-1111-1111-111111111111"
+
+    result = runner.invoke(
+        main_module.app,
+        [
+            "nodes",
+            "unassign",
+            node_uuid,
+            "--device",
+            "PLC002",
+            "--confirm",
+            node_uuid,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert FakeAuthorizedSession.requests[-1] == (
+        "PUT",
+        f"/api/distributed/nodes/{node_uuid}/assignments",
+        {"deviceIds": [3]},
+    )
+
+
+def test_node_assign_set_replaces_all_assignments(monkeypatch) -> None:
+    _use_fake_session(monkeypatch)
+    node_uuid = "11111111-1111-1111-1111-111111111111"
+
+    result = runner.invoke(
+        main_module.app,
+        [
+            "nodes",
+            "assign-set",
+            node_uuid,
+            "--device",
+            "PLC002",
+            "--confirm",
+            node_uuid,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert FakeAuthorizedSession.requests == [
+        (
+            "PUT",
+            f"/api/distributed/nodes/{node_uuid}/assignments",
+            {"deviceIds": [7]},
+        )
+    ]

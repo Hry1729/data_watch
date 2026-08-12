@@ -56,6 +56,7 @@ services:
     volumes:
       - ../backend/logs:/app/logs
       - ../backend/exports:/app/exports
+      - ../backend/cli-releases:/app/cli-releases:ro
       # 只读挂载 TDengine 服务日志卷，供「数据库日志」查看页 tail（需 compose 托管 TDengine）
       - tdengine_log:/tdengine-logs:ro
     restart: unless-stopped

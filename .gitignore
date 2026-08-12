@@ -14,11 +14,14 @@ agent/.venv/
 
 # 构建输出
 dist/
+artifacts/
 agent/build/
 collector/build/
 writer/build/
 collector/dist/
+artifacts/
 frontend/dist/
+artifacts/
 build/
 deploy/*.zip
 deploy/images/*.tar
@@ -80,3 +83,7 @@ backend/exports/
 .vscode/
 *.swp
 *.swo
+
+# CLI release signing private keys
+packaging/keys/
+backend/cli-releases/

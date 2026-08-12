@@ -10,7 +10,6 @@ from cli.files import (
     load_workbook_rows,
     parse_ids,
     require_confirmation,
-    write_download,
 )
 
 
@@ -98,8 +97,9 @@ def install_catalog_management(
         device_status: Optional[str] = typer.Option(None, "--device-status"),
     ) -> None:
         def operation(session) -> dict[str, Any]:
-            content, filename = session.download(
+            return session.download_to(
                 "/api/device-monitor/device/export",
+                output,
                 params=compact_params(
                     pageNo=1,
                     pageSize=10000,
@@ -108,7 +108,6 @@ def install_catalog_management(
                     deviceStatus=device_status,
                 ),
             )
-            return write_download(output, content, filename)
 
         run_authorized(
             ctx,
@@ -122,7 +121,7 @@ def install_catalog_management(
     def device_delete(
         ctx: typer.Context,
         identifier: str = typer.Argument(...),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             device = _device_detail(session, identifier)
@@ -143,7 +142,7 @@ def install_catalog_management(
     def device_delete_batch(
         ctx: typer.Context,
         ids: str = typer.Option(..., "--ids"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, "batch")
@@ -235,8 +234,9 @@ def install_catalog_management(
     ) -> None:
         def operation(session) -> dict[str, Any]:
             device_code = str(_device_detail(session, device)["deviceCode"])
-            content, filename = session.download(
+            return session.download_to(
                 "/api/device-monitor/point/export",
+                output,
                 params={
                     "deviceCode": device_code,
                     "pageNo": 1,
@@ -244,7 +244,6 @@ def install_catalog_management(
                     "template": "true",
                 },
             )
-            return write_download(output, content, filename)
 
         run_authorized(
             ctx,
@@ -263,8 +262,9 @@ def install_catalog_management(
     ) -> None:
         def operation(session) -> dict[str, Any]:
             device_code = str(_device_detail(session, device)["deviceCode"])
-            content, filename = session.download(
+            return session.download_to(
                 "/api/device-monitor/point/export",
+                output,
                 params=compact_params(
                     deviceCode=device_code,
                     pageNo=1,
@@ -272,7 +272,6 @@ def install_catalog_management(
                     keyword=keyword,
                 ),
             )
-            return write_download(output, content, filename)
 
         run_authorized(
             ctx,
@@ -286,7 +285,7 @@ def install_catalog_management(
     def point_delete(
         ctx: typer.Context,
         point_id: int = typer.Argument(..., min=1),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, str(point_id))
@@ -306,7 +305,7 @@ def install_catalog_management(
     def point_delete_batch(
         ctx: typer.Context,
         ids: str = typer.Option(..., "--ids"),
-        confirm: str = typer.Option(..., "--confirm"),
+        confirm: str = typer.Option("", "--confirm"),
     ) -> None:
         def operation(session) -> Any:
             require_confirmation(confirm, "batch")
