@@ -12,7 +12,8 @@
 docs/03-数据与契约/
 ├─ 契约/
 │  ├─ API契约.md
-│  └─ WebSocket协议.md
+│  ├─ WebSocket协议.md
+│  └─ CLI输出契约.md
 └─ 数据库/
    ├─ MySQL结构与字段.md
    ├─ Redis结构与字段.md
@@ -27,6 +28,7 @@ docs/03-数据与契约/
 |------|------|
 | [API 契约](契约/API契约.md) | backend REST、agent REST、响应包络、鉴权、分页、错误语义、接口变更门禁 |
 | [WebSocket 协议](契约/WebSocket协议.md) | 实时监控 ws_push、历史 Perspective 快照、消息格式、状态机、nginx WS 代理 |
+| [CLI 输出契约](契约/CLI输出契约.md) | JSON/JSONL、错误、退出码、分页、dry-run、文件与兼容性 |
 
 ---
 

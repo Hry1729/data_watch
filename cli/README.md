@@ -1,6 +1,15 @@
 # DataWatch CLI
 
-DataWatch CLI 是面向运维人员、脚本和 AI Agent 的 Backend 命令行客户端。当前已完成 M0-M5：业务调用、三级权限、机器契约、Windows 安装包、签名自更新和可靠性增强均已接入；M4 MCP Server 延后单独设计。
+DataWatch CLI 是面向运维人员、脚本和 AI Agent 的 Backend 命令行客户端。当前已完成 M0-M3 和 M5：业务调用、三级权限、机器契约、Windows 安装包、签名自更新和可靠性增强均已接入；M4 MCP Server 延后单独设计。
+
+正式文档入口：
+
+- [CLI 模块说明](../docs/02-模块设计/cli/README.md)
+- [总体设计与架构](../docs/02-模块设计/cli/总体设计与架构.md)
+- [命令与权限参考](../docs/02-模块设计/cli/命令与权限参考.md)
+- [AI 调用指南](../docs/02-模块设计/cli/AI调用指南.md)
+- [CLI 输出契约](../docs/03-数据与契约/契约/CLI输出契约.md)
+- [安装与更新](../docs/04-运维部署/CLI安装与更新.md)
 
 CLI 只访问 Backend API，不直接连接 MySQL、Redis 或 TDengine，也不输出模拟业务数据。
 

@@ -10,7 +10,7 @@
 
 | 通道 | 端点 | 数据源 | 用途 | 主要客户端 |
 |------|------|--------|------|------------|
-| 实时监控 ws_push | `/api/device-monitor/ws/realtime-push` | Redis latest | 设备点位当前值与增量变化 | frontend 实时页 |
+| 实时监控 ws_push | `/api/device-monitor/ws/realtime-push` | Redis latest | 设备点位当前值与增量变化 | frontend 实时页 / CLI |
 | 历史快照 Perspective | 配置项 `perspective_ws_route` 对应端点 | TDengine 查询结果 | 历史大表/图表 snapshot 推送 | frontend 历史页 |
 
 两条通道不要混用：实时通道面向“当前值持续变化”，Perspective 通道面向“一次历史查询结果的会话化快照”。
@@ -22,12 +22,22 @@
 ### 2.1 连接
 
 ```text
-ws(s)://<host>/api/device-monitor/ws/realtime-push?token=<JWT>
+ws(s)://<host>/api/device-monitor/ws/realtime-push
 ```
 
-- token 来自 backend 登录。
-- token 当前经 query 传递；nginx、浏览器、调试日志不要记录完整 URL。
-- nginx 需要转发 Upgrade/Connection 头，镜像部署中由 `deploy/nginx.conf` 处理。
+服务端兼容三种认证来源，按以下顺序读取：
+
+1. `?token=` query 参数；
+2. `Authorization` Header；
+3. 连接后 5 秒内发送认证消息。
+
+CLI 规范固定使用第 3 种：URL 不含 Token，连接成功后立即发送：
+
+```json
+{"type":"auth","token":"<登录接口返回的原值>"}
+```
+
+CLI 禁止使用 query token，避免 Token 进入 shell history、进程列表、nginx 访问日志或诊断记录。浏览器前端若受 WebSocket Header API 限制而保留 query 方式，仍必须避免记录完整 URL。nginx 需要转发 Upgrade/Connection 头，镜像部署中由 `deploy/nginx.conf` 处理。
 
 ### 2.2 客户端状态机
 
@@ -46,15 +56,27 @@ stateDiagram-v2
     closed --> [*]
 ```
 
-前端行为：
+客户端行为：
 
 - 初次进入页面连接 WS；
+- CLI 在连接后先发送认证消息，认证后再订阅；
 - 连接后发送 subscribe；
 - 断线后指数退避重连；
 - 页面恢复可见时检查连接；
 - 离开页面主动 unsubscribe 并关闭连接。
 
 ### 2.3 客户端 → 服务端
+
+CLI 认证：
+
+```json
+{
+  "type": "auth",
+  "token": "Bearer eyJ..."
+}
+```
+
+认证消息必须是连接后的第一条消息。登录响应 Token 原值可带 `Bearer ` 前缀，客户端不得重复拼接。
 
 订阅：
 
@@ -83,6 +105,8 @@ stateDiagram-v2
 ```
 
 切换设备或分组时，客户端应先退订旧分组，再订阅新分组。
+
+当前路由权限检查是 `device_monitor:monitor:view` 或 `device_monitor:realtime:view` 任一满足即可。`device_monitor:realtime:subscribe` 虽存在于默认权限种子中，但现行路由没有消费它；协议客户端不得据此自行改变权限判断。
 
 ### 2.4 服务端 → 客户端
 

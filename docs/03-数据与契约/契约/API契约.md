@@ -14,6 +14,7 @@ flowchart LR
     FE -->|/api/device-monitor/ws/*| BE
     APP[app Tauri] -->|backend_request| BE
     APP -->|agent_request| AG[agent 127.0.0.1:7070]
+    CLI[DataWatch CLI / AI Agent] -->|REST + WebSocket| BE
     BE --> RDS[(Redis)]
     BE --> TD[(TDengine)]
     BE --> MY[(MySQL)]
@@ -23,6 +24,7 @@ flowchart LR
 
 - frontend 只调用 backend，不直接访问 agent、Redis、TDengine、MySQL。
 - app 同时调用 backend 与 agent。
+- CLI 只调用 backend；生产可经 nginx，开发可直连 backend，不直接访问数据库或 agent。
 - agent 只监听本机，服务桌面端与边缘进程管控。
 - backend 是业务 API 事实源，前端类型和 mock 不能反向定义接口契约。
 
@@ -41,6 +43,7 @@ flowchart LR
 - 开发：frontend 通过 Vite proxy 或 `VITE_API_URL` 指向 backend；
 - 镜像：frontend nginx 将 `/api/` 反代到 backend:8000；
 - app：从 agent `runtime-config` 读取 backend base_url 后经 Rust `backend_request` 调用。
+- CLI：Profile 保存完整 HTTP(S) base URL；生产推荐 nginx，开发允许 `127.0.0.1:8000` 直连。
 
 ### 2.2 响应包络
 
@@ -114,9 +117,10 @@ pageNo=1&pageSize=20
 
 | 方法 | 路径 | 用途 | 主要调用方 |
 |------|------|------|------------|
-| POST | `/api/auth/login` | 登录，返回 token / refreshToken / 用户信息 | frontend/app |
+| POST | `/api/auth/login` | 登录，返回 token / refreshToken | frontend/app/CLI |
+| POST | `/api/auth/refresh` | 消费 Refresh Token 并轮换 access/refresh token | CLI/其他支持刷新客户端 |
 | POST | `/api/auth/logout` | 登出 | frontend |
-| GET | `/api/user/info` | 当前用户信息、角色、权限、按钮标记 | frontend |
+| GET | `/api/user/info` | 当前用户信息、角色、权限、按钮标记 | frontend/app/CLI |
 | POST | `/api/user/password/change` | 修改密码 | frontend |
 
 登录响应示例：
@@ -127,16 +131,36 @@ pageNo=1&pageSize=20
   "msg": "success",
   "data": {
     "token": "Bearer eyJ...",
-    "refreshToken": "Bearer eyJ...",
-    "userInfo": {
-      "id": 1,
-      "userName": "Super",
-      "roles": ["R_SUPER"],
-      "buttons": ["device_monitor:realtime:view"]
-    }
+    "refreshToken": "Bearer eyJ..."
   }
 }
 ```
+
+用户信息响应示例：
+
+```json
+{
+  "code": 0,
+  "msg": "success",
+  "data": {
+    "userId": 1,
+    "userName": "Super",
+    "roles": ["R_SUPER"],
+    "buttons": ["edit"],
+    "permissions": ["device_monitor:realtime:view"]
+  }
+}
+```
+
+`buttons` 来自 `auth_mark`，用于前端按钮可见性；`permissions` 来自 `permission_code`，用于 Backend 鉴权与 CLI 本地预检查。两者不保证等价。
+
+刷新请求：
+
+```json
+{"refreshToken":"Bearer eyJ..."}
+```
+
+刷新成功返回新的 `token` 与 `refreshToken`。服务端验证令牌类型、用户状态和当前角色；CLI 在认证请求 401 后最多自动刷新一次并重放原请求。
 
 ### 3.2 系统管理（用户/角色/菜单）
 
@@ -183,6 +207,7 @@ pageNo=1&pageSize=20
 | 路径 | 用途 |
 |------|------|
 | `/monitor/device-tree` | 监控设备树 |
+| `/monitor/point-resolve` | 按 IO 地址/点位名称解析业务点位，可带设备现场名称提示 |
 | `/monitor/realtime-init` | 实时初始快照 |
 | `/realtime-window` | 短窗口历史 |
 | `/device/{device_code}/point-groups` | 某设备点位分组 |
@@ -231,6 +256,18 @@ pageNo=1&pageSize=20
 | `/module-monitor/collector` | collector 数据链路指标 |
 | `/module-monitor/writer` | writer 队列、pending、DLQ、入库指标 |
 | `/module-monitor/rates` | 采集/入库速率趋势 |
+
+### 3.4 CLI 支持接口
+
+| 方法 | 路径 | 鉴权 | 用途 |
+|------|------|------|------|
+| GET | `/api/cli/compatibility` | 无 | 返回 Backend/API 版本及支持的 CLI 版本范围 |
+| GET | `/api/cli/releases/latest?channel=stable&platform=windows-x64` | 无 | 返回 Ed25519 签名的最新版本清单 |
+| GET | `/api/cli/releases/{version}/download?channel=stable&platform=windows-x64` | 无 | 下载清单指定的 Windows ZIP |
+
+发布清单至少包含 `schemaVersion`、`version`、`channel`、`platform`、`archive.fileName`、`archive.downloadUrl`、`archive.sha256`、`archive.size` 与 `signature`。CLI 必须先验证受信任 Ed25519 签名，再验证文件大小和 SHA-256；不能只信任 HTTPS 或文件名。
+
+CLI 自身 stdout/stderr 包络不是 Backend `{code,msg,data}` 包络，见 [CLI 输出契约](CLI输出契约.md)。
 
 ---
 
@@ -302,3 +339,5 @@ backend WebSocket 不在本文件展开，见 [WebSocket 协议](WebSocket协议
 - [边缘代理 agent](../../02-模块设计/agent/README.md)
 - [agent 边缘进程编排与凭据](../../02-模块设计/agent/边缘进程编排与凭据.md)
 - [WebSocket 协议](WebSocket协议.md)
+- [CLI 输出契约](CLI输出契约.md)
+- [CLI 模块](../../02-模块设计/cli/README.md)

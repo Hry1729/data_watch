@@ -51,7 +51,7 @@ def _walk(
 
 def _parameter_schema(parameter: click.Parameter) -> dict[str, Any]:
     option_names = list(getattr(parameter, "opts", ()) or ())
-    is_option = bool(option_names)
+    is_option = getattr(parameter, "param_type_name", "") == "option"
     result: dict[str, Any] = {
         "name": parameter.name,
         "kind": "option" if is_option else "argument",

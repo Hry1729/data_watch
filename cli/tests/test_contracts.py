@@ -30,7 +30,13 @@ def test_commands_schema_is_available_as_json() -> None:
     result = runner.invoke(main_module.app, ["commands", "schema", "devices", "get"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout)["data"]["command"] == "devices get"
+    schema = json.loads(result.stdout)["data"]
+    assert schema["command"] == "devices get"
+    identifier = next(
+        item for item in schema["parameters"] if item["name"] == "identifier"
+    )
+    assert identifier["kind"] == "argument"
+    assert "options" not in identifier
 
 
 def test_select_projects_success_data() -> None:

@@ -2,7 +2,7 @@
 <!-- xiaohu-illustration:ops-deploy-01-crate -->
 ![小狐配图：发布包木箱](../images/xiaohu-ops-deploy-01-crate.png)
 
-> 本文覆盖平台的运行环境、开发启动、中心镜像部署、发版打包、离线镜像、升级回滚与验收。三个固定角色安装包的最新构建与隔离契约见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)，交付验收见 [三角色安装包验收清单](三角色安装包验收清单.md)，Ingest 上线门禁见 [Ingest容量压测](Ingest容量压测.md)，问题排查见 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
+> 本文覆盖平台的运行环境、开发启动、中心镜像部署、发版打包、离线镜像、升级回滚与验收。DataWatch CLI 的独立 Windows ZIP、安装、自更新和回滚见 [CLI安装与更新](CLI安装与更新.md)。三个固定角色安装包的最新构建与隔离契约见 [三角色安装包构建与隔离](三角色安装包构建与隔离.md)，交付验收见 [三角色安装包验收清单](三角色安装包验收清单.md)，Ingest 上线门禁见 [Ingest容量压测](Ingest容量压测.md)，问题排查见 [问题排查](问题排查.md)。命令以仓库脚本和当前部署文件为准。
 >
 > Windows 交付固定为三种角色包：中心式、分布式边缘、分布式中心。三个 EXE 只包含对应角色的 Windows 组件；Backend/Frontend 与 MySQL/Redis/TDengine 走独立 Docker 部署，不进入 Windows 安装包。边缘角色使用 Edge Agent + Storage + Collector + SQLite outbox + Uploader，不包含 Writer 或中心数据库。
 
@@ -23,6 +23,9 @@ Windows 角色安装包：
   分布式边缘                Edge App + Edge Agent(:7071) + Storage(:7073) + Edge Collector + Uploader
   分布式中心                Center App + Agent(:7072) + Ingest + Writer
   OPC DA proxy             仅随包含 Collector 的角色安装
+
+独立工具包：
+  DataWatch CLI            Windows x64 one-folder ZIP，不进入三角色安装包，目标机无需 Python
 ```
 
 采集模块涉及 OPC DA、DCOM、PLC 网络和现场驱动环境，**不放进 Docker**；中心业务服务与 Web 前端支持镜像部署。
@@ -35,6 +38,7 @@ Windows 角色安装包：
 |------|---------------|
 | backend | free-threaded Python 3.14t，uvicorn，`backend/.env` 或 `deploy/backend.env` |
 | frontend | Node 22 构建，nginx 1.27-alpine 运行 |
+| CLI | Python 3.11+ 源码开发；PyInstaller Windows x64 one-folder 包用于目标机，目标机无需 Python |
 | collector / storage / uploader / ingest / writer | free-threaded Python 3.14t，PyInstaller 打包 exe，按 Windows 角色运行 |
 | agent | Python/FastAPI 打包 exe，NSSM Windows 服务 |
 | app | Tauri + React + Rust + WebView2 |
@@ -627,3 +631,6 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 - [app 控制台页面与双数据源](../02-模块设计/app/控制台页面与双数据源.md)
 - [API 契约](../03-数据与契约/契约/API契约.md)
 - [WebSocket 协议](../03-数据与契约/契约/WebSocket协议.md)
+- [CLI 安装与更新](CLI安装与更新.md)
+- [CLI 模块说明](../02-模块设计/cli/README.md)
+- [CLI 输出契约](../03-数据与契约/契约/CLI输出契约.md)
