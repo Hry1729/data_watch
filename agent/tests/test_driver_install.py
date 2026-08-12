@@ -141,6 +141,21 @@ def test_validate_rejects_manifest_values_exceeding_database_columns(tmp_path: P
         validate_and_extract(buf.getvalue(), tmp_path / "description-staging")
 
 
+def test_agent_rejects_readwrite_driver_manifest(tmp_path: Path):
+    package_root = tmp_path / "demo_drv"
+    package_root.mkdir()
+    manifest_path = package_root / "driver.toml"
+    manifest_path.write_text(
+        _minimal_driver_toml().replace(
+            'read_write = "只读"', 'read_write = "读写"'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DriverZipError, match="仅允许"):
+        _load_and_validate_manifest(manifest_path, package_root)
+
+
 def test_manifest_read_error_does_not_expose_absolute_path(tmp_path: Path):
     manifest_path = tmp_path / "private" / "driver.toml"
 
@@ -276,8 +291,9 @@ def test_validate_rejects_bad_abi(tmp_path: Path):
         validate_and_extract(data, tmp_path / "staging")
 
 
-def test_validate_rejects_builtin_protocol(tmp_path: Path):
-    data = _build_zip(tmp_path, driver_id="s7_ext", protocol="s7")
+@pytest.mark.parametrize("protocol", ["s7", "snap7", "modbus_tcp"])
+def test_validate_rejects_builtin_protocol(tmp_path: Path, protocol: str):
+    data = _build_zip(tmp_path, driver_id=f"{protocol}_ext", protocol=protocol)
     # id 与 entry 顶层包需一致；协议冲突在 manifest 校验后触发
     with pytest.raises(DriverZipError, match="内置"):
         validate_and_extract(data, tmp_path / "staging")
@@ -1453,6 +1469,42 @@ async def test_recovery_commit_keeps_only_previous_version_backup(
     assert results[0]["verified"] is True
     backup_root = installer.backup_root / "demo_drv"
     assert {path.name for path in backup_root.iterdir()} == {"2.0.0"}
+
+@pytest.mark.asyncio
+async def test_list_drivers_keeps_bundled_runtime_without_installed_directory(
+    installer: DriverInstaller, monkeypatch: pytest.MonkeyPatch
+):
+    installer.ensure_layout()
+
+    async def probe():
+        return {
+            "s7": {
+                "id": "s7",
+                "protocol": "s7",
+                "status": "loaded",
+                "source": "bundled",
+                "protected": True,
+                "readWriteType": "只读",
+                "capabilities": ["poll", "read"],
+            }
+        }
+
+    monkeypatch.setattr(installer, "_probe_collector_drivers", probe)
+    items = await installer.list_drivers()
+
+    assert items == [
+        {
+            "id": "s7",
+            "protocol": "s7",
+            "status": "loaded",
+            "runtime_status": "loaded",
+            "source": "bundled",
+            "protected": True,
+            "readWriteType": "只读",
+            "capabilities": ["poll", "read"],
+        }
+    ]
+
 
 
 def test_terminal_operation_compaction_keeps_incomplete_and_limited_audit(

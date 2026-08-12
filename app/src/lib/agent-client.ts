@@ -102,7 +102,9 @@ export interface AgentDriverInfo {
   sha256: string;
   capabilities?: string[];
   readWriteType?: string;
+  aliases?: string[];
   source?: string;
+  protected?: boolean;
   status: string;
   error?: string | null;
   updated_at?: string;

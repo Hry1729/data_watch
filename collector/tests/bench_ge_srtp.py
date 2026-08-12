@@ -5,7 +5,7 @@ Purpose: measure single-block RTT to verify whether 124 blocks x RTT
 accounts for the 4-5s scan time observed on device_id=30.
 
 Usage:
-    python bench_ge_srtp.py <host> [port=18245] [slot=1] [rounds=50]
+    python bench_ge_srtp.py <host> [port=18245] [slot=1] [rounds=50] [blocks=124]
 
 Run with collector venv (cwd=collector/tests):
     ..\\.venv-pack\\Scripts\\python.exe bench_ge_srtp.py 192.168.x.x 18245 1 50
@@ -61,9 +61,10 @@ def main():
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 18245
     slot = int(sys.argv[3]) if len(sys.argv) > 3 else 1
     rounds = int(sys.argv[4]) if len(sys.argv) > 4 else 50
+    block_count = int(sys.argv[5]) if len(sys.argv) > 5 else 124
 
     print("=== GE SRTP RTT bench ===")
-    print(f"host={host} port={port} slot={slot} rounds={rounds}")
+    print(f"host={host} port={port} slot={slot} rounds={rounds} blocks={block_count}")
     print("(READ ONLY - no writes sent)\n")
 
     drv = GE_SRTP_Driver(host=host, port=port, slot=slot)
@@ -82,12 +83,11 @@ def main():
     print("\n[3] read_discrete_input(offset=0, count=64, bit)")
     stats("discrete bit", bench(lambda: drv.read_discrete_input(0, 64, mode='bit'), rounds))
 
-    # [4] 模拟真实扫描：124 个串行块（offset 0..123, count=1）
-    # 模拟 device_id=30 的 124 块串行扫描
-    print(f"\n[4] simulate 124 sequential blocks (offset 0..123, count=1)")
+    # [4] 模拟真实扫描：可配置数量的串行块（offset 0..N-1, count=1）
+    print(f"\n[4] simulate {block_count} sequential blocks (offset 0..{block_count - 1}, count=1)")
     t0 = time.perf_counter()
     errs = 0
-    for off in range(124):
+    for off in range(block_count):
         try:
             drv.read_register(off, 1)
         except Exception as e:
@@ -95,7 +95,7 @@ def main():
             if errs <= 3:
                 print(f"  block offset={off} raised: {e!r}")
     total = (time.perf_counter() - t0) * 1000.0
-    print(f"  total={total:.1f}ms  avg={total / 124:.2f}ms  errors={errs}")
+    print(f"  total={total:.1f}ms  avg={total / block_count:.2f}ms  errors={errs}")
     print(f"  >>> compare total to the 4-5s observed scan time <<<")
 
     # [5] 探测越界地址 - 暴露 NACK / 重试 / 超时行为

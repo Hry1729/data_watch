@@ -12,6 +12,13 @@ log_max_bytes = 10485760  # 10MB
 log_backup_count = 5
 enable_fake_bootstrap = false
 
+# GE SRTP 实机验证建议按 250 → 500 → 1000 → 1024 递进；默认保持 250。
+ge_max_payload_bytes = 250
+# 双连接仅用于试点设备；默认单连接，当前只允许 1 或 2。
+ge_parallel_channels = 1
+# 可选：整批超过该时长后不再发起后续 Block；正在执行的 Block 会安全收尾。
+# ge_batch_deadline_ms = 300
+
 [mysql]
 # host/port/user/database/password 生产由 Agent 注入覆盖；以下为 dev 回退值。
 host = "127.0.0.1"

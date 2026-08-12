@@ -16,6 +16,7 @@ import pytest
 
 from device.device import Device, Variable
 from drivers.base import ReadBlock
+from collector.bounded_executor import ExecutorSaturatedError
 from collector.executor import TaskExecutor
 
 
@@ -113,6 +114,33 @@ class TestGEAddressParsing:
         assert parsed["logical_number"] == 201
         assert parsed["protocol_offset"] == 200
 
+    @pytest.mark.parametrize(
+        ("address", "area", "logical_number"),
+        [
+            ("%T00001", "T", 1),
+            ("%S00002", "S", 2),
+            ("%SA00003", "SA", 3),
+            ("%SB00004", "SB", 4),
+            ("%SC00005", "SC", 5),
+            ("%G00006", "G", 6),
+        ],
+    )
+    def test_parse_additional_discrete_memory(
+        self, address, area, logical_number
+    ):
+        """新增离散内存区沿用 GE 1 基逻辑地址。"""
+        device = Device(
+            device_id="test",
+            device_type="PLC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+
+        parsed = device._parse_ge_address(address)
+
+        assert parsed["area"] == area
+        assert parsed["logical_number"] == logical_number
+        assert parsed["protocol_offset"] == logical_number - 1
     def test_invalid_ge_address(self):
         """测试无效 GE 地址"""
         device = Device(
@@ -127,7 +155,13 @@ class TestGEAddressParsing:
         with pytest.raises(Exception):
             device._parse_ge_address("%X100")  # 无效区域
 
-    @pytest.mark.parametrize("address", ["%R0", "%AI0", "%AQ0", "%I0", "%Q0", "%M0"])
+    @pytest.mark.parametrize(
+        "address",
+        [
+            "%R0", "%AI0", "%AQ0", "%I0", "%Q0", "%M0",
+            "%T0", "%S0", "%SA0", "%SB0", "%SC0", "%G0",
+        ],
+    )
     def test_ge_address_zero_is_invalid(self, address):
         """GE 逻辑地址 0 无效"""
         device = Device(
@@ -291,6 +325,32 @@ class TestGEBlockMerging:
         assert scan_task.result_map["v1"]["bit_offset"] == 0
         assert scan_task.result_map["v2"]["bit_offset"] == 1
         assert scan_task.result_map["v3"]["bit_offset"] == 2
+        assert scan_task.result_map["v1"]["packing"] == "byte"
+
+    @pytest.mark.parametrize(
+        "area",
+        ["T", "S", "SA", "SB", "SC", "G"],
+    )
+    def test_merge_additional_discrete_memory_bools(self, area):
+        """新增离散内存区也应合并为 byte 模式只读块。"""
+        device = Device(
+            device_id="qc100",
+            device_type="QC",
+            protocol="ge_srtp",
+            connection_config={"ip": "127.0.0.1"},
+        )
+        device.add_variable(Variable(variable_id="v1", address=f"%{area}1", data_type="BOOL"))
+        device.add_variable(Variable(variable_id="v2", address=f"%{area}2", data_type="BOOL"))
+
+        device.build_scan_tasks()
+
+        scan_task = device.scan_tasks[0]
+        block = scan_task.read_blocks[0]
+        assert block.address == f"%{area}00001"
+        assert block.count == 1
+        assert block.data_type == "BYTE"
+        assert scan_task.result_map["v1"]["bit_offset"] == 0
+        assert scan_task.result_map["v2"]["bit_offset"] == 1
         assert scan_task.result_map["v1"]["packing"] == "byte"
 
     def test_split_register_when_span_exceeds_max_words(self):
@@ -761,6 +821,17 @@ class TestGEValueExtraction:
         mapping = {"area": "I", "bit_offset": 1, "data_type": "BOOL", "packing": "byte"}
         assert TaskExecutor._extract_mapped_ge_value(0x02, mapping) is True
 
+    @pytest.mark.parametrize("area", ["T", "S", "SA", "SB", "SC", "G"])
+    def test_extract_bool_from_additional_discrete_memory(self, area):
+        """新增离散区复用 byte 模式的 LSB-first 位解码。"""
+        mapping = {
+            "area": area,
+            "bit_offset": 1,
+            "data_type": "BOOL",
+            "packing": "byte",
+        }
+        assert TaskExecutor._extract_mapped_ge_value([0x02], mapping) is True
+
     def test_extract_byte_packed_out_of_range_raises(self):
         """bit_offset 超出块字节数 -> 带上下文的 ValueError 而非裸 IndexError"""
         mapping = {
@@ -791,6 +862,18 @@ class _FakeGeDriver:
     def read_discrete_internal(self, offset, count, mode='bit'):
         self.calls.append(("M", offset, count, mode))
         return [0] * count
+    def read_discrete_temp(self, offset, count, mode='bit'):
+        self.calls.append(("T", offset, count, mode))
+        return [0] * count
+
+    def read_system_memory(self, mem_type, offset, count, mode='bit'):
+        self.calls.append((mem_type, offset, count, mode))
+        return [0] * count
+
+    def read_global_memory(self, offset, count, mode='bit'):
+        self.calls.append(("G", offset, count, mode))
+        return [0] * count
+
 
 
 class TestGEDriverByteMode:
@@ -819,6 +902,13 @@ class TestGEDriverByteMode:
         drv._read_block(ReadBlock("%M00017", count=3, data_type="BYTE"))
         assert drv._driver.calls == [("M", 2, 3, "byte")]
 
+    @pytest.mark.parametrize("area", ["T", "S", "SA", "SB", "SC", "G"])
+    def test_additional_discrete_memory_uses_read_only_byte_api(self, area):
+        """新增离散区必须路由到对应 read_* 接口，且按字节偏移读取。"""
+        drv = self._make_driver()
+        drv._read_block(ReadBlock(f"%{area}00009", count=2, data_type="BYTE"))
+        assert drv._driver.calls == [(area, 1, 2, "byte")]
+
     def test_byte_block_not_aligned_raises(self):
         from core.exceptions import ReadError
         drv = self._make_driver()
@@ -829,6 +919,94 @@ class TestGEDriverByteMode:
         drv = self._make_driver()
         drv._read_block(ReadBlock("%I00001", count=10, data_type="BIT"))
         assert drv._driver.calls == [("I", 0, 10, "bit")]
+
+
+class _RejectingExecutor:
+    def submit(self, *_args, **_kwargs):
+        raise ExecutorSaturatedError("plc_read executor capacity reached: 1")
+
+
+@pytest.mark.asyncio
+async def test_ge_read_propagates_executor_saturation():
+    """读池背压必须交给 TaskExecutor 处理，不能退化为普通块失败。"""
+    from drivers.ge_srtp_driver import GESRTPDriver
+
+    drv = GESRTPDriver(read_executor=_RejectingExecutor())
+    drv._driver = _FakeGeDriver()
+    drv._connected = True
+
+    with pytest.raises(ExecutorSaturatedError):
+        await drv.read([ReadBlock("%R00001", count=1, data_type="WORD")])
+
+
+@pytest.mark.asyncio
+async def test_ge_read_aborts_remaining_blocks_when_connection_is_lost():
+    """致命连接错误后不得继续读取同批次后续 Block。"""
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from src import exceptions as ge_exceptions
+
+    class FatalGeDriver:
+        def __init__(self):
+            self.calls = 0
+
+        def read_register(self, _offset, _count):
+            self.calls += 1
+            raise ge_exceptions.TimeoutError("connection lost")
+
+        def is_connected(self):
+            return False
+
+    fatal = FatalGeDriver()
+    drv = GESRTPDriver()
+    drv._driver = fatal
+    drv._connected = True
+
+    blocks = [
+        ReadBlock("%R00001", count=1, data_type="WORD"),
+        ReadBlock("%R00002", count=1, data_type="WORD"),
+    ]
+    with pytest.raises(ge_exceptions.TimeoutError):
+        await drv.read(blocks)
+
+    assert fatal.calls == 1
+    assert drv.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_ge_read_records_block_and_batch_metrics():
+    """GE 指标应记录请求数量、区域、字节量、RTT 与批次结果。"""
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from monitor.performance import PerformanceMetrics
+
+    class MetricsGeDriver(_FakeGeDriver):
+        def read_register(self, _offset, count):
+            self.calls.append(("R", _offset, count))
+            return [0] * count
+
+        def is_connected(self):
+            return True
+
+    metrics = PerformanceMetrics()
+    drv = GESRTPDriver(metrics=metrics)
+    drv._driver = MetricsGeDriver()
+    drv._connected = True
+
+    result = await drv.read([
+        ReadBlock("%R00001", count=2, data_type="WORD"),
+        ReadBlock("%I00001", count=3, data_type="BYTE"),
+    ])
+
+    snapshot = metrics.snapshot()
+    assert set(result) == {"%R00001", "%I00001"}
+    assert snapshot["timings"]["ge_srtp_block_rtt_ms"]["count"] == 2
+    assert snapshot["timings"]["ge_srtp_batch_ms"]["count"] == 1
+    assert snapshot["counters"]["ge_srtp_block_success_count"] == 2
+    assert snapshot["counters"]["ge_srtp_batch_success_count"] == 1
+    assert snapshot["gauges"]["ge_srtp_last_batch_block_count"] == 2
+    assert snapshot["gauges"]["ge_srtp_last_batch_payload_bytes"] == 7
+    assert snapshot["gauges"]["ge_srtp_last_batch_blocks_r"] == 1
+    assert snapshot["gauges"]["ge_srtp_last_batch_blocks_i"] == 1
+
 
 
 class TestGEIntegration:
@@ -915,3 +1093,263 @@ class TestGEWordSize:
 
     def test_unknown_type_defaults_to_one(self):
         assert Device._ge_word_size("UNKNOWN") == 1
+
+
+@pytest.mark.parametrize(
+    ("payload_bytes", "expected_blocks"),
+    [(250, 2), (500, 1), (1024, 1)],
+)
+def test_ge_payload_size_changes_planned_block_count(payload_bytes, expected_blocks):
+    device = Device(
+        device_id="ge_payload",
+        device_type="PLC",
+        protocol="ge_srtp",
+        connection_config={
+            "ip": "127.0.0.1",
+            "ge_max_payload_bytes": payload_bytes,
+        },
+    )
+    device.add_variable(Variable("r1", "%R00001", "INT"))
+    device.add_variable(Variable("r200", "%R00200", "INT"))
+
+    device.build_scan_tasks()
+
+    blocks = device.scan_tasks[0].read_blocks
+    assert len(blocks) == expected_blocks
+    if expected_blocks == 1:
+        assert blocks[0].count == 200
+
+
+def test_ge_planner_rejects_invalid_payload_size():
+    from core.exceptions import DeviceConnectionError
+
+    device = Device(
+        device_id="ge_invalid_payload",
+        device_type="PLC",
+        protocol="ge_srtp",
+        connection_config={"ip": "127.0.0.1", "ge_max_payload_bytes": 1025},
+    )
+    device.add_variable(Variable("r1", "%R00001", "INT"))
+
+    with pytest.raises(DeviceConnectionError, match="Invalid GE max payload"):
+        device.build_scan_tasks()
+
+@pytest.mark.asyncio
+async def test_ge_connect_creates_isolated_parallel_channels(monkeypatch):
+    import drivers.ge_srtp_driver as ge_module
+
+    class FakeConnection:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.connected = False
+            self.disconnect_calls = 0
+            self.__class__.instances.append(self)
+
+        def connect(self):
+            self.connected = True
+
+        def disconnect(self):
+            self.connected = False
+            self.disconnect_calls += 1
+
+        def is_connected(self):
+            return self.connected
+
+    monkeypatch.setattr(ge_module, "GE_SRTP_Driver", FakeConnection)
+    driver = ge_module.GESRTPDriver()
+
+    await driver.connect(
+        {
+            "ip": "127.0.0.1",
+            "port": 18245,
+            "slot": 1,
+            "ge_parallel_channels": 2,
+        }
+    )
+
+    assert len(FakeConnection.instances) == 2
+    assert driver._drivers == FakeConnection.instances
+    assert driver._drivers[0] is not driver._drivers[1]
+    assert driver.is_connected is True
+
+    await driver.disconnect()
+    assert [item.disconnect_calls for item in FakeConnection.instances] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_ge_parallel_read_round_robins_blocks_per_isolated_channel():
+    from drivers.ge_srtp_driver import GESRTPDriver
+
+    class Channel:
+        def __init__(self, name):
+            self.name = name
+            self.calls = []
+
+        def read_register(self, offset, count):
+            self.calls.append((offset, count))
+            return [offset] * count
+
+        def is_connected(self):
+            return True
+
+    first = Channel("first")
+    second = Channel("second")
+    driver = GESRTPDriver()
+    driver._drivers = [first, second]
+    driver._driver = first
+    driver._connected = True
+    blocks = [
+        ReadBlock(f"%R{index:05d}", count=1, data_type="WORD")
+        for index in range(1, 5)
+    ]
+
+    result = await driver.read(blocks)
+
+    assert set(result) == {block.address for block in blocks}
+    assert first.calls == [(0, 1), (2, 1)]
+    assert second.calls == [(1, 1), (3, 1)]
+
+
+@pytest.mark.asyncio
+async def test_ge_parallel_read_fails_over_remaining_blocks_to_survivor():
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from monitor.performance import PerformanceMetrics
+    from src import exceptions as ge_exceptions
+
+    class FailedChannel:
+        def __init__(self):
+            self.calls = 0
+            self.connected = True
+
+        def read_register(self, _offset, _count):
+            self.calls += 1
+            self.connected = False
+            raise ge_exceptions.TimeoutError("channel lost")
+
+        def is_connected(self):
+            return self.connected
+
+    class SurvivorChannel:
+        def __init__(self):
+            self.calls = []
+
+        def read_register(self, offset, count):
+            self.calls.append((offset, count))
+            return [offset] * count
+
+        def is_connected(self):
+            return True
+
+    failed = FailedChannel()
+    survivor = SurvivorChannel()
+    metrics = PerformanceMetrics()
+    driver = GESRTPDriver(metrics=metrics)
+    driver._drivers = [failed, survivor]
+    driver._driver = failed
+    driver._connected = True
+    blocks = [
+        ReadBlock(f"%R{index:05d}", count=1, data_type="WORD")
+        for index in range(1, 5)
+    ]
+
+    result = await driver.read(blocks)
+
+    assert set(result) == {block.address for block in blocks}
+    assert failed.calls == 1
+    assert set(survivor.calls) == {(0, 1), (1, 1), (2, 1), (3, 1)}
+    assert driver._drivers == [survivor]
+    assert driver._driver is survivor
+    assert driver.is_connected is True
+    snapshot = metrics.snapshot()
+    assert snapshot["counters"]["ge_srtp_channel_degraded_count"] == 1
+    assert snapshot["counters"]["ge_srtp_failover_retry_block_count"] == 2
+    assert snapshot["gauges"]["ge_srtp_active_channel_count"] == 1
+
+@pytest.mark.asyncio
+async def test_ge_single_channel_deadline_stops_before_next_block():
+    import time as wall_time
+
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from monitor.performance import PerformanceMetrics
+
+    class SlowChannel:
+        def __init__(self):
+            self.calls = []
+
+        def read_register(self, offset, count):
+            self.calls.append((offset, count))
+            wall_time.sleep(0.02)
+            return [offset] * count
+
+        def is_connected(self):
+            return True
+
+    channel = SlowChannel()
+    metrics = PerformanceMetrics()
+    driver = GESRTPDriver(metrics=metrics)
+    driver._driver = channel
+    driver._connected = True
+    driver._batch_deadline_ms = 5
+    blocks = [
+        ReadBlock(f"%R{index:05d}", count=1, data_type="WORD")
+        for index in range(1, 4)
+    ]
+
+    result = await driver.read(blocks)
+
+    assert channel.calls == [(0, 1)]
+    assert result[blocks[0].address] == [0]
+    assert result[blocks[1].address] is None
+    assert result[blocks[2].address] is None
+    counters = metrics.snapshot()["counters"]
+    assert counters["ge_srtp_batch_deadline_count"] == 1
+    assert counters["ge_srtp_batch_deadline_block_count"] == 2
+    assert counters["ge_srtp_batch_partial_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ge_parallel_channels_share_one_batch_deadline():
+    import time as wall_time
+
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from monitor.performance import PerformanceMetrics
+
+    class SlowChannel:
+        def __init__(self):
+            self.calls = []
+
+        def read_register(self, offset, count):
+            self.calls.append((offset, count))
+            wall_time.sleep(0.02)
+            return [offset] * count
+
+        def is_connected(self):
+            return True
+
+    first = SlowChannel()
+    second = SlowChannel()
+    metrics = PerformanceMetrics()
+    driver = GESRTPDriver(metrics=metrics)
+    driver._drivers = [first, second]
+    driver._driver = first
+    driver._connected = True
+    driver._batch_deadline_ms = 5
+    blocks = [
+        ReadBlock(f"%R{index:05d}", count=1, data_type="WORD")
+        for index in range(1, 5)
+    ]
+
+    result = await driver.read(blocks)
+
+    assert first.calls == [(0, 1)]
+    assert second.calls == [(1, 1)]
+    assert result[blocks[0].address] == [0]
+    assert result[blocks[1].address] == [1]
+    assert result[blocks[2].address] is None
+    assert result[blocks[3].address] is None
+    counters = metrics.snapshot()["counters"]
+    assert counters["ge_srtp_batch_deadline_count"] == 1
+    assert counters["ge_srtp_batch_deadline_block_count"] == 2
+    assert counters["ge_srtp_batch_partial_count"] == 1

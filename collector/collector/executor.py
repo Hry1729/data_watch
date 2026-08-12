@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from core.exceptions import ReadError
 from core.logger import get_logger
-from core.quality_codes import QUALITY_CONFIG_DECODE_ERROR, QUALITY_GOOD, is_valid_quality
+from core.quality_codes import QUALITY_BAD, QUALITY_CONFIG_DECODE_ERROR, QUALITY_GOOD, is_valid_quality
 from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from data_queue.types import DataPoint
@@ -104,6 +104,9 @@ class TaskExecutor:
         self._redis_executor = redis_executor
         self._metrics.increment("stale_generation_drop_count", 0)
         self._clock = time.perf_counter
+        self._metrics.increment("coalesced_read_group_count", 0)
+        self._metrics.increment("coalesced_read_task_count", 0)
+        self._metrics.increment("coalesced_read_saved_block_count", 0)
         self._summary_interval_seconds = summary_interval_seconds
         self._summary_started_at = time.time()
         self._summary_tasks = 0
@@ -116,15 +119,14 @@ class TaskExecutor:
         self._device_warn_last_time: Dict[str, float] = {}
         self._executor_warn_last_time: Dict[str, float] = {}
 
-    async def _read_device(self, task: CollectTask) -> Dict[str, Any]:
+    async def _read_blocks(self, device, blocks) -> Dict[str, Any]:
         """Apply a logical deadline without releasing the device before I/O exits."""
-        device = task.device
         timeout_ms = device.connection_config.get("read_timeout_ms")
         if timeout_ms is None:
-            return await device.driver.read(task.scan_task.read_blocks)
+            return await device.driver.read(blocks)
 
         timeout_ms = int(timeout_ms)
-        read_task = asyncio.create_task(device.driver.read(task.scan_task.read_blocks))
+        read_task = asyncio.create_task(device.driver.read(blocks))
         try:
             done, _ = await asyncio.wait({read_task}, timeout=timeout_ms / 1000.0)
         except asyncio.CancelledError:
@@ -151,7 +153,16 @@ class TaskExecutor:
             f"for device {device.device_id}"
         )
 
-    async def execute(self, task: CollectTask) -> None:
+    async def _read_device(self, task: CollectTask) -> Dict[str, Any]:
+        return await self._read_blocks(task.device, task.scan_task.read_blocks)
+
+    async def execute(
+        self,
+        task: CollectTask,
+        *,
+        _prefetched_result: Optional[Dict[str, Any]] = None,
+        _prefetched_elapsed: Optional[float] = None,
+    ) -> None:
         """
         执行单个采集任务
         1. 调用驱动批量读取
@@ -183,7 +194,11 @@ class TaskExecutor:
         # 批量读取（读失败：标记设备异常并向调度器抛出）
         start = self._clock()
         try:
-            result = await self._read_device(task)
+            result = (
+                _prefetched_result
+                if _prefetched_result is not None
+                else await self._read_device(task)
+            )
             if scan_task.read_blocks and all(result.get(block.address) is None for block in scan_task.read_blocks):
                 raise ReadError(f"All read blocks failed for task {task.task_name}")
         except ExecutorSaturatedError as exc:
@@ -210,7 +225,11 @@ class TaskExecutor:
                 await self.device_manager.mark_device_error(device, f"read failed: {e}", "timeout")
             raise
 
-        elapsed = self._clock() - start
+        elapsed = (
+            _prefetched_elapsed
+            if _prefetched_elapsed is not None
+            else self._clock() - start
+        )
         self._metrics.record_timing("read_ms", elapsed * 1000)
         self._metrics.increment("read_success_count")
         self._total_reads += 1
@@ -293,6 +312,105 @@ class TaskExecutor:
         )
         self._record_read_summary(task, len(points), elapsed * 1000)
 
+
+    async def execute_many(self, tasks: List[CollectTask]) -> None:
+        """Read coincident tasks for one device once, then preserve per-task outputs."""
+        active_tasks = []
+        for task in tasks:
+            if self._task_is_current(task):
+                active_tasks.append(task)
+            else:
+                self._record_stale_generation_drop()
+        if not active_tasks:
+            return
+        if len(active_tasks) == 1:
+            await self.execute(active_tasks[0])
+            return
+
+        device = active_tasks[0].device
+        if any(task.device.device_id != device.device_id for task in active_tasks):
+            raise ValueError("execute_many requires tasks from one device")
+        if not device.driver or not device.driver.is_connected:
+            outcomes = await asyncio.gather(
+                *(self.execute(task) for task in active_tasks),
+                return_exceptions=True,
+            )
+            for task, outcome in zip(active_tasks, outcomes):
+                if isinstance(outcome, BaseException):
+                    task.error_count += 1
+                    logger.error(
+                        "Task %s failed (errors=%s): %s",
+                        task.task_name,
+                        task.error_count,
+                        outcome,
+                    )
+                else:
+                    task.error_count = 0
+            return
+
+        blocks_by_address = {}
+        requested_blocks = 0
+        for task in active_tasks:
+            for block in task.scan_task.read_blocks:
+                requested_blocks += 1
+                existing = blocks_by_address.get(block.address)
+                if existing is None or block.count > existing.count:
+                    blocks_by_address[block.address] = block
+        merged_blocks = list(blocks_by_address.values())
+
+        started = self._clock()
+        try:
+            result = await self._read_blocks(device, merged_blocks)
+        except ExecutorSaturatedError as exc:
+            self._total_errors += 1
+            self._warn_executor_saturated("plc_read", active_tasks[0], exc)
+            self._metrics.increment("coalesced_read_reject_count")
+            return
+        except Exception as exc:
+            elapsed_ms = (self._clock() - started) * 1000
+            self._metrics.record_timing("read_ms", elapsed_ms)
+            self._total_errors += 1
+            self._metrics.increment("read_error_count")
+            self._metrics.increment("coalesced_read_error_count")
+            for task in active_tasks:
+                task.error_count += 1
+            self._emit_read_failure(active_tasks[0], exc, elapsed_ms)
+            if self.device_manager:
+                await self.device_manager.mark_device_error(
+                    device, f"read failed: {exc}", "timeout"
+                )
+            raise
+
+        elapsed = self._clock() - started
+        self._metrics.increment("coalesced_read_group_count")
+        self._metrics.increment("coalesced_read_task_count", len(active_tasks))
+        self._metrics.increment(
+            "coalesced_read_saved_block_count",
+            max(0, requested_blocks - len(merged_blocks)),
+        )
+        outcomes = await asyncio.gather(
+            *(
+                self.execute(
+                    task,
+                    _prefetched_result=result,
+                    _prefetched_elapsed=elapsed,
+                )
+                for task in active_tasks
+            ),
+            return_exceptions=True,
+        )
+
+        for task, outcome in zip(active_tasks, outcomes):
+            if isinstance(outcome, BaseException):
+                task.error_count += 1
+                logger.error(
+                    "Task %s failed after coalesced read (errors=%s): %s",
+                    task.task_name,
+                    task.error_count,
+                    outcome,
+                )
+            else:
+                task.error_count = 0
     async def shutdown(self, timeout: Optional[float] = None) -> int:
         """关闭 parse/redis 有界池，返回两池未完成 job 数之和（§7.9-5）。"""
         executors = []
@@ -351,6 +469,8 @@ class TaskExecutor:
         会让 writer 的 float() 解析失败、兜底成 0（bool 点全部入库为 0）；统一转成
         "1"/"0"，与其它数值串一致、可被 float() 正常解析。
         """
+        if value is None:
+            return ""
         if isinstance(value, bool):
             return "1" if value else "0"
         return str(value)
@@ -412,13 +532,13 @@ class TaskExecutor:
                 stream_values = {
                     var_id: self._format_point_value(point.value)
                     for var_id, (point, dt, is_storage) in var_data.items()
-                    if is_storage and dt != "STRING"
+                    if is_storage and dt != "STRING" and point.value is not None
                 }
                 # stream_qualities：键集合与 stream_values 一致
                 stream_qualities = {
                     var_id: int(getattr(point, "quality", 0))
                     for var_id, (point, dt, is_storage) in var_data.items()
-                    if is_storage and dt != "STRING"
+                    if is_storage and dt != "STRING" and point.value is not None
                 }
                 # window+stream 合并一次往返（§7.5）；任一失败抛出 → 跳过 latest。
                 self._redis_writer.write_window_stream(
@@ -493,9 +613,17 @@ class TaskExecutor:
                         quality=quality,
                     ))
                     continue
+
                 block_addr = mapped["block_address"]
                 raw_values = result.get(block_addr)
                 if raw_values is None:
+                    points.append(DataPoint(
+                        device_id=device_id,
+                        variable_id=variable.variable_id,
+                        value=None,
+                        timestamp=now,
+                        quality=QUALITY_BAD,
+                    ))
                     continue
 
                 # 根据 protocol 选择还原方法（内置 S7/GE 映射路径）
@@ -533,6 +661,13 @@ class TaskExecutor:
             raw_values = result.get(block_addr)
 
             if raw_values is None:
+                points.append(DataPoint(
+                    device_id=device_id,
+                    variable_id=variable.variable_id,
+                    value=None,
+                    timestamp=now,
+                    quality=QUALITY_BAD,
+                ))
                 continue
 
             # 单值或多值
@@ -647,7 +782,7 @@ class TaskExecutor:
             DWORD/UDINT: 2 word 组合为无符号 32 位
             REAL/FLOAT: 2 word 组合为 32 位浮点
 
-        离散量区域 (%I/%Q/%M):
+        离散量区域 (%I/%Q/%M/%T/%S/%SA/%SB/%SC/%G):
             第一版只支持 BOOL
             packing="byte"（byte 模式块）：values 为字节列表，LSB-first 拆位
             （位序与 gesrtp extract_bit_values 一致，bit 模式下已现场验证）
@@ -709,7 +844,7 @@ class TaskExecutor:
             return values[word_offset]
 
         # 离散量区域：BOOL bit 偏移
-        if area in ("I", "Q", "M"):
+        if area in ("I", "Q", "M", "T", "S", "SA", "SB", "SC", "G"):
             if data_type == "BOOL":
                 bit_offset = int(mapping.get("bit_offset", 0))
                 if str(mapping.get("packing", "")) == "byte":

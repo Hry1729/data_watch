@@ -76,13 +76,13 @@ function resolveStatusBadge(row: DriverListItem): { label: string; variant: "def
   if (row.source === "unregistered") {
     return { label: "未注册", variant: "destructive" };
   }
-  if (row.loadStatus && row.loadStatus !== "loaded" && row.source === "installed") {
+  if (row.loadStatus && row.loadStatus !== "loaded" && (row.source === "installed" || row.source === "bundled")) {
     return { label: "异常", variant: "destructive" };
   }
   if (row.status === "disabled") {
     return { label: "不可用", variant: "secondary" };
   }
-  if (row.loadStatus === "loaded" || row.source === "builtin") {
+  if (row.loadStatus === "loaded" || row.source === "bundled" || row.source === "builtin") {
     return { label: "可用", variant: "outline" };
   }
   if (row.source === "installed") {
@@ -92,6 +92,7 @@ function resolveStatusBadge(row: DriverListItem): { label: string; variant: "def
 }
 
 function resolveSourceLabel(source: DriverListItem["source"]): string {
+  if (source === "bundled") return "安装包内置";
   if (source === "installed") return "已安装";
   if (source === "unregistered") return "未注册";
   if (source === "unknown") return "状态未知";
@@ -139,9 +140,12 @@ export default function DriverManagementPage() {
         error?: string | null;
         readWriteType?: string;
         protocol?: string;
+        aliases?: string[];
+        source?: string;
+        protected?: boolean;
       }> = {};
       for (const item of agentResult.drivers) {
-        nextMap[normalizeKey(item.protocol || item.id)] = {
+        const local = {
           id: item.id,
           name: item.name,
           description: item.description,
@@ -152,7 +156,16 @@ export default function DriverManagementPage() {
           error: item.error,
           readWriteType: item.readWriteType,
           protocol: item.protocol || item.id,
+          aliases: item.aliases,
+          source: item.source,
+          protected: item.protected,
         };
+        const keys = [item.id, item.protocol, ...(item.aliases ?? [])]
+          .map((value) => normalizeKey(value || ""))
+          .filter(Boolean);
+        for (const key of keys) {
+          nextMap[key] = local;
+        }
       }
 
       const catalogKeySet = new Set(
@@ -164,11 +177,19 @@ export default function DriverManagementPage() {
         const key = normalizeKey(row.driverName);
         const local = nextMap[key];
         if (!local) {
-          // Agent 不可达：勿把未匹配伪装成 builtin
+          // Agent 不可达：保留保护标记，但运行时状态明确为未知。
           if (!agentResult.ok) {
             return { ...row, source: "unknown" as const, loadStatus: "unknown" };
           }
-          // 已注册外置包在 Agent 缺失：包缺失/异常（不可标 builtin）
+          if (row.source === "bundled" || row.source === "builtin" || row.protected) {
+            return {
+              ...row,
+              source: "bundled" as const,
+              protected: true,
+              loadStatus: "missing",
+              error: row.error || "Agent 未报告该安装包内置驱动",
+            };
+          }
           const registeredExternal =
             row.source === "installed" || Boolean(row.driverId) || Boolean(row.installSource);
           if (registeredExternal) {
@@ -179,18 +200,17 @@ export default function DriverManagementPage() {
               error: row.error || "Agent 本机未找到已注册驱动包",
             };
           }
-          // 仅 Backend 明确的内置协议可标 builtin
-          if (row.source === "builtin") {
-            return { ...row, source: "builtin" as const, loadStatus: "builtin" };
-          }
           return { ...row, source: "unknown" as const, loadStatus: "unknown" };
         }
         matchedKeys.add(key);
         // Agent 已核对目录/collector：missing / load_failed 直接透出
         const agentMissing = local.status === "missing";
+        const bundled = row.source === "bundled" || row.protected === true || local.source === "bundled" || local.protected === true;
+
         return {
           ...row,
-          source: agentMissing ? ("missing" as const) : ("installed" as const),
+          source: bundled ? ("bundled" as const) : agentMissing ? ("missing" as const) : ("installed" as const),
+          protected: bundled,
           driverId: local.id || row.driverId,
           version: local.version || row.version,
           sha256: local.sha256 || row.sha256,
@@ -205,20 +225,25 @@ export default function DriverManagementPage() {
       const kw = keyword.trim().toLowerCase();
       if (agentResult.ok) {
         for (const item of agentResult.drivers) {
-          const key = normalizeKey(item.protocol || item.id);
-          if (catalogKeySet.has(key) || matchedKeys.has(key)) continue;
+          const keys = [item.id, item.protocol, ...(item.aliases ?? [])]
+            .map((value) => normalizeKey(value || ""))
+            .filter(Boolean);
+          if (keys.some((key) => catalogKeySet.has(key) || matchedKeys.has(key))) continue;
+          const key = keys[0] || normalizeKey(item.id);
           const name = item.protocol || item.id;
           const desc = item.description || item.name || "";
+          const bundled = item.source === "bundled" || item.protected === true;
           if (kw && !name.toLowerCase().includes(kw) && !desc.toLowerCase().includes(kw)) {
             continue;
           }
           mergedList.push({
             id: -Math.abs(hashText(key)) || -1,
             driverName: name,
-            driverDesc: desc || "Agent 本机已安装，尚未注册到 catalog",
+            driverDesc: desc || (bundled ? "安装包内置驱动" : "Agent 本机已安装，尚未注册到 catalog"),
             readWriteType: item.readWriteType || "-",
             updateTime: item.updated_at || "",
-            source: "unregistered",
+            source: bundled ? "bundled" : "unregistered",
+            protected: bundled,
             driverId: item.id,
             version: item.version,
             sha256: item.sha256,
@@ -400,11 +425,13 @@ export default function DriverManagementPage() {
                       const canUninstall =
                         canManage
                         && (row.source === "installed" || row.source === "unregistered")
+                        && !row.protected
                         && (row.boundDeviceCount ?? 0) === 0
                         && !busy
                         && Boolean(row.driverId || row.driverName);
                       const showUninstall =
-                        row.source === "installed" || row.source === "unregistered";
+                        !row.protected
+                        && (row.source === "installed" || row.source === "unregistered");
                       return (
                         <TableRow key={row.id} className="h-12">
                           <TableCell className="max-w-0 overflow-hidden text-center font-medium">

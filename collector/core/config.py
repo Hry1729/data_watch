@@ -47,6 +47,9 @@ class DeviceConfig:
     opc_server: Optional[str] = None  # OPC DA ProgID，从 comm_protocol.server 获取
     config_version: int = 1  # device.variable_config_version，用于 Redis Stream entry
     read_timeout_ms: Optional[int] = None  # None 保持协议驱动默认超时
+    ge_max_payload_bytes: Optional[int] = None  # GE 设备级覆盖；None 继承 collector 全局值
+    ge_parallel_channels: Optional[int] = None  # GE 设备级覆盖；None 继承 collector 全局值
+    ge_batch_deadline_ms: Optional[int] = None  # GE 整批截止时间；None 继承 collector 全局值
 
 
 @dataclass
@@ -89,7 +92,13 @@ class CollectorConfig:
     enable_fake_bootstrap: bool = False
     # 运行态标记：当前是否正在使用假数据模式
     fake_mode_active: bool = False
+    # GE SRTP 单请求 payload 上限；默认保持历史 250 bytes。
+    ge_max_payload_bytes: int = 250
+    # GE SRTP 并行连接数；默认单连接，现场试验上限为 2。
+    ge_parallel_channels: int = 1
 
+    # GE 整批截止时间；None 表示不额外限制（单次 I/O 仍受 read_timeout_ms 约束）。
+    ge_batch_deadline_ms: Optional[int] = None
     # 日志
     log_level: str = "INFO"
     log_file: Optional[str] = None  # 日志文件路径，如 "logs/collector.log"，为空则只输出控制台

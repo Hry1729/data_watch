@@ -16,6 +16,7 @@ import type {
   ModuleStatusValue,
 } from "@/types";
 import type { MenuTreeItem, RoleGrant, RoleListItem, UserListItem } from "@/types/system-management";
+import type { DriverListItem } from "@/types/device-monitor";
 import type { DistributedNode } from "@/types/distributed";
 
 // ─── 辅助 ─────────────────────────────────────────────────────────────────────
@@ -329,12 +330,14 @@ export const mockAgent: AgentClient = {
         id: "modbus_tcp",
         protocol: "modbus_tcp",
         name: "Modbus TCP",
-        description: "Mock 已安装驱动",
+        description: "安装包默认内置的 Modbus TCP 只读驱动",
         version: "1.0.0",
         sha256: "abc",
         capabilities: ["poll", "read"],
         readWriteType: "只读",
-        source: "installed",
+        aliases: ["modbus_tcp"],
+        source: "bundled",
+        protected: true,
         status: "loaded",
         error: null,
       },
@@ -648,12 +651,12 @@ export const mockBackend: BackendClient = {
   },
   async driverList(_token, query) {
     await delay(160);
-    const list = [
-      { id: 1, driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动", readWriteType: "读写", updateTime: "2026-07-16 14:20:00", status: "available", boundDeviceCount: 14 },
-      { id: 2, driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动", readWriteType: "读写", updateTime: "2026-07-15 09:12:00", status: "available", boundDeviceCount: 10 },
-      { id: 3, driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动", readWriteType: "只读", updateTime: "2026-07-13 18:35:00", status: "available", boundDeviceCount: 8 },
-      { id: 4, driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动", readWriteType: "读写", updateTime: "2026-07-10 10:05:00", status: "disabled", boundDeviceCount: 0 },
-    ].filter((item) => !query.keyword || item.driverName.toLowerCase().includes(query.keyword.toLowerCase()));
+    const list = ([
+      { id: 1, driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动", readWriteType: "只读", updateTime: "2026-07-16 14:20:00", status: "available", boundDeviceCount: 14, source: "bundled", protected: true },
+      { id: 2, driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动", readWriteType: "只读", updateTime: "2026-07-15 09:12:00", status: "available", boundDeviceCount: 10, source: "bundled", protected: true },
+      { id: 3, driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动", readWriteType: "只读", updateTime: "2026-07-13 18:35:00", status: "available", boundDeviceCount: 8, source: "bundled", protected: true },
+      { id: 4, driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动", readWriteType: "只读", updateTime: "2026-07-10 10:05:00", status: "disabled", boundDeviceCount: 0, source: "bundled", protected: true },
+    ] satisfies DriverListItem[]).filter((item) => !query.keyword || item.driverName.toLowerCase().includes(query.keyword.toLowerCase()));
     return { list, total: list.length, pageNo: 1, pageSize: 20, availableCount: 3 };
   },
   async driverOptions(_token) {

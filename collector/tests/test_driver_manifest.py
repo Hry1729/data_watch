@@ -80,8 +80,16 @@ def test_readonly_cannot_declare_write(tmp_path):
         tmp_path,
         _valid_toml(capabilities='["poll", "read", "write"]'),
     )
-    with pytest.raises(DriverManifestError, match="只读"):
+    with pytest.raises(DriverManifestError, match="write"):
         load_driver_toml(path)
+def test_readwrite_manifest_is_rejected_even_without_write_capability(tmp_path):
+    path = _write_toml(
+        tmp_path,
+        _valid_toml(read_write='"读写"'),
+    )
+    with pytest.raises(DriverManifestError, match="仅允许"):
+        load_driver_toml(path)
+
 
 
 def test_duplicate_capability_raises(tmp_path):

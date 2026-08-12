@@ -68,3 +68,17 @@ def test_invalid_int_env_raises_config_error(tmp_path, monkeypatch):
 
     with pytest.raises(ConfigError):
         load_collector_config(str(path))
+
+
+def test_ge_max_payload_can_be_overridden_by_env(tmp_path, monkeypatch):
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    monkeypatch.setenv("DATAWATCH_GE_MAX_PAYLOAD_BYTES", "1000")
+    monkeypatch.setenv("DATAWATCH_GE_PARALLEL_CHANNELS", "2")
+    monkeypatch.setenv("DATAWATCH_GE_BATCH_DEADLINE_MS", "300")
+
+    config = load_collector_config(str(path))
+
+    assert config.ge_max_payload_bytes == 1000
+    assert config.ge_parallel_channels == 2
+    assert config.ge_batch_deadline_ms == 300

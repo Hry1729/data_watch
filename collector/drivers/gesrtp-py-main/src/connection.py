@@ -99,10 +99,12 @@ class SRTPConnection:
             self._perform_initialization()
 
         except socket.timeout as e:
+            self.disconnect()
             raise exceptions.TimeoutError(
                 f"Connection timeout to {self.host}:{self.port}"
             ) from e
         except socket.error as e:
+            self.disconnect()
             raise exceptions.ConnectionError(
                 f"Failed to connect to {self.host}:{self.port}: {e}"
             ) from e
@@ -194,9 +196,10 @@ class SRTPConnection:
                 logger.debug(f"Sent packet: {request_data[:56].hex()}")
 
         except socket.timeout as e:
+            self.disconnect()
             raise exceptions.TimeoutError("Timeout sending request") from e
         except socket.error as e:
-            self.is_connected = False
+            self.disconnect()
             raise exceptions.ConnectionError(f"Error sending request: {e}") from e
 
     def receive_response(self, expected_size: int = 1024) -> bytes:
@@ -233,9 +236,10 @@ class SRTPConnection:
         while remaining > 0:
             chunk = self.sock.recv(remaining)
             if not chunk:
-                self.is_connected = False
+                received = n - remaining
+                self.disconnect()
                 raise exceptions.ConnectionError(
-                    f"Connection closed by PLC (received {n - remaining}/{n} bytes)"
+                    f"Connection closed by PLC (received {received}/{n} bytes)"
                 )
             chunks.append(chunk)
             remaining -= len(chunk)
@@ -249,7 +253,7 @@ class SRTPConnection:
         - First packet: 56-byte header
         - Second packet: payload data (if any)
 
-        Byte 4 of the header indicates the payload length.
+        Bytes 4-5 of the header indicate the little-endian payload length.
 
         Args:
             max_bytes: Maximum bytes to receive
@@ -274,8 +278,8 @@ class SRTPConnection:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Response header: {header.hex()}")
 
-            # Check byte 4 for payload length indicator
-            payload_length = header[4] if len(header) > 4 else 0
+            # Payload length is a 16-bit little-endian value in header bytes 4-5.
+            payload_length = header[4] | (header[5] << 8)
 
             if payload_length > 0:
                 # Receive the payload in a second packet (循环读满，防 TCP 半包)
@@ -292,9 +296,10 @@ class SRTPConnection:
                 return header
 
         except socket.timeout as e:
+            self.disconnect()
             raise exceptions.TimeoutError("Timeout receiving response") from e
         except socket.error as e:
-            self.is_connected = False
+            self.disconnect()
             raise exceptions.ConnectionError(f"Error receiving response: {e}") from e
 
     def disconnect(self) -> None:

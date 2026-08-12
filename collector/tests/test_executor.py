@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -609,3 +610,136 @@ async def test_explicit_read_timeout_rejects_late_sample_after_driver_finishes()
     redis_writer.write_window_stream.assert_not_called()
     redis_writer.write_latest.assert_not_called()
     assert executor.stats["performance"]["counters"]["read_timeout_count"] == 1
+
+@pytest.mark.asyncio
+async def test_execute_many_coalesces_same_address_into_one_physical_read():
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(return_value={"%R1": [10, 20]})
+    device = SimpleNamespace(
+        device_id="GE_COALESCE",
+        driver=driver,
+        connection_config={},
+    )
+    short_block = SimpleNamespace(address="%R1", count=1, data_type="INT")
+    long_block = SimpleNamespace(address="%R1", count=2, data_type="INT")
+    tasks = [
+        SimpleNamespace(
+            task_name="GE_COALESCE_1s",
+            device=device,
+            scan_task=SimpleNamespace(read_blocks=(short_block,)),
+            error_count=0,
+        ),
+        SimpleNamespace(
+            task_name="GE_COALESCE_5s",
+            device=device,
+            scan_task=SimpleNamespace(read_blocks=(long_block,)),
+            error_count=0,
+        ),
+    ]
+    metrics = PerformanceMetrics()
+    executor = TaskExecutor(redis_writer=MagicMock(), metrics=metrics)
+    executor.execute = AsyncMock()
+
+    await executor.execute_many(tasks)
+
+    driver.read.assert_awaited_once()
+    merged_blocks = driver.read.await_args.args[0]
+    assert len(merged_blocks) == 1
+    assert merged_blocks[0].address == "%R1"
+    assert merged_blocks[0].count == 2
+    assert executor.execute.await_count == 2
+    for call in executor.execute.await_args_list:
+        assert call.kwargs["_prefetched_result"] == {"%R1": [10, 20]}
+    counters = metrics.snapshot()["counters"]
+    assert counters["coalesced_read_group_count"] == 1
+    assert counters["coalesced_read_task_count"] == 2
+    assert counters["coalesced_read_saved_block_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_many_physical_read_failure_marks_every_task_once():
+    driver = MagicMock()
+    driver.is_connected = True
+    driver.read = AsyncMock(side_effect=ReadError("connection lost"))
+    device = SimpleNamespace(
+        device_id="GE_COALESCE_FAIL",
+        driver=driver,
+        connection_config={},
+    )
+    block = SimpleNamespace(address="%R1", count=1, data_type="INT")
+    tasks = [
+        SimpleNamespace(
+            task_name=f"GE_COALESCE_FAIL_{rate}s",
+            device=device,
+            scan_task=SimpleNamespace(read_blocks=(block,)),
+            error_count=0,
+        )
+        for rate in (1, 5)
+    ]
+    metrics = PerformanceMetrics()
+    executor = TaskExecutor(redis_writer=MagicMock(), metrics=metrics)
+
+    with pytest.raises(ReadError, match="connection lost"):
+        await executor.execute_many(tasks)
+
+    driver.read.assert_awaited_once()
+    assert [task.error_count for task in tasks] == [1, 1]
+    counters = metrics.snapshot()["counters"]
+    assert counters["read_error_count"] == 1
+    assert counters["coalesced_read_error_count"] == 1
+
+def test_partial_block_failure_writes_bad_latest_but_not_history_value():
+    from core.quality_codes import QUALITY_BAD, QUALITY_GOOD
+
+    redis_writer = MagicMock()
+    executor = TaskExecutor(redis_writer=redis_writer)
+    variables = [
+        SimpleNamespace(
+            variable_id="ok",
+            address="block-ok",
+            data_type="INT",
+            is_storage=True,
+            group_code="g001",
+            group_config_version=1,
+        ),
+        SimpleNamespace(
+            variable_id="failed",
+            address="block-failed",
+            data_type="INT",
+            is_storage=True,
+            group_code="g001",
+            group_config_version=1,
+        ),
+    ]
+    scan_task = SimpleNamespace(
+        scan_rate=1.0,
+        variables=variables,
+        result_map={},
+    )
+    device = SimpleNamespace(
+        device_id="PARTIAL",
+        device_type="PLC",
+    )
+
+    points = executor._parse_result(
+        device.device_id,
+        scan_task,
+        {"block-ok": [12], "block-failed": None},
+    )
+    by_id = {point.variable_id: point for point in points}
+
+    assert by_id["ok"].value == 12
+    assert by_id["ok"].quality == QUALITY_GOOD
+    assert by_id["failed"].value is None
+    assert by_id["failed"].quality == QUALITY_BAD
+
+    executor._write_to_redis(device, scan_task, points)
+
+    stream_call = redis_writer.write_window_stream.call_args
+    assert stream_call.args[7] == {"ok": "12"}
+    assert stream_call.args[8] == {"ok": QUALITY_GOOD}
+    assert stream_call.args[6]["values"] == {"ok": "12", "failed": ""}
+    latest_fields = redis_writer.write_latest.call_args.args[2]
+    assert latest_fields["failed"]["v"] == ""
+    assert latest_fields["failed"]["q"] == QUALITY_BAD

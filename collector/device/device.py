@@ -62,19 +62,13 @@ class Device:
         re.IGNORECASE,
     )
     _GE_ADDRESS_RE = re.compile(
-        r"^%(R|AI|AQ|I|Q|M)(\d+)$",
+        r"^%(R|AI|AQ|I|Q|M|T|SA|SB|SC|S|G)(\d+)$",
         re.IGNORECASE,
     )
     # GE 合并配置默认值
     GE_MAX_BLOCK_WORDS = 125
-    # 离散区（%I/%Q/%M）byte 模式：单块最大 250 字节 = 2000 位
-    # （与 125 words 同源：响应长度字段 byte4 单字节 ≤255 的硬约束）
+    # 历史默认 250 bytes；设备 connection_config 可在 8..1024 范围覆盖。
     GE_MAX_BLOCK_BYTES = 250
-    # GE 跨空洞合并：真机 bench 实测单次请求 RTT 恒为 ~33ms、与读取量无关（payload 免费），
-    # 空洞位置的数据读回即弃。GAP 默认等于块上限=不额外收紧，实际可跨空洞大小仍由
-    # GE_MAX_BLOCK_* 总跨度约束隐含限制；仅当现场需要收紧跨洞（如 PLC 对未组态地址 NACK）时下调。
-    GE_MAX_GAP_WORDS = GE_MAX_BLOCK_WORDS
-    GE_MAX_GAP_BYTES = GE_MAX_BLOCK_BYTES
     # 驱动最小请求护栏（不可动：保证响应走扩展数据段路径）会把小块请求垫长：
     # 寄存器 max(count,4) 词、离散 byte 模式 max(count,8) 字节。区域顶部的小块被垫长后
     # 会越过已组态区域上限（如 %Q 2048 位）→ PLC NACK 整块失败。
@@ -115,6 +109,17 @@ class Device:
         """添加变量到设备"""
         self.variables.append(variable)
 
+    def _ge_max_payload_bytes(self) -> int:
+        raw = self.connection_config.get(
+            "ge_max_payload_bytes", self.GE_MAX_BLOCK_BYTES
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise DeviceConnectionError(f"Invalid GE max payload: {raw!r}") from exc
+        if not 8 <= value <= 1024:
+            raise DeviceConnectionError(f"Invalid GE max payload: {value} bytes")
+        return value
     def build_scan_tasks(self) -> None:
         """
         按scan_rate分组构建采集任务
@@ -432,7 +437,8 @@ class Device:
 
         合并规则：
         - %R/%AI/%AQ：按 word 范围合并，最大 125 words
-        - %I/%Q/%M：byte 模式（第一版只支持 BOOL），块按字节界对齐，最大 250 字节 = 2000 位
+        - %I/%Q/%M/%T/%S/%SA/%SB/%SC/%G：byte 模式（第一版只支持 BOOL），
+          块按字节界对齐，最大长度由设备 payload 配置决定
         - 允许跨空洞合并：空洞不超过 GE_MAX_GAP_WORDS/GE_MAX_GAP_BYTES 且总跨度不超过块上限，
           空洞位置的数据读回即弃（真机 bench：payload 免费，减少往返次数）
         """
@@ -443,7 +449,9 @@ class Device:
 
         # 分组：按区域类型
         register_groups: Dict[str, List[tuple]] = {"R": [], "AI": [], "AQ": []}
-        discrete_groups: Dict[str, List[tuple]] = {"I": [], "Q": [], "M": []}
+        discrete_groups: Dict[str, List[tuple]] = {
+            area: [] for area in ("I", "Q", "M", "T", "S", "SA", "SB", "SC", "G")
+        }
 
         for var in task.variables:
             parsed = self._parse_ge_address(var.address)
@@ -501,14 +509,18 @@ class Device:
         current_start: Optional[int] = None
         current_end: Optional[int] = None
         current_items: List[tuple] = []
+        max_block_words = self._ge_max_payload_bytes() // 2
 
         for start, end, var, parsed, word_len in items:
             if current_start is None:
                 current_start = start
                 current_end = end
                 current_items.append((start, end, var, parsed, word_len))
-            elif start - current_end <= self.GE_MAX_GAP_WORDS and end - current_start <= self.GE_MAX_BLOCK_WORDS:
-                # 可合并：空洞不超过 GE_MAX_GAP_WORDS 且总跨度不超限
+            elif (
+                start - current_end <= max_block_words
+                and end - current_start <= max_block_words
+            ):
+                # 跨洞和总跨度均受当前设备 payload 上限约束。
                 current_end = max(current_end, end)
                 current_items.append((start, end, var, parsed, word_len))
             else:
@@ -569,7 +581,7 @@ class Device:
         result_map: Dict[str, Dict[str, Any]],
         blocks: List,
     ) -> None:
-        """合并 GE 离散量区域（%I/%Q/%M）的地址（byte 模式，允许跨空洞）。
+        """合并 GE 离散量区域的地址（byte 模式，允许跨空洞）。
 
         以字节为单位合并：每个 bit 点先换算为所属字节范围（byte_start = bit//8，
         byte_end = ceil(bit_end/8)），块按字节界对齐，gap/span 均以字节计。
@@ -582,6 +594,7 @@ class Device:
         current_byte_end: Optional[int] = None
         current_items: List[tuple] = []
 
+        max_block_bytes = self._ge_max_payload_bytes()
         for start, end, var, parsed, bit_len in items:
             byte_start = start // 8
             byte_end = (end + 7) // 8
@@ -590,10 +603,10 @@ class Device:
                 current_byte_end = byte_end
                 current_items.append((start, end, var, parsed, bit_len))
             elif (
-                byte_start - current_byte_end <= self.GE_MAX_GAP_BYTES
-                and byte_end - current_byte_start <= self.GE_MAX_BLOCK_BYTES
+                byte_start - current_byte_end <= max_block_bytes
+                and byte_end - current_byte_start <= max_block_bytes
             ):
-                # 可合并：空洞不超过 GE_MAX_GAP_BYTES 且总跨度不超限
+                # 跨洞和总跨度均受当前设备 payload 上限约束。
                 current_byte_end = max(current_byte_end, byte_end)
                 current_items.append((start, end, var, parsed, bit_len))
             else:
@@ -773,7 +786,7 @@ class Device:
         解析 GE SRTP 地址，返回地址语义信息。
 
         返回：
-            area: 区域类型 (R/AI/AQ/I/Q/M)
+            area: 区域类型 (R/AI/AQ/I/Q/M/T/S/SA/SB/SC/G)
             logical_number: 用户输入的 PLC 逻辑地址编号
             protocol_offset: GE 库需要的 0-based 偏移
 
@@ -787,7 +800,7 @@ class Device:
         if not match:
             raise DeviceConnectionError(
                 f"Unsupported GE SRTP address format: {address}. "
-                "Expected %R<num>, %AI<num>, %AQ<num>, %I<num>, %Q<num> or %M<num>."
+                "Expected %R/%AI/%AQ/%I/%Q/%M/%T/%S/%SA/%SB/%SC/%G followed by a number."
             )
 
         area = match.group(1).upper()

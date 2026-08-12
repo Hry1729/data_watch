@@ -174,6 +174,11 @@ test("driver management uses a full-height paginated table with truncated descri
   assert.match(source, /ChevronRight/);
   assert.match(source, /ChevronsRight/);
   assert.match(source, /\[10, 20, 50\]/);
+  assert.match(source, /source === "bundled"/);
+  assert.match(source, /item\.aliases/);
+  assert.match(source, /protected: bundled/);
+  assert.match(source, /&& !row\.protected/);
+  assert.match(source, /安装包内置/);
 });
 
 test("device and point management use dynamic type tabs with full-height paginated lists", async () => {

@@ -8,7 +8,7 @@ from pymodbus.client import AsyncModbusTcpClient
 
 from core.exceptions import DeviceConnectionError, ReadError
 from core.logger import get_logger
-from drivers.base import BaseDriver, ReadBlock, WritePoint
+from drivers.base import BaseDriver, ReadBlock
 from drivers.context import DriverContext
 
 from .planner import plan_read_blocks
@@ -182,8 +182,6 @@ class ModbusTcpDriver(BaseDriver):
 
         return results
 
-    async def write(self, points: List[WritePoint]) -> None:
-        raise ReadError("Modbus TCP 驱动当前为只读")
 
     async def ping(self) -> bool:
         """仅检查已有 TCP 连接状态，不发起 HR0 探针读取。"""

@@ -12,10 +12,11 @@ import tomllib
 import types
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from core.logger import get_logger
 from drivers.base import BaseDriver
+from core.version import __version__ as COLLECTOR_VERSION
 from drivers.context import DriverContext
 from drivers.manifest import (
     DriverManifest,
@@ -24,16 +25,18 @@ from drivers.manifest import (
     validate_package_compatibility,
 )
 
-# 内置协议码：外置驱动不得覆盖
+# 内置协议与别名的唯一来源；外置驱动不得覆盖任一名称。
+BUILTIN_DRIVER_ALIASES = {
+    "s7": ("s7", "snap7", "siemens", "siemens_s7", "siemens_snap7"),
+    "ge_srtp": ("ge_srtp",),
+    "opcua": ("opcua", "opc", "opc_ua"),
+    "opcda_center": ("opcda_center",),
+    "modbus_tcp": ("modbus_tcp",),
+}
 BUILTIN_PROTOCOLS = frozenset(
-    {
-        "s7",
-        "ge_srtp",
-        "opc",
-        "opcua",
-        "opc_ua",
-        "opcda_center",
-    }
+    alias
+    for aliases in BUILTIN_DRIVER_ALIASES.values()
+    for alias in aliases
 )
 
 # 扫描时忽略的目录名
@@ -61,12 +64,15 @@ class VendorMetadata:
 
 @dataclass(frozen=True)
 class DriverRegistration:
-    """单个外置驱动注册项。"""
+    """统一驱动注册项（安装包自带或用户安装）。"""
 
     manifest: DriverManifest
     package_root: Path
     factory: Callable[[DriverContext], BaseDriver]
     vendor_metadata: Optional[VendorMetadata] = None
+    source: str = "installed"
+    protected: bool = False
+    aliases: Tuple[str, ...] = ()
     build_read_plan: Optional[Callable[..., Any]] = None
     decode_read_results: Optional[Callable[..., Any]] = None
 
@@ -78,6 +84,174 @@ class DriverLoadFailure:
     package_root: Path
     stage: str
     error: str
+
+def _create_bundled_s7(context: DriverContext) -> BaseDriver:
+    from drivers.s7_driver import S7Driver
+
+    return S7Driver(read_executor=context.read_executor)
+
+
+def _create_bundled_ge_srtp(context: DriverContext) -> BaseDriver:
+    from drivers.ge_srtp_driver import GESRTPDriver
+
+    return GESRTPDriver(
+        read_executor=context.read_executor,
+        metrics=context.metrics,
+    )
+
+
+def _create_bundled_opcua(_context: DriverContext) -> BaseDriver:
+    from drivers.opcua_driver import OPCUADriver
+
+    return OPCUADriver()
+
+
+def _create_bundled_opcda_center(_context: DriverContext) -> BaseDriver:
+    from drivers.opcda_center_driver import OpcDaCenterDriver
+
+    return OpcDaCenterDriver()
+
+
+def _bundled_driver_package_candidates(driver_id: str) -> tuple[Path, ...]:
+    """Return development and frozen-runtime locations for a bundled package driver."""
+    candidates: list[Path] = []
+    configured_root = os.environ.get("DATAWATCH_BUNDLED_DRIVERS_ROOT")
+    if configured_root:
+        candidates.append(Path(configured_root) / driver_id)
+
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        candidates.append(Path(frozen_root) / "bundled_drivers" / driver_id)
+
+    candidates.append(
+        Path(__file__).resolve().parents[2] / "packages" / driver_id
+    )
+    unique: list[Path] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def _load_bundled_package_registration(driver_id: str) -> DriverRegistration:
+    candidates = _bundled_driver_package_candidates(driver_id)
+    package_root = next(
+        (path for path in candidates if (path / "driver.toml").is_file()),
+        None,
+    )
+    if package_root is None:
+        searched = ", ".join(str(path) for path in candidates)
+        raise DriverRegistryError(
+            f"内置驱动包 {driver_id!r} 不存在，已检查: {searched}"
+        )
+
+    manifest = load_driver_toml(package_root / "driver.toml")
+    if manifest.id.lower() != driver_id or manifest.protocol.lower() != driver_id:
+        raise DriverRegistryError(
+            f"内置驱动目录 {driver_id!r} 与清单 "
+            f"id={manifest.id!r}, protocol={manifest.protocol!r} 不一致"
+        )
+    vendor_metadata = _load_vendor_metadata(package_root)
+    loaded = _load_driver_package(package_root, manifest, vendor_metadata)
+    if "batch_contiguous" in manifest.capabilities and (
+        loaded.build_read_plan is None or loaded.decode_read_results is None
+    ):
+        raise DriverRegistryError(
+            f"内置驱动 {driver_id!r} 的 planner hooks 不完整"
+        )
+    return DriverRegistration(
+        manifest=manifest,
+        package_root=package_root,
+        factory=loaded.factory,
+        vendor_metadata=vendor_metadata,
+        source="bundled",
+        protected=True,
+        aliases=BUILTIN_DRIVER_ALIASES[driver_id],
+        build_read_plan=loaded.build_read_plan,
+        decode_read_results=loaded.decode_read_results,
+    )
+
+
+
+def _bundled_registrations() -> tuple[
+    Dict[str, DriverRegistration],
+    Dict[str, DriverLoadFailure],
+]:
+    package_root = Path(__file__).resolve().parent
+    definitions = {
+        "s7": (
+            "S7",
+            "Siemens S7 只读采集驱动",
+            "drivers.registry:_create_bundled_s7",
+            _create_bundled_s7,
+        ),
+        "ge_srtp": (
+            "GE SRTP",
+            "GE SRTP 只读采集驱动",
+            "drivers.registry:_create_bundled_ge_srtp",
+            _create_bundled_ge_srtp,
+        ),
+        "opcua": (
+            "OPC UA",
+            "OPC UA 只读采集驱动",
+            "drivers.registry:_create_bundled_opcua",
+            _create_bundled_opcua,
+        ),
+        "opcda_center": (
+            "OPC DA Center",
+            "OPC DA 中心只读采集驱动",
+            "drivers.registry:_create_bundled_opcda_center",
+            _create_bundled_opcda_center,
+        ),
+    }
+    registrations: Dict[str, DriverRegistration] = {}
+    failures: Dict[str, DriverLoadFailure] = {}
+    for driver_id, (name, description, entry, factory) in definitions.items():
+        aliases = BUILTIN_DRIVER_ALIASES[driver_id]
+        manifest = DriverManifest(
+            manifest_version=1,
+            driver_api="1.0",
+            id=driver_id,
+            protocol=driver_id,
+            name=name,
+            description=description,
+            version=COLLECTOR_VERSION,
+            entry=entry,
+            python_abi="bundled",
+            os=("windows",),
+            architectures=("x86_64",),
+            capabilities=("poll", "read", "batch_contiguous", "health_check"),
+            read_write="只读",
+            source_path=package_root,
+        )
+        registration = DriverRegistration(
+            manifest=manifest,
+            package_root=package_root,
+            factory=factory,
+            source="bundled",
+            protected=True,
+            aliases=aliases,
+        )
+        for alias in aliases:
+            registrations[alias] = registration
+    modbus_id = "modbus_tcp"
+    try:
+        registration = _load_bundled_package_registration(modbus_id)
+    except Exception as exc:
+        candidates = _bundled_driver_package_candidates(modbus_id)
+        logger.error("内置驱动包加载失败 id=%s: %s", modbus_id, exc)
+        failures[modbus_id] = DriverLoadFailure(
+            driver_id=modbus_id,
+            protocol=modbus_id,
+            package_root=candidates[-1],
+            stage="bundled_load",
+            error=str(exc),
+        )
+    else:
+        for alias in registration.aliases:
+            registrations[alias] = registration
+    return registrations, failures
+
 
 
 class DriverRegistry:
@@ -92,6 +266,56 @@ class DriverRegistry:
         self._failures: Dict[str, DriverLoadFailure] = failures or {}
         # 每次 scan 递增；Agent 用其判断是否为重启后的新代际
         self.generation: int = 0
+
+    @classmethod
+    def discover(cls, drivers_root: Optional[Path] = None) -> "DriverRegistry":
+        """Build the runtime registry from protected bundled and installed drivers."""
+        installed = (
+            cls.scan(drivers_root)
+            if drivers_root is not None and drivers_root.is_dir()
+            else cls()
+        )
+        bundled, bundled_failures = _bundled_registrations()
+        registrations = dict(installed._registrations)
+        registrations.update(bundled)
+        failures = dict(installed._failures)
+        failures.update(bundled_failures)
+        for key in tuple(failures):
+            registration = registrations.get(key)
+            if registration is not None and registration.source == "bundled":
+                failures.pop(key)
+        registry = cls(registrations, failures)
+        registry.generation = max(1, installed.generation)
+        return registry
+
+    def with_bundled(self) -> "DriverRegistry":
+        """Merge bundled registrations into an explicitly supplied installed registry."""
+        bundled, bundled_failures = _bundled_registrations()
+        core_ids = {"s7", "ge_srtp", "opcua", "opcda_center"}
+        bundled_ids = {
+            registration.manifest.id
+            for registration in self._registrations.values()
+            if registration.source == "bundled"
+        }
+        modbus_resolved = (
+            "modbus_tcp" in bundled_ids
+            or self._failures.get("modbus_tcp", None) is not None
+        )
+        if core_ids.issubset(bundled_ids) and modbus_resolved:
+            return self
+
+        registrations = dict(self._registrations)
+        registrations.update(bundled)
+        failures = dict(self._failures)
+        failures.update(bundled_failures)
+        for key in tuple(failures):
+            registration = registrations.get(key)
+            if registration is not None and registration.source == "bundled":
+                failures.pop(key)
+        registry = type(self)(registrations, failures)
+        registry.generation = max(1, self.generation)
+        return registry
+
 
     @classmethod
     def scan(cls, drivers_root: Path) -> "DriverRegistry":
@@ -205,17 +429,29 @@ class DriverRegistry:
         return registry
 
     def list_loaded(self) -> list[dict[str, Any]]:
-        """供状态探针：已成功 import 并注册的外置驱动。"""
+        """Return one management record per driver, deduplicating protocol aliases."""
         items: list[dict[str, Any]] = []
+        seen: Set[str] = set()
         for registration in self._registrations.values():
             manifest = registration.manifest
+            if manifest.id in seen:
+                continue
+            seen.add(manifest.id)
             vendor = registration.vendor_metadata
+            aliases = registration.aliases or (manifest.protocol,)
             items.append(
                 {
                     "id": manifest.id,
                     "protocol": manifest.protocol,
+                    "aliases": list(aliases),
+                    "name": manifest.name,
+                    "description": manifest.description,
                     "version": manifest.version,
                     "sha256": vendor.sha256 if vendor is not None else None,
+                    "capabilities": list(manifest.capabilities),
+                    "readWriteType": manifest.read_write,
+                    "source": registration.source,
+                    "protected": registration.protected,
                     "generation": self.generation,
                 }
             )
@@ -230,6 +466,10 @@ class DriverRegistry:
                     "id": failure.driver_id,
                     "protocol": failure.protocol,
                     "version": None,
+                    "capabilities": [],
+                    "readWriteType": "只读",
+                    "source": "installed",
+                    "protected": False,
                     "sha256": None,
                     "generation": self.generation,
                     "status": "load_failed",
@@ -262,16 +502,13 @@ class DriverRegistry:
         *,
         read_executor: Any = None,
         data_root: Optional[Path] = None,
+        metrics: Any = None,
     ) -> BaseDriver:
-        """按协议码构造 DriverContext 并调用外置驱动工厂。"""
+        """Resolve bundled/installed protocol aliases through one factory contract."""
         key = protocol.lower()
-        if key in BUILTIN_PROTOCOLS:
-            raise DriverRegistryError(
-                f"协议 {protocol!r} 为内置驱动，不得经注册表创建"
-            )
         registration = self._registrations.get(key)
         if registration is None:
-            raise DriverRegistryError(f"未注册的外置协议: {protocol}")
+            raise DriverRegistryError(f"未注册的协议: {protocol}")
 
         manifest = registration.manifest
         context = DriverContext(
@@ -282,6 +519,7 @@ class DriverRegistry:
             logger=get_logger(f"driver.{manifest.id}"),
             read_executor=read_executor,
             data_root=data_root,
+            metrics=metrics,
         )
         driver = registration.factory(context)
         if not isinstance(driver, BaseDriver):
@@ -289,6 +527,13 @@ class DriverRegistry:
                 f"工厂 {manifest.entry} 必须返回 BaseDriver，实际为 {type(driver)!r}"
             )
         driver.native_quality = "native_quality" in manifest.capabilities
+        bound_write = getattr(driver, "write", None)
+        if getattr(bound_write, "__func__", None) is not BaseDriver.write:
+            raise DriverRegistryError(
+                f"工厂 {manifest.entry} 返回的驱动覆盖了 write；"
+                "collector 生产驱动必须继承 BaseDriver 只读拒写实现"
+            )
+        driver.read_only = True
         return driver
 
 

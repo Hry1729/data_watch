@@ -276,7 +276,10 @@ def _check_potential_issues(config: CollectorConfig, result: DryRunResult) -> No
         for dev in config.devices:
             if dev.device_id == var.device_id and dev.protocol.lower() == "ge_srtp":
                 addr = var.address.upper()
-                if any(addr.startswith(f"%{a}") for a in ["I", "Q", "M"]):
+                if any(
+                    addr.startswith(f"%{area}")
+                    for area in ("I", "Q", "M", "T", "S", "SA", "SB", "SC", "G")
+                ):
                     if var.data_type.upper() != "BOOL":
                         ge_discrete_non_bool += 1
     if ge_discrete_non_bool > 0:

@@ -63,11 +63,16 @@ _REQUIRED_FIELDS = (
 BUILTIN_PROTOCOLS = frozenset(
     {
         "s7",
+        "snap7",
+        "siemens",
+        "siemens_s7",
+        "siemens_snap7",
         "ge_srtp",
         "opc",
         "opcua",
         "opc_ua",
         "opcda_center",
+        "modbus_tcp",
     }
 )
 
@@ -560,8 +565,10 @@ def _load_and_validate_manifest(path: Path, package_root: Path) -> dict[str, Any
     read_write = data["read_write"]
     if read_write not in ("只读", "读写"):
         raise DriverZipError("read_write 必须为 '只读' 或 '读写'", status_code=422)
-    if read_write == "只读" and "write" in caps:
-        raise DriverZipError("read_write=只读 时不得声明 write", status_code=422)
+    if read_write != "只读":
+        raise DriverZipError("生产驱动仅允许 read_write=只读", status_code=422)
+    if "write" in caps:
+        raise DriverZipError("生产驱动不得声明 write 能力", status_code=422)
 
     for text_field in ("name", "description"):
         if not isinstance(data[text_field], str) or not str(data[text_field]).strip():

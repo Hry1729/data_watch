@@ -113,7 +113,7 @@ def test_modbus_scan_task_attaches_decode_via_hooks():
     from drivers.registry import DriverRegistry
     from device.device import Variable
 
-    registry = DriverRegistry.scan(_MODBUS_PKG_ROOT.parent)
+    registry = DriverRegistry.discover(_MODBUS_PKG_ROOT.parent)
     hooks = registry.get("modbus_tcp")
     assert hooks is not None and hooks.build_read_plan is not None
 
@@ -605,3 +605,46 @@ async def test_authoritative_async_missing_raises_no_allocate(tmp_path):
         await mapper.get_port_async("10.0.0.99")
     after = (tmp_path / "port_mapping.json").read_text(encoding="utf-8")
     assert before == after
+
+
+def test_ge_connection_config_uses_global_payload_and_device_override():
+    config = CollectorConfig(
+        ge_max_payload_bytes=500,
+        ge_parallel_channels=2,
+        ge_batch_deadline_ms=300,
+    )
+    manager = DeviceManager(config)
+
+    inherited = manager._build_connection_config(
+        DeviceConfig("GE1", "PLC", "ge_srtp", "127.0.0.1")
+    )
+    overridden = manager._build_connection_config(
+        DeviceConfig(
+            "GE2",
+            "PLC",
+            "ge_srtp",
+            "127.0.0.1",
+            ge_max_payload_bytes=1000,
+            ge_parallel_channels=1,
+            ge_batch_deadline_ms=100,
+        )
+    )
+
+    assert inherited["ge_max_payload_bytes"] == 500
+    assert overridden["ge_max_payload_bytes"] == 1000
+    assert inherited["ge_parallel_channels"] == 2
+    assert overridden["ge_parallel_channels"] == 1
+    assert inherited["ge_batch_deadline_ms"] == 300
+    assert overridden["ge_batch_deadline_ms"] == 100
+
+def test_device_manager_creates_bundled_aliases_through_unified_registry():
+    from drivers.opcua_driver import OPCUADriver
+    from drivers.s7_driver import S7Driver
+
+    manager = DeviceManager(CollectorConfig())
+
+    registry = manager._resolve_driver_registry()
+    assert registry.get("s7").source == "bundled"
+    assert registry.get("s7").protected is True
+    assert isinstance(manager._create_driver("snap7"), S7Driver)
+    assert isinstance(manager._create_driver("opc"), OPCUADriver)

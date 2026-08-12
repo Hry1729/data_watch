@@ -53,6 +53,7 @@ _BUILTIN_PROTOCOLS = frozenset(
         "opc-da-sidecar",
         "opc_da_sidecar",
         "opcda_sidecar",
+        "modbus_tcp",
     }
 )
 
@@ -144,6 +145,18 @@ class DriverLifecycleService:
                 409,
                 f"Agent 驱动 {driver_id} 未成功加载: "
                 f"{agent_info.get('error') or agent_info.get('status') or 'unknown'}",
+            )
+        agent_read_write = str(
+            agent_info.get("readWriteType") or agent_info.get("read_write") or ""
+        ).strip()
+        agent_capabilities = agent_info.get("capabilities")
+        if (
+            agent_read_write != "只读"
+            or not isinstance(agent_capabilities, list)
+            or "write" in agent_capabilities
+        ):
+            raise ApiError(
+                409, f"Agent 驱动 {driver_id} 未通过只读能力校验"
             )
         agent_protocol = str(agent_info.get("protocol") or "").strip()
         if _normalize_protocol(agent_protocol) != _normalize_protocol(protocol):

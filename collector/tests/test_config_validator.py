@@ -91,6 +91,24 @@ def test_validator_uses_protocol_specific_address_rules():
 
     assert result.valid, result.errors
 
+def test_validator_accepts_additional_ge_discrete_memory_areas():
+    """GE 配置校验接受新增的只读 BOOL 内存区。"""
+    config = CollectorConfig(
+        devices=[DeviceConfig("ge001", "ASC", "ge_srtp", "127.0.0.1")],
+        variables=[
+            VariableConfig("1", "ge001", "%T1", "BOOL", 1, True, 1),
+            VariableConfig("2", "ge001", "%S2", "BOOL", 1, True, 2),
+            VariableConfig("3", "ge001", "%SA3", "BOOL", 1, True, 3),
+            VariableConfig("4", "ge001", "%SB4", "BOOL", 1, True, 4),
+            VariableConfig("5", "ge001", "%SC5", "BOOL", 1, True, 5),
+            VariableConfig("6", "ge001", "%G6", "BOOL", 1, True, 6),
+        ],
+    )
+
+    result = validate_config(config)
+
+    assert result.valid, result.errors
+
 
 def test_validator_rejects_direct_opcda_in_64bit_collector():
     config = CollectorConfig(
@@ -214,3 +232,85 @@ def test_read_timeout_is_optional_positive_and_independent_from_scan_rate():
     result = validate_config(valid)
     assert not result.valid
     assert any("Invalid read timeout" in error for error in result.errors)
+
+
+def test_validator_rejects_invalid_global_ge_payload():
+    config = CollectorConfig(ge_max_payload_bytes=1025)
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("runtime.ge_max_payload_bytes" in error for error in result.errors)
+
+
+def test_validator_rejects_invalid_device_ge_payload_override():
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                "ge001",
+                "PLC",
+                "ge_srtp",
+                "127.0.0.1",
+                ge_max_payload_bytes=7,
+            )
+        ]
+    )
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("Invalid GE max payload" in error for error in result.errors)
+
+def test_validator_rejects_invalid_global_ge_parallel_channels():
+    config = CollectorConfig(ge_parallel_channels=3)
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("runtime.ge_parallel_channels" in error for error in result.errors)
+
+
+def test_validator_rejects_invalid_device_ge_parallel_channels_override():
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                "ge_parallel",
+                "PLC",
+                "ge_srtp",
+                "127.0.0.1",
+                ge_parallel_channels=0,
+            )
+        ]
+    )
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("Invalid GE parallel channels" in error for error in result.errors)
+
+def test_validator_rejects_invalid_global_ge_batch_deadline():
+    config = CollectorConfig(ge_batch_deadline_ms=0)
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("runtime.ge_batch_deadline_ms" in error for error in result.errors)
+
+
+def test_validator_rejects_invalid_device_ge_batch_deadline_override():
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                "ge_deadline",
+                "PLC",
+                "ge_srtp",
+                "127.0.0.1",
+                ge_batch_deadline_ms=-1,
+            )
+        ]
+    )
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("Invalid GE batch deadline" in error for error in result.errors)

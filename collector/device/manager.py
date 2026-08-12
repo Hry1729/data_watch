@@ -70,6 +70,9 @@ class _NullMetrics:
     def increment(self, _name: str, _amount: int = 1) -> None:
         pass
 
+    def record_timing(self, _name: str, _value_ms: float) -> None:
+        pass
+
     def set_gauge(self, _name: str, _value: int | float) -> None:
         pass
 
@@ -326,10 +329,34 @@ class DeviceManager:
         self._connect_semaphore = asyncio.Semaphore(10)
         # VM endpoint 到代理端口的映射器
         self._port_mapper: Optional[EndpointPortMapper] = None
-        # 外置驱动注册表；None 时在首次需要时从 DATAWATCH_DATA_ROOT/drivers 懒加载
+        # 统一驱动注册表；None 时合并 bundled 与 DATAWATCH_DATA_ROOT/drivers 后懒加载
         self._driver_registry: Optional["DriverRegistry"] = driver_registry
         self._driver_registry_scanned = driver_registry is not None
 
+    def _build_connection_config(self, dev_cfg: DeviceConfig) -> Dict[str, Any]:
+        config = build_connection_config(dev_cfg)
+        if (dev_cfg.protocol or "").lower() == "ge_srtp":
+            configured = dev_cfg.ge_max_payload_bytes
+            config["ge_max_payload_bytes"] = (
+                configured
+                if configured is not None
+                else self.config.ge_max_payload_bytes
+            )
+            configured_channels = dev_cfg.ge_parallel_channels
+            config["ge_parallel_channels"] = (
+                configured_channels
+                if configured_channels is not None
+                else self.config.ge_parallel_channels
+            )
+            configured_deadline = dev_cfg.ge_batch_deadline_ms
+            batch_deadline_ms = (
+                configured_deadline
+                if configured_deadline is not None
+                else self.config.ge_batch_deadline_ms
+            )
+            if batch_deadline_ms is not None:
+                config["ge_batch_deadline_ms"] = batch_deadline_ms
+        return config
     def _generation_lock_for(self, device_id: str) -> threading.RLock:
         with self._generation_registry_lock:
             return self._generation_locks.setdefault(device_id, threading.RLock())
@@ -413,7 +440,7 @@ class DeviceManager:
         device_map: Dict[str, Device] = {}
         for dev_cfg in self.config.devices:
             try:
-                connection_config = build_connection_config(dev_cfg)
+                connection_config = self._build_connection_config(dev_cfg)
                 config_error = None
             except Exception as exc:
                 connection_config = {
@@ -513,7 +540,7 @@ class DeviceManager:
                 device_id=dev_cfg.device_id,
                 device_type=dev_cfg.device_type,
                 protocol=dev_cfg.protocol,
-                connection_config=build_connection_config(dev_cfg),
+                connection_config=self._build_connection_config(dev_cfg),
                 device_pk=dev_cfg.device_pk,
                 config_version=dev_cfg.config_version,
             )
@@ -557,11 +584,8 @@ class DeviceManager:
             device.status = DeviceStatus.OFFLINE
 
     def _attach_external_hooks(self, device: Device) -> None:
-        """将 Registry 中的 plan/decode 钩子挂到设备，避免核心硬编码协议名。"""
+        """Attach optional planner/decode hooks from the unified registry."""
         registry = self._resolve_driver_registry()
-        if registry is None:
-            device.external_driver_hooks = None
-            return
         if registry.has_failed(device.protocol):
             reason = registry.failure_reason(device.protocol) or "未知加载错误"
             raise RuntimeError(f"驱动 {device.protocol} 加载失败: {reason}")
@@ -569,8 +593,13 @@ class DeviceManager:
 
     def _is_external_protocol(self, protocol: str) -> bool:
         registry = self._resolve_driver_registry()
-        return registry is not None and (
-            registry.has(protocol) or registry.has_failed(protocol)
+        registration = registry.get(protocol)
+        return registry.has_failed(protocol) or bool(
+            registration
+            and (
+                registration.source == "installed"
+                or registration.build_read_plan is not None
+            )
         )
 
     @staticmethod
@@ -589,7 +618,7 @@ class DeviceManager:
             self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
 
         try:
-            connection_config = build_connection_config(dev_cfg)
+            connection_config = self._build_connection_config(dev_cfg)
             config_error = None
         except Exception as exc:
             connection_config = {
@@ -668,7 +697,7 @@ class DeviceManager:
             self._port_mapper = EndpointPortMapper(mapping_file=self._port_mapping_file)
 
         try:
-            connection_config = build_connection_config(dev_cfg)
+            connection_config = self._build_connection_config(dev_cfg)
             config_error = None
         except Exception as exc:
             connection_config = {"ip": dev_cfg.ip, "endpoint": dev_cfg.endpoint, "port": dev_cfg.port}
@@ -1041,62 +1070,44 @@ class DeviceManager:
             await asyncio.gather(*(_one(d) for d in devices), return_exceptions=True)
         logger.info("All devices disconnected")
 
-    def _resolve_driver_registry(self) -> Optional["DriverRegistry"]:
-        """返回外置驱动注册表；未显式注入时懒扫描 DATAWATCH_DATA_ROOT/drivers。"""
-        if self._driver_registry is not None:
-            return self._driver_registry
-        if self._driver_registry_scanned:
-            return None
-        self._driver_registry_scanned = True
+    def _resolve_driver_registry(self) -> "DriverRegistry":
+        """Return the unified bundled/installed registry, discovering it lazily."""
         from drivers.registry import DriverRegistry, default_drivers_root
 
-        drivers_root = default_drivers_root()
-        if not drivers_root.is_dir():
-            self._driver_registry = DriverRegistry()
+        if self._driver_registry is not None:
+            self._driver_registry = self._driver_registry.with_bundled()
             return self._driver_registry
+
+        self._driver_registry_scanned = True
+        drivers_root = default_drivers_root()
         try:
-            self._driver_registry = DriverRegistry.scan(drivers_root)
+            self._driver_registry = DriverRegistry.discover(drivers_root)
             logger.info(
-                "外置驱动扫描完成 root=%s protocols=%s",
+                "统一驱动注册表加载完成 root=%s protocols=%s",
                 drivers_root,
                 self._driver_registry.protocols(),
             )
         except Exception as exc:
-            logger.warning("外置驱动扫描失败 root=%s: %s", drivers_root, exc)
-            self._driver_registry = DriverRegistry()
+            logger.warning("统一驱动注册表加载失败 root=%s: %s", drivers_root, exc)
+            self._driver_registry = DriverRegistry.discover()
         return self._driver_registry
 
     def _create_driver(self, protocol: str) -> "BaseDriver":
-        """根据协议类型创建驱动：外置注册表优先（内置协议除外），再回退内置分支。"""
-        from drivers.registry import BUILTIN_PROTOCOLS, default_data_root
-
-        name = protocol.lower()
+        """Create every polling driver through the unified registry."""
+        from drivers.registry import DriverRegistryError, default_data_root
 
         registry = self._resolve_driver_registry()
-        if (
-            registry is not None
-            and name not in BUILTIN_PROTOCOLS
-            and registry.has(name)
-        ):
+        try:
             return registry.create(
-                name,
+                protocol,
                 read_executor=self._read_executor,
                 data_root=default_data_root(),
+                metrics=self._metrics,
             )
-
-        if name == "s7":
-            from drivers.s7_driver import S7Driver
-            return S7Driver(read_executor=self._read_executor)
-        if name == "ge_srtp":
-            from drivers.ge_srtp_driver import GESRTPDriver
-            return GESRTPDriver(read_executor=self._read_executor)
-        if name in ("opc", "opcua", "opc_ua"):
-            from drivers.opcua_driver import OPCUADriver
-            return OPCUADriver()
-        if name == "opcda_center":
-            from drivers.opcda_center_driver import OpcDaCenterDriver
-            return OpcDaCenterDriver()
-        raise DeviceConnectionError(f"Unsupported protocol: {protocol}")
+        except DriverRegistryError as exc:
+            raise DeviceConnectionError(
+                f"Unsupported protocol: {protocol}: {exc}"
+            ) from exc
 
     async def check_device_health(self, device: Device) -> bool:
         """检查设备健康状态"""

@@ -50,8 +50,6 @@ def _write_driver_package(tmp_path: Path, driver_id: str, protocol: str) -> Path
                 async def read(self, blocks):
                     return {{}}
 
-                async def write(self, points):
-                    pass
 
             def create_driver(context):
                 return FakeDriver(context=context)
@@ -181,8 +179,6 @@ def test_preloaded_wrong_vendor_version_is_rejected(tmp_path, monkeypatch):
                     self._connected = False
                 async def read(self, blocks):
                     return {}
-                async def write(self, points):
-                    pass
 
             def create_driver(context):
                 return FakeDriver()
@@ -210,6 +206,7 @@ def test_create_unknown_protocol_raises(tmp_path):
 def test_builtin_protocols_frozen():
     assert "s7" in BUILTIN_PROTOCOLS
     assert "opcda_center" in BUILTIN_PROTOCOLS
+    assert "modbus_tcp" in BUILTIN_PROTOCOLS
 
 
 def test_load_uses_datawatch_ext_without_sys_path_insert(tmp_path):
@@ -260,8 +257,6 @@ def test_two_drivers_with_same_submodule_name_do_not_collide(tmp_path):
                         self._connected = False
                     async def read(self, blocks):
                         return {{}}
-                    async def write(self, points):
-                        pass
 
                 def create_driver(context):
                     return FakeDriver(context=context)
@@ -307,6 +302,8 @@ def test_two_drivers_with_same_submodule_name_do_not_collide(tmp_path):
 def test_bad_package_does_not_block_good_package(tmp_path):
     """一坏一好时，好协议仍可扫描并 create。"""
     import sys
+    from drivers.manifest import current_python_abi
+
 
     drivers_root = _write_driver_package(tmp_path, "good_one", "good_one")
     bad = drivers_root / "bad_one"
@@ -317,27 +314,24 @@ def test_bad_package_does_not_block_good_package(tmp_path):
         "raise RuntimeError('intentional import failure')\n",
         encoding="utf-8",
     )
-    (bad / "driver.toml").write_text(
-        textwrap.dedent(
-            """
-            manifest_version = 1
-            driver_api = "1.0"
-            id = "bad_one"
-            protocol = "bad_one"
-            name = "Bad"
-            description = "broken entry"
-            version = "1.0.0"
-            entry = "bad_one.driver:create_driver"
-            python_abi = "cp314t"
-            os = ["windows"]
-            architectures = ["x86_64"]
-            capabilities = ["poll", "read"]
-            read_write = "只读"
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
-    )
+    bad_manifest = textwrap.dedent(
+        f"""
+        manifest_version = 1
+        driver_api = "1.0"
+        id = "bad_one"
+        protocol = "bad_one"
+        name = "Bad"
+        description = "broken entry"
+        version = "1.0.0"
+        entry = "bad_one.driver:create_driver"
+        python_abi = "{current_python_abi()}"
+        os = ["windows"]
+        architectures = ["x86_64"]
+        capabilities = ["poll", "read"]
+        read_write = "只读"
+        """
+    ).strip()
+    (bad / "driver.toml").write_text(bad_manifest + "\n", encoding="utf-8")
 
     registry = DriverRegistry.scan(drivers_root)
     assert registry.has("good_one")
@@ -370,7 +364,7 @@ def test_device_manager_uses_registry_for_external_protocol(tmp_path):
 
 def test_modbus_tcp_vendor_metadata_is_exposed():
     """真实驱动的 vendor 元数据必须被注册表读取并保留。"""
-    registry = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
+    registry = DriverRegistry.discover(_MODBUS_PACKAGE_ROOT.parent)
     registration = registry.get("modbus_tcp")
 
     assert registration is not None
@@ -379,17 +373,20 @@ def test_modbus_tcp_vendor_metadata_is_exposed():
     assert registration.vendor_metadata.version == "3.14.0"
     assert registration.vendor_metadata.license
     assert len(registration.vendor_metadata.sha256) == 64
+    assert registration.source == "bundled"
+    assert registration.protected is True
+    assert not registry.has_failed("modbus_tcp")
 
 
 def test_modbus_tcp_rescan_reexecutes_driver_after_vendor_cache_is_cleared():
-    first = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
+    first = DriverRegistry.discover(_MODBUS_PACKAGE_ROOT.parent)
     assert first.has("modbus_tcp")
 
     for key in list(sys.modules):
         if key == "pymodbus" or key.startswith("pymodbus."):
             sys.modules.pop(key, None)
 
-    second = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
+    second = DriverRegistry.discover(_MODBUS_PACKAGE_ROOT.parent)
 
     assert second.has("modbus_tcp")
     assert "pymodbus" in sys.modules
@@ -422,7 +419,7 @@ def test_modbus_tcp_loads_pymodbus_from_vendor_without_site_packages(monkeypatch
     )
 
     try:
-        registry = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
+        registry = DriverRegistry.discover(_MODBUS_PACKAGE_ROOT.parent)
         driver = registry.create("modbus_tcp")
 
         assert isinstance(driver, BaseDriver)
@@ -596,8 +593,6 @@ def test_planner_missing_internal_dependency_fails_registration(tmp_path):
                 async def read(self, blocks):
                     return {}
 
-                async def write(self, points):
-                    pass
 
             def create_driver(context):
                 return FakeDriver(context=context)
@@ -728,3 +723,63 @@ def test_batch_contiguous_decode_only_fails_registration(tmp_path):
     )
     registry = DriverRegistry.scan(drivers_root)
     assert not registry.has("decode_only")
+
+def test_create_rejects_external_driver_that_overrides_write(tmp_path):
+    drivers_root = _write_driver_package(tmp_path, "writer_drv", "writer_proto")
+    driver_path = drivers_root / "writer_drv" / "writer_drv" / "driver.py"
+    source = driver_path.read_text(encoding="utf-8")
+    source = source.replace(
+        "def create_driver(context):",
+        "    async def write(self, points):\n"
+        "        return None\n\n"
+        "def create_driver(context):",
+    )
+    driver_path.write_text(source, encoding="utf-8")
+
+    registry = DriverRegistry.scan(drivers_root)
+
+    with pytest.raises(DriverRegistryError, match="覆盖了 write"):
+
+        registry.create("writer_proto")
+
+def test_discover_exposes_bundled_sources_aliases_and_protection(tmp_path):
+    registry = DriverRegistry.discover(tmp_path / "missing-drivers")
+
+    assert registry.has("s7")
+    assert registry.has("snap7")
+    assert registry.has("siemens_s7")
+    assert registry.has("ge_srtp")
+    assert registry.has("opc")
+    assert registry.has("opc_ua")
+    assert registry.has("opcda_center")
+
+    assert registry.has("modbus_tcp")
+    items = {item["id"]: item for item in registry.list_loaded()}
+    assert set(items) == {"s7", "ge_srtp", "opcua", "opcda_center", "modbus_tcp"}
+    assert items["s7"]["source"] == "bundled"
+    assert items["s7"]["protected"] is True
+    assert items["s7"]["readWriteType"] == "只读"
+    assert "snap7" in items["s7"]["aliases"]
+    assert items["modbus_tcp"]["source"] == "bundled"
+    assert items["modbus_tcp"]["protected"] is True
+    assert items["modbus_tcp"]["readWriteType"] == "只读"
+
+
+def test_bundled_aliases_create_through_same_registry_factory(tmp_path):
+    from drivers.ge_srtp_driver import GESRTPDriver
+    from drivers.opcua_driver import OPCUADriver
+    from drivers.s7_driver import S7Driver
+
+    registry = DriverRegistry.discover(tmp_path / "missing-drivers")
+
+    assert isinstance(registry.create("siemens"), S7Driver)
+    assert isinstance(registry.create("ge_srtp"), GESRTPDriver)
+    assert isinstance(registry.create("opc_ua"), OPCUADriver)
+
+
+def test_with_bundled_is_idempotent_after_first_merge(tmp_path):
+    registry = DriverRegistry.scan(tmp_path / "missing-drivers")
+
+    bundled = registry.with_bundled()
+
+    assert bundled.with_bundled() is bundled

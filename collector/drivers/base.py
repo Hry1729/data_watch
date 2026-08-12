@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.quality_codes import QUALITY_GOOD
+from core.exceptions import ReadError
 
 
 class ReadBlock:
@@ -58,6 +59,8 @@ class BaseDriver(ABC):
     """设备驱动基类，所有协议驱动需实现此接口"""
 
     native_quality = False
+    read_only = True
+    capabilities = frozenset({"read"})
 
     def __init__(self):
         self._connected = False
@@ -99,10 +102,9 @@ class BaseDriver(ABC):
         """
         pass
 
-    @abstractmethod
     async def write(self, points: List[WritePoint]) -> None:
-        """批量写入数据"""
-        pass
+        """采集进程生产驱动统一只读，运行时拒绝任何 PLC/节点写入。"""
+        raise ReadError(f"{type(self).__name__} is read-only in collector")
 
     async def ping(self) -> bool:
         """健康检查（可选实现）"""

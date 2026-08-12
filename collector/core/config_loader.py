@@ -54,6 +54,13 @@ def load_collector_config(path: str) -> CollectorConfig:
         config = CollectorConfig(
             mysql=MySQLConfig(**mysql_raw),
             interface_ingest=InterfaceIngestConfig(**ingest_raw),
+            ge_max_payload_bytes=int(runtime.get("ge_max_payload_bytes", 250)),
+            ge_parallel_channels=int(runtime.get("ge_parallel_channels", 1)),
+            ge_batch_deadline_ms=(
+                int(runtime["ge_batch_deadline_ms"])
+                if runtime.get("ge_batch_deadline_ms") not in (None, "")
+                else None
+            ),
             redis=RedisConfig(**redis_raw),
             devices=[],
             variables=[],
@@ -96,6 +103,9 @@ def _apply_env_overrides(config: CollectorConfig) -> None:
     与运行参数（log/pool/interface_ingest 等）。collector 不写 TDengine，故无 tdengine 段。
     """
     _override_str(config.mysql, "host", "DATAWATCH_MYSQL_HOST")
+    _override_int(config, "ge_max_payload_bytes", "DATAWATCH_GE_MAX_PAYLOAD_BYTES")
+    _override_int(config, "ge_parallel_channels", "DATAWATCH_GE_PARALLEL_CHANNELS")
+    _override_int(config, "ge_batch_deadline_ms", "DATAWATCH_GE_BATCH_DEADLINE_MS")
     _override_int(config.mysql, "port", "DATAWATCH_MYSQL_PORT")
     _override_str(config.mysql, "user", "DATAWATCH_MYSQL_USER")
     _override_str(config.mysql, "database", "DATAWATCH_MYSQL_DATABASE")

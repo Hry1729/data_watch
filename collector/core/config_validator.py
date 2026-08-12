@@ -116,6 +116,20 @@ class ConfigValidator:
             result.errors.append(
                 f"Invalid read timeout: {config.read_timeout_ms}ms"
             )
+        if config.ge_max_payload_bytes is not None and not (
+            8 <= config.ge_max_payload_bytes <= 1024
+        ):
+            result.errors.append(
+                f"Invalid GE max payload: {config.ge_max_payload_bytes} bytes"
+            )
+        if config.ge_parallel_channels is not None and config.ge_parallel_channels not in (1, 2):
+            result.errors.append(
+                f"Invalid GE parallel channels: {config.ge_parallel_channels}"
+            )
+        if config.ge_batch_deadline_ms is not None and config.ge_batch_deadline_ms <= 0:
+            result.errors.append(
+                f"Invalid GE batch deadline: {config.ge_batch_deadline_ms}ms"
+            )
 
         return result
 
@@ -228,6 +242,18 @@ class ConfigValidator:
         if redis_cfg.db < 0:
             result.errors.append(f"Invalid redis db: {redis_cfg.db}")
 
+        if not (8 <= config.ge_max_payload_bytes <= 1024):
+            result.errors.append(
+                f"runtime.ge_max_payload_bytes must be between 8 and 1024, got {config.ge_max_payload_bytes}"
+            )
+        if config.ge_parallel_channels not in (1, 2):
+            result.errors.append(
+                f"runtime.ge_parallel_channels must be 1 or 2, got {config.ge_parallel_channels}"
+            )
+        if config.ge_batch_deadline_ms is not None and config.ge_batch_deadline_ms <= 0:
+            result.errors.append(
+                f"runtime.ge_batch_deadline_ms must be > 0, got {config.ge_batch_deadline_ms}"
+            )
         # 验证设备与变量的关系
         device_ids = {dev.device_id for dev in config.devices}
         for var in config.variables:
@@ -358,7 +384,12 @@ class ConfigValidator:
     @staticmethod
     def _validate_ge_address(address: str) -> bool:
         """验证 GE SRTP 地址。"""
-        return bool(re.match(r'^%(R|AI|AQ|I|Q|M)\d+$', address.upper()))
+        return bool(
+            re.match(
+                r'^%(R|AI|AQ|I|Q|M|T|SA|SB|SC|S|G)\d+$',
+                address.upper(),
+            )
+        )
 
     @staticmethod
     def _validate_opcda_item_id(address: str) -> bool:

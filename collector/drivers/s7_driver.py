@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from core.exceptions import DeviceConnectionError, ReadError
 from core.logger import get_logger
-from .base import BaseDriver, ReadBlock, WritePoint
+from .base import BaseDriver, ReadBlock
 
 logger = get_logger("s7_driver")
 
@@ -408,9 +408,6 @@ class S7Driver(BaseDriver):
 
         return values
 
-    async def write(self, points: List[WritePoint]) -> None:
-        """S7 驱动在采集模块中保持只读，禁止写 PLC。"""
-        raise ReadError("S7 driver is read-only in collector")
 
     async def ping(self) -> bool:
         """S7健康检查（无副作用，不调用 PLC 运行/停止类方法）。"""

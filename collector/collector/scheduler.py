@@ -46,6 +46,8 @@ class TaskScheduler:
         self._metrics = metrics or PerformanceMetrics()
         self._metrics.increment("deadline_miss_count", 0)
         self._metrics.increment("device_inflight_skip_count", 0)
+        self._metrics.increment("scheduler_coalesced_group_count", 0)
+        self._metrics.increment("scheduler_coalesced_task_count", 0)
         self._metrics.set_gauge("max_consecutive_deadline_misses", 0)
         self._metrics.set_gauge("inflight_jobs", 0)
         self._metrics.set_gauge("peak_inflight_jobs", 0)
@@ -108,6 +110,129 @@ class TaskScheduler:
         if self._running:
             await self._run_loop(task, execute_func)
 
+
+    @staticmethod
+    def _group_execute_func(execute_func: Callable):
+        owner = getattr(execute_func, "__self__", None)
+        group_func = getattr(owner, "execute_many", None)
+        return group_func if callable(group_func) else None
+
+    async def _execute_due_tasks(
+        self,
+        tasks: List[CollectTask],
+        execute_func: Callable,
+    ) -> None:
+        group_func = self._group_execute_func(execute_func)
+        if len(tasks) > 1 and group_func is not None:
+            self._metrics.increment("scheduler_coalesced_group_count")
+            self._metrics.increment("scheduler_coalesced_task_count", len(tasks))
+            await group_func(tasks)
+            return
+
+        for task in tasks:
+            try:
+                await execute_func(task)
+                task.error_count = 0
+            except Exception as exc:
+                task.error_count += 1
+                logger.error(
+                    "Task %s failed (errors=%s): %s",
+                    task.task_name,
+                    task.error_count,
+                    exc,
+                )
+
+    async def _run_device_loop(
+        self,
+        tasks: List[CollectTask],
+        execute_func: Callable,
+    ) -> None:
+        if not tasks:
+            return
+        if len(tasks) == 1:
+            await self._run_phased_loop(tasks[0], execute_func)
+            return
+
+        lead_task = min(tasks, key=lambda item: item.scan_rate)
+        phase = self._initial_phase_seconds(lead_task)
+        if phase > 0:
+            await self._sleep(phase)
+        if not self._running:
+            return
+
+        next_due = {task.task_name: self._clock() for task in tasks}
+        consecutive_misses = {task.task_name: 0 for task in tasks}
+        device_id = self._task_device_id(lead_task)
+        logger.info(
+            "Device %s unified loop started, scan_rates=%s",
+            device_id,
+            sorted(task.scan_rate for task in tasks),
+        )
+
+        while self._running:
+            now = self._clock()
+            due = [
+                task
+                for task in tasks
+                if next_due[task.task_name] <= now + 1e-6
+            ]
+            if not due:
+                await self._sleep(max(0.0, min(next_due.values()) - now))
+                continue
+
+            for task in due:
+                lag_ms = max(0.0, (now - next_due[task.task_name]) * 1000)
+                self._metrics.record_timing("deadline_lag_ms", lag_ms)
+                if lag_ms > task.scan_rate * 1000 * self._deadline_miss_ratio:
+                    self._metrics.increment("deadline_miss_count")
+                    consecutive_misses[task.task_name] += 1
+                    self._max_consecutive_deadline_misses = max(
+                        self._max_consecutive_deadline_misses,
+                        consecutive_misses[task.task_name],
+                    )
+                    self._metrics.set_gauge(
+                        "max_consecutive_deadline_misses",
+                        self._max_consecutive_deadline_misses,
+                    )
+                else:
+                    consecutive_misses[task.task_name] = 0
+
+            if not self._try_begin_device_execution(lead_task):
+                self._metrics.increment("device_inflight_skip_count")
+                await self._sleep(min(task.scan_rate for task in due))
+                continue
+
+            started = self._clock()
+            self._active_executions += 1
+            self._peak_active_executions = max(
+                self._peak_active_executions,
+                self._active_executions,
+            )
+            self._metrics.set_gauge("inflight_jobs", self._active_executions)
+            self._metrics.set_gauge("peak_inflight_jobs", self._peak_active_executions)
+            try:
+                await self._execute_due_tasks(due, execute_func)
+            except Exception as exc:
+                logger.error(
+                    "Device %s coincident task group failed: %s",
+                    device_id,
+                    exc,
+                )
+            finally:
+                self._finish_device_execution(lead_task)
+                self._active_executions -= 1
+                self._metrics.set_gauge("inflight_jobs", self._active_executions)
+
+            finished = self._clock()
+            self._metrics.record_timing("execution_ms", (finished - started) * 1000)
+            self._metrics.increment("scheduler_executions")
+            for task in due:
+                deadline = next_due[task.task_name] + task.scan_rate
+                while deadline <= finished:
+                    deadline += task.scan_rate
+                    self._metrics.increment("deadline_miss_count")
+                next_due[task.task_name] = deadline
+
     def add_task(self, task: CollectTask) -> None:
         """添加采集任务"""
         self.tasks[task.task_name] = task
@@ -129,13 +254,15 @@ class TaskScheduler:
         self._execute_func = execute_func
         logger.info("Scheduler starting with %s tasks", len(self.tasks))
 
-        # 为每个任务创建独立的循环
+        # 每台设备一个统一循环；同一时刻到期的不同扫描周期任务可合并读取。
+        tasks_by_device: Dict[str, List[CollectTask]] = {}
         for task in self.tasks.values():
-            coro = self._run_phased_loop(task, execute_func)
+            tasks_by_device.setdefault(task.device.device_id, []).append(task)
+        for device_id, device_tasks in tasks_by_device.items():
+            coro = self._run_device_loop(device_tasks, execute_func)
             loop_task = asyncio.create_task(coro)
             self._loop_tasks.append(loop_task)
-            device_id = task.device.device_id
-            self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
+            self._device_loop_tasks[device_id] = [loop_task]
         self._metrics.set_gauge("scheduler_active_loops", len(self._loop_tasks))
 
     async def _run_loop(
@@ -264,10 +391,11 @@ class TaskScheduler:
             return
         for task in new_tasks:
             self.tasks[task.task_name] = task
-            coro = self._run_phased_loop(task, self._execute_func)
+        if new_tasks:
+            coro = self._run_device_loop(new_tasks, self._execute_func)
             loop_task = asyncio.create_task(coro)
             self._loop_tasks.append(loop_task)
-            self._device_loop_tasks.setdefault(device_id, []).append(loop_task)
+            self._device_loop_tasks[device_id] = [loop_task]
 
         self._metrics.set_gauge("scheduler_task_count", len(self.tasks))
         self._metrics.set_gauge("scheduler_active_loops", len(self._loop_tasks))
@@ -285,6 +413,7 @@ class TaskScheduler:
                 await task
             except asyncio.CancelledError:
                 pass
+        self._device_loop_tasks.clear()
         self._loop_tasks.clear()
         self._metrics.set_gauge("scheduler_active_loops", 0)
         logger.info("Scheduler stopped")

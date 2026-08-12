@@ -46,3 +46,11 @@ async def test_binding_rejects_uninstalling_driver():
         await service._lock_protocol_for_binding(protocol_id=3, protocol="modbus_tcp")
 
     assert exc_info.value.code == 409
+
+def test_catalog_reports_all_production_drivers_read_only():
+    service = CatalogService(session=AsyncMock(), tdengine=MagicMock())
+
+    assert service._resolve_read_write_type("S7") == "只读"
+    assert service._resolve_read_write_type("GE_SRTP") == "只读"
+    assert service._resolve_read_write_type("MODBUS_TCP") == "只读"
+    assert service._resolve_read_write_type("third_party") == "只读"

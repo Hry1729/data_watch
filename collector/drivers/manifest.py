@@ -329,7 +329,11 @@ def _validate_read_write(value: Any, path: Path) -> str:
 def _validate_read_write_vs_capabilities(
     read_write: str, capabilities: Tuple[str, ...], path: Path
 ) -> None:
-    if read_write == "只读" and "write" in capabilities:
+    if read_write != "只读":
         raise DriverManifestError(
-            f"read_write=只读 时不得声明 write 能力: {path}"
+            f"collector 生产驱动仅允许 read_write=只读: {path}"
+        )
+    if "write" in capabilities:
+        raise DriverManifestError(
+            f"collector 生产驱动不得声明 write 能力: {path}"
         )

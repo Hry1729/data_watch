@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 from core.exceptions import DeviceConnectionError, ReadError
 from core.logger import get_logger
-from .base import BaseDriver, ReadBlock, WritePoint
+from .base import BaseDriver, ReadBlock
 
 logger = get_logger("opcua_driver")
 
@@ -82,7 +82,3 @@ class OPCUADriver(BaseDriver):
                     logger.error("OPC UA read failed for %s: %s", block.address, exc)
                     result[block.address] = None
         return result
-
-    async def write(self, points: List[WritePoint]) -> None:
-        """OPC UA 驱动在采集模块中保持只读，禁止写 PLC/服务端节点。"""
-        raise ReadError("OPC UA driver is read-only in collector")

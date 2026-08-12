@@ -106,6 +106,8 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
                         "version": "2.0.0",
                         "sha256": "agent-sha",
                         "name": "Agent Driver",
+                        "readWriteType": "只读",
+                        "capabilities": ["poll", "read"],
                     }
                 ]
             ),
@@ -125,6 +127,32 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
 
         assert apply_db.await_args.kwargs["version"] == "2.0.0"
         assert apply_db.await_args.kwargs["sha256"] == "agent-sha"
+    async def test_register_rejects_agent_write_capability(self):
+        service = DriverLifecycleService(AsyncMock())
+        with patch("app.services.driver_lifecycle._agent_token", return_value="svc"), patch.object(
+            service,
+            "_list_agent_drivers",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "drv1",
+                        "protocol": "ext",
+                        "status": "loaded",
+                        "version": "1.0.0",
+                        "readWriteType": "读写",
+                        "capabilities": ["poll", "read", "write"],
+                    }
+                ]
+            ),
+        ):
+            with self.assertRaises(ApiError) as ctx:
+                await service.register_protocol(
+                    {"protocol": "ext", "driverId": "drv1"}
+                )
+
+        self.assertEqual(ctx.exception.code, 409)
+        self.assertIn("只读能力", ctx.exception.message)
+
 
     async def test_register_rejects_agent_load_failed(self):
         service = DriverLifecycleService(AsyncMock())
@@ -166,6 +194,8 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
             "status": "loaded",
             "version": "1.0.0",
             "description": "d" * 256,
+            "readWriteType": "只读",
+            "capabilities": ["poll", "read"],
         }
         with patch("app.services.driver_lifecycle._agent_token", return_value="svc"), patch.object(
             service,

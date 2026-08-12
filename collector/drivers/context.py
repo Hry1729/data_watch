@@ -18,3 +18,4 @@ class DriverContext:
     logger: Any
     read_executor: Any = None
     data_root: Optional[Path] = None
+    metrics: Any = None

@@ -64,7 +64,8 @@ class GE_SRTP_Driver:
         host: str,
         port: int = protocol.DEFAULT_PORT,
         timeout: int = protocol.DEFAULT_TIMEOUT,
-        slot: int = 1
+        slot: int = 1,
+        max_payload_bytes: int = 250
     ):
         """
         Initialize the PLC driver.
@@ -74,11 +75,21 @@ class GE_SRTP_Driver:
             port: TCP port (default 18245)
             timeout: Socket timeout in seconds (default 5)
             slot: CPU slot number (default 1, use 2 if CPU is in slot 2)
+            max_payload_bytes: Maximum response payload (8-1024 bytes)
         """
         self.host = host
         self.port = port
         self.timeout = timeout
         self.slot = slot
+        try:
+            self.max_payload_bytes = int(max_payload_bytes)
+        except (TypeError, ValueError) as exc:
+            raise exceptions.ValidationError(
+                f"max_payload_bytes must be an integer, got {max_payload_bytes!r}"
+            ) from exc
+        if not 8 <= self.max_payload_bytes <= 1024:
+            raise exceptions.ValidationError("max_payload_bytes must be between 8 and 1024")
+        self.max_word_count = self.max_payload_bytes // 2
         self.connection = SRTPConnection(host, port, timeout)
         self.sequence_number = 0
 
@@ -121,6 +132,16 @@ class GE_SRTP_Driver:
         self.sequence_number = (self.sequence_number + 1) % 256
         return seq
 
+    def _validate_discrete_count(self, count: int, mode: str) -> None:
+        if mode not in ("bit", "byte"):
+            return
+        max_count = (
+            self.max_payload_bytes * 8 if mode == "bit" else self.max_payload_bytes
+        )
+        if count < 1 or count > max_count:
+            raise exceptions.ValidationError(
+                f"Count must be 1-{max_count} for mode={mode}, got {count}"
+            )
     def _send_request_and_receive(
         self,
         service_code: int,
@@ -157,17 +178,22 @@ class GE_SRTP_Driver:
             slot=self.slot
         )
 
-        # Send request
-        self.connection.send_request(request)
+        try:
+            # Send request and receive the complete response frame.
+            self.connection.send_request(request)
+            response_data = self.connection.receive_response()
+        except exceptions.ConnectionError:
+            self.connection.disconnect()
+            raise
 
-        # Receive response
-        response_data = self.connection.receive_response()
-
-        # Parse response
-        response = SRTPPacket.parse_response(response_data)
-
-        # Validate sequence number
-        response.validate_sequence_number(seq)
+        try:
+            # A malformed frame or mismatched sequence makes stream ownership
+            # uncertain. Fully consumed PLC NACKs are intentionally not caught.
+            response = SRTPPacket.parse_response(response_data)
+            response.validate_sequence_number(seq)
+        except exceptions.ProtocolError:
+            self.connection.disconnect()
+            raise
 
         return response
 
@@ -199,10 +225,10 @@ class GE_SRTP_Driver:
             values = plc.read_register(100, 10)  # Read %R100-R109
             ```
         """
-        if count < 1 or count > 125:
-            raise exceptions.ValidationError(f"Count must be 1-125, got {count}")
+        if count < 1 or count > self.max_word_count:
+            raise exceptions.ValidationError(f"Count must be 1-{self.max_word_count}, got {count}")
 
-        logger.info(f"Reading register %R{address}, count={count}")
+        logger.debug(f"Reading register %R{address}, count={count}")
 
         # PLC requires minimum data_length of 4 words (8 bytes)
         # Request at least 4, but return only what was asked for
@@ -242,10 +268,10 @@ class GE_SRTP_Driver:
         Returns:
             Single integer if count=1, list of integers otherwise
         """
-        if count < 1 or count > 125:
-            raise exceptions.ValidationError(f"Count must be 1-125, got {count}")
+        if count < 1 or count > self.max_word_count:
+            raise exceptions.ValidationError(f"Count must be 1-{self.max_word_count}, got {count}")
 
-        logger.info(f"Reading analog input %AI{address+1}, count={count}")
+        logger.debug(f"Reading analog input %AI{address+1}, count={count}")
 
         # PLC requires minimum data_length of 4 words
         request_length = max(count, 4)
@@ -278,10 +304,10 @@ class GE_SRTP_Driver:
         Returns:
             Single integer if count=1, list of integers otherwise
         """
-        if count < 1 or count > 125:
-            raise exceptions.ValidationError(f"Count must be 1-125, got {count}")
+        if count < 1 or count > self.max_word_count:
+            raise exceptions.ValidationError(f"Count must be 1-{self.max_word_count}, got {count}")
 
-        logger.info(f"Reading analog output %AQ{address+1}, count={count}")
+        logger.debug(f"Reading analog output %AQ{address+1}, count={count}")
 
         # PLC requires minimum data_length of 4 words
         request_length = max(count, 4)
@@ -328,14 +354,15 @@ class GE_SRTP_Driver:
             - mode='byte', count=1: single integer (0-255)
             - mode='byte', count>1: list of integers
         """
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = protocol.SegmentSelector.DISCRETE_INPUTS_BIT
-            logger.info(f"Reading discrete input %I{address}, count={count}, mode=bit")
+            logger.debug(f"Reading discrete input %I{address}, count={count}, mode=bit")
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
             request_length = max(count, 64)
         elif mode == 'byte':
             selector = protocol.SegmentSelector.DISCRETE_INPUTS_BYTE
-            logger.info(f"Reading discrete input %I{address}, count={count}, mode=byte")
+            logger.debug(f"Reading discrete input %I{address}, count={count}, mode=byte")
             # For byte mode, enforce minimum of 8 bytes - verified on RX3i
             request_length = max(count, 8)
         else:
@@ -376,6 +403,7 @@ class GE_SRTP_Driver:
         Returns:
             Depends on mode and count (see read_discrete_input)
         """
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = protocol.SegmentSelector.DISCRETE_OUTPUTS_BIT
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
@@ -387,7 +415,7 @@ class GE_SRTP_Driver:
         else:
             raise exceptions.ValidationError(f"Invalid mode: {mode}")
 
-        logger.info(f"Reading discrete output %Q{address}, count={count}, mode={mode}")
+        logger.debug(f"Reading discrete output %Q{address}, count={count}, mode={mode}")
 
         response = self._send_request_and_receive(
             service_code=protocol.ServiceCode.READ_SYSTEM_MEMORY,
@@ -427,6 +455,7 @@ class GE_SRTP_Driver:
         Returns:
             Depends on mode and count
         """
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = protocol.SegmentSelector.DISCRETE_INTERNALS_BIT
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
@@ -438,7 +467,7 @@ class GE_SRTP_Driver:
         else:
             raise exceptions.ValidationError(f"Invalid mode: {mode}")
 
-        logger.info(f"Reading discrete internal %M{address}, count={count}, mode={mode}")
+        logger.debug(f"Reading discrete internal %M{address}, count={count}, mode={mode}")
 
         response = self._send_request_and_receive(
             service_code=protocol.ServiceCode.READ_SYSTEM_MEMORY,
@@ -475,6 +504,7 @@ class GE_SRTP_Driver:
         Returns:
             Depends on mode and count
         """
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = protocol.SegmentSelector.DISCRETE_TEMPS_BIT
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
@@ -486,7 +516,7 @@ class GE_SRTP_Driver:
         else:
             raise exceptions.ValidationError(f"Invalid mode: {mode}")
 
-        logger.info(f"Reading discrete temp %T{address}, count={count}, mode={mode}")
+        logger.debug(f"Reading discrete temp %T{address}, count={count}, mode={mode}")
 
         response = self._send_request_and_receive(
             service_code=protocol.ServiceCode.READ_SYSTEM_MEMORY,
@@ -542,6 +572,7 @@ class GE_SRTP_Driver:
             'SC': protocol.SegmentSelector.SYSTEM_C_DISCRETE_BYTE,
         }
 
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = selector_map_bit.get(mem_type.upper())
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
@@ -556,7 +587,7 @@ class GE_SRTP_Driver:
         if selector is None:
             raise exceptions.ValidationError(f"Invalid system memory type: {mem_type}")
 
-        logger.info(f"Reading system memory %{mem_type}{address}, count={count}, mode={mode}")
+        logger.debug(f"Reading system memory %{mem_type}{address}, count={count}, mode={mode}")
 
         response = self._send_request_and_receive(
             service_code=protocol.ServiceCode.READ_SYSTEM_MEMORY,
@@ -596,6 +627,7 @@ class GE_SRTP_Driver:
         Returns:
             Depends on mode and count
         """
+        self._validate_discrete_count(count, mode)
         if mode == 'bit':
             selector = protocol.SegmentSelector.GENIUS_GLOBAL_DATA_BIT
             # For bit mode, enforce minimum of 64 bits (8 bytes) - verified on RX3i
@@ -607,7 +639,7 @@ class GE_SRTP_Driver:
         else:
             raise exceptions.ValidationError(f"Invalid mode: {mode}")
 
-        logger.info(f"Reading global memory %G{address}, count={count}, mode={mode}")
+        logger.debug(f"Reading global memory %G{address}, count={count}, mode={mode}")
 
         response = self._send_request_and_receive(
             service_code=protocol.ServiceCode.READ_SYSTEM_MEMORY,

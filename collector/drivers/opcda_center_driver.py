@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 from core.logger import get_logger
 from core.opcda_ipc_client import OpcDaIpcClient, OpcDaIpcClientPool
 from core.opcda_ipc_protocol import DEFAULT_PROXY_PORT
-from drivers.base import BaseDriver, ReadBlock, WritePoint
+from drivers.base import BaseDriver, ReadBlock
 
 logger = get_logger("opcda_center_driver")
 
@@ -167,16 +167,6 @@ class OpcDaCenterDriver(BaseDriver):
                 logger.error("读取点位失败: %s", e)
                 return {block.address: None for block in blocks}
 
-    async def write(self, points: List[WritePoint]) -> None:
-        """
-        写入数据（OPC DA 中心采集模式暂不支持写入）
-
-        Raises:
-            NotImplementedError: OPC DA 中心采集模式暂不支持写入操作
-        """
-        raise NotImplementedError(
-            "OPC DA 中心采集模式暂不支持写入操作"
-        )
 
     async def ping(self) -> bool:
         """健康检查"""

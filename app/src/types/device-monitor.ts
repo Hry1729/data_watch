@@ -15,8 +15,10 @@ export interface DriverListItem {
   updateTime: string;
   status?: string;
   boundDeviceCount?: number;
-  /** 内置 / 已安装 / Agent 独有未注册 / Agent 查询失败 / 已注册但本机包缺失 */
-  source?: "builtin" | "installed" | "unregistered" | "unknown" | "missing";
+  /** 安装包内置 / 旧版内置 / 已安装 / Agent 独有未注册 / 状态异常 */
+  source?: "bundled" | "builtin" | "installed" | "unregistered" | "unknown" | "missing";
+  /** 内置驱动不可被外部包覆盖或卸载 */
+  protected?: boolean;
   /** Manifest.id，Agent 安装目录名（可与 protocol 不同） */
   driverId?: string;
   version?: string;

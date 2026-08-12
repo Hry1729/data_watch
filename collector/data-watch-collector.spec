@@ -5,7 +5,10 @@ from PyInstaller.utils.hooks import collect_all
 
 repo_root = str(Path(SPECPATH).resolve().parent)
 
-datas = [('drivers\\gesrtp-py-main', 'drivers\\gesrtp-py-main')]
+datas = [
+    ('drivers\\gesrtp-py-main', 'drivers\\gesrtp-py-main'),
+    (str(Path(repo_root) / 'packages' / 'modbus_tcp'), 'bundled_drivers\\modbus_tcp'),
+]
 binaries = []
 hiddenimports = ['drivers.s7_driver', 'drivers.ge_srtp_driver', 'drivers.opcda_center_driver', 'drivers.opcua_driver']
 tmp_ret = collect_all('snap7')

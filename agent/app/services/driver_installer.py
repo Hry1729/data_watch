@@ -384,6 +384,20 @@ class DriverInstaller:
         all_ids = set(state_map) | disk_ids | collector_ids
         items: list[dict[str, Any]] = []
         for driver_id in sorted(all_ids):
+            runtime_info = (
+                dict(collector_map.get(driver_id) or {})
+                if collector_map is not None
+                else {}
+            )
+            if runtime_info.get("source") == "bundled":
+                runtime_info["source"] = "bundled"
+                runtime_info["protected"] = True
+                runtime_info["status"] = str(
+                    runtime_info.get("status") or "loaded"
+                )
+                runtime_info["runtime_status"] = runtime_info["status"]
+                items.append(runtime_info)
+                continue
             base = dict(state_map.get(driver_id) or {"id": driver_id, "source": "installed"})
             toml_ok = driver_id in disk_ids
             in_state = driver_id in state_map

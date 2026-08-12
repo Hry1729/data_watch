@@ -1,4 +1,6 @@
+import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -125,3 +127,67 @@ async def test_busy_device_cycle_is_skipped_without_execution():
     assert executions == 0
     assert snapshot["counters"]["device_inflight_skip_count"] == 1
     assert snapshot["counters"]["deadline_miss_count"] == 1
+
+@pytest.mark.asyncio
+async def test_scheduler_dispatches_coincident_tasks_through_execute_many():
+    metrics = PerformanceMetrics()
+    scheduler = TaskScheduler(metrics=metrics)
+    device = SimpleNamespace(device_id="d-coalesced")
+    tasks = [
+        SimpleNamespace(
+            task_name=f"d-coalesced-{rate}",
+            scan_rate=rate,
+            error_count=0,
+            device=device,
+        )
+        for rate in (0.1, 0.5)
+    ]
+
+    class GroupExecutor:
+        def __init__(self):
+            self.groups = []
+            self.single_calls = []
+
+        async def execute(self, task):
+            self.single_calls.append(task)
+
+        async def execute_many(self, due_tasks):
+            self.groups.append(list(due_tasks))
+
+    executor = GroupExecutor()
+    await scheduler._execute_due_tasks(tasks, executor.execute)
+
+    assert executor.groups == [tasks]
+    assert executor.single_calls == []
+    counters = metrics.snapshot()["counters"]
+    assert counters["scheduler_coalesced_group_count"] == 1
+    assert counters["scheduler_coalesced_task_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduler_starts_one_unified_loop_per_device():
+    scheduler = TaskScheduler()
+    device = SimpleNamespace(device_id="d-one-loop")
+    tasks = [
+        SimpleNamespace(
+            task_name=f"d-one-loop-{rate}",
+            scan_rate=rate,
+            error_count=0,
+            device=device,
+        )
+        for rate in (0.1, 0.5)
+    ]
+    scheduler.add_tasks(tasks)
+    scheduler._run_device_loop = AsyncMock()
+
+    async def execute(_task):
+        return None
+
+    await scheduler.start(execute)
+    await asyncio.sleep(0)
+
+    assert scheduler._run_device_loop.await_count == 1
+    grouped_tasks = scheduler._run_device_loop.await_args.args[0]
+    assert grouped_tasks == tasks
+    assert scheduler.stats["gauges"]["scheduler_active_loops"] == 1
+    await scheduler.stop()

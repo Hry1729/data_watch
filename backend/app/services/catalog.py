@@ -161,11 +161,11 @@ class CatalogService:
             protocol = row["driver_name"] or ""
             driver_id = str(row["driver_id"] or "").strip()
             install_source = str(row["install_source"] or "").strip()
-            # 仅固定内置协议集合标 builtin；已注册外置包标 installed（Agent 缺失由前端标 missing）
-            if driver_id or install_source:
+            # 安装包内置驱动优先于历史 installed_driver 记录，始终受保护。
+            if self._is_builtin_protocol(protocol):
+                source = "bundled"
+            elif driver_id or install_source:
                 source = "installed"
-            elif self._is_builtin_protocol(protocol):
-                source = "builtin"
             else:
                 source = "unknown"
             item = {
@@ -177,6 +177,7 @@ class CatalogService:
                 "boundDeviceCount": int(row["bound_device_count"] or 0),
                 "updateTime": self._format_datetime(self._coerce_datetime(row["create_time"])),
                 "source": source,
+                "protected": source == "bundled",
                 "driverId": driver_id or None,
                 "version": str(row["driver_version"] or "").strip() or None,
                 "sha256": str(row["driver_sha256"] or "").strip() or None,
@@ -2910,10 +2911,8 @@ class CatalogService:
         return "abnormal"
 
     def _resolve_read_write_type(self, driver_name: Any) -> str:
-        normalized = str(driver_name or "").strip().upper()
-        if normalized == "OPC-DA":
-            return "只读"
-        return "读写"
+        _ = driver_name
+        return "只读"
 
     def _is_builtin_protocol(self, protocol: Any) -> bool:
         """与 Agent/collector 内置协议集合对齐；仅这些可标 builtin。
@@ -2937,6 +2936,7 @@ class CatalogService:
             "opc_da_center",
             "opc_da_sidecar",
             "opcda_sidecar",
+            "modbus_tcp",
         }
 
     def _resolve_tdengine_database(
