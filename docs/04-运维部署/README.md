@@ -594,6 +594,8 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 
 ## 12. 验收清单
 
+分布式阶段 1 至阶段 4 的研发范围已经完成，但下列现场检查和《三角色安装包验收清单》仍需在目标环境签署。自动化测试通过不能替代安装、断网、升级、真实设备和容量证据。
+
 ### 中心镜像部署
 
 - `docker compose ps` 中 backend/frontend running；
