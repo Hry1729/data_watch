@@ -3,6 +3,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
+import time
+
+import pytest
 
 from edge.app.config_snapshot import snapshot_checksum
 from edge.app.outbox import OutboxCompletion
@@ -111,3 +114,80 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
         server.server_close()
         engine.close()
         thread.join(timeout=5)
+
+
+def test_storage_close_reports_slow_writer_instead_of_silent_return(tmp_path: Path) -> None:
+    engine = StorageEngine(
+        tmp_path / "edge.db",
+        max_queue=8,
+        shutdown_timeout_seconds=0.01,
+    )
+    engine.start()
+    dispatch_started = threading.Event()
+
+    def slow_dispatch(_outbox, _config, _action, _payload):
+        dispatch_started.set()
+        time.sleep(0.1)
+        return None
+
+    engine._dispatch = slow_dispatch
+    submit_thread = threading.Thread(target=lambda: engine.submit("slow"))
+    submit_thread.start()
+    assert dispatch_started.wait(timeout=1)
+
+    with pytest.raises(TimeoutError, match="did not stop"):
+        engine.close()
+
+    submit_thread.join(timeout=1)
+    assert not submit_thread.is_alive()
+    # The second close observes the same worker and waits for the accepted
+    # command/sentinel to finish instead of silently abandoning it.
+    engine.close(timeout_seconds=1)
+
+
+def test_storage_queue_saturation_backpressures_without_dropping_commands(
+    tmp_path: Path,
+) -> None:
+    engine = StorageEngine(tmp_path / "edge.db", max_queue=1)
+    engine.start()
+    first_started = threading.Event()
+    release = threading.Event()
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def slow_dispatch(_outbox, _config, action, _payload):
+        if action == "first":
+            first_started.set()
+            release.wait(timeout=2)
+        return action
+
+    def submit(action: str) -> None:
+        try:
+            results.append(engine.submit(action, timeout_seconds=2))
+        except Exception as exc:
+            errors.append(exc)
+
+    engine._dispatch = slow_dispatch
+    threads = [
+        threading.Thread(target=submit, args=(action,))
+        for action in ("first", "second", "third")
+    ]
+    try:
+        threads[0].start()
+        assert first_started.wait(timeout=1)
+        threads[1].start()
+        time.sleep(0.02)
+        threads[2].start()
+        time.sleep(0.05)
+        assert threads[2].is_alive()
+
+        release.set()
+        for thread in threads:
+            thread.join(timeout=2)
+
+        assert errors == []
+        assert sorted(results) == ["first", "second", "third"]
+        assert all(not thread.is_alive() for thread in threads)
+    finally:
+        release.set()
+        engine.close(timeout_seconds=2)

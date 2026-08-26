@@ -116,7 +116,7 @@ Redis stream entry
   values = {"900001":"23.4"}
 
 MysqlMapper.get_or_load(QC100, g001, 12)
-  -> 查询 device / device_type / device_point_group / device_variable
+  -> 查询永久 point_storage_mapping（device_code + group_code）
   -> stable = sd{device_type}
   -> child_table = device_code
   -> var_id_to_column = {900001: td_column_name}
@@ -124,11 +124,11 @@ MysqlMapper.get_or_load(QC100, g001, 12)
 
 ### 5.1 config_version 的意义
 
-`device_point_group.config_version` 是映射缓存失效依据。点位新增、删除、列位调整时版本变化，writer 重新加载映射。
+缓存键是 `(device_code, group_code)`，物理映射来自永久表 `point_storage_mapping`；`device_point_group.config_version` 只作为 Stream 消息与日志上下文，不是缓存失效依据。
 
 ### 5.2 版本不一致降级
 
-如果 Stream 中版本与 MySQL 当前版本不一致，但 writer 仍有旧缓存，可用旧缓存写入。这依赖 TDengine schema **只增不减**：旧列不会被删除，旧数据仍可落入原列，避免配置切换瞬间大量消息卡死。
+历史 Stream 中的 `config_version` 即使与当前控制面版本不同，writer 仍使用永久 mapping 解码，不因版本差异拒绝历史消息。热缓存发现新 `var_id` 时运行期 reload 永久 mapping；reload 失败或仍无映射则不 ACK，保留 PEL 以避免新点静默漏写。这依赖 TDengine schema **只增不减**：旧列不会被删除，旧数据仍可落入原列。
 
 ---
 

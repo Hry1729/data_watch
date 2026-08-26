@@ -13,6 +13,17 @@ from core.logger import get_logger
 logger = get_logger("config_validator")
 
 
+def _is_loopback_bind_host(host: str) -> bool:
+    """返回 HTTP 监听地址是否明确为本机回环地址。"""
+    normalized = (host or "").strip().lower()
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
 @dataclass
 class ValidationResult:
     """验证结果"""
@@ -218,12 +229,12 @@ class ConfigValidator:
                 result.errors.append(f"Invalid interface ingest port: {ingest.port}")
             if ingest.max_batch_size <= 0:
                 result.errors.append("interface_ingest.max_batch_size must be > 0")
-            # 安全检查：绑定公网地址时必须配置非空 API Key
+            # 安全检查：除明确的 loopback 外，所有监听地址都必须配置非空 API Key。
             host = (ingest.host or "").strip()
             api_key = (ingest.api_key or "").strip()
-            if host in {"0.0.0.0", "::"} and not api_key:
+            if not _is_loopback_bind_host(host) and not api_key:
                 result.errors.append(
-                    f"interface_ingest.api_key is required when binding to {host}. "
+                    f"interface_ingest.api_key is required when binding to non-loopback host {host!r}. "
                     "Either set a non-empty api_key or bind to 127.0.0.1 for local-only access."
                 )
 
@@ -233,9 +244,19 @@ class ConfigValidator:
             result.errors.append(
                 f"redis.stream_shard_count must be >= 1, got {redis_cfg.stream_shard_count}"
             )
-        if redis_cfg.stream_maxlen < 1:
+        if redis_cfg.stream_maxlen < 0:
             result.errors.append(
-                f"redis.stream_maxlen must be >= 1, got {redis_cfg.stream_maxlen}"
+                f"redis.stream_maxlen must be >= 0, got {redis_cfg.stream_maxlen}"
+            )
+        elif redis_cfg.stream_maxlen > 0:
+            result.warnings.append(
+                "redis.stream_maxlen > 0 is a lossy emergency cap; entries near the cap "
+                "may be trimmed before the writer consumes them"
+            )
+        if redis_cfg.stream_warn_entries < 0:
+            result.errors.append(
+                "redis.stream_warn_entries must be >= 0 (0 disables), "
+                f"got {redis_cfg.stream_warn_entries}"
             )
         if not (1 <= redis_cfg.port <= 65535):
             result.errors.append(f"Invalid redis port: {redis_cfg.port}")

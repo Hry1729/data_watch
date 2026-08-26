@@ -117,11 +117,11 @@ pageNo=1&pageSize=20
 
 | 方法 | 路径 | 用途 | 主要调用方 |
 |------|------|------|------------|
-| POST | `/api/auth/login` | 登录，返回 token / refreshToken | frontend/app/CLI |
+| POST | `/api/auth/login` | 登录，返回 token / refreshToken / userId / mustChangePassword | frontend/app/CLI |
 | POST | `/api/auth/refresh` | 消费 Refresh Token 并轮换 access/refresh token | CLI/其他支持刷新客户端 |
 | POST | `/api/auth/logout` | 登出 | frontend |
 | GET | `/api/user/info` | 当前用户信息、角色、权限、按钮标记 | frontend/app/CLI |
-| POST | `/api/user/password/change` | 修改密码 | frontend |
+| POST | `/api/user/password/change` | 修改密码并轮换 token version | frontend/app |
 
 登录响应示例：
 
@@ -131,7 +131,10 @@ pageNo=1&pageSize=20
   "msg": "success",
   "data": {
     "token": "Bearer eyJ...",
-    "refreshToken": "Bearer eyJ..."
+    "refreshToken": "Bearer eyJ...",
+    "userId": 1,
+    "mustChangePassword": false,
+    "tokenVersion": 0
   }
 }
 ```
@@ -147,7 +150,9 @@ pageNo=1&pageSize=20
     "userName": "Super",
     "roles": ["R_SUPER"],
     "buttons": ["edit"],
-    "permissions": ["device_monitor:realtime:view"]
+    "permissions": ["device_monitor:realtime:view"],
+    "mustChangePassword": false,
+    "tokenVersion": 0
   }
 }
 ```
@@ -160,16 +165,16 @@ pageNo=1&pageSize=20
 {"refreshToken":"Bearer eyJ..."}
 ```
 
-刷新成功返回新的 `token` 与 `refreshToken`。服务端验证令牌类型、用户状态和当前角色；CLI 在认证请求 401 后最多自动刷新一次并重放原请求。
+刷新成功返回新的 `token`、`refreshToken`、`userId`、`mustChangePassword` 与 `tokenVersion`。服务端验证令牌类型、用户状态和当前角色；CLI 在认证请求 401 后最多自动刷新一次并重放原请求。
 
 ### 3.2 系统管理（用户/角色/菜单）
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| GET/POST | `/api/user` | 用户列表/新增 |
+| GET/POST | `/api/user` | 用户列表/新增；创建请求不携带 password，由服务端生成一次性临时密码 |
 | GET/PUT/DELETE | `/api/user/{id}` | 用户详情/更新/删除 |
 | PATCH | `/api/user/{id}/status` | 启停用户 |
-| PATCH | `/api/user/{id}/password/reset` | 重置密码 |
+| PATCH | `/api/user/{id}/password/reset` | 重置密码；请求体必须为 `{}`，返回一次性临时密码 |
 | GET/POST | `/api/role` | 角色列表/新增 |
 | GET/PUT/DELETE | `/api/role/{id}` | 角色详情/更新/删除 |
 | PATCH | `/api/role/{id}/status` | 启停角色 |
@@ -178,6 +183,13 @@ pageNo=1&pageSize=20
 | POST | `/api/v3/system/menu/{id}/permissions` | 维护菜单权限 |
 
 字段注意：角色编码字段为 `role_code`。
+
+密码生命周期约定：
+
+- 创建用户与重置密码都返回 `data={id,userId,temporaryPassword,mustChangePassword:true,tokenVersion}`；`temporaryPassword` 只在本次响应中显示，客户端不得保存、回传或用固定默认值替代。
+- `PATCH /api/user/{id}/password/reset` 请求体固定为 `{}`；旧客户端若发送 `password` 不会被采用。
+- `POST /api/user/password/change` 请求体为 `{oldPassword,newPassword}`。成功后 `tokenVersion` 增加，当前 access/refresh token 立即失效；客户端必须清空本地会话并用新密码重新登录。
+- `mustChangePassword=true` 时，登录/刷新及用户信息都会携带该状态；客户端应只进入强制改密页，不把菜单拉取失败当成登录失败。
 
 ### 3.3 设备监控域 `/api/device-monitor`
 

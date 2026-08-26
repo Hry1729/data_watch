@@ -163,10 +163,10 @@ collector 从 v0.1.0 起支持 **质量码（Quality Codes）** 端到端传递�
 ```python
 @dataclass
 class DriverSample:
-    var_id: int          # 点位 ID
     value: Any           # 采集值（数值/字符串/布尔）
-    timestamp: float     # 采集时刻（UTC 秒级浮点）
-    quality: int = Q_GOOD  # 质量码（默认 0=GOOD）
+    quality: int = Q_GOOD  # 平台质量码（默认 0=GOOD）
+    source_timestamp: Optional[datetime] = None  # 协议源时间；缺失时回落采集时刻
+    protocol_quality: Optional[int] = None       # 原始协议质量，供诊断
 ```
 
 驱动在读取失败时，应返回质量码 + `None` 值，而不是抛出异常。例如：
@@ -180,6 +180,8 @@ return DriverSample(var_id=123, value=42.5, timestamp=time.time(), quality=Q_GOO
 ```
 
 ### Redis Stream 契约
+
+同一设备/分组 frame 的 ts 取该帧所有点 timestamp 的最大值；latest 中每个点的 t 保留自身 timestamp。驱动提供 source_timestamp 时作为该点时间，否则使用本轮采集时刻。
 
 collector 写入 Redis Stream 时，使用 **contract v2**（`collector/redis_writer.py:187`）：
 
@@ -227,7 +229,7 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/redis_wr
 
 启动顺序（`start()` `main.py:169`）：ping Redis → 注册设备 → 连接所有设备 → 为每设备每 ScanTask 建 CollectTask 并入调度 → 启动调度器 → 启动 HTTP 接入 → 健康检查 → 配置热更新轮询 → 性能日志循环。
 
-停机（`shutdown()` `main.py:257`）：取消热更新/性能/健康任务 → 停调度器 → 停接入服务 → drain parse/redis 池 → 断开设备 → 关 PLC 读池 → 关连接池。整个过程有 `SHUTDOWN_DRAIN_TIMEOUT` 上限，超时则放弃等待并记未完成 job 数。
+停机（`shutdown()`）：取消热更新/性能/健康任务 → 停调度器 → 停接入服务 → 完整 drain parse/redis 池 → 断开设备 → 关 PLC 读池 → 关连接池。Parse/Redis 任务可能已持有成功读取的样本，因此正常停机不按超时取消；尚未产出样本的 PLC 读池受 `SHUTDOWN_DRAIN_TIMEOUT` 上限约束，超时会记录未完成 job 数。
 
 > **停机信号**：除信号量外，collector 还监听 `runtime/collector.shutdown_flag` 文件（`_watch_shutdown_flag` `main.py:73`）。agent 通过写该文件来停止 collector 进程；启动时会先清理上一轮残留 flag。
 

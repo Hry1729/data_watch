@@ -245,7 +245,7 @@
       formData.username = username
       const { password } = formData
 
-      const { token, refreshToken } = await fetchLogin({
+      const { token, refreshToken, mustChangePassword } = await fetchLogin({
         userName: username,
         password
       })
@@ -257,21 +257,28 @@
 
       // 存储 token，随后用新 token 初始化用户态和路由态。
       userStore.setToken(token, refreshToken)
+      userStore.setMustChangePassword(Boolean(mustChangePassword))
       resetRouteInitState()
       const userInfo = await fetchGetUserInfo()
       userStore.setUserInfo(userInfo)
+      if (typeof userInfo.mustChangePassword === 'boolean') {
+        userStore.setMustChangePassword(userInfo.mustChangePassword)
+      }
       userStore.setLoginStatus(true)
       userStore.checkAndClearWorktabs()
 
       // 记录历史账号（仅用户名）
       saveAccountHistory(username)
 
-      // 登录成功处理
-      showLoginSuccessNotice()
-
       // 获取 redirect 参数，如果存在则跳转到指定页面，否则跳转到首页
       const redirect = route.query.redirect as string
-      await router.replace(redirect || '/')
+      if (mustChangePassword) {
+        await router.replace({ name: 'ForceChangePassword', query: { redirect: redirect || '/' } })
+      } else {
+        // 登录成功处理
+        showLoginSuccessNotice()
+        await router.replace(redirect || '/')
+      }
     } catch (error) {
       // HttpError：http 层已统一弹出错误提示，无需重复处理
       if (error instanceof HttpError) {

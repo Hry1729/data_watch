@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
+import { loadAllDevicePages } from "@/lib/device-catalog";
 import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { parseImportWorkbook } from "@/lib/import-workbook";
 import { saveDownload } from "@/lib/save-download";
@@ -56,7 +57,10 @@ export default function DeviceManagementPage() {
     }),
     [activeType, connectStatus, keyword, page, pageSize],
   );
-  const loadDeviceCatalog = useCallback((token: string) => backendClient.deviceList(token, { pageNo: 1, pageSize: 1000 }), []);
+  const loadDeviceCatalog = useCallback(
+    (token: string) => loadAllDevicePages((pageNo, pageSize) => backendClient.deviceList(token, { pageNo, pageSize })),
+    [],
+  );
   const loadDrivers = useCallback((token: string) => backendClient.driverOptions(token), []);
   const devices = useBackendQuery(loadDevices);
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);

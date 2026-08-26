@@ -61,7 +61,7 @@ async def logout(
 
         # 尝试获取用户信息以记录登出日志
         try:
-            principal = await service.resolve_principal(_authorization_from_credentials(credentials))
+            principal = await service.logout(_authorization_from_credentials(credentials))
             await write_system_log(
                 level="INFO",
                 log_type="auth",

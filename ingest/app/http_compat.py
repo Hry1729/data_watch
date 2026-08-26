@@ -15,6 +15,10 @@ class Headers(dict[str, str]):
         return super().get(key.lower(), default)
 
 
+class RequestBodyTooLarge(ValueError):
+    pass
+
+
 class Request:
     def __init__(
         self,
@@ -38,10 +42,20 @@ class Request:
 
 
 class IngestASGI(TurboAPI):
-    def __init__(self, *args, on_startup=None, on_shutdown=None, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        on_startup=None,
+        on_shutdown=None,
+        max_body_bytes: int = 4 * 1024 * 1024,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._on_startup = on_startup
         self._on_shutdown = on_shutdown
+        if max_body_bytes <= 0:
+            raise ValueError("max_body_bytes must be positive")
+        self._max_body_bytes = max_body_bytes
         self._startup_complete = False
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
@@ -54,13 +68,47 @@ class IngestASGI(TurboAPI):
 
         method = str(scope["method"])
         path = str(scope["path"])
-        body = await self._read_body(receive)
         headers = Headers(
             {
                 name.decode("latin-1").lower(): value.decode("latin-1")
                 for name, value in scope.get("headers", [])
             }
         )
+        raw_content_length = headers.get("content-length")
+        content_length: int | None = None
+        if raw_content_length is not None:
+            try:
+                content_length = int(raw_content_length)
+            except (TypeError, ValueError):
+                await self._send(
+                    send,
+                    JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"}),
+                )
+                return
+            if content_length < 0:
+                await self._send(
+                    send,
+                    JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"}),
+                )
+                return
+            if content_length > self._max_body_bytes:
+                await self._send(
+                    send,
+                    JSONResponse(status_code=413, content={"detail": "Request body too large"}),
+                )
+                return
+        try:
+            body = await self._read_body(
+                receive,
+                max_bytes=self._max_body_bytes,
+                content_length=content_length,
+            )
+        except RequestBodyTooLarge:
+            await self._send(
+                send,
+                JSONResponse(status_code=413, content={"detail": "Request body too large"}),
+            )
+            return
         match = self.registry.match_route(method, path)
         if not match:
             await self._send(send, JSONResponse(status_code=404, content={"detail": "Not Found"}))
@@ -115,13 +163,26 @@ class IngestASGI(TurboAPI):
                 return
 
     @staticmethod
-    async def _read_body(receive: Callable) -> bytes:
-        body = b""
+    async def _read_body(
+        receive: Callable,
+        *,
+        max_bytes: int,
+        content_length: int | None = None,
+    ) -> bytes:
+        body_parts: list[bytes] = []
+        body_size = 0
         while True:
             message = await receive()
-            body += message.get("body", b"")
+            chunk = message.get("body", b"")
+            body_size += len(chunk)
+            if body_size > max_bytes:
+                raise RequestBodyTooLarge("request body exceeds configured limit")
+            body_parts.append(chunk)
             if not message.get("more_body", False):
-                return body
+                break
+        if content_length is not None and body_size > content_length:
+            raise RequestBodyTooLarge("request body exceeds Content-Length")
+        return b"".join(body_parts)
 
     @staticmethod
     async def _invoke(

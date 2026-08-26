@@ -119,13 +119,13 @@ def test_recover_inflight_and_session_switch(tmp_path: Path) -> None:
     switch = store.prepare_session_switch()
     assert switch.old_session_id == first.upload_session_id
     assert switch.new_session_id != switch.old_session_id
-    assert store.stats() == {"sent": 1}
+    assert store.stats() == {"pending": 1, "sent": 1}
     assert store.pending_session_switch() == switch
 
     store.complete_session_switch(switch)
     assert store.pending_session_switch() is None
     new_first = append(store)
-    assert new_first.local_seq == 1
+    assert new_first.local_seq == 2
     assert new_first.upload_session_id == switch.new_session_id
     assert second.local_seq == 2
     store.close()
@@ -169,7 +169,7 @@ def test_local_latest_prefers_compact_frame_and_keeps_legacy_fallback(tmp_path: 
     store.close()
 
 
-def test_overflow_abandons_whole_session_and_tracks_drops(tmp_path: Path, monkeypatch) -> None:
+def test_overflow_marks_degraded_without_dropping_backlog(tmp_path: Path, monkeypatch) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     configure(store, "QC100", 1, 100)
     original_session = append(store).upload_session_id
@@ -187,12 +187,35 @@ def test_overflow_abandons_whole_session_and_tracks_drops(tmp_path: Path, monkey
 
     result = store.maintenance(7)
 
-    assert result["dropped_records"] == 2
-    assert result["session_switched"] is True
-    assert store.stats() == {}
-    assert store.pending_session_switch().old_session_id == original_session
-    assert store.snapshot_target_seq() == 0
-    assert store.operational_status()["dropped_records"] == 2
+    assert result["dropped_records"] == 0
+    assert result["session_switched"] is False
+    assert result["degraded"] is True
+    assert result["degraded_reasons"] == ["disk_overflow"]
+    assert result["backlog_count"] == 2
+    assert store.stats() == {"pending": 2}
+    assert store.pending_session_switch() is None
+    assert store.current_session_id() == original_session
+    assert store.snapshot_target_seq() == 2
+    assert store.operational_status()["dropped_records"] == 0
+    store.close()
+
+
+def test_overflow_rejects_new_durable_frame_without_touching_existing_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = OutboxStore(tmp_path / "edge.db")
+    configure(store, "QC100", 1, 100)
+    append(store)
+    monkeypatch.setattr(
+        store,
+        "_disk_status",
+        lambda: {"disk_total_bytes": 100, "disk_free_bytes": 4, "disk_used_percent": 96.0, "watermark": "overflow"},
+    )
+
+    with pytest.raises(RuntimeError, match="refusing new durable data"):
+        append(store)
+
+    assert store.stats() == {"pending": 1}
     store.close()
 
 

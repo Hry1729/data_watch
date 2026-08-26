@@ -5,11 +5,13 @@ import hashlib
 import hmac
 import json
 import secrets
+import string
 import time
 from typing import Any
 
 PBKDF2_ALGORITHM = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = 600000
+TEMPORARY_PASSWORD_ALPHABET = string.ascii_letters + string.digits + "-_"
 
 
 def _base64url_encode(raw: bytes) -> str:
@@ -48,6 +50,13 @@ def verify_password(password: str, encoded: str) -> bool:
         iterations,
     ).hex()
     return hmac.compare_digest(candidate, digest)
+
+
+def generate_temporary_password(length: int = 24) -> str:
+    """Generate a high-entropy password intended for one-time delivery."""
+    if length < 16:
+        raise ValueError("temporary password length must be at least 16")
+    return "".join(secrets.choice(TEMPORARY_PASSWORD_ALPHABET) for _ in range(length))
 
 
 def create_signed_token(

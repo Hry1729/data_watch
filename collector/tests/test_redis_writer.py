@@ -13,11 +13,16 @@ from storage.redis_writer import RedisWriter
 from monitor.performance import PerformanceMetrics
 
 
-def _make_config(shard_count: int = 4, maxlen: int = 500000) -> SimpleNamespace:
+def _make_config(
+    shard_count: int = 4,
+    maxlen: int = 500000,
+    warn_entries: int = 50000,
+) -> SimpleNamespace:
     return SimpleNamespace(
         redis=SimpleNamespace(
             stream_shard_count=shard_count,
             stream_maxlen=maxlen,
+            stream_warn_entries=warn_entries,
         )
     )
 
@@ -142,6 +147,51 @@ class TestWriteStream:
         assert kwargs["maxlen"] == 200000
         assert kwargs["approximate"] is True
 
+    def test_xadd_omits_trim_when_maxlen_is_zero(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config(maxlen=0))
+
+        writer.write_stream("qc100", "qc", "g001", 100, 0, 1, {})
+
+        assert mock_redis.xadd.call_args[1] == {}
+
+    def test_no_trim_mode_still_observes_and_warns_at_configured_threshold(self, mock_redis):
+        mock_redis.xlen.return_value = 50
+        writer = RedisWriter(
+            mock_redis,
+            _make_config(maxlen=0, warn_entries=50),
+        )
+        writer._stream_observe_interval_s = 0
+
+        with patch("storage.redis_writer.logger.warning") as warning:
+            writer.write_stream("qc100", "qc", "g001", 100, 0, 1, {})
+
+        stream_key = mock_redis.xadd.call_args[0][0]
+        mock_redis.xlen.assert_called_once_with(stream_key)
+        assert warning.call_count == 1
+        assert "Writer lag/Redis memory pressure" in warning.call_args.args[0]
+        assert writer._metrics.snapshot()["gauges"][f"redis_stream_len:{stream_key}"] == 50
+
+    def test_no_trim_capacity_observation_can_be_disabled(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config(maxlen=0, warn_entries=0))
+
+        writer.write_stream("qc100", "qc", "g001", 100, 0, 1, {})
+
+        mock_redis.xlen.assert_not_called()
+
+    def test_positive_maxlen_observes_capacity_and_warns_near_limit(self, mock_redis):
+        mock_redis.xlen.return_value = 90
+        writer = RedisWriter(mock_redis, _make_config(maxlen=100))
+        writer._stream_observe_interval_s = 0
+
+        with patch("storage.redis_writer.logger.warning") as warning:
+            writer.write_stream("qc100", "qc", "g001", 100, 0, 1, {})
+
+        stream_key = mock_redis.xadd.call_args[0][0]
+        mock_redis.xlen.assert_called_once_with(stream_key)
+        assert warning.call_count == 1
+        assert "lag" in warning.call_args.args[0]
+        assert writer._metrics.snapshot()["gauges"][f"redis_stream_len:{stream_key}"] == 90
+
 
 # ---------------------------------------------------------------------------
 # write_window_stream（§7.5：window+stream 合并一个 pipeline）
@@ -161,6 +211,16 @@ class TestWriteWindowStream:
         assert pipe.lpush.call_args[0][0] == "rt:window:qc100:g001:100"
         assert pipe.ltrim.called
         assert pipe.xadd.call_args[0][0] == f"rt:stream:qc:g001:{shard_no}"
+
+    def test_pipeline_xadd_omits_trim_when_maxlen_is_zero(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config(maxlen=0))
+
+        writer.write_window_stream(
+            "qc100", "qc", "g001", 100, 1000, 2, {"ts": 1000}, {"1": "3.14"}
+        )
+
+        pipe = mock_redis.pipeline.return_value
+        assert pipe.xadd.call_args[1] == {}
         # latest 不在本方法内（latest-last 由调用方保证）
         mock_redis.hset.assert_not_called()
 

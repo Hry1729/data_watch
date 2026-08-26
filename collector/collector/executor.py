@@ -254,11 +254,6 @@ class TaskExecutor:
                     result,
                     native_quality,
                 )
-        except ExecutorSaturatedError as exc:
-            self._total_errors += 1
-            self._warn_executor_saturated("parse", task, exc)
-            self._record_read_summary(task, 0, elapsed * 1000, error=True)
-            return
         finally:
             self._metrics.record_timing(
                 "parse_ms", (self._clock() - parse_start) * 1000
@@ -283,11 +278,6 @@ class TaskExecutor:
                 if not written:
                     self._record_stale_generation_drop()
                     return
-            except ExecutorSaturatedError as exc:
-                self._total_errors += 1
-                self._warn_executor_saturated("redis", task, exc)
-                self._record_read_summary(task, len(points), elapsed * 1000, error=True)
-                return
             except Exception as exc:
                 self._total_errors += 1
                 self._metrics.increment("redis_write_error_count")

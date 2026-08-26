@@ -212,7 +212,7 @@ async def test_executor_runs_parse_on_injected_worker_executor():
 
 
 @pytest.mark.asyncio
-async def test_executor_rejects_cycle_when_parse_executor_is_saturated():
+async def test_executor_backpressures_when_parse_executor_is_saturated():
     config = _make_single_group_config("EXE_PARSE_FULL")
     device_manager = DeviceManager(config)
     device_manager.register_devices()
@@ -249,15 +249,18 @@ async def test_executor_rejects_cycle_when_parse_executor_is_saturated():
     )
     task = CollectTask(device=device, scan_task=device.scan_tasks[0])
 
-    await executor.execute(task)
+    execution = asyncio.create_task(executor.execute(task))
+    await asyncio.sleep(0.02)
+    assert execution.done() is False
     release.set()
     await blocker
+    await execution
     await executor.shutdown()
 
-    redis_writer.write_window_stream.assert_not_called()
-    redis_writer.write_latest.assert_not_called()
-    assert executor.stats["total_errors"] == 1
-    assert metrics.snapshot()["counters"]["parse_executor_reject_count"] == 1
+    redis_writer.write_window_stream.assert_called_once()
+    redis_writer.write_latest.assert_called_once()
+    assert executor.stats["total_errors"] == 0
+    assert metrics.snapshot()["counters"]["parse_executor_wait_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -298,7 +301,7 @@ async def test_executor_runs_redis_on_injected_worker_executor():
 
 
 @pytest.mark.asyncio
-async def test_executor_rejects_cycle_when_redis_executor_is_saturated():
+async def test_executor_backpressures_when_redis_executor_is_saturated():
     config = _make_single_group_config("EXE_REDIS_FULL")
     device_manager = DeviceManager(config)
     device_manager.register_devices()
@@ -335,15 +338,18 @@ async def test_executor_rejects_cycle_when_redis_executor_is_saturated():
     )
     task = CollectTask(device=device, scan_task=device.scan_tasks[0])
 
-    await executor.execute(task)
+    execution = asyncio.create_task(executor.execute(task))
+    await asyncio.sleep(0.02)
+    assert execution.done() is False
     release.set()
     await blocker
+    await execution
     await executor.shutdown()
 
-    redis_writer.write_window_stream.assert_not_called()
-    redis_writer.write_latest.assert_not_called()
-    assert executor.stats["total_errors"] == 1
-    assert metrics.snapshot()["counters"]["redis_executor_reject_count"] == 1
+    redis_writer.write_window_stream.assert_called_once()
+    redis_writer.write_latest.assert_called_once()
+    assert executor.stats["total_errors"] == 0
+    assert metrics.snapshot()["counters"]["redis_executor_wait_count"] == 1
 
 
 @pytest.mark.asyncio

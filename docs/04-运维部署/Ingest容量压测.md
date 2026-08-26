@@ -121,9 +121,9 @@ $KeyHex = "<与夹具一致的测试私钥>"
 
 ## 7. Redis 与 Writer 容量注意事项
 
-- `INGEST_STREAM_MAXLEN` 默认每 Stream 50000，是近似裁剪目标，不是精确硬上限。
-- Ingest 在 `ingest:stream_trim_item_counts` Hash 中按 Stream 独立累计；每接纳 5000 个 item 才对该 Stream 执行一次 `XTRIM MAXLEN ~`，随后保留计数余数。
-- Redis 使用近似裁剪，实际长度会短暂高于 maxlen；按“maxlen + 裁剪间隔 + Redis 近似误差”预留内存。
+- `INGEST_STREAM_MAXLEN` 默认为 0，表示不主动裁剪 Stream，以保留待入库历史；压测必须持续观察 Redis 内存、Stream 长度和 Writer lag。
+- 只有显式配置正数上限时，Ingest 才在 `ingest:stream_trim_item_counts` Hash 中按 Stream 独立累计；每接纳 5000 个 item 执行一次 `XTRIM MAXLEN ~`，随后保留计数余数。
+- 正数上限是有损应急策略；Redis 使用近似裁剪，实际长度会短暂高于 maxlen，需按“maxlen + 裁剪间隔 + Redis 近似误差”预留内存。
 - Writer 默认 `consumer_workers=4`、`flush_interval_ms=200`、`batch_count=1000`、`max_buffer_rows=10000`。每个 worker 使用独立 MySQL mapper 和 TDengine 连接。
 - 增加 Ingest worker 会同时增加 Redis/MySQL 连接和控制缓存副本，必须联动核算。
 

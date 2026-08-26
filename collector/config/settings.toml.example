@@ -47,4 +47,5 @@ port = 6379
 db = 0
 password = ""
 stream_shard_count = 4
-stream_maxlen = 50000  # 每 shard 上限。MAXLEN 卡条数不卡字节；单条约 9KB 时 ≈ 450MB/shard。组合数增多时按 Redis maxmemory 预算重算
+stream_maxlen = 0  # 0=不主动裁剪（默认，保证历史完整性）；正数=有损应急上限，接近上限会告警
+stream_warn_entries = 50000  # 无损模式的 XLEN/lag 与 Redis 内存压力告警阈值；<=0 禁用

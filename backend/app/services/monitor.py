@@ -314,6 +314,20 @@ class MonitorService:
             ).mappings().all()
         ]
 
+    async def validate_realtime_target(self, device_code: str, group_code: str) -> bool:
+        """Return whether a device/group has a known, enabled point set."""
+        normalized_device = str(device_code or "").strip()
+        normalized_group = str(group_code or "").strip()
+        if not normalized_device or not normalized_group:
+            return False
+        if len(normalized_device) > 128 or len(normalized_group) > 64:
+            return False
+        device = await self._fetch_target_device(None, device_code=normalized_device)
+        if device is None:
+            return False
+        points = await self._fetch_device_points(int(device["device_id"]), normalized_group)
+        return bool(points)
+
     def _build_connect_status(self, _device_status: int, last_collect_time: datetime | None) -> str:
         if last_collect_time is None:
             return "offline"

@@ -44,6 +44,7 @@ class BoundedThreadPoolExecutor(ThreadPoolExecutor):
         self._set_gauge("pending", 0)
         self._set_gauge("peak_pending", 0)
         self._increment("reject_count", 0)
+        self._increment("wait_count", 0)
 
     @property
     def pending(self) -> int:
@@ -122,12 +123,12 @@ class BoundedExecutor:
         if self._closed:
             raise RuntimeError(f"{self.name} executor is closed")
         if self._slots.locked():
-            self._increment("reject_count")
-            raise ExecutorSaturatedError(
-                f"{self.name} executor capacity reached: {self.max_pending}"
-            )
+            self._increment("wait_count")
 
         await self._slots.acquire()
+        if self._closed:
+            self._slots.release()
+            raise RuntimeError(f"{self.name} executor is closed")
         self._pending += 1
         self._peak_pending = max(self._peak_pending, self._pending)
         self._drained.clear()

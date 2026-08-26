@@ -36,8 +36,9 @@ async def test_cancelled_waiter_does_not_release_capacity_early() -> None:
     with pytest.raises(asyncio.CancelledError):
         await first
 
-    with pytest.raises(ExecutorSaturatedError):
-        await executor.run(lambda: "must not run")
+    waiting = asyncio.create_task(executor.run(lambda: "must run after backpressure"))
+    await asyncio.sleep(0.02)
+    assert waiting.done() is False
 
     release.set()
     for _ in range(100):
@@ -45,11 +46,13 @@ async def test_cancelled_waiter_does_not_release_capacity_early() -> None:
             break
         await asyncio.sleep(0.01)
 
+    assert await waiting == "must run after backpressure"
     assert await executor.run(lambda: "next") == "next"
     await executor.shutdown()
 
     snapshot = metrics.snapshot()
-    assert snapshot["counters"]["test_executor_reject_count"] == 1
+    assert snapshot["counters"]["test_executor_reject_count"] == 0
+    assert snapshot["counters"]["test_executor_wait_count"] == 1
     assert snapshot["gauges"]["test_executor_pending"] == 0
     assert snapshot["gauges"]["test_executor_peak_pending"] == 1
 

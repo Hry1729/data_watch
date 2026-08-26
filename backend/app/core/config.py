@@ -55,10 +55,12 @@ def _load_backend_env_defaults() -> dict[str, str]:
 class Settings:
     app_name: str
     app_version: str
+    app_env: str
     log_level: str
     api_prefix: str
     host: str
     port: int
+    max_body_bytes: int
     cors_origins: list[str]
     mysql_host: str
     mysql_port: int
@@ -101,6 +103,11 @@ class Settings:
     cli_min_version: str
     cli_max_version: str
     cli_release_dir: str
+    export_max_active_tasks: int = 4
+    export_max_active_tasks_per_user: int = 2
+    export_max_retained_tasks: int = 100
+    export_max_records: int = 200000
+    realtime_ws_max_subscriptions_per_connection: int = 20
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -137,10 +144,17 @@ def get_settings() -> Settings:
     return Settings(
         app_name=str(read_setting("BACKEND_APP_NAME", "Industrial Device Monitor Backend")),
         app_version=str(read_setting("BACKEND_APP_VERSION", "0.1.0")),
+        app_env=str(read_setting("BACKEND_ENV", "production")).strip().lower(),
         log_level=str(read_setting("BACKEND_LOG_LEVEL", runtime_defaults.get("log_level", "INFO"))),
         api_prefix=str(read_setting("BACKEND_API_PREFIX", "/api/device-monitor")),
         host=str(read_setting("BACKEND_HOST", "0.0.0.0")),
         port=int(read_setting("BACKEND_PORT", 8000)),
+        max_body_bytes=int(
+            read_setting(
+                "BACKEND_MAX_BODY_BYTES",
+                read_setting("DATAWATCH_MAX_HTTP_BODY_BYTES", 4 * 1024 * 1024),
+            )
+        ),
         cors_origins=cors_origins,
         mysql_host=str(read_setting("MYSQL_HOST", mysql_defaults.get("host", "127.0.0.1"))),
         mysql_port=int(read_setting("MYSQL_PORT", mysql_defaults.get("port", 3306))),
@@ -191,5 +205,14 @@ def get_settings() -> Settings:
                 "CLI_RELEASE_DIR",
                 str(Path(__file__).resolve().parents[2] / "cli-releases"),
             )
+        ),
+        export_max_active_tasks=int(read_setting("EXPORT_MAX_ACTIVE_TASKS", 4)),
+        export_max_active_tasks_per_user=int(
+            read_setting("EXPORT_MAX_ACTIVE_TASKS_PER_USER", 2)
+        ),
+        export_max_retained_tasks=int(read_setting("EXPORT_MAX_RETAINED_TASKS", 100)),
+        export_max_records=int(read_setting("EXPORT_MAX_RECORDS", 200000)),
+        realtime_ws_max_subscriptions_per_connection=int(
+            read_setting("REALTIME_WS_MAX_SUBSCRIPTIONS_PER_CONNECTION", 20)
         ),
     )

@@ -43,6 +43,7 @@ export function LoginPage() {
 
       let backendToken = "";
       let backendRefreshToken = "";
+      let mustChangePassword = false;
       let user = {
         userId: 0,
         userName: username,
@@ -55,15 +56,19 @@ export function LoginPage() {
         const centerAuth = await backendClient.login(username, password);
         backendToken = centerAuth.token;
         backendRefreshToken = centerAuth.refreshToken;
-        try {
-          const [userInfo, menus] = await Promise.all([
-            backendClient.userInfo(backendToken),
-            backendClient.currentUserMenus(backendToken),
-          ]);
-          user = userInfo;
-          allowedPaths = buildAllowedPaths(menus, userInfo.roles);
-        } catch (centerProfileError) {
-          if ((centerProfileError as AppError)?.type === "unauthorized") throw centerProfileError;
+        mustChangePassword = Boolean(centerAuth.mustChangePassword);
+        const userInfo = await backendClient.userInfo(backendToken);
+        user = userInfo;
+        if (typeof userInfo.mustChangePassword === "boolean") {
+          mustChangePassword = userInfo.mustChangePassword;
+        }
+        if (!mustChangePassword) {
+          try {
+            const menus = await backendClient.currentUserMenus(backendToken);
+            allowedPaths = buildAllowedPaths(menus, userInfo.roles);
+          } catch (centerProfileError) {
+            if ((centerProfileError as AppError)?.type === "unauthorized") throw centerProfileError;
+          }
         }
       } catch (centerError) {
         if (BUILD_ROLE !== "edge" || !canUseEdgeOffline(centerError)) throw centerError;
@@ -75,6 +80,7 @@ export function LoginPage() {
         backendRefreshToken,
         user,
         allowedPaths,
+        mustChangePassword,
       });
       navigate(pickFallbackPath(allowedPaths), { replace: true });
 

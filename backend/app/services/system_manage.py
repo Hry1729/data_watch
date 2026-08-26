@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
-from app.core.security import hash_password
+from app.core.security import generate_temporary_password, hash_password
 from app.models import (
     SysDataPermission,
     SysMenu,
@@ -68,7 +68,7 @@ class SystemManageService:
         *,
         actor: str,
         current_user_roles: list[str],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         existing = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
         if existing is not None and not existing.deleted:
             raise ApiError(400, "用户名已存在")
@@ -82,9 +82,12 @@ class SystemManageService:
             role_ids = [default_role_id]
         if await self._role_ids_include_super(role_ids) and not current_is_super:
             raise ApiError(403, "只有超级管理员可以分配超级管理员角色")
+        temporary_password = generate_temporary_password()
         user = SysUser(
             user_name=payload.user_name,
-            password_hash=hash_password(payload.password or "123456"),
+            password_hash=hash_password(temporary_password),
+            token_version=0,
+            must_change_password=True,
             nick_name=payload.nick_name or payload.user_name,
             email=payload.user_email,
             phone=payload.user_phone,
@@ -100,7 +103,13 @@ class SystemManageService:
         for role_id in role_ids:
             self.session.add(SysUserRole(user_id=user.id, role_id=role_id))
         await self.session.commit()
-        return {"id": user.id}
+        return {
+            "id": user.id,
+            "userId": user.id,
+            "temporaryPassword": temporary_password,
+            "mustChangePassword": True,
+            "tokenVersion": 0,
+        }
 
     async def update_user(
         self,
@@ -110,7 +119,7 @@ class SystemManageService:
         actor: str,
         current_user_id: int,
         current_user_roles: list[str],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         user = await self._get_user_or_raise(user_id)
         if payload.user_name and payload.user_name != user.user_name:
             duplicate = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
@@ -178,14 +187,23 @@ class SystemManageService:
         *,
         actor: str,
         current_user_roles: list[str],
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         if await self._user_has_role(user_id, "R_SUPER") and not self._is_current_super(current_user_roles):
             raise ApiError(403, "只有超级管理员可以重置超级管理员密码")
         user = await self._get_user_or_raise(user_id)
-        user.password_hash = hash_password(payload.password)
+        temporary_password = generate_temporary_password()
+        user.password_hash = hash_password(temporary_password)
+        user.must_change_password = True
+        user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
         user.update_by = actor
         await self.session.commit()
-        return {"id": user.id}
+        return {
+            "id": user.id,
+            "userId": user.id,
+            "temporaryPassword": temporary_password,
+            "mustChangePassword": True,
+            "tokenVersion": user.token_version,
+        }
 
     async def delete_user(
         self,

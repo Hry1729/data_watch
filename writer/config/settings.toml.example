@@ -37,3 +37,10 @@ batch_count = 200
 max_buffer_rows = 2000
 pending_min_idle_ms = 30000
 pending_max_retry = 5
+scope_refresh_interval_s = 60  # 运行期发现新增 device_type/group_code；<=0 按 1 秒限幅
+# 每个 rt:dlq:{device_type}:{group_code} 的保留上限；0 表示不裁剪（默认，无损）。
+# 配置正数会在超限时淘汰最旧死信，必须由部署方显式接受该数据损失策略。
+dlq_max_size = 0
+dlq_alert_threshold = 0.9
+# 无界模式达到此条目数时记录 warning；<=0 禁用。
+dlq_warn_entries = 1000

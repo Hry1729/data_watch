@@ -21,6 +21,8 @@ interface AuthContextValue {
   login(store: AuthStore): void;
   /** 清空 token，跳转 /login；幂等，可重复调用 */
   logout(): void;
+  /** 完成一次性密码更换后解除强制改密状态。 */
+  clearMustChangePassword(): void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -51,9 +53,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate("/login", { replace: true });
   }
 
+  function clearMustChangePassword() {
+    setAuth((current) => current ? { ...current, mustChangePassword: false } : current);
+  }
+
   return (
     <AuthContext.Provider
-      value={{ auth, isAuthenticated: auth !== null, login, logout }}
+      value={{ auth, isAuthenticated: auth !== null, login, logout, clearMustChangePassword }}
     >
       {children}
     </AuthContext.Provider>
@@ -91,6 +97,9 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 export function MenuAccessGuard({ children }: { children: ReactNode }) {
   const { auth } = useAuth();
   const location = useLocation();
+  if (auth?.mustChangePassword && location.pathname !== "/force-password-change") {
+    return <Navigate to="/force-password-change" state={{ from: location.pathname }} replace />;
+  }
   if (!canAccessPath(location.pathname, auth?.allowedPaths, auth?.user?.roles)) {
     return <Navigate to={pickFallbackPath(auth?.allowedPaths)} replace />;
   }
@@ -104,7 +113,7 @@ export function MenuAccessGuard({ children }: { children: ReactNode }) {
 export function PublicOnlyRoute({ children }: { children: ReactNode }) {
   const { auth, isAuthenticated } = useAuth();
   if (isAuthenticated) {
-    return <Navigate to={pickFallbackPath(auth?.allowedPaths)} replace />;
+    return <Navigate to={auth?.mustChangePassword ? "/force-password-change" : pickFallbackPath(auth?.allowedPaths)} replace />;
   }
   return <>{children}</>;
 }

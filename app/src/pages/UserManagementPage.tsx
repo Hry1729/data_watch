@@ -18,7 +18,7 @@ import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
 import type { UserListItem, UserPayload, UserQuery } from "@/types/system-management";
 
-const emptyForm: UserPayload = { userName: "", password: "", nickName: "", userPhone: "", userEmail: "", userGender: "unknown", status: "1", userRoles: ["R_USER"] };
+const emptyForm: UserPayload = { userName: "", nickName: "", userPhone: "", userEmail: "", userGender: "unknown", status: "1", userRoles: ["R_USER"] };
 const genderName: Record<string, string> = { male: "男", female: "女", unknown: "未知" };
 
 export function UserManagementPage() {
@@ -30,6 +30,7 @@ export function UserManagementPage() {
   const [editing, setEditing] = useState<UserListItem | null>(null);
   const [form, setForm] = useState<UserPayload>(emptyForm);
   const [confirm, setConfirm] = useState<{ type: "delete" | "reset"; user: UserListItem } | null>(null);
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
   const loadUsers = useCallback((activeToken: string) => backendClient.userList(activeToken, query), [query]);
   const users = useBackendQuery(loadUsers);
@@ -56,8 +57,12 @@ export function UserManagementPage() {
     if (form.userName.trim().length < 2) return toast.error("用户名至少需要 2 个字符");
     if (form.userEmail && !/^\S+@\S+\.\S+$/.test(form.userEmail)) return toast.error("请输入正确的邮箱格式");
     try {
-      if (editing) await backendClient.updateUser(token, editing.id, form);
-      else await backendClient.createUser(token, form);
+      if (editing) {
+        await backendClient.updateUser(token, editing.id, form);
+      } else {
+        const result = await backendClient.createUser(token, form);
+        setTemporaryPassword(result.temporaryPassword);
+      }
       toast.success(editing ? "用户更新成功" : "用户添加成功");
       setDialogOpen(false);
       users.refresh();
@@ -74,7 +79,11 @@ export function UserManagementPage() {
     if (!token || !confirm) return;
     try {
       if (confirm.type === "delete") { await backendClient.deleteUser(token, confirm.user.id); toast.success("用户已删除"); users.refresh(); }
-      else { await backendClient.resetUserPassword(token, confirm.user.id); toast.success("密码已重置为 123456"); }
+      else {
+        const result = await backendClient.resetUserPassword(token, confirm.user.id);
+        setTemporaryPassword(result.temporaryPassword);
+        toast.success("密码已重置，请通过安全渠道交付临时密码");
+      }
       setConfirm(null);
     } catch { toast.error(confirm.type === "delete" ? "删除失败" : "重置密码失败"); }
   }
@@ -182,9 +191,10 @@ export function UserManagementPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑用户" : "添加用户"}</DialogTitle></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2 sm:col-span-2"><Label>用户名</Label><Input disabled={Boolean(editing)} value={form.userName} onChange={(event) => setForm((value) => ({ ...value, userName: event.target.value }))} /></div>{!editing && <div className="space-y-2 sm:col-span-2"><Label>密码</Label><Input type="password" placeholder="留空则默认 123456" value={form.password ?? ""} onChange={(event) => setForm((value) => ({ ...value, password: event.target.value }))} /></div>}<div className="space-y-2"><Label>昵称</Label><Input value={form.nickName ?? ""} onChange={(event) => setForm((value) => ({ ...value, nickName: event.target.value }))} /></div><div className="space-y-2"><Label>手机号</Label><Input value={form.userPhone ?? ""} onChange={(event) => setForm((value) => ({ ...value, userPhone: event.target.value }))} /></div><div className="space-y-2"><Label>邮箱</Label><Input value={form.userEmail ?? ""} onChange={(event) => setForm((value) => ({ ...value, userEmail: event.target.value }))} /></div><div className="space-y-2"><Label>性别</Label><Select value={form.userGender ?? "unknown"} onValueChange={(userGender) => setForm((value) => ({ ...value, userGender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unknown">未知</SelectItem><SelectItem value="male">男</SelectItem><SelectItem value="female">女</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>状态</Label><Select value={form.status ?? "1"} onValueChange={(status) => setForm((value) => ({ ...value, status }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">启用</SelectItem><SelectItem value="2">禁用</SelectItem></SelectContent></Select></div><div className="space-y-2 sm:col-span-2"><Label>角色</Label><div className="grid max-h-40 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">{(roles.data ?? []).map((role) => <label key={role.roleCode} className="flex items-center gap-2 text-sm"><Checkbox disabled={!role.enabled} checked={(form.userRoles ?? []).includes(role.roleCode)} onCheckedChange={(checked) => toggleRole(role.roleCode, checked === true)} /><span>{role.roleName}</span><span className="text-xs text-muted-foreground">{role.roleCode}</span></label>)}</div></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={() => void saveUser()}>提交</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑用户" : "添加用户"}</DialogTitle></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2 sm:col-span-2"><Label>用户名</Label><Input disabled={Boolean(editing)} value={form.userName} onChange={(event) => setForm((value) => ({ ...value, userName: event.target.value }))} /></div>{!editing && <p className="text-xs text-muted-foreground sm:col-span-2">创建后系统会生成一次性临时密码，提交成功后仅显示一次。</p>}<div className="space-y-2"><Label>昵称</Label><Input value={form.nickName ?? ""} onChange={(event) => setForm((value) => ({ ...value, nickName: event.target.value }))} /></div><div className="space-y-2"><Label>手机号</Label><Input value={form.userPhone ?? ""} onChange={(event) => setForm((value) => ({ ...value, userPhone: event.target.value }))} /></div><div className="space-y-2"><Label>邮箱</Label><Input value={form.userEmail ?? ""} onChange={(event) => setForm((value) => ({ ...value, userEmail: event.target.value }))} /></div><div className="space-y-2"><Label>性别</Label><Select value={form.userGender ?? "unknown"} onValueChange={(userGender) => setForm((value) => ({ ...value, userGender }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unknown">未知</SelectItem><SelectItem value="male">男</SelectItem><SelectItem value="female">女</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>状态</Label><Select value={form.status ?? "1"} onValueChange={(status) => setForm((value) => ({ ...value, status }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">启用</SelectItem><SelectItem value="2">禁用</SelectItem></SelectContent></Select></div><div className="space-y-2 sm:col-span-2"><Label>角色</Label><div className="grid max-h-40 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">{(roles.data ?? []).map((role) => <label key={role.roleCode} className="flex items-center gap-2 text-sm"><Checkbox disabled={!role.enabled} checked={(form.userRoles ?? []).includes(role.roleCode)} onCheckedChange={(checked) => toggleRole(role.roleCode, checked === true)} /><span>{role.roleName}</span><span className="text-xs text-muted-foreground">{role.roleCode}</span></label>)}</div></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={() => void saveUser()}>提交</Button></DialogFooter></DialogContent></Dialog>
 
-      <AlertDialog open={Boolean(confirm)} onOpenChange={(open) => { if (!open) setConfirm(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirm?.type === "delete" ? "删除用户" : "重置密码"}</AlertDialogTitle><AlertDialogDescription>{confirm?.type === "delete" ? `确定要删除用户“${confirm.user.userName}”吗？此操作不可撤销。` : `确定将用户“${confirm?.user.userName}”的密码重置为 123456 吗？`}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void runConfirm()}>{confirm?.type === "delete" ? "确认删除" : "确认重置"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={Boolean(confirm)} onOpenChange={(open) => { if (!open) setConfirm(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{confirm?.type === "delete" ? "删除用户" : "重置密码"}</AlertDialogTitle><AlertDialogDescription>{confirm?.type === "delete" ? `确定要删除用户“${confirm.user.userName}”吗？此操作不可撤销。` : `确定为用户“${confirm?.user.userName}”生成一次性临时密码吗？用户首次登录后必须修改。`}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void runConfirm()}>{confirm?.type === "delete" ? "确认删除" : "确认重置"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <Dialog open={temporaryPassword !== null} onOpenChange={(open) => { if (!open) setTemporaryPassword(null); }}><DialogContent><DialogHeader><DialogTitle>临时密码（仅显示本次）</DialogTitle></DialogHeader><p className="text-sm text-muted-foreground">请通过安全渠道交付给用户，关闭后不会再次显示，也不会保存到浏览器。</p><div className="rounded-md border bg-muted/40 p-3 text-center font-mono text-base select-all">{temporaryPassword}</div><DialogFooter><Button onClick={() => setTemporaryPassword(null)}>我已安全交付</Button></DialogFooter></DialogContent></Dialog>
     </div>
   );
 }

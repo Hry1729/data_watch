@@ -144,7 +144,7 @@ async def test_network_error_is_logged_and_retried(tmp_path: Path, caplog) -> No
 
 
 @pytest.mark.asyncio
-async def test_seq_reject_abandons_session_and_cas_switches(tmp_path: Path) -> None:
+async def test_seq_reject_switches_session_without_discarding_backlog(tmp_path: Path) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     seed(store, 2)
     old_session = store.current_session_id()
@@ -180,7 +180,13 @@ async def test_seq_reject_abandons_session_and_cas_switches(tmp_path: Path) -> N
 
     assert store.current_session_id() != old_session
     assert store.pending_session_switch() is None
-    assert store.stats() == {}
+    assert store.stats() == {"pending": 2}
+    with store._lock:
+        rows = store._connection.execute(
+            "SELECT local_seq, upload_session_id FROM outbox ORDER BY local_seq"
+        ).fetchall()
+    assert [row["local_seq"] for row in rows] == [1, 2]
+    assert {row["upload_session_id"] for row in rows} == {store.current_session_id()}
     assert switch_payloads[0]["old_session_id"] == old_session
     await client.aclose()
     store.close()

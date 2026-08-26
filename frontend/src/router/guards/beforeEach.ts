@@ -253,6 +253,12 @@ function handleLoginStatus(
   userStore: ReturnType<typeof useUserStore>,
   next: NavigationGuardNext
 ): boolean {
+  // 已登录时，必须先完成临时密码更换；强制改密页本身例外。
+  if (userStore.isLogin && userStore.mustChangePassword && to.name !== 'ForceChangePassword') {
+    next({ name: 'ForceChangePassword', query: { redirect: to.fullPath }, replace: true })
+    return false
+  }
+
   // 已登录或访问登录页或静态路由，直接放行
   if (userStore.isLogin || to.path === RoutesAlias.Login || isStaticRoute(to.path)) {
     return true
@@ -418,6 +424,9 @@ async function fetchUserInfo(): Promise<void> {
   const userStore = useUserStore()
   const data = await fetchGetUserInfo()
   userStore.setUserInfo(data)
+  if (typeof data.mustChangePassword === 'boolean') {
+    userStore.setMustChangePassword(data.mustChangePassword)
+  }
   // 检查并清理工作台标签页（如果是不同用户登录）
   userStore.checkAndClearWorktabs()
 }

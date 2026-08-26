@@ -15,6 +15,8 @@ class SysUser(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     user_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     nick_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     email: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     phone: Mapped[str] = mapped_column(String(32), nullable=False, default="")

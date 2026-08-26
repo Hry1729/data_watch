@@ -6,12 +6,15 @@ export interface AuthUserInfo {
   avatar?: string;
   roles: string[];
   buttons: string[];
+  mustChangePassword?: boolean;
 }
 
 export interface AuthStore {
   agentToken: string;
   backendToken: string;
   backendRefreshToken: string;
+  /** Backend marks a newly reset account until the user changes the temporary password. */
+  mustChangePassword?: boolean;
   /** 当前用户资料（角色 / 按钮权限） */
   user?: AuthUserInfo;
   /** 侧栏与路由可见 path；含桌面专有页 */

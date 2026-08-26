@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
+import { loadAllDevicePages } from "@/lib/device-catalog";
 import { cn } from "@/lib/utils";
 
 const DEVICE_TYPE_LABELS: Record<string, string> = {
@@ -47,13 +48,13 @@ function getDeviceTone(connectStatus?: string, deviceStatus?: string) {
   return "bg-destructive text-white hover:bg-destructive/90";
 }
 
-function RateCard({ title, value, variant }: { title: string; value: number; variant: ProgressVariant }) {
+function RateCard({ title, value, variant }: { title: string; value: number | null; variant: ProgressVariant }) {
   return (
     <Card size="sm" className="border border-border bg-card shadow-xs">
       <CardContent className="flex min-h-24 flex-col justify-center py-2">
         <p className="text-xs text-muted-foreground">{title}</p>
-        <p className="mt-1 text-2xl font-semibold tabular-nums">{value.toFixed(1)}%</p>
-        <Progress className="mt-2" value={value} variant={variant} aria-label={`${title} ${value.toFixed(1)}%`} />
+        <p className="mt-1 text-2xl font-semibold tabular-nums">{value == null ? "—" : `${value.toFixed(1)}%`}</p>
+        <Progress className="mt-2" value={value ?? 0} variant={variant} aria-label={value == null ? `${title} 暂不可用` : `${title} ${value.toFixed(1)}%`} />
       </CardContent>
     </Card>
   );
@@ -65,7 +66,7 @@ export default function DeviceCommunicationPage() {
   const [deviceType, setDeviceType] = useState("all");
   const [status, setStatus] = useState("all");
   const load = useCallback(
-    (token: string) => backendClient.deviceList(token, { pageNo: 1, pageSize: 1000, keyword: keyword.trim() || undefined }),
+    (token: string) => loadAllDevicePages((pageNo, pageSize) => backendClient.deviceList(token, { pageNo, pageSize, keyword: keyword.trim() || undefined })),
     [keyword],
   );
   const query = useBackendQuery(load, { intervalMs: 30_000 });
@@ -83,7 +84,7 @@ export default function DeviceCommunicationPage() {
     }, {});
     return Object.entries(grouped);
   }, [filtered]);
-  const total = devices.length;
+  const total = query.data?.total ?? devices.length;
   const online = devices.filter((device) => device.connectStatus === "online" && device.deviceStatus === "enabled").length;
   const offline = devices.filter((device) => device.connectStatus === "offline" && device.deviceStatus === "enabled").length;
   const disabled = devices.filter((device) => device.deviceStatus === "disabled").length;
@@ -103,11 +104,12 @@ export default function DeviceCommunicationPage() {
             </div>
           </CardContent>
         </Card>
-        <RateCard title="在线比例" value={total ? online / total * 100 : 0} variant="success" />
-        <RateCard title="离线比例" value={total ? offline / total * 100 : 0} variant="destructive" />
-        <RateCard title="未用比例" value={total ? disabled / total * 100 : 0} variant="warning" />
+        <RateCard title="在线比例" value={query.data?.truncated ? null : total ? online / total * 100 : 0} variant="success" />
+        <RateCard title="离线比例" value={query.data?.truncated ? null : total ? offline / total * 100 : 0} variant="destructive" />
+        <RateCard title="未用比例" value={query.data?.truncated ? null : total ? disabled / total * 100 : 0} variant="warning" />
       </div>
 
+      {query.data?.truncated && <p className="text-xs text-warning">设备超过选择器安全上限 {devices.length} 台，已加载前 {devices.length} 台；请使用关键字缩小范围。</p>}
       <Card className="border border-border">
         <CardHeader className="flex flex-row items-center gap-3">
           <div className="flex shrink-0 items-center gap-4">

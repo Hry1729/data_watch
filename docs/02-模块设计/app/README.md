@@ -112,8 +112,8 @@ flowchart TD
 | 规则 | 说明 |
 |------|------|
 | 菜单映射 | Web `component` / `path` → 桌面 path（如 `/device_monitor/point/index` → `/device/points`） |
-| 桌面专有 | Collector / Writer / Settings 始终加入 `allowedPaths` |
-| 管理员 | `R_SUPER`、`R_ADMIN` 额外加入 `/dashboard/console`（控制台） |
+| 桌面专有 | Collector / Writer 始终加入 `allowedPaths`；Settings 与控制台仅管理员可见 |
+| 管理员 | `R_SUPER`、`R_ADMIN` 额外加入 `/dashboard/console`（控制台）与 `/settings` |
 | 路由守卫 | `MenuAccessGuard`：无权限则跳转 `pickFallbackPath` |
 | 失败降级 | 权限接口失败不阻断登录，侧栏仅桌面专有页 |
 

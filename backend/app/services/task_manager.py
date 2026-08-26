@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.core.config import get_settings
+
 
 @dataclass
 class ExportTask:
@@ -20,6 +22,10 @@ class ExportTask:
     file_path: Optional[str] = None
     error: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class TaskLimitError(RuntimeError):
+    """Raised when export concurrency or retained-task capacity is exhausted."""
 
 
 class ExportTaskManager:
@@ -34,6 +40,12 @@ class ExportTaskManager:
                 cls._instance._tasks_lock = threading.Lock()
                 cls._instance._cleanup_task = None
                 cls._instance.tasks_file = tasks_file or str(Path(__file__).resolve().parents[3] / "data" / "exports" / "tasks.json")
+                settings = get_settings()
+                cls._instance.max_active_tasks = max(1, int(settings.export_max_active_tasks))
+                cls._instance.max_active_tasks_per_user = max(
+                    1, int(settings.export_max_active_tasks_per_user)
+                )
+                cls._instance.max_retained_tasks = max(1, int(settings.export_max_retained_tasks))
                 cls._instance._load_tasks()
             return cls._instance
 
@@ -57,6 +69,8 @@ class ExportTaskManager:
             for t in interrupted:
                 t.status = "failed"
                 t.error = "服务重启中断"
+        retained_changed = self._prune_retained_locked()
+        if interrupted or retained_changed:
             self._save_tasks()
 
     def _save_tasks(self):
@@ -77,14 +91,27 @@ class ExportTaskManager:
             print(f"Error saving tasks: {e}")
 
     def create_task(self, metadata: Optional[Dict[str, Any]] = None) -> str:
-        task_id = str(uuid.uuid4())
-        task = ExportTask(
-            task_id=task_id,
-            status="running",
-            created_at=datetime.now(timezone.utc),
-            metadata=metadata or {},
-        )
+        task_metadata = dict(metadata or {})
         with self._tasks_lock:
+            active_tasks = [task for task in self.tasks.values() if self._is_active(task)]
+            if len(active_tasks) >= self.max_active_tasks:
+                raise TaskLimitError("export global concurrency limit reached")
+            owner_id = self._owner_id(task_metadata)
+            if owner_id is not None:
+                owner_active = sum(
+                    self._owner_id(task.metadata) == owner_id
+                    for task in active_tasks
+                )
+                if owner_active >= self.max_active_tasks_per_user:
+                    raise TaskLimitError("export per-user concurrency limit reached")
+            self._prune_retained_locked()
+            task_id = str(uuid.uuid4())
+            task = ExportTask(
+                task_id=task_id,
+                status="running",
+                created_at=datetime.now(timezone.utc),
+                metadata=task_metadata,
+            )
             self.tasks[task_id] = task
             self._save_tasks()
         self._ensure_cleanup_started()
@@ -109,6 +136,7 @@ class ExportTaskManager:
                     task.file_path = file_path
                 if error:
                     task.error = error
+                self._prune_retained_locked()
                 self._save_tasks()
 
     def get_task(self, task_id: str) -> Optional[ExportTask]:
@@ -135,7 +163,8 @@ class ExportTaskManager:
             expired_ids = [
                 task_id
                 for task_id, task in self.tasks.items()
-                if (now - task.created_at).total_seconds() > 86400
+                if not self._is_active(task)
+                and (now - task.created_at).total_seconds() > 86400
             ]
             
             has_changes = False
@@ -148,9 +177,43 @@ class ExportTaskManager:
                         print(f"Error removing exported file {task.file_path}: {e}")
                 del self.tasks[task_id]
                 has_changes = True
+
+            has_changes = self._prune_retained_locked() or has_changes
                 
             if has_changes:
                 self._save_tasks()
+
+    @staticmethod
+    def _is_active(task: ExportTask) -> bool:
+        return task.status in {"running", "pending", "processing"}
+
+    @staticmethod
+    def _owner_id(metadata: Dict[str, Any] | None) -> str | None:
+        if not metadata:
+            return None
+        value = metadata.get("owner_id")
+        if value is None or str(value).strip() == "":
+            return None
+        return str(value)
+
+    def _prune_retained_locked(self) -> bool:
+        terminal = [
+            task
+            for task in self.tasks.values()
+            if not self._is_active(task)
+        ]
+        overflow = len(terminal) - self.max_retained_tasks
+        if overflow <= 0:
+            return False
+        victims = sorted(terminal, key=lambda task: task.created_at)[:overflow]
+        for task in victims:
+            if task.file_path and os.path.exists(task.file_path):
+                try:
+                    os.remove(task.file_path)
+                except OSError:
+                    pass
+            self.tasks.pop(task.task_id, None)
+        return True
 
 
 def get_export_task_manager() -> ExportTaskManager:

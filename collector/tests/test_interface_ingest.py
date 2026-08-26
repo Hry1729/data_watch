@@ -14,7 +14,10 @@ P1-2b：_IngestHTTPServer.write_points_to_redis 的多段 Redis 写入
 - 顺序回归：write_latest 必须在 write_window 与 write_stream 之后被调用。
 """
 
-from datetime import datetime
+import json
+import threading
+from datetime import datetime, timezone
+from http.client import HTTPConnection
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,6 +29,7 @@ from monitor.ingest_server import (
     _IngestRequestHandler,
     _map_opcda_quality,
     _normalize_payload,
+    _normalize_point_value,
     _point_from_dict,
 )
 
@@ -71,6 +75,18 @@ def test_point_from_dict_with_iso_timestamp():
     assert point.value == 1.23
     assert point.quality == 0
     assert isinstance(point.timestamp, datetime)
+
+
+@pytest.mark.parametrize("raw, expected", [(True, "1"), (False, "0")])
+def test_external_boolean_value_is_normalized_for_stream(raw, expected):
+    point = _point_from_dict({
+        "device_id": "EXT001",
+        "variable_id": "running",
+        "value": raw,
+    })
+
+    assert point.value == expected
+    assert _normalize_point_value(raw) == expected
 
 
 def test_point_from_dict_accepts_quality_code():
@@ -169,6 +185,69 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
         {"30041800": "12.5"},
         {"30041800": 4},
     )
+
+
+def test_frame_timestamp_uses_max_point_timestamp_for_stream_and_window():
+    """同一 frame 的宽行时间戳取点位时间戳最大值，latest 仍保留点位时间。"""
+    redis_writer = MagicMock()
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="fast",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Fast",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            ),
+            VariableConfig(
+                variable_id="slow",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.Slow",
+                data_type="REAL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=2,
+                group_code="g001",
+            ),
+        ],
+    )
+    server = _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+    earlier = datetime(2026, 4, 5, 12, 0, 0, 100000, tzinfo=timezone.utc)
+    later = datetime(2026, 4, 5, 12, 0, 0, 900000, tzinfo=timezone.utc)
+    try:
+        accepted, errors = server.write_points_to_redis([
+            DataPoint("AGV801", "fast", 1.0, timestamp=earlier),
+            DataPoint("AGV801", "slow", 2.0, timestamp=later),
+        ])
+    finally:
+        server.server_close()
+
+    assert accepted == 2
+    assert errors == []
+    frame_ts = int(later.timestamp() * 1000)
+    assert redis_writer.write_window.call_args.args[3]["ts"] == frame_ts
+    assert redis_writer.write_stream.call_args.args[4] == frame_ts
+    assert redis_writer.write_latest.call_args.args[2]["fast"]["t"] == int(earlier.timestamp() * 1000)
+    assert redis_writer.write_latest.call_args.args[2]["slow"]["t"] == frame_ts
 
 
 def test_ingest_server_update_metadata_refreshes_snapshot():
@@ -280,6 +359,122 @@ def _make_ingest_server(redis_writer):
     return server
 
 
+class _FakeOpcDaMapper:
+    mapping_count = 1
+
+    def get_variable_id(self, item_id):
+        if item_id == "OPD_Server.AGV801.ViewMain.TagRunning":
+            return "running"
+        return None
+
+
+def _post_opcda_payload(server, payload):
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=2)
+    try:
+        body = json.dumps(payload).encode("utf-8")
+        connection.request(
+            "POST",
+            "/ingest/opcda-tags",
+            body=body,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+        )
+        response = connection.getresponse()
+        return response.status, json.loads(response.read().decode("utf-8"))
+    finally:
+        connection.close()
+        server.shutdown()
+        thread.join(timeout=2)
+        server.server_close()
+
+
+def _make_opcda_ingest_server(redis_writer):
+    config = CollectorConfig(
+        devices=[
+            DeviceConfig(
+                device_id="AGV801",
+                device_type="AGV",
+                protocol="opcda_sidecar",
+                ip="127.0.0.1",
+            )
+        ],
+        variables=[
+            VariableConfig(
+                variable_id="running",
+                device_id="AGV801",
+                address="OPD_Server.AGV801.ViewMain.TagRunning",
+                data_type="BOOL",
+                scan_rate=0.1,
+                is_storage=True,
+                var_seq=1,
+                group_code="g001",
+            )
+        ],
+    )
+    return _IngestHTTPServer(
+        ("127.0.0.1", 0),
+        _IngestRequestHandler,
+        ingest_path="/ingest",
+        api_key=None,
+        max_batch_size=100,
+        opcda_mapper=_FakeOpcDaMapper(),
+        redis_writer=redis_writer,
+        realtime_config=config,
+    )
+
+
+def test_opcda_response_reports_partial_failure_and_full_failure_status():
+    redis_writer = MagicMock()
+    server = _make_opcda_ingest_server(redis_writer)
+    status, body = _post_opcda_payload(server, {
+        "schema": "opcda_tag_batch_v1",
+        "batch_id": "batch-1",
+        "points": [
+            {
+                "item_id": "OPD_Server.AGV801.ViewMain.TagRunning",
+                "device_id": "AGV801",
+                "value": True,
+                "quality": 192,
+            },
+            {
+                "item_id": "OPD_Server.AGV801.ViewMain.TagMissing",
+                "device_id": "AGV801",
+                "value": False,
+                "quality": 192,
+            },
+        ],
+    })
+
+    assert status == 200
+    assert body["batch_id"] == "batch-1"
+    assert body["accepted"] == 1
+    assert body["rejected"] == 1
+    assert body["rejected_indices"] == [1]
+    assert body["errors"]
+    stream_values = redis_writer.write_stream.call_args.args[6]
+    assert stream_values == {"running": "1"}
+
+    server = _make_opcda_ingest_server(MagicMock())
+    status, body = _post_opcda_payload(server, {
+        "schema": "opcda_tag_batch_v1",
+        "batch_id": "batch-2",
+        "points": [{
+            "item_id": "OPD_Server.AGV801.ViewMain.TagMissing",
+            "device_id": "AGV801",
+            "value": False,
+            "quality": 192,
+        }],
+    })
+
+    assert status == 400
+    assert body["batch_id"] == "batch-2"
+    assert body["accepted"] == 0
+    assert body["rejected"] == 1
+    assert body["rejected_indices"] == [0]
+    assert body["errors"]
+
+
 def test_ingest_server_redis_stream_failure_does_not_refresh_latest():
     """stream 失败 → 错误计为一次，write_latest 未被调用（latest 不被假装推进）。"""
     redis_writer = MagicMock()
@@ -292,7 +487,7 @@ def test_ingest_server_redis_stream_failure_does_not_refresh_latest():
     finally:
         server.server_close()
 
-    assert accepted == 1
+    assert accepted == 0
     assert len(errors) == 1
     assert "write_stream" in errors[0]
     redis_writer.write_window.assert_called_once()
@@ -312,7 +507,7 @@ def test_ingest_server_redis_window_failure_does_not_call_stream_or_latest():
     finally:
         server.server_close()
 
-    assert accepted == 1
+    assert accepted == 0
     assert len(errors) == 1
     assert "write_window" in errors[0]
     redis_writer.write_window.assert_called_once()
@@ -332,7 +527,7 @@ def test_ingest_server_redis_latest_failure_reported_in_errors():
     finally:
         server.server_close()
 
-    assert accepted == 1
+    assert accepted == 0
     assert len(errors) == 1
     assert "write_latest" in errors[0]
     redis_writer.write_window.assert_called_once()
@@ -436,7 +631,7 @@ def test_ingest_server_redis_multi_scan_rate_frame_failure_isolates_latest():
     finally:
         server.server_close()
 
-    assert accepted == 2
+    assert accepted == 1
     assert len(errors) == 1
     assert "write_stream" in errors[0]
     assert "500ms" in errors[0]
@@ -606,7 +801,7 @@ def test_ingest_rejects_frame_from_stale_metadata_generation():
     finally:
         server.server_close()
 
-    assert accepted == 1
+    assert accepted == 0
     assert len(errors) == 1
     assert "stale generation" in errors[0]
     redis_writer.write_window.assert_not_called()

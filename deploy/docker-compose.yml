@@ -6,11 +6,17 @@ services:
     container_name: data-watch-redis
     profiles:
       - infra
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    env_file:
+      - ./backend.env
+    command:
+      - /bin/sh
+      - -c
+      - exec redis-server /usr/local/etc/redis/redis.conf --requirepass "$${REDIS_PASSWORD:?REDIS_PASSWORD must be set in deploy/backend.env}"
     environment:
       - TZ=Asia/Shanghai
     ports:
-      - "6379:6379"
+      # Keep Redis reachable from the host only; never publish it to all NICs.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
       - ./redis.conf:/usr/local/etc/redis/redis.conf:ro

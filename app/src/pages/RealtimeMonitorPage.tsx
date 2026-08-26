@@ -55,6 +55,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
 import { monitorClient } from "@/lib/monitor-client";
+import { loadAllDevicePages } from "@/lib/device-catalog";
 import { saveDownload } from "@/lib/save-download";
 import type { RealtimeDataItem } from "@/types/device-monitor";
 
@@ -255,7 +256,10 @@ export default function RealtimeMonitorPage() {
   const [draftPoints, setDraftPoints] = useState<number[]>([]);
   const chartCardRef = useRef<HTMLDivElement>(null);
 
-  const loadDevices = useCallback((backendToken: string) => monitorClient.deviceList(backendToken, { pageNo: 1, pageSize: 1000 }), []);
+  const loadDevices = useCallback(
+    (backendToken: string) => loadAllDevicePages((pageNo, pageSize) => monitorClient.deviceList(backendToken, { pageNo, pageSize })),
+    [],
+  );
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
   const [deviceSearch, setDeviceSearch] = useState("");
   const [draftDeviceType, setDraftDeviceType] = useState("all");

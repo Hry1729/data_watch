@@ -25,19 +25,19 @@
 ws(s)://<host>/api/device-monitor/ws/realtime-push
 ```
 
-服务端兼容三种认证来源，按以下顺序读取：
+服务端当前兼容三种认证来源；新客户端必须使用首帧认证，其他两种仅用于旧客户端兼容：
 
-1. `?token=` query 参数；
-2. `Authorization` Header；
-3. 连接后 5 秒内发送认证消息。
+1. 连接后 5 秒内发送认证消息（规范方式）；
+2. `Authorization` Header（兼容方式，deprecated）；
+3. `?token=` query 参数（兼容方式，deprecated，容易进入访问日志）。
 
-CLI 规范固定使用第 3 种：URL 不含 Token，连接成功后立即发送：
+浏览器与 CLI 规范固定使用第 1 种：URL 不含 Token，连接成功后立即发送：
 
 ```json
 {"type":"auth","token":"<登录接口返回的原值>"}
 ```
 
-CLI 禁止使用 query token，避免 Token 进入 shell history、进程列表、nginx 访问日志或诊断记录。浏览器前端若受 WebSocket Header API 限制而保留 query 方式，仍必须避免记录完整 URL。nginx 需要转发 Upgrade/Connection 头，镜像部署中由 `deploy/nginx.conf` 处理。
+客户端禁止使用 query token，避免 Token 进入 shell history、进程列表、nginx 访问日志或诊断记录。后端保留 query/header 仅为兼容旧客户端，网关和日志系统不得记录完整 URL 或鉴权头。nginx 需要转发 Upgrade/Connection 头，镜像部署中由 `deploy/nginx.conf` 处理。
 
 ### 2.2 客户端状态机
 
@@ -59,15 +59,14 @@ stateDiagram-v2
 客户端行为：
 
 - 初次进入页面连接 WS；
-- CLI 在连接后先发送认证消息，认证后再订阅；
-- 连接后发送 subscribe；
+- 浏览器与 CLI 在连接后先发送认证消息，认证成功后再订阅；
 - 断线后指数退避重连；
 - 页面恢复可见时检查连接；
 - 离开页面主动 unsubscribe 并关闭连接。
 
 ### 2.3 客户端 → 服务端
 
-CLI 认证：
+认证（浏览器与 CLI 均适用）：
 
 ```json
 {
@@ -106,7 +105,7 @@ CLI 认证：
 
 切换设备或分组时，客户端应先退订旧分组，再订阅新分组。
 
-当前路由权限检查是 `device_monitor:monitor:view` 或 `device_monitor:realtime:view` 任一满足即可。`device_monitor:realtime:subscribe` 虽存在于默认权限种子中，但现行路由没有消费它；协议客户端不得据此自行改变权限判断。
+连接级权限检查要求 `device_monitor:monitor:view` 或 `device_monitor:realtime:view` 任一满足；每次 subscribe 还必须具备 `device_monitor:realtime:subscribe`，并通过设备/分组授权校验。客户端应将 403 视为无订阅权限，不重复发送同一订阅。
 
 ### 2.4 服务端 → 客户端
 
@@ -187,7 +186,11 @@ sequenceDiagram
     participant FE as frontend
     participant WS as ws_push
     participant R as Redis
+    FE->>WS: connect（URL 不含 token）
+    FE->>WS: auth {token}
+    WS->>WS: 校验 realtime:view
     FE->>WS: subscribe(device, group)
+    WS->>WS: 校验 realtime:subscribe + device/group
     WS->>R: HGETALL rt:latest:{device}:{group}
     WS-->>FE: snapshot
     loop every 0.1s
@@ -216,6 +219,8 @@ Perspective 会话按 owner + sessionId 管理，典型参数：
 | `perspectiveSessionId` | 前端生成/持有的会话 ID |
 | `connectionId` | 本次 WebSocket 连接 ID |
 | `queryVersion` | 查询版本，防止旧结果覆盖新结果 |
+
+Perspective WebSocket 在握手阶段优先使用 `Authorization` Header；当前仍兼容 `?token=` query 参数，但该方式已 deprecated，因为凭据可能进入浏览器历史、代理/访问日志和诊断记录。新客户端不得使用 query token；后续可迁移到短期 WebSocket ticket。Perspective 通道当前沿用握手鉴权，不适用实时 ws_push 的首帧 `auth` 流程。
 
 Perspective runtime 是可选依赖；未安装时普通历史 REST 查询仍应可用，只是大表运行时能力降级。
 
@@ -319,7 +324,7 @@ location /api/device-monitor/ws/ {
 }
 ```
 
-如果实时页在直连 backend 正常、经 frontend 镜像异常，优先检查 nginx Upgrade 头、路径前缀和 token query 是否被保留。
+如果实时页在直连 backend 正常、经 frontend 镜像异常，优先检查 nginx Upgrade 头、路径前缀以及首帧 `auth` 是否先于 subscribe 发送；不要通过 query token 绕过握手。
 
 ---
 

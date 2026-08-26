@@ -68,6 +68,15 @@ import type {
   NodeAssignment,
   RegistrationCodeResult,
 } from "@/types/distributed";
+import {
+  isAllowedBackendMethod,
+  isAllowedBackendPath,
+  MAX_BACKEND_REQUEST_BYTES,
+  normalizeBackendOrigin,
+  requestBodyByteLength,
+} from "@/lib/backend-proxy-policy";
+import { stripClientPassword } from "@/lib/password-contract";
+import { assertImportRequestSize } from "@/lib/import-workbook";
 
 // ─── 接口 ─────────────────────────────────────────────────────────────────────
 
@@ -84,10 +93,20 @@ export interface LogListQuery {
   endTime?: string;
 }
 
+export interface UserPasswordProvisionResult {
+  id: number;
+  userId: number;
+  temporaryPassword: string;
+  mustChangePassword: true;
+  tokenVersion: number;
+}
+
 export interface BackendClient {
   login(userName: string, password: string): Promise<{
     token: string;
     refreshToken: string;
+    userId?: number;
+    mustChangePassword?: boolean;
   }>;
   /** 查询 DB system_log（需 backend token 鉴权），返回行数组 */
   logList(token: string, query: LogListQuery): Promise<WriterLogRow[]>;
@@ -171,10 +190,11 @@ export interface BackendClient {
   /** 当前登录用户信息（角色 / 按钮权限） */
   userInfo(token: string): Promise<AuthUserInfo>;
   roleOptions(token: string): Promise<RoleOption[]>;
-  createUser(token: string, payload: UserPayload): Promise<{ id: number }>;
+  createUser(token: string, payload: UserPayload): Promise<UserPasswordProvisionResult>;
   updateUser(token: string, id: number, payload: UserPayload): Promise<{ id: number }>;
   updateUserStatus(token: string, id: number, status: string): Promise<{ id: number }>;
-  resetUserPassword(token: string, id: number, password?: string): Promise<{ id: number }>;
+  resetUserPassword(token: string, id: number): Promise<UserPasswordProvisionResult>;
+  changePassword(token: string, oldPassword: string, newPassword: string): Promise<boolean>;
   deleteUser(token: string, id: number): Promise<{ id: number }>;
   roleList(token: string, query: RoleQuery): Promise<RolePageResult>;
   createRole(token: string, payload: RolePayload): Promise<{ id: number }>;
@@ -200,6 +220,7 @@ export interface BackendClient {
 // 读取后端地址并注入。这样同一安装包可用于不同目标机，无需重新打包。
 
 let _backendBaseUrl = import.meta.hot?.data.backendBaseUrl ?? "";
+let _backendOriginReady: Promise<void> = Promise.resolve();
 
 if (import.meta.hot) {
   import.meta.hot.dispose((data) => {
@@ -208,7 +229,16 @@ if (import.meta.hot) {
 }
 
 export function setBackendBaseUrl(url: string) {
-  _backendBaseUrl = (url || "").replace(/\/+$/, ""); // 去尾部斜杠，避免双斜杠
+  const normalized = normalizeBackendOrigin(url || "");
+  _backendBaseUrl = normalized ?? "";
+  if (!normalized) {
+    _backendOriginReady = Promise.resolve();
+    return;
+  }
+  _backendOriginReady = invoke<void>("set_backend_origin", { baseUrl: normalized });
+  // Keep the rejection for the next request, while avoiding an unhandled rejection
+  // when startup never reaches a backend call.
+  void _backendOriginReady.catch(() => undefined);
 }
 
 export function getBackendWebSocketUrl(path = "/api/device-monitor/ws/realtime-push") {
@@ -238,12 +268,20 @@ async function backendFetch<T>(
 
   let result: [number, string];
   try {
+    await _backendOriginReady;
+    if (!isAllowedBackendMethod(method) || !isAllowedBackendPath(path)) {
+      throw new Error("backend request is not allowed");
+    }
+    const serializedBody = body === undefined ? undefined : JSON.stringify(body);
+    if (requestBodyByteLength(serializedBody) > MAX_BACKEND_REQUEST_BYTES) {
+      throw new Error("backend request body is too large");
+    }
     // 经 Tauri Rust 转发，桌面 app 不再受浏览器 CORS 限制。
     result = await invoke<[number, string]>("backend_request", {
       baseUrl: _backendBaseUrl,
       method,
       path,
-      body: body ? JSON.stringify(body) : undefined,
+      body: serializedBody,
       authorization,
     });
   } catch {
@@ -296,6 +334,8 @@ async function backendDownload(path: string, token: string) {
   const authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
   let result: [number, number[], string | null];
   try {
+    await _backendOriginReady;
+    if (!isAllowedBackendPath(path)) throw new Error("backend download path is not allowed");
     result = await invoke<[number, number[], string | null]>("backend_download", {
       baseUrl: _backendBaseUrl,
       path,
@@ -334,7 +374,7 @@ function toQuery(params: object) {
 
 const realBackend: BackendClient = {
   login(userName, password) {
-    return backendFetch<{ token: string; refreshToken: string }>(
+    return backendFetch<{ token: string; refreshToken: string; userId?: number; mustChangePassword?: boolean }>(
       "POST",
       "/api/auth/login",
       { userName, password }
@@ -552,7 +592,9 @@ const realBackend: BackendClient = {
     return backendDownload(`/api/device-monitor/device/export?${toQuery({ ...query, pageNo: 1, pageSize: 10000, template })}`, token);
   },
   importDevices(token, rows) {
-    return backendFetch("POST", "/api/device-monitor/device/import", { rows }, token);
+    const body = { rows };
+    assertImportRequestSize(body);
+    return backendFetch("POST", "/api/device-monitor/device/import", body, token);
   },
   pointDeviceTree(token) {
     return backendFetch("GET", "/api/device-monitor/point/device-tree", undefined, token);
@@ -588,7 +630,9 @@ const realBackend: BackendClient = {
     return backendDownload(`/api/device-monitor/point/export?${toQuery({ ...query, pageNo: 1, pageSize: 10000, template })}`, token);
   },
   importPoints(token, rows) {
-    return backendFetch("POST", "/api/device-monitor/point/import", { rows }, token);
+    const body = { rows };
+    assertImportRequestSize(body);
+    return backendFetch("POST", "/api/device-monitor/point/import", body, token);
   },
   importPointsFromTemplate(token, deviceId) {
     return backendFetch("POST", "/api/device-monitor/point/import/template", { deviceId }, token);
@@ -644,10 +688,16 @@ const realBackend: BackendClient = {
   userList(token, query) { return backendFetch("GET", `/api/user/list?${toQuery(query)}`, undefined, token); },
   userInfo(token) { return backendFetch("GET", "/api/user/info", undefined, token); },
   roleOptions(token) { return backendFetch("GET", "/api/role/options", undefined, token); },
-  createUser(token, payload) { return backendFetch("POST", "/api/user", payload, token); },
+  createUser(token, payload) {
+    const requestPayload = stripClientPassword(payload);
+    return backendFetch<UserPasswordProvisionResult>("POST", "/api/user", requestPayload, token);
+  },
   updateUser(token, id, payload) { return backendFetch("PUT", `/api/user/${id}`, payload, token); },
   updateUserStatus(token, id, status) { return backendFetch("PATCH", `/api/user/${id}/status`, { status }, token); },
-  resetUserPassword(token, id, password = "123456") { return backendFetch("PATCH", `/api/user/${id}/password/reset`, { password }, token); },
+  resetUserPassword(token, id) { return backendFetch<UserPasswordProvisionResult>("PATCH", `/api/user/${id}/password/reset`, {}, token); },
+  changePassword(token, oldPassword, newPassword) {
+    return backendFetch<boolean>("POST", "/api/user/password/change", { oldPassword, newPassword }, token);
+  },
   deleteUser(token, id) { return backendFetch("DELETE", `/api/user/${id}`, undefined, token); },
   roleList(token, query) { return backendFetch("GET", `/api/role/list?${toQuery(query)}`, undefined, token); },
   createRole(token, payload) { return backendFetch("POST", "/api/role", payload, token); },
@@ -786,7 +836,8 @@ export const backendClient: BackendClient = {
   async createUser(token, payload) { const c = await _implPromise; return c.createUser(token, payload); },
   async updateUser(token, id, payload) { const c = await _implPromise; return c.updateUser(token, id, payload); },
   async updateUserStatus(token, id, status) { const c = await _implPromise; return c.updateUserStatus(token, id, status); },
-  async resetUserPassword(token, id, password) { const c = await _implPromise; return c.resetUserPassword(token, id, password); },
+  async resetUserPassword(token, id) { const c = await _implPromise; return c.resetUserPassword(token, id); },
+  async changePassword(token, oldPassword, newPassword) { const c = await _implPromise; return c.changePassword(token, oldPassword, newPassword); },
   async deleteUser(token, id) { const c = await _implPromise; return c.deleteUser(token, id); },
   async roleList(token, query) { const c = await _implPromise; return c.roleList(token, query); },
   async createRole(token, payload) { const c = await _implPromise; return c.createRole(token, payload); },

@@ -4,6 +4,26 @@
 
 import request from '@/utils/http'
 import { useUserStore } from '@/store/modules/user'
+import {
+  assertImportRequestSize,
+  MAX_IMPORT_FILE_BYTES,
+  MAX_IMPORT_REQUEST_BYTES,
+  MAX_IMPORT_SHEET_CELLS,
+  MAX_IMPORT_SHEET_ROWS,
+  validateImportFileSize,
+  validateImportSheetRange
+} from '@/utils/import-limits'
+import { parseImportRows } from '@/utils/import-workbook'
+
+export {
+  assertImportRequestSize,
+  MAX_IMPORT_FILE_BYTES,
+  MAX_IMPORT_REQUEST_BYTES,
+  MAX_IMPORT_SHEET_CELLS,
+  MAX_IMPORT_SHEET_ROWS,
+  validateImportFileSize,
+  validateImportSheetRange
+} from '@/utils/import-limits'
 
 const BASE_URL = '/api/device-monitor'
 const DEVICE_IMPORT_FIELD_MAP: Record<string, string> = {
@@ -218,6 +238,7 @@ export function fetchExportDevices(
 /** 导入设备 */
 export async function fetchImportDevices(file: File) {
   const rows = await parseImportRows(file, DEVICE_IMPORT_FIELD_MAP)
+  assertImportRequestSize({ rows })
   return request.post<Api.DeviceMonitor.ImportResult>({
     url: `${BASE_URL}/device/import`,
     data: { rows }
@@ -338,6 +359,7 @@ export function fetchExportPoints(
 /** 导入点位 */
 export async function fetchImportPoints(file: File) {
   const rows = await parseImportRows(file, POINT_IMPORT_FIELD_MAP)
+  assertImportRequestSize({ rows })
   return request.post<Api.DeviceMonitor.ImportResult>({
     url: `${BASE_URL}/point/import`,
     data: { rows }
@@ -350,61 +372,6 @@ export function fetchImportPointsFromTemplate(deviceId: number) {
     url: `${BASE_URL}/point/import/template`,
     data: { deviceId }
   })
-}
-
-const normalizeImportHeader = (value: unknown) =>
-  String(value ?? '')
-    .trim()
-    .replace(/[()（）]/g, '')
-    .replace(/[\s_-]+/g, '')
-    .toLowerCase()
-
-const buildImportFieldAliasMap = (fieldMap: Record<string, string>) => {
-  const aliasMap: Record<string, string> = {}
-  Object.entries(fieldMap).forEach(([header, field]) => {
-    aliasMap[normalizeImportHeader(header)] = field
-    aliasMap[normalizeImportHeader(field)] = field
-  })
-  return aliasMap
-}
-
-const normalizeImportCellValue = (value: unknown) => {
-  if (typeof value === 'string') {
-    return value.trim()
-  }
-  return value ?? ''
-}
-
-async function parseImportRows(
-  file: File,
-  fieldMap: Record<string, string>
-): Promise<Array<Record<string, any>>> {
-  const buffer = await file.arrayBuffer()
-  const XLSX = await import('xlsx')
-  const workbook = XLSX.read(buffer, { type: 'array' })
-  const preferredSheetName = workbook.SheetNames[1] || workbook.SheetNames[0]
-  const worksheet = workbook.Sheets[preferredSheetName]
-  const aliasMap = buildImportFieldAliasMap(fieldMap)
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, {
-    defval: ''
-  })
-
-  return rawRows
-    .map((row) => {
-      const mappedRow: Record<string, any> = {}
-
-      Object.entries(row).forEach(([key, value]) => {
-        const field = aliasMap[normalizeImportHeader(key)]
-        if (field) {
-          mappedRow[field] = normalizeImportCellValue(value)
-        }
-      })
-
-      return mappedRow
-    })
-    .filter((row) =>
-      Object.values(row).some((value) => String(value ?? '').trim() !== '')
-    )
 }
 
 // ==================== 实时监控 ====================

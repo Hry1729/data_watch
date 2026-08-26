@@ -72,6 +72,8 @@ declare namespace Api {
     interface LoginResponse {
       token: string
       refreshToken: string
+      userId?: number
+      mustChangePassword?: boolean
     }
 
     /** 用户信息 */
@@ -82,6 +84,7 @@ declare namespace Api {
       userName: string
       email: string
       avatar?: string
+      mustChangePassword?: boolean
     }
   }
 
@@ -123,7 +126,15 @@ declare namespace Api {
       avatar?: string
       status?: string
       userRoles?: string[]
-      password?: string
+    }
+
+    /** 管理员重置密码响应；临时密码只在本次响应中展示，不得持久化。 */
+    interface ResetUserPasswordResponse {
+      id: number
+      userId: number
+      temporaryPassword: string
+      mustChangePassword: true
+      tokenVersion: number
     }
 
     /** 角色列表 */

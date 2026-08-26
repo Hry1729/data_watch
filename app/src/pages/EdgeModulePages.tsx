@@ -163,7 +163,7 @@ export function EdgeCollectorPage() {
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-hidden px-4 pb-4">
             {snapshot.error && <p className="pb-2 text-xs text-destructive">{snapshot.error}</p>}
-            <div className="h-full overflow-hidden rounded-lg border">
+            <div className="h-full overflow-auto rounded-lg border">
               <Table className="w-full table-fixed">
                 <TableHeader className="bg-muted/50">
                   <TableRow className="h-10 hover:bg-transparent">
@@ -175,7 +175,7 @@ export function EdgeCollectorPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {devices.slice(0, 3).map((device) => (
+                  {devices.map((device) => (
                     <TableRow key={device.device_code} className="h-12">
                       <TableCell className="max-w-0 truncate text-center font-mono text-xs">{device.device_code}</TableCell>
                       <TableCell className="max-w-0 truncate text-center uppercase">{device.protocol}</TableCell>

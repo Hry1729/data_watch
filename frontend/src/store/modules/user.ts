@@ -24,9 +24,9 @@
  *
  * ## 持久化
  *
- * - 使用 localStorage 存储
- * - 存储键：sys-v{version}-user
- * - 登出时自动清理
+ * - 仅持久化语言和搜索历史
+ * - accessToken、refreshToken、lockPassword、登录态和用户资料只保留在内存
+ * - 启动时清理旧快照中的敏感字段
  *
  * @module store/modules/user
  * @author Art Design Pro Team
@@ -42,6 +42,17 @@ import { setPageTitle } from '@/utils/router'
 import { resetRouterState } from '@/router/guards/beforeEach'
 import { useMenuStore } from './menu'
 import { StorageConfig } from '@/utils/storage/storage-config'
+import { migrateUserPersistence, USER_PERSISTENCE_KEY, USER_PERSISTENCE_PICK } from '@/utils/storage/user-persistence'
+
+// Remove sensitive fields from snapshots written by older builds before the
+// persisted-state plugin hydrates the store.
+if (typeof localStorage !== 'undefined') {
+  try {
+    migrateUserPersistence(localStorage)
+  } catch {
+    // Storage can be unavailable in private/restricted browser contexts.
+  }
+}
 
 /**
  * 用户状态管理
@@ -54,6 +65,8 @@ export const useUserStore = defineStore(
     const language = ref(LanguageEnum.ZH)
     // 登录状态
     const isLogin = ref(false)
+    // 后端要求当前用户修改一次性临时密码（仅内存）
+    const mustChangePassword = ref(false)
     // 锁屏状态
     const isLock = ref(false)
     // 锁屏密码
@@ -88,6 +101,10 @@ export const useUserStore = defineStore(
      */
     const setLoginStatus = (status: boolean) => {
       isLogin.value = status
+    }
+
+    const setMustChangePassword = (status: boolean) => {
+      mustChangePassword.value = status
     }
 
     /**
@@ -151,6 +168,7 @@ export const useUserStore = defineStore(
       info.value = {}
       // 重置登录状态
       isLogin.value = false
+      mustChangePassword.value = false
       // 重置锁屏状态
       isLock.value = false
       // 清空锁屏密码
@@ -206,6 +224,7 @@ export const useUserStore = defineStore(
     return {
       language,
       isLogin,
+      mustChangePassword,
       isLock,
       lockPassword,
       info,
@@ -217,6 +236,7 @@ export const useUserStore = defineStore(
       getWorktabState,
       setUserInfo,
       setLoginStatus,
+      setMustChangePassword,
       setLanguage,
       setSearchHistory,
       setLockStatus,
@@ -228,8 +248,9 @@ export const useUserStore = defineStore(
   },
   {
     persist: {
-      key: 'user',
-      storage: localStorage
+      key: USER_PERSISTENCE_KEY,
+      storage: localStorage,
+      pick: [...USER_PERSISTENCE_PICK]
     }
   }
 )

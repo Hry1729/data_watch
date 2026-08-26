@@ -52,7 +52,7 @@ from monitor.performance import PerformanceMetrics
 
 logger = get_logger("main")
 
-# 停机 drain 各有界池的最长等待秒数；超时则放弃等待并记录未完成 job 数（§7.9-5）。
+# 停机等待尚未产出采集结果的 PLC 读取池的最长秒数。
 SHUTDOWN_DRAIN_TIMEOUT = 10.0
 
 
@@ -341,7 +341,9 @@ class CollectorApp:
         if self.driver_status_server is not None:
             self.driver_status_server.stop()
             self.driver_status_server = None
-        unfinished_jobs = await self.executor.shutdown(timeout=SHUTDOWN_DRAIN_TIMEOUT)
+        # Parse/Redis jobs may already contain successfully read samples. Drain
+        # them fully before closing devices or Redis instead of cancelling data.
+        await self.executor.shutdown()
         await self.device_manager.disconnect_all()
         # 读池在驱动 disconnect 之后再关：disconnect 自身也走该池。
         try:
@@ -350,9 +352,10 @@ class CollectorApp:
                 timeout=SHUTDOWN_DRAIN_TIMEOUT,
             )
         except asyncio.TimeoutError:
-            read_unfinished = self.plc_read_executor.pending
+            unfinished_jobs = self.plc_read_executor.pending
             self.plc_read_executor.shutdown(wait=False, cancel_futures=True)
-            unfinished_jobs += read_unfinished
+        else:
+            unfinished_jobs = 0
         if unfinished_jobs:
             logger.warning(
                 "Shutdown drain timed out with %d unfinished job(s)", unfinished_jobs

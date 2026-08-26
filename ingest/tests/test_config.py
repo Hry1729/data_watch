@@ -58,3 +58,18 @@ def test_capacity_defaults_fall_back_to_logical_cpu_estimate(monkeypatch) -> Non
     settings = IngestSettings.from_env()
 
     assert settings.workers == 4
+
+
+def test_stream_maxlen_zero_preserves_stream_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("INGEST_STREAM_MAXLEN", raising=False)
+
+    settings = IngestSettings.from_env()
+
+    assert settings.stream_maxlen == 0
+
+
+def test_negative_stream_maxlen_is_rejected(monkeypatch) -> None:
+    monkeypatch.setenv("INGEST_STREAM_MAXLEN", "-1")
+
+    with pytest.raises(ValueError, match="maxlen non-negative"):
+        IngestSettings.from_env()

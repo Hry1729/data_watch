@@ -212,7 +212,9 @@ test("device and point management build type tabs from current system devices", 
   assert.match(pointSource, /activeDeviceIds/);
   assert.match(pointSource, /filteredRows/);
   assert.match(pointSource, /activeType === "all"/);
-  assert.match(deviceSource, /const loadDeviceCatalog = useCallback\(\(token: string\) => backendClient\.deviceList/);
+  assert.match(deviceSource, /const loadDeviceCatalog = useCallback/);
+  assert.match(deviceSource, /loadAllDevicePages/);
+  assert.match(deviceSource, /backendClient\.deviceList/);
   assert.match(deviceSource, /const typeTabs = useMemo/);
   assert.doesNotMatch(deviceSource, /historyDeviceTypes/);
   const buttonSource = await readFile(new URL("../src/components/ui/button.tsx", import.meta.url), "utf8");

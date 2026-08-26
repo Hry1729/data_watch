@@ -32,7 +32,7 @@ frontend 是基于 [Art Design Pro](https://www.artd.pro/docs/zh/) 的 Vue3 管�
 | 基于权限的导航 | RBAC 动态路由/菜单 + 路由守卫 |
 | 实时数据低延迟 | WebSocket 订阅 + diff 增量更新 |
 | 大体量历史可视 | 降采样图表 + 分页 + 矩阵对齐 |
-| 敏感数据不持久化 | 禁用 webstorage 存敏感信息（仅主题 key 例外） |
+| 敏感数据不持久化 | Pinia 持久化仅白名单保存 `language`/`searchHistory`；access/refresh token、密码和用户态不落盘 |
 
 **不在本模块范围**：边缘进程管控（app + agent）、服务端数据逻辑（backend）。
 
@@ -91,9 +91,9 @@ flowchart TD
 
 ### 5.3 实时监控（useRealtimeWs）
 
-`frontend/src/composables/useRealtimeWs.ts`。浏览器 WebSocket 直连 backend `/api/device-monitor/ws/realtime-push`（token 经 query 传递）：
+`frontend/src/composables/useRealtimeWs.ts`。浏览器 WebSocket 直连 backend `/api/device-monitor/ws/realtime-push`，URL 不携带 token：
 
-- 连接后发 `subscribe {device_code, group_code}`；
+- 连接后第一条消息发 `{"type":"auth","token":"<token>"}`，再发 `subscribe {device_code, group_code}`；
 - 处理 `snapshot`（全量）/ `diff`（增量合并）/ `offline`（置离线）——与 backend `ws_push` 协议一致；
 - 指数退避重连（3s→30s）、页面可见性恢复时重连、`switchGroup` 切换分组、卸载时 `unsubscribe`。
 
@@ -158,7 +158,7 @@ frontend 是消费端：
 | RBAC 动态路由/菜单 | 权限与导航服务端驱动，前端按权限渲染 |
 | 实时 diff 增量更新 | 仅传变化点，降带宽与渲染开销 |
 | 历史大表用 Perspective | 大数据量表格/图表渲染性能好 |
-| 禁用 webstorage 存敏感数据 | 安全合规；仅 `data-watch-theme` 主题 key 例外 |
+| Pinia 敏感字段白名单 | 仅持久化 `language`/`searchHistory`；token、密码、用户信息和权限状态留在内存 |
 | 运行期 API 地址（VITE_API_URL） | 构建产物可适配不同部署 |
 
 ---
@@ -169,7 +169,7 @@ frontend 是消费端：
 
 - **模板携带冗余**：基于 admin 模板，存在与本项目无关的示例页/能力，未完全裁剪。
 - **兼容旧函数过渡层**：`device-monitor.ts` 保留多个"兼容旧函数"做新旧字段映射，待过渡期结束清理。
-- **token 经 WS query 传递**：实时 WS 用 query 携带 token，需注意日志与代理层不泄露。
+- **旧 WS 认证兼容**：后端仍兼容旧 query/header 认证，客户端必须使用首帧 `auth`；query token 已废弃，避免进入代理或访问日志。
 
 ---
 

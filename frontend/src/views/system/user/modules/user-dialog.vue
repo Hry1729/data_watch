@@ -13,14 +13,7 @@
           :disabled="dialogType === 'edit'"
         />
       </ElFormItem>
-      <ElFormItem v-if="dialogType === 'add'" label="密码" prop="password">
-        <ElInput
-          v-model="formData.password"
-          type="password"
-          placeholder="留空则默认123456"
-          show-password
-        />
-      </ElFormItem>
+      <p v-if="dialogType === 'add'" class="mb-4 text-xs text-gray-500">创建后系统会生成一次性临时密码，提交成功后仅显示一次。</p>
       <ElFormItem label="昵称" prop="nickName">
         <ElInput v-model="formData.nickName" placeholder="请输入昵称" />
       </ElFormItem>
@@ -73,7 +66,7 @@
 <script setup lang="ts">
   import { fetchGetRoleOptions, fetchCreateUser, fetchUpdateUser } from '@/api/system-manage'
   import { useUserStore } from '@/store/modules/user'
-  import type { FormInstance, FormRules } from 'element-plus'
+  import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
   interface Props {
     visible: boolean
@@ -110,7 +103,6 @@
   // 表单数据
   const formData = reactive<Api.SystemManage.UserPayload>({
     userName: '',
-    password: undefined,
     nickName: '',
     userPhone: '',
     userEmail: '',
@@ -158,7 +150,6 @@
 
     Object.assign(formData, {
       userName: isEdit && row ? row.userName || '' : '',
-      password: undefined,
       nickName: isEdit && row ? row.nickName || '' : '',
       userPhone: isEdit && row ? row.userPhone || '' : '',
       userEmail: isEdit && row ? row.userEmail || '' : '',
@@ -209,8 +200,12 @@
         }
 
         if (dialogType.value === 'add') {
-          await fetchCreateUser(formData)
+          const result = await fetchCreateUser(formData)
           ElMessage.success('添加成功')
+          await ElMessageBox.alert(`临时密码：${result.temporaryPassword}\n\n请通过安全渠道交付给用户；关闭后不会再次显示，也不会保存到浏览器。`, '临时密码（仅显示本次）', {
+            confirmButtonText: '我已安全交付',
+            type: 'success'
+          })
         } else if (props.userData?.id) {
           await fetchUpdateUser(props.userData.id, formData)
           ElMessage.success('更新成功')

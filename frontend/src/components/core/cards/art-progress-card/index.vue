@@ -6,7 +6,9 @@
         <ArtSvgIcon :icon="icon" class="text-2xl"></ArtSvgIcon>
       </div>
       <div>
+        <span v-if="percentage === null" class="mb-1 block text-2xl font-semibold">—</span>
         <ArtCountTo
+          v-else
           class="mb-1 block text-2xl font-semibold"
           :target="percentage"
           :duration="2000"
@@ -17,12 +19,14 @@
       </div>
     </div>
     <ElProgress
+      v-if="percentage !== null"
       :percentage="currentPercentage"
       :stroke-width="strokeWidth"
       :show-text="false"
       :color="color"
       class="[&_.el-progress-bar__outer]:bg-[rgb(240_240_240)]"
     />
+    <div v-else class="h-[5px] rounded-sm bg-[rgb(240_240_240)]" aria-hidden="true" />
   </div>
 </template>
 
@@ -31,7 +35,7 @@
 
   interface Props {
     /** 进度百分比 */
-    percentage: number
+    percentage: number | null
     /** 标题 */
     title: string
     /** 颜色 */
@@ -56,6 +60,10 @@
     const startTime = Date.now()
     const startValue = currentPercentage.value
     const endValue = props.percentage
+    if (endValue === null) {
+      currentPercentage.value = 0
+      return
+    }
 
     const animate = () => {
       const currentTime = Date.now()

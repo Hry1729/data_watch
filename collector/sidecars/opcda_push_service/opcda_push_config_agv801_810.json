@@ -10,6 +10,8 @@
   "source": "cache",
   "updateRateMs": 1000,
   "readIntervalMs": 1000,
+  "pushMode": "changed_only",
+  "fullSnapshotIntervalMs": 60000,
   "reportIntervalMs": 5000,
   "batchSize": 500,
   "postTimeoutMs": 5000,

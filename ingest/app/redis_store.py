@@ -153,6 +153,7 @@ for _, latest_key in ipairs(pending_latest_keys) do
 end
 
 if #changes > 0 then
+    if stream_maxlen > 0 then
     for touched_stream, item_count in pairs(touched_streams) do
         local trim_count = redis.call(
             "HINCRBY", KEYS[#KEYS], touched_stream, item_count
@@ -162,6 +163,7 @@ if #changes > 0 then
             local consumed = math.floor(trim_count / trim_every_items) * trim_every_items
             redis.call("HINCRBY", KEYS[#KEYS], touched_stream, -consumed)
         end
+    end
     end
     redis.call("PUBLISH", KEYS[3], cjson.encode(changes))
 end

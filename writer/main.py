@@ -156,6 +156,78 @@ def _partition_stream_keys(stream_keys: list[str], worker_count: int) -> list[li
     return [stream_keys[index::actual_count] for index in range(actual_count)]
 
 
+def _stream_keys_for_scopes(
+    stream_scopes: list[tuple[str, str]], shard_count: int
+) -> list[str]:
+    return [
+        f"rt:stream:{device_type}:{group_code}:{shard}"
+        for device_type, group_code in stream_scopes
+        for shard in range(shard_count)
+    ]
+
+
+async def _refresh_stream_scopes_once(
+    mysql_config: dict,
+    shard_count: int,
+    consumers: list[StreamConsumer],
+    partitions: list[list[str]],
+    known_stream_keys: set[str],
+) -> set[str]:
+    """发现并接入新流；已存在的流不移除，以保留消费连续性。"""
+    loop = asyncio.get_running_loop()
+
+    def discover() -> list[tuple[str, str]]:
+        connection = _open_mysql_connection(mysql_config)
+        try:
+            return _discover_stream_scopes(connection)
+        finally:
+            connection.close()
+
+    stream_scopes = await loop.run_in_executor(None, discover)
+    discovered_keys = set(_stream_keys_for_scopes(stream_scopes, shard_count))
+    new_keys = sorted(discovered_keys - known_stream_keys)
+    for stream_key in new_keys:
+        worker_index = min(range(len(partitions)), key=lambda index: len(partitions[index]))
+        consumer = consumers[worker_index]
+        # 先建组并排空已有 PEL，再把 key 放入共享 partition；run_loop 下一轮
+        # 构造 xreadgroup 参数时即可消费该新流。
+        await loop.run_in_executor(
+            None, consumer._ensure_consumer_groups, [stream_key]
+        )
+        await consumer.drain_pending(stream_key, consumer._consumer_name)
+        partitions[worker_index].append(stream_key)
+        known_stream_keys.add(stream_key)
+    return set(new_keys)
+
+
+async def _watch_stream_scopes(
+    mysql_config: dict,
+    shard_count: int,
+    consumers: list[StreamConsumer],
+    partitions: list[list[str]],
+    known_stream_keys: set[str],
+    interval_s: float = 60.0,
+) -> None:
+    """周期发现 MySQL 新增流范围，查询失败时保留现有消费者并重试。"""
+    interval = max(float(interval_s), 1.0)
+    while True:
+        try:
+            new_keys = await _refresh_stream_scopes_once(
+                mysql_config,
+                shard_count,
+                consumers,
+                partitions,
+                known_stream_keys,
+            )
+            if new_keys:
+                logger.info("Discovered %d new writer stream key(s): %s", len(new_keys), sorted(new_keys))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("Writer stream scope refresh failed; will retry", exc_info=True)
+        await asyncio.sleep(interval)
+
+
 def _open_mysql_connection(config: dict) -> pymysql.connections.Connection:
     return pymysql.connect(
         host=config["host"],
@@ -288,11 +360,7 @@ async def main() -> None:
     logger.info("Discovered %d stream scope(s): %s", len(stream_scopes), stream_scopes)
 
     # 构建完整的流键集合并按消费 worker 分片。
-    stream_keys = [
-        f"rt:stream:{dt}:{gc}:{shard}"
-        for dt, gc in stream_scopes
-        for shard in range(rc["stream_shard_count"])
-    ]
+    stream_keys = _stream_keys_for_scopes(stream_scopes, rc["stream_shard_count"])
     logger.info("Consuming %d stream key(s): %s", len(stream_keys), stream_keys)
     partitions = _partition_stream_keys(
         stream_keys, int(wc.get("consumer_workers", 4))
@@ -336,6 +404,7 @@ async def main() -> None:
     mappers = [MysqlMapper(connection) for connection in mapper_connections]
     performance_metrics = WriterPerformanceMetrics()
     base_consumer_name = str(rc["consumer_name"])
+    consumers: list[StreamConsumer] = []
     consumer_tasks = []
     for index, (partition, writer, mapper) in enumerate(
         zip(partitions, writers, mappers), start=1
@@ -351,6 +420,7 @@ async def main() -> None:
             syslog=syslog,
             metrics=performance_metrics,
         )
+        consumers.append(consumer)
         consumer_tasks.append(
             asyncio.create_task(
                 consumer.run_loop(partition),
@@ -368,6 +438,18 @@ async def main() -> None:
 
     consumer_task = asyncio.gather(*consumer_tasks)
     watchdog_task = asyncio.create_task(_watch_shutdown_flag(consumer_task, flag_path))
+    known_stream_keys = set(stream_keys)
+    scope_refresh_task = asyncio.create_task(
+        _watch_stream_scopes(
+            mc,
+            rc["stream_shard_count"],
+            consumers,
+            partitions,
+            known_stream_keys,
+            wc.get("scope_refresh_interval_s", 60.0),
+        ),
+        name="writer-stream-scope-refresh",
+    )
     try:
         await consumer_task
     except asyncio.CancelledError:
@@ -380,6 +462,11 @@ async def main() -> None:
         watchdog_task.cancel()
         try:
             await watchdog_task
+        except asyncio.CancelledError:
+            pass
+        scope_refresh_task.cancel()
+        try:
+            await scope_refresh_task
         except asyncio.CancelledError:
             pass
         syslog.emit(

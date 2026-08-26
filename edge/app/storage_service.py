@@ -41,14 +41,30 @@ class StorageQueueFull(RuntimeError):
 
 
 class StorageEngine:
-    def __init__(self, database_path: str | Path, *, max_queue: int = 2048) -> None:
+    def __init__(
+        self,
+        database_path: str | Path,
+        *,
+        max_queue: int = 2048,
+        shutdown_timeout_seconds: float = 30.0,
+    ) -> None:
         self.database_path = Path(database_path)
         self.max_queue = max_queue
+        if shutdown_timeout_seconds <= 0:
+            raise ValueError("shutdown_timeout_seconds must be positive")
+        self.shutdown_timeout_seconds = shutdown_timeout_seconds
         self._queue: Queue[_Command | None] = Queue(maxsize=max_queue)
         self._ready = threading.Event()
         self._stopped = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._closing = False
+        self._started = False
+        self._sentinel_requested = threading.Event()
+        self._sentinel_enqueued = threading.Event()
         self._startup_error: Exception | None = None
-        self._worker = threading.Thread(target=self._run, name="edge-storage-writer", daemon=True)
+        # Keep the process alive until accepted commands are drained; close()
+        # reports a timeout rather than allowing a daemon thread to vanish.
+        self._worker = threading.Thread(target=self._run, name="edge-storage-writer", daemon=False)
         self._latencies_ms: deque[float] = deque(maxlen=2000)
         self._recent_frames: deque[tuple[float, int]] = deque(maxlen=10000)
         self._action_counts: Counter[str] = Counter()
@@ -56,21 +72,43 @@ class StorageEngine:
         self._started_at = time.time()
 
     def start(self, timeout_seconds: float = 10.0) -> None:
+        with self._lifecycle_lock:
+            if self._closing:
+                raise RuntimeError("Edge Storage is stopping")
+            if self._started:
+                return
+            self._started = True
         self._worker.start()
         if not self._ready.wait(timeout_seconds):
             raise RuntimeError("Edge Storage writer did not become ready")
         if self._startup_error is not None:
             raise RuntimeError(f"Edge Storage initialization failed: {self._startup_error}")
 
-    def close(self) -> None:
-        if self._stopped.is_set():
-            return
-        self._stopped.set()
-        try:
-            self._queue.put_nowait(None)
-        except Full:
-            self._queue.put(None)
-        self._worker.join(timeout=10)
+    def close(self, timeout_seconds: float | None = None) -> None:
+        with self._lifecycle_lock:
+            if not self._closing:
+                self._closing = True
+                self._stopped.set()
+                try:
+                    # The lock makes this enqueue atomic with submit(): every
+                    # accepted command is ahead of the sentinel.
+                    self._queue.put_nowait(None)
+                    self._sentinel_enqueued.set()
+                except Full:
+                    # Do not block a shutdown behind a full queue. The worker
+                    # inserts the sentinel only after it has drained the queue.
+                    self._sentinel_requested.set()
+        if self._started:
+            timeout = self.shutdown_timeout_seconds if timeout_seconds is None else timeout_seconds
+            if timeout <= 0:
+                raise ValueError("shutdown timeout must be positive")
+            self._worker.join(timeout=timeout)
+            if self._worker.is_alive():
+                logger.critical(
+                    "Edge Storage shutdown timed out after %.3fs; accepted commands remain in the writer",
+                    timeout,
+                )
+                raise TimeoutError("Edge Storage writer did not stop before shutdown timeout")
 
     def submit(
         self,
@@ -79,14 +117,25 @@ class StorageEngine:
         *,
         timeout_seconds: float = 30.0,
     ) -> Any:
-        if self._stopped.is_set():
-            raise RuntimeError("Edge Storage is stopping")
-        command = _Command(action=action, payload=payload or {})
-        try:
-            self._queue.put_nowait(command)
-        except Full as exc:
-            raise StorageQueueFull("Edge Storage write queue is full") from exc
-        if not command.done.wait(timeout_seconds):
+        if timeout_seconds <= 0:
+            raise ValueError("command timeout must be positive")
+        deadline = time.monotonic() + timeout_seconds
+        with self._lifecycle_lock:
+            if not self._started:
+                raise RuntimeError("Edge Storage has not started")
+            if self._closing:
+                raise RuntimeError("Edge Storage is stopping")
+            command = _Command(action=action, payload=payload or {})
+            try:
+                # A full queue is transient backpressure, not permission to
+                # discard a command that already reached the storage process.
+                self._queue.put(command, timeout=timeout_seconds)
+            except Full as exc:
+                raise StorageQueueFull(
+                    "Edge Storage write queue remained full until command timeout"
+                ) from exc
+        remaining = max(0.0, deadline - time.monotonic())
+        if not command.done.wait(remaining):
             raise TimeoutError(f"Edge Storage command timed out: {action}")
         if command.error is not None:
             raise command.error
@@ -108,6 +157,12 @@ class StorageEngine:
                 try:
                     command = self._queue.get(timeout=0.5)
                 except Empty:
+                    if self._sentinel_requested.is_set() and not self._sentinel_enqueued.is_set():
+                        try:
+                            self._queue.put_nowait(None)
+                            self._sentinel_enqueued.set()
+                        except Full:
+                            continue
                     continue
                 if command is None:
                     break
@@ -125,6 +180,16 @@ class StorageEngine:
                             (time.perf_counter() - command.queued_at) * 1000
                         )
                     command.done.set()
+                if (
+                    self._sentinel_requested.is_set()
+                    and not self._sentinel_enqueued.is_set()
+                    and self._queue.empty()
+                ):
+                    try:
+                        self._queue.put_nowait(None)
+                        self._sentinel_enqueued.set()
+                    except Full:
+                        pass
         finally:
             config.close()
             outbox.close()

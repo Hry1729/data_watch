@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from uuid import uuid4
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -111,6 +112,22 @@ async def test_ingest_http_bad_request_shape() -> None:
 
     assert response.status_code == 400
     assert response.json()["status"] == "bad_request"
+
+
+@pytest.mark.asyncio
+async def test_ingest_http_rejects_oversized_content_length_before_reading() -> None:
+    limited = replace(settings(), max_body_bytes=64)
+    app = create_app(runtime_provider, limited)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/ingest",
+            content=b"{}",
+            headers={"content-type": "application/json", "content-length": "65"},
+        )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Request body too large"
 
 
 @pytest.mark.asyncio

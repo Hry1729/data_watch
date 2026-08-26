@@ -10,7 +10,12 @@ from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.log_writer import write_system_log
 from app.core.time_utils import now_local
-from app.core.security import create_signed_token, decode_signed_token, hash_password, verify_password
+from app.core.security import (
+    create_signed_token,
+    decode_signed_token,
+    hash_password,
+    verify_password,
+)
 from app.models import SysPermission, SysRole, SysRolePermission, SysUser, SysUserRole
 from app.schemas.auth import ChangePasswordPayload
 
@@ -20,7 +25,7 @@ class AuthService:
         self.session = session
         self.settings = get_settings()
 
-    async def login(self, *, user_name: str, password: str, client_ip: str) -> dict[str, str]:
+    async def login(self, *, user_name: str, password: str, client_ip: str) -> dict[str, Any]:
         user = await self._fetch_user_by_name(user_name)
 
         # 用户不存在或已删除
@@ -79,6 +84,8 @@ class AuthService:
             "uid": user.id,
             "userName": user.user_name,
             "roles": roles,
+            "token_version": int(getattr(user, "token_version", 0) or 0),
+            "must_change_password": bool(getattr(user, "must_change_password", False)),
         }
         access_token = create_signed_token(
             payload,
@@ -107,9 +114,15 @@ class AuthService:
             },
         )
 
-        return {"token": access_token, "refreshToken": refresh_token}
+        return {
+            "token": access_token,
+            "refreshToken": refresh_token,
+            "userId": user.id,
+            "mustChangePassword": bool(getattr(user, "must_change_password", False)),
+            "tokenVersion": int(getattr(user, "token_version", 0) or 0),
+        }
 
-    async def refresh(self, refresh_token: str) -> dict[str, str]:
+    async def refresh(self, refresh_token: str) -> dict[str, Any]:
         try:
             claims = decode_signed_token(
                 refresh_token,
@@ -125,11 +138,24 @@ class AuthService:
             raise ApiError(401, "当前登录状态无效")
         if user.status != "1":
             raise ApiError(403, "当前账号不可用，请联系管理员")
+        token_version = int(getattr(user, "token_version", 0) or 0)
+        try:
+            claimed_token_version = int(claims.get("token_version", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ApiError(401, "Invalid token version") from exc
+        if claimed_token_version != token_version:
+            raise ApiError(401, "当前登录状态已失效，请重新登录")
         roles = await self._fetch_user_roles(user.id)
         if not roles:
             raise ApiError(403, "当前账号未分配角色")
 
-        payload = {"uid": user.id, "userName": user.user_name, "roles": roles}
+        payload = {
+            "uid": user.id,
+            "userName": user.user_name,
+            "roles": roles,
+            "token_version": token_version,
+            "must_change_password": bool(getattr(user, "must_change_password", False)),
+        }
         return {
             "token": create_signed_token(
                 payload,
@@ -143,10 +169,13 @@ class AuthService:
                 expires_in_seconds=self.settings.auth_refresh_token_expire_seconds,
                 token_type="refresh",
             ),
+            "userId": user.id,
+            "mustChangePassword": bool(getattr(user, "must_change_password", False)),
+            "tokenVersion": token_version,
         }
 
     async def get_user_info(self, authorization: str | None) -> dict[str, Any]:
-        principal = await self.resolve_principal(authorization)
+        principal = await self.resolve_principal(authorization, allow_password_change=True)
         buttons = await self._fetch_user_auth_marks(principal["user_id"])
         permissions = await self.fetch_user_permission_codes(principal["user_id"])
         return {
@@ -157,10 +186,12 @@ class AuthService:
             "roles": principal["roles"],
             "buttons": buttons,
             "permissions": permissions,
+            "mustChangePassword": bool(principal.get("must_change_password", False)),
+            "tokenVersion": int(principal.get("token_version", 0) or 0),
         }
 
     async def change_password(self, authorization: str | None, payload: ChangePasswordPayload) -> bool:
-        principal = await self.resolve_principal(authorization)
+        principal = await self.resolve_principal(authorization, allow_password_change=True)
         user = await self._fetch_user_by_id(principal["user_id"])
         if user is None or user.deleted:
             raise ApiError(401, "当前登录状态无效")
@@ -179,6 +210,8 @@ class AuthService:
             raise ApiError(400, "新密码不能与当前密码相同")
 
         user.password_hash = hash_password(payload.new_password)
+        user.must_change_password = False
+        user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
         user.update_by = user.user_name
         await self.session.commit()
 
@@ -191,7 +224,22 @@ class AuthService:
         )
         return True
 
-    async def resolve_principal(self, authorization: str | None) -> dict[str, Any]:
+    async def logout(self, authorization: str | None) -> dict[str, Any]:
+        principal = await self.resolve_principal(authorization, allow_password_change=True)
+        user = await self._fetch_user_by_id(principal["user_id"])
+        if user is None or user.deleted:
+            raise ApiError(401, "当前登录状态无效")
+        user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
+        user.update_by = user.user_name
+        await self.session.commit()
+        return principal
+
+    async def resolve_principal(
+        self,
+        authorization: str | None,
+        *,
+        allow_password_change: bool = False,
+    ) -> dict[str, Any]:
         if authorization is None:
             raise ApiError(401, "未登录或登录已失效")
         try:
@@ -209,6 +257,17 @@ class AuthService:
         if user.status != "1":
             raise ApiError(403, "当前账号不可用，请联系管理员")
 
+        current_token_version = int(getattr(user, "token_version", 0) or 0)
+        try:
+            claimed_token_version = int(claims.get("token_version", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ApiError(401, "Invalid token version") from exc
+        if claimed_token_version != current_token_version:
+            raise ApiError(401, "当前登录状态已失效，请重新登录")
+        must_change_password = bool(getattr(user, "must_change_password", False))
+        if must_change_password and not allow_password_change:
+            raise ApiError(403, "首次登录必须修改密码")
+
         roles = await self._fetch_user_roles(user.id)
         return {
             "user_id": user.id,
@@ -216,6 +275,8 @@ class AuthService:
             "email": user.email,
             "avatar": user.avatar,
             "roles": roles,
+            "token_version": current_token_version,
+            "must_change_password": must_change_password,
         }
 
     async def _fetch_user_by_name(self, user_name: str) -> SysUser | None:

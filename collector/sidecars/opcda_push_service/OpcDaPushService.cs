@@ -117,7 +117,10 @@ namespace OpcDaPushService
                             List<Dictionary<string, object>> points = client.ReadAll();
                             if (points.Count > 0 && config.PostEnabled)
                             {
-                                PushClient.PostPoints(config, points);
+                                if (!PushClient.PostPoints(config, points))
+                                {
+                                    LogWarn("Poll cycle push was not fully acknowledged; no local durable failure queue is configured; a later read cycle may retry current values.");
+                                }
                             }
                             else if (points.Count > 0)
                             {
@@ -210,6 +213,7 @@ namespace OpcDaPushService
         private OpcDaClient _client;
         private long _totalPushedPoints;
         private long _totalPushBatches;
+        private DateTime _lastFullSnapshotAt = DateTime.MinValue;
 
         public SubscriptionStaRunner(AppConfig config)
         {
@@ -326,7 +330,10 @@ namespace OpcDaPushService
 
         private void PushCachedPoints()
         {
-            List<Dictionary<string, object>> points = _client.GetAllCachedPoints(_config.IncludeBadQuality);
+            bool fullSnapshot = ShouldUseFullSnapshot(DateTime.Now);
+            List<Dictionary<string, object>> points = fullSnapshot
+                ? _client.GetAllCachedPoints(_config.IncludeBadQuality, true)
+                : _client.GetChangedCachedPoints(_config.IncludeBadQuality);
             if (points.Count == 0)
             {
                 return;
@@ -334,14 +341,39 @@ namespace OpcDaPushService
 
             try
             {
-                PushClient.PostPoints(_config, points);
-                _totalPushBatches++;
-                _totalPushedPoints += points.Count;
+                if (PushClient.PostPoints(_config, points))
+                {
+                    _totalPushBatches++;
+                    _totalPushedPoints += points.Count;
+                }
+                else
+                {
+                    _client.MarkAllCachedPointsDirty();
+                    Program.LogWarn("Subscription push was not fully acknowledged; cache points were marked dirty for retry; no local durable failure queue is configured, so process crashes can lose unsent points.");
+                }
             }
             catch (Exception ex)
             {
+                _client.MarkAllCachedPointsDirty();
                 Program.LogError("Push cached points failed: " + ex.Message);
             }
+        }
+
+        private bool ShouldUseFullSnapshot(DateTime now)
+        {
+            if (_config.PushMode == "full")
+            {
+                return true;
+            }
+
+            if (_lastFullSnapshotAt == DateTime.MinValue
+                || (now - _lastFullSnapshotAt).TotalMilliseconds >= _config.FullSnapshotIntervalMs)
+            {
+                _lastFullSnapshotAt = now;
+                return true;
+            }
+
+            return false;
         }
 
         private static void PumpWindowsMessages()
@@ -405,6 +437,8 @@ namespace OpcDaPushService
         public int ReadIntervalMs { get; set; }
         public int PushIntervalMs { get; set; }
         public int ReportIntervalMs { get; set; }
+        public string PushMode { get; set; }
+        public int FullSnapshotIntervalMs { get; set; }
         public int BatchSize { get; set; }
         public int PostTimeoutMs { get; set; }
         public int MaxPostRetries { get; set; }
@@ -476,6 +510,12 @@ namespace OpcDaPushService
             ReadIntervalMs = ReadIntervalMs > 0 ? ReadIntervalMs : 1000;
             PushIntervalMs = PushIntervalMs > 0 ? PushIntervalMs : 500;
             ReportIntervalMs = ReportIntervalMs > 0 ? ReportIntervalMs : ReadIntervalMs;
+            PushMode = Default(PushMode, "changed_only").ToLowerInvariant();
+            if (PushMode != "changed_only" && PushMode != "full")
+            {
+                throw new InvalidOperationException("pushMode must be 'changed_only' or 'full'.");
+            }
+            FullSnapshotIntervalMs = FullSnapshotIntervalMs > 0 ? FullSnapshotIntervalMs : 60000;
             BatchSize = BatchSize > 0 ? BatchSize : 500;
             PostTimeoutMs = PostTimeoutMs > 0 ? PostTimeoutMs : 5000;
             MaxPostRetries = MaxPostRetries > 0 ? MaxPostRetries : 2;
@@ -790,7 +830,8 @@ namespace OpcDaPushService
             Program.Log("Stats: changed=" + snapshot.Changed + " cached=" + snapshot.CachedCount + " good=" + snapshot.Good + " bad=" + snapshot.Bad + " callbacks=" + snapshot.TotalCallbacks);
         }
 
-        public List<Dictionary<string, object>> GetAllCachedPoints(bool includeBadQuality)
+        public List<Dictionary<string, object>> GetAllCachedPoints(
+            bool includeBadQuality, bool clearDirty = false)
         {
             List<Dictionary<string, object>> points = new List<Dictionary<string, object>>();
             DateTime now = DateTime.Now;
@@ -829,11 +870,84 @@ namespace OpcDaPushService
                         point["opc_timestamp"] = cached.OpcTimestamp == DateTime.MinValue ? "" : cached.OpcTimestamp.ToString("o", CultureInfo.InvariantCulture);
                         point["timestamp"] = now.ToString("o", CultureInfo.InvariantCulture);
                         points.Add(point);
+                        if (clearDirty)
+                        {
+                            cached.Dirty = false;
+                        }
                     }
                 }
             }
 
             return points;
+        }
+
+        public List<Dictionary<string, object>> GetChangedCachedPoints(bool includeBadQuality)
+        {
+            List<Dictionary<string, object>> points = new List<Dictionary<string, object>>();
+            DateTime now = DateTime.Now;
+
+            for (int g = 0; g < _groups.Count; g++)
+            {
+                GroupBinding group = _groups[g];
+                lock (group.SyncRoot)
+                {
+                    foreach (KeyValuePair<int, CachedPoint> entry in group.Cache)
+                    {
+                        CachedPoint cached = entry.Value;
+                        if (!cached.Dirty)
+                        {
+                            continue;
+                        }
+
+                        ItemBinding item;
+                        if (!group.ClientHandleMap.TryGetValue(cached.ClientHandle, out item))
+                        {
+                            continue;
+                        }
+
+                        if (!includeBadQuality && !cached.QualityGood)
+                        {
+                            continue;
+                        }
+
+                        Dictionary<string, object> point = new Dictionary<string, object>();
+                        point["device_id"] = group.Device.DeviceId;
+                        point["opc_device"] = group.Device.OpcDevice;
+                        point["group"] = group.Group.Name;
+                        point["tag"] = item.Point.Tag;
+                        point["address"] = item.Point.Address;
+                        point["data_type"] = item.Point.DataType;
+                        point["item_id"] = item.ItemId;
+                        point["value"] = ConvertJsonValue(cached.Value);
+                        point["quality"] = cached.Quality;
+                        point["quality_hex"] = "0x" + cached.Quality.ToString("X4", CultureInfo.InvariantCulture);
+                        point["quality_good"] = cached.QualityGood;
+                        point["opc_timestamp"] = cached.OpcTimestamp == DateTime.MinValue ? "" : cached.OpcTimestamp.ToString("o", CultureInfo.InvariantCulture);
+                        point["timestamp"] = now.ToString("o", CultureInfo.InvariantCulture);
+                        points.Add(point);
+                        // Clear only after taking the immutable payload snapshot. A callback
+                        // racing with the HTTP call sets Dirty again and is retained.
+                        cached.Dirty = false;
+                    }
+                }
+            }
+
+            return points;
+        }
+
+        public void MarkAllCachedPointsDirty()
+        {
+            for (int g = 0; g < _groups.Count; g++)
+            {
+                GroupBinding group = _groups[g];
+                lock (group.SyncRoot)
+                {
+                    foreach (CachedPoint cached in group.Cache.Values)
+                    {
+                        cached.Dirty = true;
+                    }
+                }
+            }
         }
 
         private void SubscribeGroup(GroupBinding group)
@@ -1278,6 +1392,7 @@ namespace OpcDaPushService
         public DateTime OpcTimestamp;
         public DateTime ReceivedAt;
         public int Error;
+        public bool Dirty;
     }
 
     internal sealed class SubscriptionStats
@@ -1479,6 +1594,7 @@ namespace OpcDaPushService
                     cached.OpcTimestamp = opcTimestamp;
                     cached.ReceivedAt = now;
                     cached.Error = itemError;
+                    cached.Dirty = true;
                     changed++;
                 }
             }
@@ -1500,53 +1616,94 @@ namespace OpcDaPushService
 
     internal static class PushClient
     {
-        public static void PostPoints(AppConfig config, List<Dictionary<string, object>> points)
+        public static bool PostPoints(AppConfig config, List<Dictionary<string, object>> points)
         {
             int sent = 0;
             while (sent < points.Count && !Program.IsStopping)
             {
                 int take = Math.Min(config.BatchSize, points.Count - sent);
                 List<Dictionary<string, object>> batch = points.GetRange(sent, take);
-                if (!PostBatchWithRetry(config, batch))
+                string batchId = Guid.NewGuid().ToString("N");
+                if (!PostBatchWithRetry(config, batch, batchId))
                 {
-                    return; // 停止或失败，退出
+                    return false; // 停止或失败，退出；失败点不再伪装成已发送
                 }
                 sent += take;
             }
+            return sent == points.Count;
         }
 
-        private static bool PostBatchWithRetry(AppConfig config, List<Dictionary<string, object>> batch)
+        private static bool PostBatchWithRetry(
+            AppConfig config,
+            List<Dictionary<string, object>> batch,
+            string batchId)
         {
+            List<Dictionary<string, object>> pending = new List<Dictionary<string, object>>(batch);
             int attempt = 0;
-            while (!Program.IsStopping)
+            while (pending.Count > 0 && !Program.IsStopping)
             {
                 try
                 {
-                    PostBatch(config, batch);
-                    return true;
+                    List<int> failedIndexes = PostBatch(config, pending, batchId);
+                    if (failedIndexes.Count == 0)
+                    {
+                        return true;
+                    }
+
+                    List<Dictionary<string, object>> failed = new List<Dictionary<string, object>>();
+                    for (int i = 0; i < failedIndexes.Count; i++)
+                    {
+                        failed.Add(pending[failedIndexes[i]]);
+                    }
+                    pending = failed;
+                    Program.LogWarn(
+                        "Push batch " + batchId + " partially rejected; retrying " +
+                        pending.Count.ToString(CultureInfo.InvariantCulture) + " point(s).");
+                    if (attempt >= config.MaxPostRetries)
+                    {
+                        Program.LogError(
+                            "Push batch " + batchId + " exhausted retries with " +
+                            pending.Count.ToString(CultureInfo.InvariantCulture) +
+                            " point(s) remaining.");
+                        return false;
+                    }
+                    attempt++;
+                    SleepBeforeRetry(config, attempt);
                 }
                 catch (Exception ex)
                 {
                     if (attempt >= config.MaxPostRetries || Program.IsStopping)
                     {
-                        Program.LogError("Push failed: " + batch.Count + " points, error=" + ex.Message);
+                        Program.LogError(
+                            "Push batch " + batchId + " failed with " +
+                            pending.Count.ToString(CultureInfo.InvariantCulture) +
+                            " point(s) remaining, error=" + ex.Message);
                         return false;
                     }
                     attempt++;
-                    for (int i = 0; i < config.RetryDelayMs * attempt && !Program.IsStopping; i += 100)
-                    {
-                        Thread.Sleep(100);
-                    }
+                    SleepBeforeRetry(config, attempt);
                 }
             }
             return false;
         }
 
-        private static void PostBatch(AppConfig config, List<Dictionary<string, object>> batch)
+        private static void SleepBeforeRetry(AppConfig config, int attempt)
+        {
+            for (int i = 0; i < config.RetryDelayMs * attempt && !Program.IsStopping; i += 100)
+            {
+                Thread.Sleep(100);
+            }
+        }
+
+        private static List<int> PostBatch(
+            AppConfig config,
+            List<Dictionary<string, object>> batch,
+            string batchId)
         {
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["source"] = "opcda_sidecar";
             payload["schema"] = "opcda_tag_batch_v1";
+            payload["batch_id"] = batchId;
             payload["server"] = config.ServerProgId;
             payload["com_host"] = string.IsNullOrWhiteSpace(config.ComHost) ? Environment.MachineName : config.ComHost;
             payload["channel"] = config.Channel;
@@ -1584,7 +1741,133 @@ namespace OpcDaPushService
                         "HTTP status " + status.ToString(CultureInfo.InvariantCulture) +
                         ", response: " + (responseBody.Length > 200 ? responseBody.Substring(0, 200) : responseBody));
                 }
+                return ParseResponse(responseBody, batch.Count, batchId);
             }
+        }
+
+        private static List<int> ParseResponse(string responseBody, int batchCount, string batchId)
+        {
+            JavaScriptSerializer serializer = new JavaScriptSerializer();
+            serializer.MaxJsonLength = int.MaxValue;
+            object decoded = serializer.DeserializeObject(responseBody);
+            Dictionary<string, object> result = decoded as Dictionary<string, object>;
+            if (result == null)
+            {
+                throw new InvalidOperationException("Collector response is not a JSON object.");
+            }
+
+            object responseBatchId;
+            if (result.TryGetValue("batch_id", out responseBatchId) &&
+                !string.Equals(
+                    Convert.ToString(responseBatchId, CultureInfo.InvariantCulture),
+                    batchId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Collector response batch_id does not match request.");
+            }
+
+            int accepted = ReadNonNegativeCount(result, "accepted");
+            int rejected = ReadNonNegativeCount(result, "rejected");
+            List<string> errors = ReadErrors(result);
+            List<int> failedIndexes = ReadRejectedIndexes(result, batchCount);
+
+            if (accepted == batchCount && rejected == 0 && errors.Count == 0 && failedIndexes.Count == 0)
+            {
+                return failedIndexes;
+            }
+
+            if (failedIndexes.Count == 0)
+            {
+                // 老版本 collector 或不完整响应没有逐点索引时，保守地重试当前剩余批次，
+                // 绝不能把 rejected/errors 当作整体成功。
+                for (int i = 0; i < batchCount; i++)
+                {
+                    failedIndexes.Add(i);
+                }
+            }
+            Program.LogWarn(
+                "Collector batch " + batchId + " response accepted=" +
+                accepted.ToString(CultureInfo.InvariantCulture) + " rejected=" +
+                rejected.ToString(CultureInfo.InvariantCulture) + " errors=" +
+                errors.Count.ToString(CultureInfo.InvariantCulture));
+            return failedIndexes;
+        }
+
+        private static int ReadNonNegativeCount(Dictionary<string, object> result, string key)
+        {
+            object raw;
+            if (!result.TryGetValue(key, out raw) || raw == null)
+            {
+                return 0;
+            }
+            int value;
+            try
+            {
+                value = Convert.ToInt32(raw, CultureInfo.InvariantCulture);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("Collector response field " + key + " is invalid.", ex);
+            }
+            if (value < 0)
+            {
+                throw new InvalidOperationException("Collector response field " + key + " is negative.");
+            }
+            return value;
+        }
+
+        private static List<string> ReadErrors(Dictionary<string, object> result)
+        {
+            List<string> errors = new List<string>();
+            object raw;
+            if (!result.TryGetValue("errors", out raw) || raw == null)
+            {
+                return errors;
+            }
+            object[] values = raw as object[];
+            if (values != null)
+            {
+                for (int i = 0; i < values.Length; i++)
+                {
+                    errors.Add(Convert.ToString(values[i], CultureInfo.InvariantCulture));
+                }
+                return errors;
+            }
+            errors.Add(Convert.ToString(raw, CultureInfo.InvariantCulture));
+            return errors;
+        }
+
+        private static List<int> ReadRejectedIndexes(Dictionary<string, object> result, int batchCount)
+        {
+            List<int> indexes = new List<int>();
+            object raw;
+            if (!result.TryGetValue("rejected_indices", out raw) || raw == null)
+            {
+                return indexes;
+            }
+            object[] values = raw as object[];
+            if (values == null)
+            {
+                throw new InvalidOperationException("Collector response rejected_indices is invalid.");
+            }
+            for (int i = 0; i < values.Length; i++)
+            {
+                int index;
+                try
+                {
+                    index = Convert.ToInt32(values[i], CultureInfo.InvariantCulture);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException("Collector response rejected index is invalid.", ex);
+                }
+                if (index < 0 || index >= batchCount || indexes.Contains(index))
+                {
+                    throw new InvalidOperationException("Collector response rejected index is out of range.");
+                }
+                indexes.Add(index);
+            }
+            return indexes;
         }
     }
 

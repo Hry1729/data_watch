@@ -41,7 +41,6 @@ export interface UserPayload {
   avatar?: string;
   status?: string;
   userRoles?: string[];
-  password?: string;
 }
 
 export type UserPageResult = SystemPaginatedResult<UserListItem>;

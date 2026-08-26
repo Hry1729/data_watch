@@ -124,6 +124,23 @@
           <ElEmpty v-else description="暂无设备数据" :image-size="160" />
         </template>
       </div>
+      <div v-if="listTotal > DEVICE_LIST_PAGE_SIZE" class="list-pagination">
+        <ElPagination
+          background
+          layout="total, prev, pager, next"
+          :current-page="pageNo"
+          :page-size="DEVICE_LIST_PAGE_SIZE"
+          :total="listTotal"
+          @current-change="handlePageChange"
+        />
+      </div>
+      <ElAlert
+        v-if="statsTruncated"
+        class="stats-limit-warning"
+        title="设备数量超过统计安全上限，比例统计暂不计算；请缩小筛选范围。"
+        type="warning"
+        :closable="false"
+      />
     </ElCard>
   </div>
 </template>
@@ -136,6 +153,7 @@
   import ArtProgressCard from '@/components/core/cards/art-progress-card/index.vue'
   import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
   import { fetchDeviceGroupTree, fetchDeviceList } from '@/api/device-monitor'
+  import { loadAllDevicePages } from '@/utils/device-pagination'
 
   defineOptions({ name: 'DeviceMonitor' })
 
@@ -147,22 +165,29 @@
   const loading           = ref(false)
   const deviceList        = ref<DeviceListItem[]>([])
   const deviceTypeOptions = ref<{ label: string; value: string }[]>([])
+  const pageNo            = ref(1)
+  const listTotal         = ref(0)
+  const statsTruncated     = ref(false)
+  const DEVICE_LIST_PAGE_SIZE = 100
 
   // 统计数据
   const stats = ref({ total: 0, online: 0, unstable: 0, offline: 0, disabled: 0 })
 
   // 计算百分比
-  const onlineRate = computed(() => {
+  const onlineRate = computed<number | null>(() => {
+    if (statsTruncated.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.online / stats.value.total) * 100).toFixed(1))
   })
 
-  const offlineRate = computed(() => {
+  const offlineRate = computed<number | null>(() => {
+    if (statsTruncated.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.offline / stats.value.total) * 100).toFixed(1))
   })
 
-  const disabledRate = computed(() => {
+  const disabledRate = computed<number | null>(() => {
+    if (statsTruncated.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.disabled / stats.value.total) * 100).toFixed(1))
   })
@@ -241,48 +266,61 @@
     }
   }
 
-  // 加载设备列表（全量，滚动展示）
+  // 加载当前页设备列表；统计与选择器使用独立的全量分页加载。
+  let listRequestVersion = 0
   const loadDeviceList = async (silent = false) => {
+    const requestVersion = ++listRequestVersion
     if (!silent) loading.value = true
     try {
       const statusParams = STATUS_FILTER_MAP[searchForm.value.statusFilter] ?? {}
       const result = await fetchDeviceList({
-        pageNo: 1,
-        pageSize: 1000,
+         pageNo: pageNo.value,
+         pageSize: DEVICE_LIST_PAGE_SIZE,
         keyword: searchForm.value.keyword.trim() || undefined,
         deviceType: searchForm.value.deviceType,
         deviceStatus: statusParams.deviceStatus,
         connectStatus: statusParams.connectStatus
       })
-      deviceList.value = result.list || []
+      if (requestVersion === listRequestVersion) {
+        deviceList.value = result.list || []
+        listTotal.value = result.total || 0
+      }
     } catch (error) {
       console.error('加载设备列表失败:', error)
-      if (!silent) deviceList.value = []   // 静默刷新出错时保留旧数据，不清空卡片墙
+      if (!silent && requestVersion === listRequestVersion) {
+        deviceList.value = []
+      }
     } finally {
-      if (!silent) loading.value = false
+      if (!silent && requestVersion === listRequestVersion) loading.value = false
     }
   }
 
   // 加载统计数据（始终全量，不受筛选影响）
+  let statsRequestVersion = 0
   const loadStats = async () => {
+    const requestVersion = ++statsRequestVersion
     try {
-      const allResult = await fetchDeviceList({ pageNo: 1, pageSize: 1000 })
+      const allResult = await loadAllDevicePages((page, size) => fetchDeviceList({ pageNo: page, pageSize: size }))
+      if (requestVersion !== statsRequestVersion) return
       const all = allResult.list || []
       stats.value.total    = allResult.total || all.length
       stats.value.online   = all.filter((d) => d.connectStatus === 'online').length
       stats.value.offline  = all.filter((d) => d.connectStatus === 'offline').length
       stats.value.unstable = all.filter((d) => d.connectStatus === 'unstable').length
       stats.value.disabled = all.filter((d) => d.deviceStatus === 'disabled').length
+      statsTruncated.value = allResult.truncated
     } catch (error) {
       console.error('加载统计数据失败:', error)
     }
   }
 
-  const handleSearch = () => { loadDeviceList() }
+  const handleSearch = () => { pageNo.value = 1; loadDeviceList() }
   const handleReset  = () => {
     searchForm.value = { keyword: '', deviceType: undefined, statusFilter: '' }
+    pageNo.value = 1
     loadDeviceList()
   }
+  const handlePageChange = (value: number) => { pageNo.value = value; loadDeviceList() }
 
   // 跳转到实时监控
   const goToRealtime = (device: DeviceListItem) => {
@@ -291,18 +329,29 @@
 
   const REFRESH_INTERVAL = 15000  // 15s 定时静默刷新设备状态
   let refreshTimer: ReturnType<typeof setInterval> | null = null
+  let refreshInFlight = false
+
+  const refreshMonitor = async (silent: boolean) => {
+    if (refreshInFlight) return
+    refreshInFlight = true
+    try {
+      await Promise.all([loadDeviceList(silent), loadStats()])
+    } finally {
+      refreshInFlight = false
+    }
+  }
 
   onMounted(() => {
     loadDeviceTypeOptions()
-    loadDeviceList()
-    loadStats()
+    void refreshMonitor(false)
     refreshTimer = setInterval(() => {
-      loadDeviceList(true)  // 静默刷新，不触发整页加载态
-      loadStats()
+      void refreshMonitor(true)
     }, REFRESH_INTERVAL)
   })
 
   onUnmounted(() => {
+    listRequestVersion += 1
+    statsRequestVersion += 1
     if (refreshTimer) {
       clearInterval(refreshTimer)
       refreshTimer = null

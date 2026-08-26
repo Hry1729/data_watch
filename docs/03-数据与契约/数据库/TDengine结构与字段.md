@@ -147,7 +147,7 @@ writer 不直接信任 Redis 中的物理列名，Redis 只携带 `var_id`，列
 列只增不减带来三个收益：
 
 1. 历史查询不会因为点位删除而找不到旧列；
-2. writer 在 config_version 短暂不一致时可安全使用旧映射；
+2. writer 使用永久 `point_storage_mapping`；历史 `config_version` 不使 mapping 失效，热缓存遇到新点位时运行期 reload；
 3. 避免 TDengine schema 频繁删除/重排造成维护风险。
 
 代价是历史废弃点位列会保留，容量与列数量需通过点位治理控制。

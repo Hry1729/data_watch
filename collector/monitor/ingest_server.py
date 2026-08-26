@@ -28,6 +28,13 @@ logger = get_logger("ingest_server")
 LOG_SAMPLE_INTERVAL_SECONDS = 10
 
 
+def _normalize_point_value(value: Any) -> Any:
+    """将外部 Boolean 值规范化为 Stream/TDengine 可解析的数值字符串。"""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return value
+
+
 def _parse_timestamp(raw_value: Any) -> datetime:
     """解析时间戳，支持 ISO8601 字符串/Unix 秒/Unix 毫秒"""
     if raw_value is None:
@@ -128,7 +135,7 @@ def _point_from_dict(item: Dict[str, Any]) -> DataPoint:
     """将单个字典转换为 DataPoint"""
     device_id = str(item.get("device_id", "")).strip()
     variable_id = str(item.get("variable_id", "")).strip()
-    value = item.get("value")
+    value = _normalize_point_value(item.get("value"))
 
     if not device_id:
         raise ValueError("device_id is required")
@@ -221,8 +228,15 @@ class _IngestHTTPServer(ThreadingHTTPServer):
 
     def write_points_to_redis(self, points: List[DataPoint]) -> Tuple[int, List[str]]:
         """写入 Redis latest/window/stream，返回 accepted 和错误列表。"""
+        accepted, errors, _ = self.write_points_to_redis_detailed(points)
+        return accepted, errors
+
+    def write_points_to_redis_detailed(
+        self, points: List[DataPoint]
+    ) -> Tuple[int, List[str], List[int]]:
+        """写入 Redis，并返回成功/失败的 DataPoint 索引。"""
         if self.redis_writer is None:
-            return 0, ["redis writer not configured"]
+            return 0, ["redis writer not configured"], list(range(len(points)))
 
         # 在锁内抓取一致快照，处理过程使用局部引用，避免读到半更新状态
         with self._metadata_lock:
@@ -232,8 +246,8 @@ class _IngestHTTPServer(ThreadingHTTPServer):
 
         by_latest: Dict[Tuple[str, str, int, Optional[int]], Dict[str, Dict[str, Any]]] = {}
         by_frame: Dict[Tuple[str, str, str, int, int, Optional[int]], Dict[str, Any]] = {}
-        accepted = 0
         errors: List[str] = []
+        successful_indices: set[int] = set()
 
         for idx, point in enumerate(points):
             var = variable_meta.get(str(point.variable_id))
@@ -271,7 +285,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             # group_config_version（与 executor 路径 035a532 一致），不用 device 表的
             # variable_config_version——否则两列不恒等时 writer 版本错配 → 刷屏告警/DLQ。
             config_version = int(getattr(var, "group_config_version", 1))
-            value_text = str(point.value)
+            value_text = str(_normalize_point_value(point.value))
             quality = int(getattr(point, "quality", 0))
 
             # latest 聚合键必须包含 scan_rate_ms：同一 (device, group) 不同 scan_rate 的
@@ -295,15 +309,20 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             )
             frame = by_frame.setdefault(
                 frame_key,
-                {"ts": ts_ms, "values": {}, "stream_values": {}, "stream_qualities": {}},
+                {
+                    "ts": ts_ms,
+                    "values": {},
+                    "stream_values": {},
+                    "stream_qualities": {},
+                    "point_indices": set(),
+                },
             )
             frame["ts"] = max(frame["ts"], ts_ms)
             frame["values"][str(point.variable_id)] = value_text
+            frame["point_indices"].add(idx)
             if getattr(var, "is_storage", True) and str(getattr(var, "data_type", "")).upper() != "STRING":
                 frame["stream_values"][str(point.variable_id)] = value_text
                 frame["stream_qualities"][str(point.variable_id)] = quality
-
-            accepted += 1
 
         for (
             device_code,
@@ -353,12 +372,15 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                     (device_code, group_code, scan_rate_ms, generation)
                 )
                 if latest_fields is None:
+                    errors.append(f"redis latest fields missing for {frame_label}")
                     return
                 try:
                     self.redis_writer.write_latest(device_code, group_code, latest_fields)
                 except Exception as exc:
                     errors.append(f"redis write_latest failed for {frame_label}: {exc}")
                     logger.error("redis write_latest failed for %s: %s", frame_label, exc)
+                    return
+                successful_indices.update(frame_data["point_indices"])
 
             if self.device_manager is None:
                 write_frame()
@@ -367,7 +389,8 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             ):
                 errors.append(f"stale generation rejected for {frame_label}")
 
-        return accepted, errors
+        failed_indices = sorted(set(range(len(points))) - successful_indices)
+        return len(successful_indices), errors, failed_indices
 
 
 class _IngestRequestHandler(BaseHTTPRequestHandler):
@@ -511,13 +534,24 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": f"unsupported schema: {schema}"})
                 return
 
+            batch_id = payload.get("batch_id")
+            if batch_id is not None:
+                batch_id = str(batch_id).strip() or None
+
             raw_points = payload.get("points", [])
             if not isinstance(raw_points, list):
                 self._send_json(400, {"error": "points must be a list"})
                 return
 
             if not raw_points:
-                self._send_json(200, {"accepted": 0, "unmapped": 0, "errors": []})
+                self._send_json(200, {
+                    "batch_id": batch_id,
+                    "accepted": 0,
+                    "rejected": 0,
+                    "rejected_indices": [],
+                    "unmapped": 0,
+                    "errors": [],
+                })
                 return
 
             if len(raw_points) > self.server.max_batch_size:
@@ -525,12 +559,15 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                 return
 
             points: List[DataPoint] = []
+            point_indices: List[int] = []
             unmapped: List[str] = []
             errors: List[str] = []
+            rejected_indices: set[int] = set()
 
             for idx, item in enumerate(raw_points):
                 if not isinstance(item, dict):
                     errors.append(f"points[{idx}]: not an object")
+                    rejected_indices.add(idx)
                     continue
 
                 # 从 item_id 或构建完整路径
@@ -554,12 +591,15 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                             f"Provide full item_id (e.g., 'OPD_Server.AGV801.ViewMain.Tag30041800') "
                             f"or device_id/group/tag for legacy fallback."
                         )
+                        rejected_indices.add(idx)
                         continue
 
                 # 查找 variable_id
                 variable_id = mapper.get_variable_id(item_id)
                 if variable_id is None:
                     unmapped.append(item_id)
+                    errors.append(f"points[{idx}]: item_id not mapped: {item_id}")
+                    rejected_indices.add(idx)
                     logger.debug(
                         "item_id not found in mapper: %s. "
                         "Ensure MySQL device_variable.var_address matches the OPC DA item_id.",
@@ -568,9 +608,10 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     continue
 
                 # 解析值和时间戳
-                value = item.get("value")
+                value = _normalize_point_value(item.get("value"))
                 if value is None:
                     errors.append(f"points[{idx}]: missing value")
+                    rejected_indices.add(idx)
                     continue
 
                 try:
@@ -578,6 +619,7 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     quality = _map_opcda_quality(item)
                 except ValueError as exc:
                     errors.append(f"points[{idx}]: {exc}")
+                    rejected_indices.add(idx)
                     continue
 
                 # 获取 device_id（用于 DataPoint）
@@ -590,16 +632,27 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     timestamp=timestamp,
                     quality=quality,
                 ))
+                point_indices.append(idx)
 
             if not points:
-                self._send_json(200, {
+                self._send_json(400 if rejected_indices else 200, {
+                    "batch_id": batch_id,
                     "accepted": 0,
+                    "rejected": len(rejected_indices),
+                    "rejected_indices": sorted(rejected_indices),
                     "unmapped": len(unmapped),
                     "errors": errors,
                 })
                 return
 
-            accepted, write_errors = self.server.write_points_to_redis(points)
+            accepted, write_errors, failed_point_indices = (
+                self.server.write_points_to_redis_detailed(points)
+            )
+            rejected_indices.update(
+                point_indices[index]
+                for index in failed_point_indices
+                if 0 <= index < len(point_indices)
+            )
             errors.extend(write_errors)
             dropped = 0
 
@@ -618,8 +671,13 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     dropped,
                 )
 
-            self._send_json(200, {
+            status_code = 400 if accepted == 0 and rejected_indices else 200
+            self._send_json(status_code, {
+                "batch_id": batch_id,
+                "received": len(raw_points),
                 "accepted": accepted,
+                "rejected": len(rejected_indices),
+                "rejected_indices": sorted(rejected_indices),
                 "unmapped": len(unmapped),
                 "dropped": dropped,
                 "errors": errors[:10] if errors else [],  # 限制错误数量

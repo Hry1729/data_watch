@@ -28,6 +28,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.log_writer import write_system_log, write_system_log_sync
 from app.core.log_scheduler import start_log_scheduler, stop_log_scheduler
+from app.http_body import RequestBodyTooLarge, read_limited_body
 from app.services.auth_bootstrap import bootstrap_auth_schema
 from app.services.driver_lifecycle import (
     reconcile_driver_operations,
@@ -38,7 +39,7 @@ from app.services.rate_sampler import start_rate_sampler, stop_rate_sampler
 from app.services.perspective import get_perspective_session_manager
 
 
-# 不安全的 JWT secret 集合：旧硬编码默认值、模板占位符、空串。命中则启动告警。
+# 不安全的 JWT secret 集合：旧硬编码默认值、模板占位符、空串。
 _UNSAFE_AUTH_SECRETS = {
     "device-monitor-dev-secret",
     "replace-with-a-strong-random-secret",
@@ -323,19 +324,48 @@ class EnhancedASGITurboAPI(TurboAPI):
         ]
         normalized_query_string = urlencode(normalized_query_pairs, doseq=True)
 
-        body = b""
-        while True:
-            message = await receive()
-            body += message.get("body", b"")
-            if not message.get("more_body", False):
-                break
-
         headers = CaseInsensitiveHeaders(
             {
                 hdr_name.decode("latin-1"): hdr_val.decode("latin-1")
                 for hdr_name, hdr_val in scope.get("headers", [])
             }
         )
+        max_body_bytes = get_settings().max_body_bytes
+        raw_content_length = headers.get("content-length")
+        if raw_content_length is not None:
+            try:
+                content_length = int(raw_content_length)
+            except (TypeError, ValueError):
+                await self._send_asgi_response(
+                    send,
+                    JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"}),
+                    headers,
+                )
+                return
+            if content_length < 0:
+                await self._send_asgi_response(
+                    send,
+                    JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"}),
+                    headers,
+                )
+                return
+            if content_length > max_body_bytes:
+                await self._send_asgi_response(
+                    send,
+                    JSONResponse(status_code=413, content={"detail": "Request body too large"}),
+                    headers,
+                )
+                return
+
+        try:
+            body = await read_limited_body(receive, max_body_bytes)
+        except RequestBodyTooLarge:
+            await self._send_asgi_response(
+                send,
+                JSONResponse(status_code=413, content={"detail": "Request body too large"}),
+                headers,
+            )
+            return
 
         if method == "OPTIONS" and await _send_cors_preflight_response(send, headers):
             return
@@ -654,15 +684,15 @@ async def lifespan(_: TurboAPI):
         }
 
         # JWT secret 安全自检：漏配时会回落到不安全的默认/占位值，任何人可伪造 token。
-        # 开发态仅 WARN，不阻断启动；生产须在 backend/.env 配置强随机 AUTH_SECRET_KEY。
         if settings.auth_secret_key in _UNSAFE_AUTH_SECRETS:
-            logger.warning(
-                "AUTH_SECRET_KEY 使用了不安全的默认/占位值，token 可被伪造；"
-                "生产环境必须在 backend/.env 配置强随机 AUTH_SECRET_KEY"
-            )
+            if settings.app_env not in {"dev", "development", "test"}:
+                raise RuntimeError(
+                    "AUTH_SECRET_KEY must be a strong random value outside development/test environments"
+                )
+            logger.warning("AUTH_SECRET_KEY uses an insecure development/test default")
 
         if settings.auth_auto_bootstrap:
-            await bootstrap_auth_schema()
+            await bootstrap_auth_schema(app_env=settings.app_env)
             logger.info("Auth schema bootstrap enabled and completed")
 
         # 补偿跨 Agent/MySQL 未完成的驱动生命周期（失败不阻断启动）

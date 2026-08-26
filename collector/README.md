@@ -320,6 +320,17 @@ collector 不直接连接 TDengine。采集结果统一写入 Redis：
 - `window`：短窗口数据，供实时页面和轻量分析使用
 - `stream`：待入库数据，由独立 writer 消费并写入 TDengine 宽表
 
+`redis.stream_maxlen = 0`（默认）表示 Stream 不主动裁剪，保留待入库历史；正数只应
+作为有损应急上限，达到约 80% 时会记录容量/lag 风险告警，超过上限的旧 entry 可能在
+writer 消费前被裁剪。无损模式仍按 `redis.stream_warn_entries`（默认 50000）低频采样
+XLEN 并在达到阈值时告警 Writer lag/Redis memory pressure；设为 `<=0` 可禁用观测。
+启用非零上限前，应结合 writer 延迟和 Redis 内存预算评估可接受的数据损失。
+
+同一 `(device, group, scan_rate, config_version)` frame 内的多个点共用一条
+`window`/`stream` 宽行时间戳，该时间戳取本 frame 所有点位源时间戳的最大值；这是当前
+兼容 schema 的聚合契约。`latest` 中各变量字段仍保留各自的点位时间戳。需要保留每个
+点的独立源时间时，应先扩展下游 schema，再改变该契约。
+
 ### 4. HTTP Push 接入
 
 外部数据源通过 `/ingest` 推送后，同样进入 Redis latest / window / stream。
@@ -332,6 +343,9 @@ collector 不直接连接 TDengine。采集结果统一写入 Redis：
 - 推送路径：`/ingest`
 - 健康检查：`/ingest/health`
 - 适用场景：AGV 32 位 OPC DA sidecar、外部算法模块、其它无法直接由 collector 驱动读取的数据源
+
+当 `interface_ingest.host` 绑定 `127.0.0.1`、`::1` 或 `localhost` 时 API key 可留空；绑定
+通配地址、具体内网地址或其它非回环地址时必须配置非空 `api_key`，即使服务只运行在内网。
 
 单点示例：
 

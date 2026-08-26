@@ -55,7 +55,7 @@ backend 是一个基于 **TurboAPI** 的 ASGI 服务（自定义增强层 `Enhan
 backend/app/
 ├── main.py              # 应用装配、生命周期、ASGI 增强层、CORS、异常、WS 注册
 ├── api/
-│   ├── router.py        # 聚合 9 个路由模块
+│   ├── router.py        # 聚合 11 个 HTTP 路由模块
 │   ├── permissions.py   # RBAC 权限校验
 │   └── routes/          # auth/system/system_manage/catalog/dashboard/
 │                        #   history/log/monitor/module_monitor/perspective
@@ -97,7 +97,7 @@ flowchart TD
 
 ### 5.2 路由层
 
-`backend/app/api/router.py` 聚合 9 个路由模块：`auth`、`system`、`catalog`、`dashboard`、`log`、`monitor`、`module_monitor`、`history`、`system_manage`。两个 WebSocket 端点在 `create_app` 单独注册（不经 HTTP 路由表）。
+`backend/app/api/router.py` 聚合 11 个 HTTP 路由模块：`auth`、`system`、`cli_releases`、`catalog`、`dashboard`、`distributed_nodes`、`log`、`monitor`、`module_monitor`、`history`、`system_manage`。两个 WebSocket 端点（ws_push、Perspective）在 `create_app` 单独注册，不经 HTTP 路由表。
 
 ### 5.3 鉴权与权限
 
@@ -167,7 +167,11 @@ sequenceDiagram
     participant FE as 前端
     participant WS as ws_push
     participant RDS as Redis
+    FE->>WS: connect（URL 不含 token）
+    FE->>WS: auth {token}
+    WS->>WS: 校验 realtime:view
     FE->>WS: subscribe(device, group)
+    WS->>WS: 校验 realtime:subscribe + device/group
     WS->>RDS: HGETALL rt:latest:device:group
     WS-->>FE: snapshot
     loop 每 0.1s
@@ -225,11 +229,14 @@ sequenceDiagram
 
 配置来自 `backend/.env`（经 `app/core/config.py` 的 `get_settings()` 读取）：
 
-- 数据源：`mysql_*`、`tdengine_*`、Redis 连接；
-- 鉴权：`AUTH_SECRET_KEY`（生产必配强随机值）、令牌有效期；
-- CORS：`cors_origins`；
-- Perspective 保护：会话数/TTL/查询点数/范围/记录数等上限；
-- 运行：`app_name`、`log_level`、`auth_auto_bootstrap`。
+- HTTP 监听与契约：`BACKEND_HOST`、`BACKEND_PORT`、`BACKEND_API_PREFIX`、`BACKEND_MAX_BODY_BYTES`（默认 4 MiB；也兼容 `DATAWATCH_MAX_HTTP_BODY_BYTES`）。
+- 数据源：`MYSQL_*`、`TDENGINE_*`、`REDIS_*`、`WRITER_REDIS_GROUP_NAME`；生产环境应配置 Redis 密码，跨主机 TDengine 按需启用 `TDENGINE_USE_SSL`。
+- 鉴权：`AUTH_SECRET_KEY`（生产必配强随机值）、访问/刷新令牌有效期和 `AUTH_AUTO_BOOTSTRAP`；首装 Super 密码策略见《04-运维部署》。
+- CORS：`BACKEND_CORS_ORIGINS`；只列出实际 Web/App 来源，不要使用任意来源。
+- Perspective 保护：`PERSPECTIVE_*` 会话数、TTL、查询点数、时间范围、记录数和超时等上限。
+- 实时与导出：`REALTIME_WS_MAX_SUBSCRIPTIONS_PER_CONNECTION`（默认 20）、`EXPORT_MAX_*` 任务/记录上限。
+- Agent 与 CLI：`DATAWATCH_AGENT_BASE_URL`、`DATAWATCH_AGENT_SERVICE_TOKEN`，以及 `CLI_API_VERSION`、`CLI_MIN_VERSION`、`CLI_MAX_VERSION`、`CLI_RELEASE_DIR`。
+- 运行：`BACKEND_APP_NAME`、`BACKEND_APP_VERSION`、`BACKEND_ENV`、`BACKEND_LOG_LEVEL`。
 
 运行时为 free-threaded Python 3.14t，`PYTHONPATH` 含 `.py314t-site`，经 uvicorn 启动。详见《04-运维部署》。
 

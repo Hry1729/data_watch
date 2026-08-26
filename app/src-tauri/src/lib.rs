@@ -5,8 +5,10 @@ mod tray;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(http_proxy::BackendOriginState::default())
         .invoke_handler(tauri::generate_handler![
             http_proxy::agent_request,
+            http_proxy::set_backend_origin,
             http_proxy::backend_request,
             http_proxy::backend_download,
             tray::show_window,

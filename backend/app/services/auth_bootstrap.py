@@ -1,12 +1,14 @@
 ﻿from __future__ import annotations
 
+import os
+import string
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, inspect, select, text
 
 from app.core.logging import get_logger
-from app.core.security import hash_password
+from app.core.security import generate_temporary_password, hash_password, verify_password
 from app.db.mysql import get_mysql_engine, get_mysql_session_factory
 from app.models import (
     Base,
@@ -381,15 +383,22 @@ DATA_SCOPE_GRANTS = {
 }
 
 
-async def bootstrap_auth_schema() -> None:
+async def bootstrap_auth_schema(
+    *,
+    app_env: str | None = None,
+) -> list[dict[str, str]]:
     engine = get_mysql_engine()
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_migrate_auth_columns)
 
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         await _seed_roles(session)
-        await _seed_users(session)
+        bootstrap_credentials = await _seed_users(session, app_env=app_env)
+        environment = (app_env or os.getenv("BACKEND_ENV", "production")).strip().lower()
+        if bootstrap_credentials and environment not in {"dev", "development", "test"}:
+            raise RuntimeError("non-development bootstrap must not return plaintext credentials")
         menu_by_name = await _seed_menus(session)
         permission_by_code = await _seed_permissions(session, menu_by_name)
         role_by_code = await _load_role_map(session)
@@ -402,6 +411,7 @@ async def bootstrap_auth_schema() -> None:
         await session.commit()
 
     logger.info("Auth schema bootstrap complete")
+    return bootstrap_credentials
 
 
 async def _seed_roles(session) -> None:
@@ -420,16 +430,44 @@ async def _seed_roles(session) -> None:
     await session.flush()
 
 
-async def _seed_users(session) -> None:
+async def _seed_users(
+    session,
+    *,
+    app_env: str | None = None,
+) -> list[dict[str, str]]:
     """只新增缺失用户，不覆盖已有用户的密码、状态、个人信息等字段"""
-    default_password_hash = hash_password("123456")
+    environment = (app_env or os.getenv("BACKEND_ENV", "production")).strip().lower()
+    is_development = environment in {"dev", "development", "test"}
+    existing_by_name = {
+        seed["user_name"]: await session.scalar(
+            select(SysUser).where(SysUser.user_name == seed["user_name"])
+        )
+        for seed in USER_SEEDS
+    }
+    bootstrap_super_password: str | None = None
+    if not is_development and existing_by_name.get("Super") is None:
+        bootstrap_super_password = os.getenv("AUTH_BOOTSTRAP_SUPER_PASSWORD", "")
+        _validate_bootstrap_super_password(bootstrap_super_password)
+
+    bootstrap_credentials: list[dict[str, str]] = []
     for seed in USER_SEEDS:
-        user = await session.scalar(select(SysUser).where(SysUser.user_name == seed["user_name"]))
+        user = existing_by_name[seed["user_name"]]
         is_new_user = user is None
         if is_new_user:
+            if not is_development and seed["user_name"] != "Super":
+                # Production bootstrap provisions only the explicit Super
+                # account; Admin/User need an administrator-created account.
+                continue
+            temporary_password = (
+                generate_temporary_password()
+                if is_development
+                else str(bootstrap_super_password)
+            )
             user = SysUser(
                 user_name=seed["user_name"],
-                password_hash=default_password_hash,
+                password_hash=hash_password(temporary_password),
+                token_version=0,
+                must_change_password=True,
                 nick_name=seed["nick_name"],
                 email=seed["email"],
                 phone=seed["phone"],
@@ -440,12 +478,15 @@ async def _seed_users(session) -> None:
                 update_by="bootstrap",
             )
             session.add(user)
+            if is_development:
+                bootstrap_credentials.append(
+                    {"userName": seed["user_name"], "temporaryPassword": temporary_password}
+                )
         else:
             # 已有用户：只补齐空字段，不覆盖已有值
-            if seed["user_name"] == "Super":
-                user.deleted = False
-                user.status = seed["status"]
-                user.update_by = "bootstrap"
+            # 兼容历史默认密码，但强制其在首次登录时完成改密。
+            if verify_password("123456", user.password_hash):
+                user.must_change_password = True
             if not user.nick_name:
                 user.nick_name = seed["nick_name"]
             if not user.email:
@@ -455,6 +496,38 @@ async def _seed_users(session) -> None:
             if not user.gender or user.gender == "unknown":
                 user.gender = seed["gender"]
     await session.flush()
+    return bootstrap_credentials
+
+
+def _validate_bootstrap_super_password(password: str) -> None:
+    if (
+        len(password) < 16
+        or any(character.isspace() for character in password)
+        or not any(character in string.ascii_lowercase for character in password)
+        or not any(character in string.ascii_uppercase for character in password)
+        or not any(character in string.digits for character in password)
+        or not any(character not in string.ascii_letters + string.digits for character in password)
+    ):
+        raise RuntimeError(
+            "AUTH_BOOTSTRAP_SUPER_PASSWORD must be at least 16 characters "
+            "and contain upper/lowercase letters, digits, and a symbol"
+        )
+
+
+def _migrate_auth_columns(connection) -> None:
+    """Add auth lifecycle columns to installations created before token revocation support."""
+    columns = {column["name"] for column in inspect(connection).get_columns("sys_user")}
+    if "token_version" not in columns:
+        connection.execute(
+            text("ALTER TABLE sys_user ADD COLUMN token_version BIGINT NOT NULL DEFAULT 0")
+        )
+    if "must_change_password" not in columns:
+        connection.execute(
+            text(
+                "ALTER TABLE sys_user "
+                "ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
 
 
 async def _seed_menus(session) -> dict[str, SysMenu]:
@@ -532,7 +605,9 @@ async def _load_user_map(session) -> dict[str, SysUser]:
 async def _seed_user_roles(session, user_by_name: dict[str, SysUser], role_by_code: dict[str, SysRole]) -> None:
     """只补齐缺失的用户角色关系，不删除已有关系"""
     for seed in USER_SEEDS:
-        user = user_by_name[seed["user_name"]]
+        user = user_by_name.get(seed["user_name"])
+        if user is None or user.deleted:
+            continue
         for role_code in seed["roles"]:
             role = role_by_code[role_code]
             existing = await session.scalar(

@@ -17,27 +17,24 @@ export function useRealtimeWs(deviceCode: string, groupCode: string = 'g001') {
 
   function buildWsUrl(): string {
     const { VITE_API_URL } = import.meta.env
-    const { accessToken } = useUserStore()
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
     const path = '/api/device-monitor/ws/realtime-push'
 
-    const appendToken = (url: string) => {
-      if (!accessToken) return url
-      const sep = url.includes('?') ? '&' : '?'
-      return `${url}${sep}token=${encodeURIComponent(accessToken)}`
-    }
-
     if (!VITE_API_URL || VITE_API_URL === '/') {
-      return appendToken(`${wsProtocol}//${location.host}${path}`)
+      return wsProtocol + '//' + location.host + path
     }
 
-    if (/^https?:\/\//.test(VITE_API_URL)) {
-      const base = VITE_API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-      return appendToken(`${base}${path}`)
+    if (VITE_API_URL.startsWith('http://') || VITE_API_URL.startsWith('https://')) {
+      const base = VITE_API_URL.startsWith('https://')
+        ? 'wss://' + VITE_API_URL.slice('https://'.length)
+        : 'ws://' + VITE_API_URL.slice('http://'.length)
+      const normalizedBase = base.endsWith('/') ? base.slice(0, -1) : base
+      return normalizedBase + path
     }
 
     const normalized = VITE_API_URL.startsWith('/') ? VITE_API_URL.slice(1) : VITE_API_URL
-    return appendToken(`${wsProtocol}//${location.host}/${normalized.replace(/\/$/, '')}${path}`)
+    const prefix = normalized.endsWith('/') ? normalized.slice(0, -1) : normalized
+    return wsProtocol + '//' + location.host + '/' + prefix + path
   }
 
   function connect() {
@@ -57,6 +54,9 @@ export function useRealtimeWs(deviceCode: string, groupCode: string = 'g001') {
 
     ws.onopen = () => {
       retryDelay = 3000
+      const { accessToken } = useUserStore()
+      // Authenticate in the first frame so the token never appears in URL/query logs.
+      ws!.send(JSON.stringify({ type: 'auth', token: accessToken ?? '' }))
       ws!.send(JSON.stringify({ action: 'subscribe', device_code: deviceCode, group_code: currentGroupCode }))
     }
 

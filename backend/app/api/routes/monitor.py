@@ -6,6 +6,7 @@ from turboapi import APIRouter, TurboAPI, WebSocket, WebSocketDisconnect, Depend
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.permissions import require_permissions, require_permissions_from_authorization
+from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
@@ -17,6 +18,28 @@ from app.services.ws_push import get_ws_manager
 
 router = APIRouter(tags=["monitor"])
 auth_scheme = HTTPBearer(auto_error=False)
+MAX_QUERY_TOKEN_LENGTH = 4096
+
+
+def _resolve_ws_authorization(websocket: WebSocket) -> str | None:
+    """Prefer headers; keep a bounded query-token fallback for old clients."""
+    authorization = websocket.headers.get("authorization")
+    if authorization:
+        return authorization
+
+    query_token = websocket.query_params.get("token")
+    if query_token and len(str(query_token)) <= MAX_QUERY_TOKEN_LENGTH:
+        return str(query_token)
+    return None
+
+
+def _subscription_limit_allows(
+    subscriptions: set[tuple[str, str]],
+    key: tuple[str, str],
+    max_subscriptions: int,
+) -> bool:
+    """Allow idempotent re-subscribe, but cap new targets per connection."""
+    return key in subscriptions or len(subscriptions) < max(1, int(max_subscriptions))
 
 
 @router.get("/api/device-monitor/monitor/device-tree")
@@ -114,7 +137,7 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
     @app.websocket("/api/device-monitor/ws/realtime-push")
     async def ws_realtime_push(websocket: WebSocket):
         await websocket.accept()
-        authorization = websocket.query_params.get("token") or websocket.headers.get("Authorization")
+        authorization = _resolve_ws_authorization(websocket)
         if not authorization:
             try:
                 auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
@@ -125,7 +148,7 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                 await websocket.close()
                 return
         try:
-            await require_permissions_from_authorization(
+            principal = await require_permissions_from_authorization(
                 authorization,
                 {"device_monitor:monitor:view", "device_monitor:realtime:view"},
             )
@@ -140,16 +163,72 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
 
         manager = get_ws_manager()
         try:
+            await require_permissions_from_authorization(
+                authorization,
+                "device_monitor:realtime:subscribe",
+            )
+            can_subscribe = True
+        except ApiError:
+            can_subscribe = False
+        settings = get_settings()
+        max_subscriptions = max(
+            1, int(settings.realtime_ws_max_subscriptions_per_connection)
+        )
+        subscriptions: set[tuple[str, str]] = set()
+        try:
             while True:
                 msg = await websocket.receive_json()
                 action = msg.get("action")
                 device_code = str(msg.get("device_code", "")).strip()
                 group_code = str(msg.get("group_code", "g001")).strip() or "g001"
                 if action == "subscribe" and device_code:
+                    key = (device_code, group_code)
+                    if not can_subscribe:
+                        await websocket.send_json(
+                            {"type": "error", "message": "无实时订阅权限", "code": 403}
+                        )
+                        continue
+                    if not _subscription_limit_allows(
+                        subscriptions, key, max_subscriptions
+                    ):
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": "单连接实时订阅数已达上限",
+                                "code": 429,
+                            }
+                        )
+                        continue
+                    try:
+                        session_factory = get_mysql_session_factory()
+                        async with session_factory() as session:
+                            target_service = MonitorService(
+                                session=session,
+                                tdengine=get_tdengine_client(),
+                            )
+                            known_target = await target_service.validate_realtime_target(
+                                device_code, group_code
+                            )
+                    except Exception:
+                        await websocket.send_json(
+                            {"type": "error", "message": "实时订阅目标校验失败", "code": 503}
+                        )
+                        continue
+                    if not known_target:
+                        await websocket.send_json(
+                            {"type": "error", "message": "设备或分组不存在", "code": 404}
+                        )
+                        continue
                     await manager.subscribe(websocket, device_code, group_code)
+                    subscriptions.add(key)
                 elif action == "unsubscribe" and device_code:
-                    await manager.unsubscribe(websocket, device_code, group_code)
+                    key = (device_code, group_code)
+                    if key in subscriptions:
+                        await manager.unsubscribe(websocket, device_code, group_code)
+                        subscriptions.discard(key)
                 elif action == "ping":
                     await websocket.send_text("pong")
         except WebSocketDisconnect:
+            pass
+        finally:
             await manager.remove_all_subscriptions(websocket)

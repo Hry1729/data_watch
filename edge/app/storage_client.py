@@ -31,7 +31,7 @@ class EdgeStorageClient:
         self,
         base_url: str | None = None,
         *,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: float = 35.0,
         client: httpx.Client | None = None,
     ) -> None:
         self.base_url = (base_url or storage_base_url()).rstrip("/")

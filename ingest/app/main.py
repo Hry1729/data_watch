@@ -103,6 +103,7 @@ def create_app(
         version="1.0.0",
         on_startup=runtime_provider,
         on_shutdown=shutdown,
+        max_body_bytes=current_settings.max_body_bytes,
     )
 
     @app.get("/healthz")

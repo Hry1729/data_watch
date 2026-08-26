@@ -2,8 +2,26 @@ from __future__ import annotations
 
 from turboapi import Query, TurboAPI, WebSocket, WebSocketDisconnect
 
+from app.api.permissions import require_permissions_from_authorization
 from app.core.config import get_settings
+from app.core.exceptions import ApiError
 from app.services.perspective import get_perspective_session_manager
+
+
+MAX_QUERY_TOKEN_LENGTH = 4096
+
+
+def _resolve_websocket_authorization(websocket: WebSocket) -> str | None:
+    """Prefer headers; retain a bounded query-token fallback for old browsers."""
+    authorization = websocket.headers.get("authorization")
+    if authorization:
+        return authorization
+
+    # Deprecated compatibility path: URL tokens can be copied into proxy/access logs.
+    query_token = websocket.query_params.get("token")
+    if query_token and len(str(query_token)) <= MAX_QUERY_TOKEN_LENGTH:
+        return str(query_token)
+    return None
 
 
 def register_perspective_websocket(app: TurboAPI) -> None:
@@ -16,6 +34,18 @@ def register_perspective_websocket(app: TurboAPI) -> None:
         perspectiveSessionId: str = Query(...),
         connectionId: str = Query(...),
     ):
+        authorization = _resolve_websocket_authorization(websocket)
+        try:
+            principal = await require_permissions_from_authorization(
+                authorization,
+                "device_monitor:history:view",
+            )
+        except ApiError:
+            # Reject the handshake before accepting or attaching any server
+            # state. The client receives a normal WebSocket policy failure.
+            await websocket.close(code=1008)
+            return
+
         await websocket.accept()
 
         if not settings.perspective_enabled:
@@ -28,7 +58,7 @@ def register_perspective_websocket(app: TurboAPI) -> None:
             await websocket.close(code=1008)
             return
 
-        owner_key = manager.build_owner_key(websocket.headers.get("authorization"))
+        owner_key = manager.build_owner_key(str(principal["user_id"]))
         try:
             session, restored, conflict = manager.attach_connection(
                 owner_key=owner_key,

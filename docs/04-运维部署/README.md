@@ -117,7 +117,7 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 
 | 服务 | 镜像 | 端口 | 说明 |
 |------|------|------|------|
-| redis | `redis:latest` | `6379:6379` | profile `infra`，可选由 compose 托管 |
+| redis | `redis:latest` | `127.0.0.1:6379:6379` | profile `infra`，可选由 compose 托管；要求 `REDIS_PASSWORD`，仅主机回环可达 |
 | tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，固定 `hostname`/`TAOS_FQDN=tdengine`（否则容器内解析不了自身 FQDN 会启动即崩），挂载 `taos.cfg` 与日志卷 |
 | backend | `data-watch-backend:latest` | `8000:8000` | 读取 `deploy/backend.env` |
 | frontend | `data-watch-frontend:latest` | `8080:80` | nginx 静态资源 + API/WS 代理 |
@@ -255,6 +255,7 @@ BACKEND_HOST=0.0.0.0
 BACKEND_PORT=8000
 BACKEND_LOG_LEVEL=INFO
 BACKEND_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420
+BACKEND_ENV=production
 
 MYSQL_HOST=host.docker.internal
 MYSQL_PORT=3306
@@ -275,6 +276,8 @@ REDIS_DB=0
 REDIS_PASSWORD=
 
 AUTH_SECRET_KEY=<generate-a-strong-random-secret>
+AUTH_AUTO_BOOTSTRAP=true
+AUTH_BOOTSTRAP_SUPER_PASSWORD=
 PERSPECTIVE_ENABLED=true
 
 # Agent 服务凭据（Backend 调用 Agent 装卸驱动时使用）
@@ -287,7 +290,9 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 - MySQL 可为宿主机、外部服务器或其他容器；compose 当前不托管 MySQL。
 - 若 Redis/TDengine 由 compose 托管，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine`。
 - 若 Redis/TDengine 是宿主机或外部服务，把 host 改为 `host.docker.internal` 或实际 IP。
-- `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值。
+- Compose `infra` 模式下 Redis 只发布到宿主机 `127.0.0.1:6379`，Backend 应通过 Docker 内网的 `redis:6379` 访问；Redis 与 Backend 必须使用同一个 `REDIS_PASSWORD`。
+- `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值；`AUTH_BOOTSTRAP_SUPER_PASSWORD` 不得提交到仓库或写成示例弱密码。
+- 生产/非开发环境首次启动且数据库中不存在 `Super` 时，`AUTH_AUTO_BOOTSTRAP=true` 必须同时提供 `AUTH_BOOTSTRAP_SUPER_PASSWORD`：至少 16 个字符，含大小写字母、数字和符号，且不得含空白。首次登录会要求改密，改密后从运行环境移除该变量；已有 disabled/deleted 的 `Super` 不会被复活。
 - `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
 - **`DATAWATCH_AGENT_SERVICE_TOKEN`（新增）**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` 保持一致。生成方式：`python -c "import secrets; print(secrets.token_hex(32))"`。
 - **`DATAWATCH_AGENT_BASE_URL`（新增）**: Agent 地址。Docker 部署 Backend 时，Agent 在宿主机使用 `http://host.docker.internal:7070`；多节点部署时改为 Agent 实际 IP。
@@ -346,6 +351,19 @@ docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此�
 - **缓冲窗口变短（重要）**：旧值 500000 名义“3 分钟容量”，但在本机内存放不下、必然 OOM；降到 50000 后，writer 掉线/滞后时每 shard 仅缓冲约几十秒~1 分钟，超出的旧数据会被 MAXLEN 裁掉丢失。本质是用“短缓冲 + 不崩”换“长缓冲 + 崩”。
 - **已部署机器生效路径**：中心式由 Collector 的 `stream_maxlen` 生效；分布式中心由 `INGEST_STREAM_MAXLEN` 生效。修改目标机实际配置后必须重启对应 Collector 或 Ingest，只改仓库不会让已安装实例生效。
 - **升级前存量**：新版 Writer 只会自动 XDEL 它实际完成终态确认的条目。升级前已经 ACK 的旧 entry 仍可能保留；测试环境需要先停止 Collector/Uploader/Ingest 等写入源，让 Writer 追平后停止 Writer，确认所有消费组 `pending=0` 且 `lag=0`，再对目标 Stream 执行 `XTRIM <key> MAXLEN 0`。正式环境执行前必须备份并逐 Stream 核对，禁止直接 `FLUSHDB`。
+
+### 5.4.1 Redis 暴露与认证
+
+Compose 默认将 Redis 端口绑定到 `127.0.0.1:6379`，不会向现场所有网卡发布；使用 `--profile infra` 时 Backend 通过 Compose 私有网络访问服务名 `redis`。启动前必须在 `deploy/backend.env` 设置高强度 `REDIS_PASSWORD`，Redis 容器会拒绝空密码启动。
+
+若必须让非 Compose 进程或其他主机访问 Redis：
+
+1. 优先把客户端加入受控 Docker/专用内网，不要把端口改成 `0.0.0.0:6379`；
+2. 为采集、Writer、Backend 分别建立 Redis ACL 用户，按实际命令授予最小权限（latest 的 Hash、window 的 List、Stream 的 XADD/XREADGROUP/XACK/XAUTOCLAIM、DLQ 的 List），禁止使用无约束的 `default on +@all`；
+3. Redis 服务端与所有客户端统一设置强随机密码，凭据只放在受保护的环境变量/Secret，不写入日志、镜像或文档；
+4. 跨主机传输必须启用 Redis TLS（或经批准的 TLS 隧道），并验收证书主机名、过期时间和客户端校验；内网不是跳过加密和 ACL 的理由。
+
+现场验收至少执行：确认 `docker port data-watch-redis` 只显示 `127.0.0.1:6379`；使用正确密码执行 `PING`；无密码、错误密码和来自非授权网络的连接均失败；再用真实采集/Writer 流程确认 ACL 不会误拒绝所需命令。
 
 ### 5.5 查看和访问
 
@@ -443,6 +461,14 @@ DATAWATCH_DATA_ROOT
 ```
 
 密码不要手工写入 config.toml；DPAPI 密文不可跨机器复制。
+
+**Backend 首次认证 bootstrap（生产/非开发）**：
+
+1. 首次启动前在 `deploy/backend.env` 设置 `BACKEND_ENV=production`、`AUTH_AUTO_BOOTSTRAP=true` 和符合策略的 `AUTH_BOOTSTRAP_SUPER_PASSWORD`；不要把密码写进 Compose 文件、脚本或文档。
+2. Backend 连接 MySQL 后只在缺少 `Super` 时创建 Super，不会自动创建 Admin/User；disabled/deleted 的同名账号不会被复活。
+3. 首次登录返回 `mustChangePassword=true`，Web/App 只能进入强制改密页；创建用户或重置密码产生的一次性临时密码只显示一次并通过安全渠道交付。
+4. 使用 `POST /api/user/password/change` 完成改密。由于 token version 会轮换，客户端随后清理旧 access/refresh token 并重新登录。
+5. 验证 Super 可正常登录后，立即从运行环境移除 `AUTH_BOOTSTRAP_SUPER_PASSWORD`；保留受控的部署审计记录，不在日志中记录密码。
 
 **Agent 服务凭据配置**：安装器生成 `DATAWATCH_AGENT_SERVICE_TOKEN`，写入角色数据目录下的 `agent_service_token.txt`，并通过 NSSM 环境变量注入 Agent。Backend 需要调用中心本机 Agent 时，必须把同一值配置到独立 Docker 部署的 `backend.env`：中心式读取 `C:\ProgramData\DataWatch\agent_service_token.txt`，分布式中心读取 `C:\ProgramData\DataWatch Distributed Center\agent_service_token.txt`；`DATAWATCH_AGENT_BASE_URL` 分别使用宿主机端口 7070 或 7072。
 
@@ -576,7 +602,7 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 | 8080 | frontend nginx | 分布式统一入口，承载 Web、`/api`、WS 与 `/ingest` |
 | 5173 | frontend dev | Vite 开发服务 |
 | 1420 | app dev | Tauri dev WebView origin |
-| 6379 | Redis | 实时缓存/Stream |
+| 6379 | Redis | 实时缓存/Stream；Compose 默认仅 `127.0.0.1` 发布 |
 | 6030 | TDengine native | TDengine 原生端口 |
 | 6041 | TDengine taosAdapter | backend/writer 常用 HTTP/WebSocket 端口 |
 | 6043 | TDengine | 组件端口 |
@@ -606,7 +632,9 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 - `docker compose ps` 中 backend/frontend running；
 - 访问 `http://127.0.0.1:8080` 正常；
 - `/api/auth/login` 可达；
+- 首装生产环境已验收 `AUTH_BOOTSTRAP_SUPER_PASSWORD` 强度、首次 `mustChangePassword=true`、改密后旧 token 失效且重新登录成功；改密后已移除该环境变量；
 - WebSocket 经 8080 可连接；
+- Redis 仅回环或 Docker 私网可达，密码/ACL/TLS 验收记录完整；
 - backend 能连 MySQL/Redis/TDengine；
 - TDengine 日志页在 compose 托管 TDengine 时可用，外部 TDengine 时优雅提示不可用。
 

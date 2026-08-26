@@ -1,6 +1,12 @@
 """配置校验测试。"""
 
-from core.config import CollectorConfig, DeviceConfig, RedisConfig, VariableConfig
+from core.config import (
+    CollectorConfig,
+    DeviceConfig,
+    InterfaceIngestConfig,
+    RedisConfig,
+    VariableConfig,
+)
 from core.config_validator import validate_config
 
 
@@ -28,7 +34,7 @@ def test_validator_rejects_invalid_redis_config():
     config = CollectorConfig(
         devices=[DeviceConfig("qc100", "QC", "s7", "127.0.0.1")],
         variables=[VariableConfig("1", "qc100", "%MD1304", "DINT", 1, True, 1)],
-        redis=RedisConfig(port=0, db=-1, stream_shard_count=0, stream_maxlen=0),
+        redis=RedisConfig(port=0, db=-1, stream_shard_count=0, stream_maxlen=-1),
     )
 
     result = validate_config(config)
@@ -38,6 +44,65 @@ def test_validator_rejects_invalid_redis_config():
     assert any("stream_maxlen" in e for e in result.errors)
     assert any("Invalid redis port" in e for e in result.errors)
     assert any("Invalid redis db" in e for e in result.errors)
+
+
+def test_validator_accepts_zero_stream_maxlen_without_trim():
+    result = validate_config(CollectorConfig(redis=RedisConfig(stream_maxlen=0)))
+
+    assert result.valid, result.errors
+    assert not any("stream_maxlen" in error for error in result.errors)
+
+
+def test_validator_warns_that_positive_stream_maxlen_is_lossy():
+    result = validate_config(CollectorConfig(redis=RedisConfig(stream_maxlen=100)))
+
+    assert result.valid, result.errors
+    assert any("lossy" in warning.lower() for warning in result.warnings)
+
+
+def test_validator_rejects_negative_stream_maxlen():
+    result = validate_config(CollectorConfig(redis=RedisConfig(stream_maxlen=-1)))
+
+    assert not result.valid
+    assert any("stream_maxlen" in error for error in result.errors)
+
+
+def test_validator_rejects_negative_stream_warn_entries():
+    result = validate_config(
+        CollectorConfig(redis=RedisConfig(stream_warn_entries=-1))
+    )
+
+    assert not result.valid
+    assert any("stream_warn_entries" in error for error in result.errors)
+
+
+def test_validator_requires_api_key_for_non_loopback_ingest_bind():
+    config = CollectorConfig(
+        interface_ingest=InterfaceIngestConfig(
+            enabled=True,
+            host="192.168.1.10",
+            api_key=None,
+        )
+    )
+
+    result = validate_config(config)
+
+    assert not result.valid
+    assert any("api_key" in error for error in result.errors)
+
+
+def test_validator_allows_empty_api_key_for_loopback_ingest_bind():
+    config = CollectorConfig(
+        interface_ingest=InterfaceIngestConfig(
+            enabled=True,
+            host="127.0.0.1",
+            api_key=None,
+        )
+    )
+
+    result = validate_config(config)
+
+    assert result.valid, result.errors
 
 
 def test_validator_rejects_legacy_and_ambiguous_s7_addresses():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 
 import msgspec
@@ -17,6 +18,9 @@ from monitor.performance import PerformanceMetrics
 from storage.redis_client import close_pool
 
 
+logger = logging.getLogger("collector.redis_writer")
+
+
 class RedisWriter:
     storage_path = "redis_only"
 
@@ -29,8 +33,12 @@ class RedisWriter:
         self.r = r
         self.shard_count: int = config.redis.stream_shard_count
         self._maxlen: int = config.redis.stream_maxlen
+        self._warn_entries: int = int(getattr(config.redis, "stream_warn_entries", 50000))
         self._metrics = metrics or PerformanceMetrics()
         self._clock = time.perf_counter
+        self._last_stream_observe: dict[str, float] = {}
+        self._stream_observe_interval_s = 10.0
+        self._stream_warn_ratio = 0.8
 
     def ping(self) -> None:
         self.r.ping()
@@ -121,14 +129,10 @@ class RedisWriter:
 
         started = self._clock()
         try:
-            self.r.xadd(
-                key,
-                fields,
-                maxlen=self._maxlen,
-                approximate=True,
-            )
+            self.r.xadd(key, fields, **self._stream_trim_kwargs())
         finally:
             self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
+        self._observe_stream_capacity(key)
 
     def write_window_stream(
         self,
@@ -151,6 +155,7 @@ class RedisWriter:
             stream_qualities: v2 质量码映射。None 时产 v1，非 None 时产 v2。
         """
         window_key = f"rt:window:{device_code}:{group_code}:{scan_rate_ms}"
+        stream_key_value: str | None = None
         started = self._clock()
         try:
             encoded_frame = msgspec.json.encode(frame)
@@ -177,18 +182,66 @@ class RedisWriter:
             pipe.lpush(window_key, encoded_frame)
             pipe.ltrim(window_key, 0, 9)
             if stream_fields is not None:
-                key = stream_key(device_code, device_type, group_code, self.shard_count)
+                stream_key_value = stream_key(
+                    device_code, device_type, group_code, self.shard_count
+                )
                 pipe.xadd(
-                    key,
+                    stream_key_value,
                     stream_fields,
-                    maxlen=self._maxlen,
-                    approximate=True,
+                    **self._stream_trim_kwargs(),
                 )
             pipe.execute()
         finally:
             self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
+        if stream_key_value is not None:
+            self._observe_stream_capacity(stream_key_value)
 
         # 本地累计 Redis 有效点数（已过滤 is_storage=0/STRING），不访问 Redis；
         # 由 main.py _performance_log_loop 60s 上报一次，避免每批 HINCRBY 拖高 CPU。
         if stream_values:
             self._metrics.increment("stream_points_written", len(stream_values))
+
+    def _stream_trim_kwargs(self) -> dict[str, object]:
+        """构造 XADD trim 参数；0 表示完全不主动裁剪。"""
+        if self._maxlen <= 0:
+            return {}
+        return {"maxlen": self._maxlen, "approximate": True}
+
+    def _observe_stream_capacity(self, key: str) -> None:
+        """低频采样 Stream 长度，按配置发出 lag/容量告警但不影响写入。"""
+        if self._maxlen <= 0 and self._warn_entries <= 0:
+            return
+        now = time.monotonic()
+        last = self._last_stream_observe.get(key)
+        if last is not None and now - last < self._stream_observe_interval_s:
+            return
+        self._last_stream_observe[key] = now
+        try:
+            length = int(self.r.xlen(key))
+        except Exception:
+            logger.warning("[redis] cannot observe stream capacity for %s", key, exc_info=True)
+            return
+
+        self._metrics.set_gauge(f"redis_stream_len:{key}", length)
+        if self._maxlen > 0:
+            ratio = length / float(self._maxlen)
+        else:
+            ratio = 0.0
+
+        if self._maxlen > 0 and ratio >= self._stream_warn_ratio:
+            logger.warning(
+                "[redis] stream %s near lossy cap: length=%d maxlen=%d ratio=%.2f; "
+                "producer/consumer lag may cause trim loss",
+                key,
+                length,
+                self._maxlen,
+                ratio,
+            )
+        elif self._maxlen <= 0 and self._warn_entries > 0 and length >= self._warn_entries:
+            logger.warning(
+                "[redis] stream %s Writer lag/Redis memory pressure: length=%d "
+                "warn_entries=%d; no trim is configured, investigate consumer lag or memory",
+                key,
+                length,
+                self._warn_entries,
+            )

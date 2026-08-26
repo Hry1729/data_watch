@@ -47,7 +47,7 @@ flowchart LR
 | `device_code` | `device` | 设备唯一编码，参与 Redis key 与 TDengine 子表名，不允许随意变更 |
 | `type_code` | `device_type` | 设备类型编码，映射 TDengine 超级表 `sd{type_code}` |
 | `group_code` | `device_point_group` | 点位分组编码，参与 Redis key 与 writer 映射维度 |
-| `config_version` | `device_point_group` | 点位分组配置版本，writer 映射缓存失效依据 |
+| `config_version` | `device_point_group` | 点位分组配置版本，随 Stream 传递作校验/日志上下文；不是永久 mapping 缓存失效依据 |
 | `td_column_name` | `device_variable` | TDengine 物理列名，唯一事实源 |
 | `var_seq` | `device_variable` | 业务展示/排序序号，不是 TDengine 物理列名 |
 | `var_address` / `var_offset` / `var_bit` | `device_variable` | 协议地址、偏移、bit 位 |
@@ -61,7 +61,7 @@ flowchart LR
 2. **入库映射权威在 MySQL**：writer 用 `device_variable.td_column_name` 把 Redis 中的 `var_id` 映射到 TDengine 列。
 3. **`device_code` 不可改**：它参与 Redis key、TDengine 子表名和前端展示；改名会断裂历史链路。
 4. **列位只增不回收**：软删除点位不回收 TDengine 列，保证 schema 只增不减。
-5. **`config_version` 驱动缓存失效**：点位分组变化时推进版本，writer 重新加载映射。
+5. **永久物理映射**：writer 从 `point_storage_mapping` 按 `(device_code, group_code)` 读取并缓存物理坐标；`config_version` 不使缓存失效，热缓存发现新点位时运行期 reload。
 6. **软删除 + 启用双标志**：查询通常需要同时过滤 `deleted=0` 与 `enable=1`。
 
 ---
@@ -134,7 +134,7 @@ RBAC 规则：
 | 设备编号 | `device.device_code` | key 中 `{device_code}` | 子表名 / tag |
 | 设备类型 | `device_type.type_code` | stream key `{device_type}` | 超级表 `sd{device_type}` |
 | 点位分组 | `device_point_group.group_code` | key 中 `{group_code}` | writer 映射加载维度 |
-| 配置版本 | `device_point_group.config_version` | stream field `config_version` | 不存储，影响 writer 映射缓存 |
+| 配置版本 | `device_point_group.config_version` | stream field `config_version` | 不存储；仅作 Ingest 校验及 Writer 上下文，不影响永久 mapping 缓存 |
 | 点位 ID | `device_variable.id` | stream/latest/window 的 `var_id` | 不直接存储 |
 | 物理列名 | `device_variable.td_column_name` | 不在 stream 中直接信任 | 列名 |
 | 点位类型 | `device_variable.var_type` | 值以字符串/数值表达 | 统一 DOUBLE，展示时回查 MySQL |

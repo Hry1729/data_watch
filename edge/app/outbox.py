@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
 
 
 SENT_RETENTION_MS = 60_000
+logger = logging.getLogger("edge.outbox")
 
 OUTBOX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS outbox (
@@ -215,6 +217,7 @@ class OutboxStore:
         qualities: dict[str, int] | None,
         batch_id: str | None = None,
     ) -> OutboxRecord:
+        self._ensure_disk_writable()
         now = self._clock_ms()
         batch_id = batch_id or str(uuid4())
         with self._transaction() as connection:
@@ -247,6 +250,7 @@ class OutboxStore:
         latest_fields: dict[str, dict[str, Any]],
     ) -> OutboxRecord:
         """Persist the durable envelope and local latest values atomically."""
+        self._ensure_disk_writable()
         now = self._clock_ms()
         with self._transaction() as connection:
             record = self._append_envelope(
@@ -553,11 +557,37 @@ class OutboxStore:
                 (new_session_id,),
             )
             connection.execute("UPDATE metadata SET value='0' WHERE key='last_seq'")
-            connection.execute(
+            pending_rows = connection.execute(
                 """
-                DELETE FROM outbox
+                SELECT batch_id
+                FROM outbox
                 WHERE state IN ('pending', 'retry_wait', 'inflight')
+                ORDER BY local_seq
                 """
+            ).fetchall()
+            # A session switch is a protocol recovery operation, not an
+            # acknowledgement. Preserve every unconfirmed row and replay it
+            # under the new session with a contiguous sequence.
+            for local_seq, row in enumerate(pending_rows, start=1):
+                connection.execute(
+                    """
+                    UPDATE outbox
+                    SET upload_session_id=?,
+                        local_seq=?,
+                        state='pending',
+                        next_retry_at=NULL,
+                        last_error=NULL,
+                        http_status=NULL,
+                        lease_owner=NULL,
+                        inflight_at=NULL,
+                        lease_until=NULL
+                    WHERE batch_id=?
+                    """,
+                    (new_session_id, local_seq, str(row["batch_id"])),
+                )
+            connection.execute(
+                "UPDATE metadata SET value=? WHERE key='last_seq'",
+                (str(len(pending_rows)),),
             )
         return SessionSwitchState(old_session_id, new_session_id)
 
@@ -621,6 +651,15 @@ class OutboxStore:
                 and oldest["value"] is not None
                 and int(oldest["value"]) < retention_cutoff
             )
+            backlog_count = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) AS value FROM outbox
+                    WHERE state IN ('pending', 'retry_wait', 'inflight')
+                    """
+                ).fetchone()["value"]
+                or 0
+            )
 
         checkpoint = "passive"
         reclaimed_pages = 0
@@ -639,61 +678,38 @@ class OutboxStore:
             checkpoint = "busy"
 
         disk = self._disk_status()
-        if disk["watermark"] == "overflow" or backlog_expired:
-            with self._transaction() as connection:
-                pending_switch = connection.execute(
-                    "SELECT 1 FROM metadata WHERE key='pending_session_switch_old_id'"
-                ).fetchone()
-                if not pending_switch:
-                    count_row = connection.execute(
-                        """
-                        SELECT COUNT(*) AS value FROM outbox
-                        WHERE state IN ('pending', 'retry_wait', 'inflight')
-                        """
-                    ).fetchone()
-                    dropped_records = int(count_row["value"] or 0)
-                    if dropped_records:
-                        old_session_id = self._metadata(connection, "upload_session_id")
-                        connection.execute(
-                            "INSERT INTO metadata(key, value) VALUES('pending_session_switch_old_id', ?)",
-                            (old_session_id,),
-                        )
-                        connection.execute(
-                            "UPDATE metadata SET value=? WHERE key='upload_session_id'",
-                            (str(uuid4()),),
-                        )
-                        connection.execute("UPDATE metadata SET value='0' WHERE key='last_seq'")
-                        connection.execute(
-                            """
-                            DELETE FROM outbox
-                            WHERE state IN ('pending', 'retry_wait', 'inflight')
-                            """
-                        )
-                        connection.execute(
-                            """
-                            UPDATE metadata
-                            SET value=CAST(CAST(value AS INTEGER) + ? AS TEXT)
-                            WHERE key='dropped_records'
-                            """,
-                            (dropped_records,),
-                        )
-                        session_switched = True
-            if dropped_records:
-                try:
-                    with self._lock:
-                        self._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                        checkpoint = "truncate"
-                except sqlite3.OperationalError:
-                    checkpoint = "busy"
+        degraded_reasons: list[str] = []
+        if disk["watermark"] == "overflow":
+            degraded_reasons.append("disk_overflow")
+        if backlog_expired:
+            degraded_reasons.append("backlog_exceeds_retention_window")
+        degraded = bool(degraded_reasons)
+        if degraded:
+            # Retention is an operational signal, not an acknowledgement.
+            # Never rotate the session or delete unconfirmed payloads here.
+            logger.error(
+                "Edge outbox degraded reasons=%s; preserving unconfirmed payloads",
+                ",".join(degraded_reasons),
+            )
 
         return {
             "deleted_terminal": deleted_terminal,
             "dropped_records": dropped_records,
             "session_switched": session_switched,
+            "degraded": degraded,
+            "degraded_reasons": degraded_reasons,
+            "backlog_expired": backlog_expired,
+            "backlog_count": backlog_count,
             "checkpoint": checkpoint,
             "reclaimed_pages": reclaimed_pages,
             **self._disk_status(),
         }
+
+    def _ensure_disk_writable(self) -> None:
+        if self._disk_status()["watermark"] == "overflow":
+            raise RuntimeError(
+                "Edge outbox disk watermark is overflow; refusing new durable data"
+            )
 
     def _disk_status(self) -> dict[str, Any]:
         usage = shutil.disk_usage(self.path.parent)

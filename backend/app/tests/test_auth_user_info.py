@@ -33,6 +33,8 @@ async def test_user_info_returns_auth_marks_and_permission_codes() -> None:
         "roles": ["R_ADMIN"],
         "buttons": ["add", "edit"],
         "permissions": ["system:menu:create", "system:menu:update"],
+        "mustChangePassword": False,
+        "tokenVersion": 0,
     }
     service._fetch_user_auth_marks.assert_awaited_once_with(7)
     service.fetch_user_permission_codes.assert_awaited_once_with(7)

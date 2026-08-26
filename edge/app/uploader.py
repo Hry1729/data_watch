@@ -43,6 +43,7 @@ class UploaderSettings:
     request_timeout_seconds: float = 10.0
     retry_base_ms: int = 500
     retry_max_ms: int = 30_000
+    max_attempts: int = 10
     max_offline_retention_days: int = 7
     maintenance_interval_seconds: float = 60.0
 
@@ -163,10 +164,16 @@ class Uploader:
         now = time.monotonic()
         if now < self._next_maintenance_at:
             return
-        await self._store_call(
+        maintenance = await self._store_call(
             self._store.maintenance,
             self._settings.max_offline_retention_days,
         )
+        if maintenance.get("degraded"):
+            logger.error(
+                "Edge outbox degraded reasons=%s backlog=%s; upload will retry without dropping data",
+                ",".join(maintenance.get("degraded_reasons") or []),
+                maintenance.get("backlog_count", "unknown"),
+            )
         self._next_maintenance_at = now + self._settings.maintenance_interval_seconds
 
     async def run_cycle(self) -> None:
@@ -235,11 +242,18 @@ class Uploader:
             return False
         if response.status_code == 400:
             logger.error(
-                "Upload contract rejected status=400 records=%d response=%s; switching session",
+                "Upload contract rejected status=400 records=%d response=%s; retrying batch without discarding backlog",
                 len(records),
                 self._response_detail(response),
             )
-            await self._abandon_and_switch()
+            quarantined = await self._retry_records(
+                records,
+                "http_400_contract_rejected",
+                400,
+                quarantine_after_max=True,
+            )
+            if quarantined:
+                await self._abandon_and_switch()
             return False
         if response.status_code != 200:
             logger.warning(
@@ -303,10 +317,23 @@ class Uploader:
                 )
             elif status in {"seq_reject", "commit_unknown"}:
                 logger.error(
-                    "Upload sequence rejected status=%s local_seq=%d; switching session",
+                    "Upload sequence/commit uncertain status=%s local_seq=%d; "
+                    "preserving and replaying unconfirmed backlog in a new session",
                     status,
                     record.local_seq,
                 )
+                quarantined = await self._retry_records(
+                    records,
+                    status,
+                    200,
+                    quarantine_after_max=True,
+                )
+                if quarantined:
+                    logger.error(
+                        "Quarantined %d unresolvable upload records after max attempts; "
+                        "payloads remain in local dead state for replay/reconciliation",
+                        len(records),
+                    )
                 await self._abandon_and_switch()
                 return False
             elif status == "session_obsolete":
@@ -391,33 +418,66 @@ class Uploader:
             items.append(row)
         return {
             "node_uuid": self._settings.node_uuid,
-            "request_id": str(uuid4()),
+            # Keep the application idempotency key stable while this exact
+            # outbox batch is retried. The signature nonce remains per
+            # transport attempt and is intentionally independent.
+            "request_id": self._stable_request_id(records),
             "items": items,
         }
+
+    def _stable_request_id(self, records: list[OutboxRecord]) -> str:
+        material = "|".join(
+            f"{record.batch_id}:{record.upload_session_id}:{record.local_seq}"
+            for record in records
+        )
+        digest = hashlib.sha256(
+            f"{self._settings.node_uuid}|{material}".encode("utf-8")
+        ).hexdigest()
+        return f"edge-{digest}"
 
     async def _retry_records(
         self,
         records: list[OutboxRecord],
         error: str,
         http_status: int | None,
-    ) -> None:
-        retries = [
-            (
-                record,
-                min(
-                    self._settings.retry_base_ms * (2 ** record.attempt_count),
-                    self._settings.retry_max_ms,
-                ),
+        *,
+        quarantine_after_max: bool = False,
+    ) -> bool:
+        retries = []
+        quarantined = []
+        for record in records:
+            if quarantine_after_max and (
+                record.attempt_count + 1 >= self._settings.max_attempts
+            ):
+                quarantined.append(record)
+            else:
+                retries.append(
+                    (
+                        record,
+                        min(
+                            self._settings.retry_base_ms * (2 ** record.attempt_count),
+                            self._settings.retry_max_ms,
+                        ),
+                    )
+                )
+        if retries:
+            await self._store_call(
+                self._store.mark_retry_batch,
+                retries,
+                self._lease_owner,
+                error=error,
+                http_status=http_status,
             )
-            for record in records
-        ]
-        await self._store_call(
-            self._store.mark_retry_batch,
-            retries,
-            self._lease_owner,
-            error=error,
-            http_status=http_status,
-        )
+        if quarantined:
+            await self._store_call(
+                self._store.complete_batch,
+                [
+                    OutboxCompletion(record, "dead", error)
+                    for record in quarantined
+                ],
+                self._lease_owner,
+            )
+        return bool(quarantined)
 
     async def _abandon_and_switch(self) -> None:
         state = await self._store_call(self._store.prepare_session_switch)

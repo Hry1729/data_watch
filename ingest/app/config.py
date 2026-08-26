@@ -25,6 +25,7 @@ class IngestSettings:
     signature_max_skew_seconds: int
     nonce_ttl_seconds: int
     max_batch_items: int
+    max_body_bytes: int = 4 * 1024 * 1024
     max_offline_retention_days: int = 7
     control_cache_ttl_ms: int = 5000
     access_log: bool = False
@@ -43,10 +44,17 @@ class IngestSettings:
             mysql_password=os.getenv("MYSQL_PASSWORD", ""),
             mysql_database=os.getenv("MYSQL_DATABASE", "device_watch"),
             stream_shard_count=int(os.getenv("INGEST_STREAM_SHARD_COUNT", "4")),
-            stream_maxlen=int(os.getenv("INGEST_STREAM_MAXLEN", "50000")),
+            # 0 means unlimited; preserving the stream is the safe default.
+            stream_maxlen=int(os.getenv("INGEST_STREAM_MAXLEN", "0")),
             signature_max_skew_seconds=int(os.getenv("INGEST_SIGNATURE_MAX_SKEW_SECONDS", "300")),
             nonce_ttl_seconds=int(os.getenv("INGEST_NONCE_TTL_SECONDS", "600")),
             max_batch_items=int(os.getenv("INGEST_MAX_BATCH_ITEMS", "500")),
+            max_body_bytes=int(
+                os.getenv(
+                    "INGEST_MAX_BODY_BYTES",
+                    os.getenv("DATAWATCH_MAX_HTTP_BODY_BYTES", str(4 * 1024 * 1024)),
+                )
+            ),
             max_offline_retention_days=int(
                 os.getenv("INGEST_MAX_OFFLINE_RETENTION_DAYS", "7")
             ),
@@ -57,10 +65,12 @@ class IngestSettings:
             workers=int(os.getenv("INGEST_WORKERS", str(_default_workers()))),
             mysql_pool_maxsize=int(os.getenv("INGEST_MYSQL_POOL_MAXSIZE", "5")),
         )
-        if settings.stream_shard_count <= 0 or settings.stream_maxlen <= 0:
-            raise ValueError("stream shard count and maxlen must be positive")
+        if settings.stream_shard_count <= 0 or settings.stream_maxlen < 0:
+            raise ValueError("stream shard count must be positive and maxlen non-negative")
         if settings.max_batch_items <= 0:
             raise ValueError("max batch items must be positive")
+        if settings.max_body_bytes <= 0:
+            raise ValueError("max body bytes must be positive")
         if settings.max_offline_retention_days <= 0:
             raise ValueError("max offline retention days must be positive")
         if settings.control_cache_ttl_ms <= 0:

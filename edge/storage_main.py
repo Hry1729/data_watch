@@ -24,6 +24,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default=os.environ.get("DATAWATCH_EDGE_STORAGE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DATAWATCH_EDGE_STORAGE_PORT", "7073")))
     parser.add_argument("--queue-capacity", type=int, default=int(os.environ.get("DATAWATCH_EDGE_STORAGE_QUEUE_CAPACITY", "2048")))
+    parser.add_argument(
+        "--shutdown-timeout-seconds",
+        type=float,
+        default=float(os.environ.get("DATAWATCH_EDGE_STORAGE_SHUTDOWN_TIMEOUT_SECONDS", "30")),
+    )
     return parser
 
 
@@ -33,7 +38,11 @@ def main() -> int:
         level=os.environ.get("DATAWATCH_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
-    engine = StorageEngine(edge_database_path(), max_queue=args.queue_capacity)
+    engine = StorageEngine(
+        edge_database_path(),
+        max_queue=args.queue_capacity,
+        shutdown_timeout_seconds=args.shutdown_timeout_seconds,
+    )
     engine.start()
     server = StorageHttpServer((args.host, args.port), engine)
     server.timeout = 0.5

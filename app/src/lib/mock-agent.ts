@@ -835,10 +835,14 @@ export const mockBackend: BackendClient = {
     };
   },
   async roleOptions(_token) { await delay(80); return MOCK_ROLES.map(({ roleId, roleName, roleCode, enabled }) => ({ roleId, roleName, roleCode, enabled })); },
-  async createUser(_token, payload) { const id = Date.now(); MOCK_USERS = [...MOCK_USERS, { id, avatar: payload.avatar ?? "", status: payload.status ?? "1", userName: payload.userName, userGender: payload.userGender ?? "unknown", nickName: payload.nickName ?? "", userPhone: payload.userPhone ?? "", userEmail: payload.userEmail ?? "", userRoles: payload.userRoles ?? ["R_USER"], createBy: "admin", createTime: new Date().toISOString(), updateBy: "admin", updateTime: new Date().toISOString() }]; return { id }; },
+  async createUser(_token, payload) { const id = Date.now(); MOCK_USERS = [...MOCK_USERS, { id, avatar: payload.avatar ?? "", status: payload.status ?? "1", userName: payload.userName, userGender: payload.userGender ?? "unknown", nickName: payload.nickName ?? "", userPhone: payload.userPhone ?? "", userEmail: payload.userEmail ?? "", userRoles: payload.userRoles ?? ["R_USER"], createBy: "admin", createTime: new Date().toISOString(), updateBy: "admin", updateTime: new Date().toISOString() }]; return { id, userId: id, temporaryPassword: "mock-temporary-password", mustChangePassword: true as const, tokenVersion: 0 }; },
   async updateUser(_token, id, payload) { MOCK_USERS = MOCK_USERS.map((user) => user.id === id ? { ...user, ...payload, updateTime: new Date().toISOString() } : user); return { id }; },
   async updateUserStatus(_token, id, status) { MOCK_USERS = MOCK_USERS.map((user) => user.id === id ? { ...user, status } : user); return { id }; },
-  async resetUserPassword(_token, id, _password) { await delay(80); return { id }; },
+  async resetUserPassword(_token, id) {
+    await delay(80);
+    return { id, userId: id, temporaryPassword: "mock-temporary-password", mustChangePassword: true as const, tokenVersion: 1 };
+  },
+  async changePassword(_token, _oldPassword, _newPassword) { await delay(80); return true; },
   async deleteUser(_token, id) { MOCK_USERS = MOCK_USERS.filter((user) => user.id !== id); return { id }; },
   async roleList(_token, query) { await delay(100); const rows = MOCK_ROLES.filter((role) => (!query.roleName || role.roleName.includes(query.roleName)) && (!query.roleCode || role.roleCode.includes(query.roleCode)) && (!query.description || role.description.includes(query.description)) && (query.enabled === "" || query.enabled === undefined || role.enabled === query.enabled)); const pageNo = query.current ?? 1; const pageSize = query.size ?? 20; return { records: rows.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: rows.length, current: pageNo, size: pageSize }; },
   async createRole(_token, payload) { const id = Date.now(); MOCK_ROLES = [...MOCK_ROLES, { roleId: id, roleName: payload.roleName, roleCode: payload.roleCode, description: payload.description ?? "", enabled: payload.enabled ?? true, createTime: new Date().toISOString() }]; return { id }; },

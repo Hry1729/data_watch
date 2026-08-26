@@ -7,7 +7,7 @@ Each stream entry (produced by the collector) has these fields:
 
 Processing pipeline per entry:
     1. Parse fields
-    2. Get GroupMapping from MysqlMapper (cached by config_version)
+    2. Get GroupMapping from MysqlMapper (permanent cache by device/group; reload on unknown var)
     3. Translate var_id→td_column_name and accumulate into buffer
     4. On flush: write_multi_table (chunked) → XACK rows of successful chunks
     5. Entries exceeding pending_max_retry → DLQ + XACK
@@ -29,7 +29,12 @@ from dataclasses import dataclass, field
 
 import redis
 
-from dlq import push_dlq
+from dlq import (
+    DEFAULT_DLQ_ALERT_THRESHOLD,
+    DEFAULT_DLQ_MAX_SIZE,
+    DEFAULT_DLQ_WARN_ENTRIES,
+    push_dlq,
+)
 from mysql_mapper import MysqlMapper
 from performance import WriterPerformanceMetrics
 from quality_codes import is_valid_quality
@@ -90,6 +95,18 @@ class StreamConsumer:
         self._max_buffer_rows: int = w["max_buffer_rows"]
         self._pending_min_idle_ms: int = w["pending_min_idle_ms"]
         self._pending_max_retry: int = w["pending_max_retry"]
+        self._dlq_max_size: int = max(0, int(w.get("dlq_max_size", DEFAULT_DLQ_MAX_SIZE)))
+        self._dlq_alert_threshold: float = min(
+            1.0,
+            max(
+                0.0,
+                float(w.get("dlq_alert_threshold", DEFAULT_DLQ_ALERT_THRESHOLD)),
+            ),
+        )
+        self._dlq_warn_entries: int = max(
+            0,
+            int(w.get("dlq_warn_entries", DEFAULT_DLQ_WARN_ENTRIES)),
+        )
         self._group_name: str = rc["group_name"]
         self._consumer_name: str = rc["consumer_name"]
 
@@ -104,6 +121,54 @@ class StreamConsumer:
         self._last_dlq_moved_log: float | None = None
         self._last_dlq_failed_log: float | None = None
 
+    def _push_dlq(self, **kwargs) -> bool:
+        """按 writer 配置写入 DLQ，并按保留模式发出容量告警。"""
+        return push_dlq(
+            self._r,
+            max_size=self._dlq_max_size,
+            alert_threshold=self._dlq_alert_threshold,
+            warn_entries=self._dlq_warn_entries,
+            **kwargs,
+        )
+
+    async def _run_blocking(self, func, *args, **kwargs):
+        """在默认执行器运行同步 Redis/DLQ 操作，避免阻塞消费事件循环。"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, lambda: func(*args, **kwargs)
+        )
+
+    def _move_entry_to_dlq(
+        self,
+        stream_key: str,
+        entry_id: str,
+        entry_data: object,
+        device_type: object,
+        group_code: object,
+        delivery_count: int,
+        last_error: str,
+    ) -> bool:
+        """Malformed entry 先落 DLQ，只有落盘成功才 ACK。"""
+        data = (
+            dict(entry_data)
+            if isinstance(entry_data, dict)
+            else {"raw_entry": str(entry_data)}
+        )
+        moved = self._push_dlq(
+            device_type=str(device_type or "unknown"),
+            group_code=str(group_code or "unknown"),
+            entry_id=entry_id,
+            stream_key=stream_key,
+            data=data,
+            retry_count=delivery_count,
+            last_error=last_error,
+        )
+        if moved:
+            self._ack_single(stream_key, entry_id)
+        else:
+            logger.error("[consumer] DLQ failed for malformed entry %s, not acking", entry_id)
+        return moved
+
     # ------------------------------------------------------------------
     # 公共入口点
     # ------------------------------------------------------------------
@@ -112,7 +177,7 @@ class StreamConsumer:
         """主消费循环。运行直到被取消。"""
         if not stream_keys:
             raise ValueError("stream_keys is empty — check writer config device_types/group_codes")
-        self._ensure_consumer_groups(stream_keys)
+        await self._run_blocking(self._ensure_consumer_groups, stream_keys)
 
         # 排空上次运行/崩溃消费者遗留的待处理消息。
         for sk in stream_keys:
@@ -130,8 +195,8 @@ class StreamConsumer:
             # --- 首先重试之前失败的 XACK（M5）---
             # 必须早于 drain：否则已成功落库但 XACK 失败、又满足 idle 条件的条目
             # 会被 drain reclaim 触发重写，违背 M5 「避免重复写入」的目标。
-            self._retry_pending_acks()
-            self._retry_pending_deletes()
+            await self._run_blocking(self._retry_pending_acks)
+            await self._run_blocking(self._retry_pending_deletes)
 
             # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
@@ -261,7 +326,11 @@ class StreamConsumer:
             )
             # 结果为 (next_start_id, [(entry_id, data), ...], deleted_ids)
             next_id, claimed_entries, _ = result
-            delivery_counts = self._get_delivery_counts(stream_key, [entry_id for entry_id, _ in claimed_entries])
+            delivery_counts = await self._run_blocking(
+                self._get_delivery_counts,
+                stream_key,
+                [entry_id for entry_id, _ in claimed_entries],
+            )
             for entry_id, entry_data in claimed_entries:
                 try:
                     delivery_count = delivery_counts.get(entry_id, 1)
@@ -370,17 +439,30 @@ class StreamConsumer:
         entry_data: dict,
         delivery_count: int,
     ) -> None:
+        if not isinstance(entry_data, dict):
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                "unknown",
+                "unknown",
+                delivery_count,
+                "entry_data is not a mapping",
+            )
+            return
+
         device_code = entry_data.get("device_code", "")
         device_type = entry_data.get("device_type", "")
         group_code = entry_data.get("group_code", "")
         ts_raw = entry_data.get("ts", "")
         config_version_raw = entry_data.get("config_version", "0")
-        values_raw = entry_data.get("values", "{}")
+        values_raw = entry_data.get("values")
 
         # --- 首先检查死信队列（DLQ）---
         if delivery_count > self._pending_max_retry:
-            moved = push_dlq(
-                self._r,
+            moved = await self._run_blocking(
+                self._push_dlq,
                 device_type=device_type or "unknown",
                 group_code=group_code or "unknown",
                 entry_id=entry_id,
@@ -390,7 +472,7 @@ class StreamConsumer:
                 last_error="exceeded max retry",
             )
             if moved:
-                self._ack_single(stream_key, entry_id)
+                await self._run_blocking(self._ack_single, stream_key, entry_id)
                 if self._syslog is not None:
                     now = time.monotonic()
                     if self._last_dlq_moved_log is None or now - self._last_dlq_moved_log >= 60.0:
@@ -423,36 +505,88 @@ class StreamConsumer:
             return
 
         # --- 解析必填字段 ---
-        if not device_code or not group_code:
-            logger.warning("[consumer] skipping entry %s: missing device_code/group_code", entry_id)
-            self._ack_single(stream_key, entry_id)
+        if (
+            not isinstance(device_code, str)
+            or not device_code.strip()
+            or not isinstance(group_code, str)
+            or not group_code.strip()
+        ):
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                device_type,
+                group_code,
+                delivery_count,
+                "missing or invalid device_code/group_code",
+            )
             return
 
         try:
             config_version = int(config_version_raw)
         except (ValueError, TypeError):
-            config_version = 0
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                device_type,
+                group_code,
+                delivery_count,
+                f"config_version_invalid: {config_version_raw!r}",
+            )
+            return
 
         try:
             ts = int(ts_raw)
         except (ValueError, TypeError):
-            ts = int(time.time() * 1000)
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                device_type,
+                group_code,
+                delivery_count,
+                f"timestamp_invalid: {ts_raw!r}",
+            )
+            return
 
         try:
             raw_values: dict[str, str] = json.loads(values_raw)
         except Exception as exc:
             logger.warning("[consumer] invalid values JSON for entry %s: %s", entry_id, exc)
-            self._ack_single(stream_key, entry_id)
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                device_type,
+                group_code,
+                delivery_count,
+                f"values_json_invalid: {exc}",
+            )
             return
         if not isinstance(raw_values, dict):
             logger.warning(
                 "[consumer] values is not a JSON object for entry %s: %r", entry_id, raw_values
             )
-            self._ack_single(stream_key, entry_id)
+            await self._run_blocking(
+                self._move_entry_to_dlq,
+                stream_key,
+                entry_id,
+                entry_data,
+                device_type,
+                group_code,
+                delivery_count,
+                "values is not a JSON object",
+            )
             return
 
         # 缓存命中走事件循环内快路径；只有首次 MySQL 加载进入 executor。
         mapping = self._mapper.get_cached(device_code, group_code)
+        cache_hit = mapping is not None
         if mapping is None:
             mapping = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -467,6 +601,48 @@ class StreamConsumer:
                 device_code,
                 group_code,
                 config_version,
+                entry_id,
+            )
+            return
+
+        # 永久 mapping 不按 config_version 失效，以便解码历史 entry；但同组新增点
+        # 需要让已热缓存的 worker 重新读取一次永久 mapping。若仍未知，保留 entry
+        # 在 PEL，不能只写旧点后 ACK 造成新点静默漏写。
+        unmapped_var_ids = [
+            str(var_id)
+            for var_id in raw_values
+            if not mapping.var_map.get(str(var_id))
+        ]
+        if unmapped_var_ids and cache_hit:
+            mapping = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._mapper.reload,
+                device_code,
+                group_code,
+                config_version,
+            )
+            if mapping is None:
+                logger.warning(
+                    "[consumer] mapping reload failed for device=%s group=%s "
+                    "unknown var_ids=%s, leaving entry %s pending",
+                    device_code,
+                    group_code,
+                    unmapped_var_ids,
+                    entry_id,
+                )
+                return
+            unmapped_var_ids = [
+                var_id
+                for var_id in unmapped_var_ids
+                if not mapping.var_map.get(var_id)
+            ]
+        if unmapped_var_ids:
+            logger.warning(
+                "[consumer] unknown var_ids after mapping load for "
+                "device=%s group=%s: %s; leaving entry %s pending",
+                device_code,
+                group_code,
+                unmapped_var_ids,
                 entry_id,
             )
             return
@@ -491,8 +667,8 @@ class StreamConsumer:
 
         if bad_var_ids:
             last_error = f"type_conversion failed var_ids={','.join(bad_var_ids)}"
-            moved = push_dlq(
-                self._r,
+            moved = await self._run_blocking(
+                self._push_dlq,
                 device_type=device_type or "unknown",
                 group_code=group_code or "unknown",
                 entry_id=entry_id,
@@ -502,7 +678,7 @@ class StreamConsumer:
                 last_error=last_error,
             )
             if moved:
-                self._ack_single(stream_key, entry_id)
+                await self._run_blocking(self._ack_single, stream_key, entry_id)
             else:
                 logger.error(
                     "[consumer] DLQ failed for type_conversion entry %s, not acking",
@@ -512,7 +688,7 @@ class StreamConsumer:
 
         if not columns:
             logger.debug("[consumer] entry %s has no mappable columns, acking", entry_id)
-            self._ack_single(stream_key, entry_id)
+            await self._run_blocking(self._ack_single, stream_key, entry_id)
             return
 
         # --- Stream 质量：v1 不写窄表；v2 严格校验后写入 ---
@@ -523,8 +699,8 @@ class StreamConsumer:
             try:
                 contract_version = int(entry_data["contract_version"])
             except (ValueError, TypeError):
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -536,11 +712,11 @@ class StreamConsumer:
                     ),
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
             if contract_version not in (1, 2):
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -550,7 +726,7 @@ class StreamConsumer:
                     last_error=f"Unsupported contract_version: {contract_version}",
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
 
         if contract_version == 2:
@@ -567,8 +743,8 @@ class StreamConsumer:
                 logger.warning(
                     "[consumer] invalid qualities JSON for entry %s: %s", entry_id, exc
                 )
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -578,11 +754,11 @@ class StreamConsumer:
                     last_error=f"qualities_json_invalid: {exc}",
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
             if not isinstance(raw_qualities, dict):
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -592,7 +768,7 @@ class StreamConsumer:
                     last_error="qualities is not a JSON object",
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
 
             # 过滤非存储点后，values 与 qualities 键集合必须对齐（设计契约）
@@ -604,8 +780,8 @@ class StreamConsumer:
                 vid for vid in raw_qualities_norm if vid in mapping.var_map
             }
             if stored_value_ids != stored_quality_ids:
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -618,7 +794,7 @@ class StreamConsumer:
                     ),
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
 
             bad_quality_var_ids: list[str] = []
@@ -633,8 +809,8 @@ class StreamConsumer:
                 last_error = (
                     f"invalid_quality var_ids={','.join(bad_quality_var_ids)}"
                 )
-                moved = push_dlq(
-                    self._r,
+                moved = await self._run_blocking(
+                    self._push_dlq,
                     device_type=device_type or "unknown",
                     group_code=group_code or "unknown",
                     entry_id=entry_id,
@@ -644,7 +820,7 @@ class StreamConsumer:
                     last_error=last_error,
                 )
                 if moved:
-                    self._ack_single(stream_key, entry_id)
+                    await self._run_blocking(self._ack_single, stream_key, entry_id)
                 else:
                     logger.error(
                         "[consumer] DLQ failed for invalid_quality entry %s, not acking",
@@ -718,7 +894,7 @@ class StreamConsumer:
                 landed_rows_count += len(chunk_rows)
             elif status == BAD_DATA:
                 for row in chunk_rows:
-                    if self._push_row_to_dlq(row):
+                    if await self._run_blocking(self._push_row_to_dlq, row):
                         to_ack.append(row)
                     else:
                         failed_rows.append(row)
@@ -730,12 +906,17 @@ class StreamConsumer:
                 failed_rows.extend(chunk_rows)
 
         if to_ack:
-            self._ack_rows(to_ack)
+            await self._run_blocking(self._ack_rows, to_ack)
         # 上报本 flush 的 LANDED rows 到 Redis metrics counter（供 backend rate_sampler 算入库速率）。
         # 失败必须吞掉：metrics 上报不得影响 XACK/TDengine 主流程。
         if landed_rows_count > 0:
             try:
-                self._r.hincrby("rt:metrics:writer", "rows_written", landed_rows_count)
+                await self._run_blocking(
+                    self._r.hincrby,
+                    "rt:metrics:writer",
+                    "rows_written",
+                    landed_rows_count,
+                )
             except Exception:
                 logger.warning("[consumer] metrics hincrby failed", exc_info=True)
         self._buffer = failed_rows
@@ -762,8 +943,7 @@ class StreamConsumer:
         调用方只在返回 True 时 ACK；False 时该行留 buffer 重试（硬约束②：DLQ
         成功才 ACK，推送失败不丢数据）。syslog 与 exceeded-max-retry 路径同口径限流。
         """
-        moved = push_dlq(
-            self._r,
+        moved = self._push_dlq(
             device_type=row.device_type or "unknown",
             group_code=row.group_code or "unknown",
             entry_id=row.entry_id,

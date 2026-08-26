@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { TitleBar } from "@/components/TitleBar";
 
 import { LoginPage } from "@/pages/LoginPage";
+import { ForcePasswordChangePage } from "@/pages/ForcePasswordChangePage";
 
 import { PlaceholderPage } from "@/pages/PlaceholderPage";
 import { agentClient } from "@/lib/agent-client";
@@ -261,6 +262,14 @@ export default function App() {
                 <PublicOnlyRoute>
                   <LoginPage />
                 </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/force-password-change"
+              element={
+                <AuthGuard>
+                  <ForcePasswordChangePage />
+                </AuthGuard>
               }
             />
             <Route path="/error" element={<AgentErrorPage />} />

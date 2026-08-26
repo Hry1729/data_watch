@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { monitorClient } from "@/lib/monitor-client";
+import { loadAllDevicePages } from "@/lib/device-catalog";
 import type { PointListItem } from "@/types/device-monitor";
 
 const DATA_TYPES = ["BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"] as const;
@@ -35,7 +36,7 @@ export default function EdgePointMonitorPage() {
   });
 
   const loadDevices = useCallback(
-    (token: string) => monitorClient.deviceList(token, { pageNo: 1, pageSize: 1000 }),
+    (token: string) => loadAllDevicePages((pageNo, pageSize) => monitorClient.deviceList(token, { pageNo, pageSize })),
     [],
   );
   const deviceCatalog = useBackendQuery(loadDevices, { intervalMs: 10_000 });

@@ -37,7 +37,7 @@ collector 的单元/集成测试（`test_*.py`，pytest 收集）与 GE 现场�
 
 ## 执行器与有界池
 - `test_executor.py` — 执行器单元测试：Redis 多段写入（window→stream→latest）失败语义与顺序回归
-- `test_bounded_executor.py` — 有界线程池执行器测试（取消等待不提前释放容量、饱和抛 `ExecutorSaturatedError`）
+- `test_bounded_executor.py` — 有界执行器测试（异步 Parse/Redis 池饱和时等待背压且取消不提前释放容量；PLC 读线程池饱和时抛 `ExecutorSaturatedError`）
 - `test_collect_task_snapshot.py` — `CollectTask` 快照冻结测试（scan_task 元数据不可变，防止运行期被改）
 
 ## Redis 写入与客户端

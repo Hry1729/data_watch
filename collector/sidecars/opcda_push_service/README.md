@@ -66,6 +66,8 @@ copy opcda_push_config.example.json opcda_push_config.json
   "collectorUrl": "http://中心collector地址:8090/ingest/opcda-tags",
   "source": "cache",
   "readIntervalMs": 1000,
+  "pushMode": "changed_only",
+  "fullSnapshotIntervalMs": 60000,
   "reportIntervalMs": 1000,
   "includeBadQuality": true,
   "devices": [
@@ -97,6 +99,8 @@ copy opcda_push_config.example.json opcda_push_config.json
 - `itemFormat`：默认生成 `OPD_Server.AGV801.ViewMain.Tag30041800`。
 - `readMode`：`poll` 为原同步轮询读；`subscription` 使用 OPC DA `IOPCDataCallback` 订阅回调。
 - `postEnabled`：为 `false` 时只做本地读取/订阅性能测试，不要求 `collectorUrl`。
+- `pushMode`：订阅缓存推送模式。默认 `changed_only` 只发送自上次成功选取后发生回调更新的点；`full` 每个推送周期发送完整缓存，适合校准但开销较大。
+- `fullSnapshotIntervalMs`：`changed_only` 模式的周期性全量校准间隔，默认 `60000`；全量推送失败会把缓存点标记为 dirty，下一周期重试。sidecar 没有本地持久失败队列，进程崩溃仍可能丢失尚未成功 HTTP 提交的数据。
 - `reportIntervalMs`：订阅压测统计日志间隔，例如 `500` 表示每 500ms 输出一行 tick。
 - `collectorUrl`：中心接收 tag 批量数据的接口。当前主 collector `/ingest` 仍要求 `variable_id`，所以中心需要新增或适配一个 tag 映射入口。
 
@@ -163,6 +167,21 @@ sidecar 推送的是 tag batch，不包含 `variable_id`：
     }
   ]
 }
+```
+
+`batch_id` 由 sidecar 为每个原始批次生成，并在该批次的重试请求中复用，仅用于关联日志和响应，不提供服务端去重或幂等保证。collector 响应中的 `accepted`、`rejected`、`rejected_indices`、`errors` 会被 sidecar 校验：带逐点拒绝索引时只重试失败点；无法定位失败点时保守重试当前剩余批次。重试耗尽后失败点不会被记为成功，但当前 sidecar 没有本地持久失败队列，后续轮询/缓存周期只能尽力重新读取当前值，进程崩溃可能丢失尚未确认的历史值。
+
+协议解析 smoke test（验证 2xx + `errors` 不会被当作整体成功）：
+
+```powershell
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe"
+$out = Join-Path ([System.IO.Path]::GetTempPath()) "OpcDaPushService-response-smoke.exe"
+& $csc /nologo /platform:x86 /target:exe /reference:System.Web.Extensions.dll `
+  /main:OpcDaPushService.PushClientResponseSmoke "/out:$out" `
+  .\OpcDaPushService.cs .\tests\PushClientResponseSmoke.cs
+if ($LASTEXITCODE -ne 0) { throw "csc failed" }
+& $out
+if ($LASTEXITCODE -ne 0) { throw "response smoke test failed" }
 ```
 
 中心侧建议按以下键映射：

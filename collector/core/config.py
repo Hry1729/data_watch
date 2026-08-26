@@ -74,7 +74,10 @@ class RedisConfig:
     db: int = 0
     password: str = ""
     stream_shard_count: int = 4
-    stream_maxlen: int = 50000
+    # 0 表示不主动裁剪 Stream；正数仅作为有损应急上限。
+    stream_maxlen: int = 0
+    # Stream 长度观测阈值；<=0 禁用观测与告警，不影响写入。
+    stream_warn_entries: int = 50000
 
 
 @dataclass

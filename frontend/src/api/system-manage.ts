@@ -1,5 +1,6 @@
 import request from '@/utils/http'
 import type { AppRouteRecord } from '@/types/router'
+import { buildPasswordResetRequest, stripClientPassword, type PasswordResetResponse } from './password-contract'
 
 // ==================== 用户相关 ====================
 
@@ -20,9 +21,9 @@ export function fetchGetUserDetail(userId: number) {
 
 // 新增用户
 export function fetchCreateUser(data: Api.SystemManage.UserPayload) {
-  return request.post<{ id: number }>({
+  return request.post<PasswordResetResponse>({
     url: '/api/user',
-    data
+    data: stripClientPassword(data)
   })
 }
 
@@ -43,10 +44,10 @@ export function fetchUpdateUserStatus(userId: number, status: string) {
 }
 
 // 重置用户密码
-export function fetchResetUserPassword(userId: number, password?: string) {
-  return request.patch<{ id: number }>({
+export function fetchResetUserPassword(userId: number) {
+  return request.patch<PasswordResetResponse>({
     url: `/api/user/${userId}/password/reset`,
-    data: { password: password || '123456' }
+    data: buildPasswordResetRequest()
   })
 }
 

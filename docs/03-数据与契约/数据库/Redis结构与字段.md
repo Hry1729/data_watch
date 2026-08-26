@@ -28,7 +28,7 @@ Redis 是实时态和入库缓冲层，不是长期历史库。长期历史以 T
 ```mermaid
 flowchart LR
     PG[device_point_group<br/>group_code/config_version] --> COL[collector 分组写 Redis]
-    PG --> WR[writer 映射缓存维度]
+    PG --> WR[writer 永久 mapping 缓存（设备+分组）]
     PG --> BE[backend realtime 订阅维度]
     COL --> L[rt:latest:device:group]
     COL --> W[rt:window:device:group:scan_rate]
@@ -38,7 +38,7 @@ flowchart LR
 分组的意义：
 
 - 降低实时页订阅和 Redis 读写放大；
-- 让 writer 以 `(device_code, group_code, config_version)` 选择映射；
+- 让 writer 以 `(device_code, group_code)` 选择永久 mapping；`config_version` 仅随消息保留作上下文；
 - 支撑不同扫描周期、不同业务页面按需读取；
 - 为 TDengine 列位管理提供边界。
 
@@ -92,6 +92,8 @@ LTRIM 0 9
 ```
 
 帧示例：
+
+帧级 ts 取同一设备/分组内所有点 timestamp 的最大值；latest Hash 的每个点仍保留自身 t。驱动若提供 source_timestamp，先使用源时间，否则回落到本轮采集时刻。
 
 ```json
 {
@@ -229,7 +231,9 @@ XREADGROUP GROUP writer_cg writer-1 STREAMS rt:stream:qc:g001:0 >
 rt:dlq:{device_type}:{group_code}
 ```
 
-List 上限 1000，writer 执行 `LPUSH + LTRIM 0 999`。
+Writer 默认只执行 `LPUSH`，不裁剪死信（`dlq_max_size=0`），并在
+`dlq_warn_entries` 阈值告警。只有部署方显式配置正数上限时才执行
+`LTRIM`；该模式会淘汰最旧死信，属于有损保留策略。
 
 载荷示例：
 
@@ -278,7 +282,7 @@ DLQ 是人工排查入口，不是自动重放机制。进入 DLQ 的常见原�
 |-----------|------------|
 | `stream_shard_count` | collector 与 writer 必须相同 |
 | `group_code` | MySQL、Redis key、前端订阅必须一致 |
-| `config_version` | collector 写入 stream，writer 用于映射缓存失效 |
+| `config_version` | collector 写入 stream；writer 用于上下文/日志，不驱动永久 mapping 缓存失效 |
 | `device_type` | Redis stream key 与 TDengine stable `sd{device_type}` 对齐 |
 | `device_code` | Redis key、TDengine 子表、MySQL 设备编号对齐 |
 

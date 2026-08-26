@@ -15,7 +15,7 @@ from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
 from app.services.history import HistoryService
-from app.services.task_manager import get_export_task_manager
+from app.services.task_manager import TaskLimitError, get_export_task_manager
 
 
 router = APIRouter(tags=["history"])
@@ -196,7 +196,7 @@ async def history_export(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """创建异步导出任务（仅管理员）"""
-    await require_permissions(credentials, "device_monitor:history:export")
+    principal = await require_permissions(credentials, "device_monitor:history:export")
     device_id = _require_positive_int(payload.get("deviceId"), "deviceId")
     var_seqs = _extract_body_var_seqs(payload)
     start_time = _require_string(payload.get("startTime"), "startTime")
@@ -205,12 +205,16 @@ async def history_export(
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = HistoryService(session=session, tdengine=get_tdengine_client())
-        task_id = await service.create_export_task(
-            device_id=device_id,
-            var_seqs=var_seqs,
-            start_time=start_time,
-            end_time=end_time,
-        )
+        try:
+            task_id = await service.create_export_task(
+                device_id=device_id,
+                var_seqs=var_seqs,
+                start_time=start_time,
+                end_time=end_time,
+                owner_id=principal["user_id"],
+            )
+        except TaskLimitError as exc:
+            raise ApiError(429, str(exc)) from exc
         return success_response(data={"taskId": task_id})
 
 
@@ -220,11 +224,13 @@ async def history_export_status(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """查询导出任务状态（仅管理员）"""
-    await require_permissions(credentials, "device_monitor:history:export")
+    principal = await require_permissions(credentials, "device_monitor:history:export")
     task_manager = get_export_task_manager()
     task = task_manager.get_task(task_id)
     if not task:
         raise ApiError(404, "Export task not found")
+    if not _can_access_export_task(principal, task):
+        raise ApiError(403, "无权访问该导出任务")
 
     return success_response(data={
         "status": task.status,
@@ -240,11 +246,13 @@ async def history_export_download(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     """下载导出结果文件（仅管理员）"""
-    await require_permissions(credentials, "device_monitor:history:export")
+    principal = await require_permissions(credentials, "device_monitor:history:export")
     task_manager = get_export_task_manager()
     task = task_manager.get_task(task_id)
     if not task:
         raise ApiError(404, "Export task not found")
+    if not _can_access_export_task(principal, task):
+        raise ApiError(403, "无权访问该导出任务")
 
     if task.status != "completed":
         raise ApiError(400, f"Task is not completed (status: {task.status})")
@@ -274,6 +282,17 @@ def _extract_var_seqs(request: Request) -> list[int]:
     if not var_seqs:
         raise ApiError(400, "varSeqs is required")
     return var_seqs
+
+
+def _can_access_export_task(principal: dict[str, Any], task: Any) -> bool:
+    """Keep new exports owner-scoped while allowing legacy tasks to remain readable."""
+    owner_id = (task.metadata or {}).get("owner_id")
+    if owner_id is None:
+        return True
+    roles = {str(role) for role in principal.get("roles", [])}
+    return str(owner_id) == str(principal.get("user_id")) or bool(
+        roles.intersection({"R_ADMIN", "R_SUPER"})
+    )
 
 
 def _extract_body_var_seqs(payload: dict[str, Any]) -> list[int]:

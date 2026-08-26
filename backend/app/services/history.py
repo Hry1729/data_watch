@@ -188,16 +188,41 @@ class HistoryService:
         perspective_session_id: str | None = None,
         perspective_query_version: int = 0,
         authorization: str | None = None,
+        max_records: int | None = None,
     ) -> dict[str, Any]:
         device = await self._fetch_device(device_id)
         points = await self._fetch_selected_points(device_id, var_seqs)
         start_dt, end_dt = self._validate_query_range(start_time, end_time)
         self._validate_query_points(points, var_seqs)
-
-        series_list = await asyncio.gather(
-            *(self._fetch_point_series(device, point, start_dt, end_dt) for point in points),
-            return_exceptions=True
+        # Query points in order and pass the remaining budget plus one row to
+        # the database. This avoids a fixed per-point split that could reject
+        # a valid skewed result (one busy point and several empty points).
+        record_budget = (
+            self._record_budget()
+            if max_records is None
+            else int(max_records)
         )
+        if record_budget <= 0:
+            raise ApiError(503, "History query protection limit is not configured")
+        remaining_records = record_budget
+        series_list: list[list[tuple[Any, Any]] | Exception] = []
+        for point in points:
+            fetch_limit = max(1, remaining_records + 1)
+            try:
+                rows = await self._fetch_point_series(
+                    device,
+                    point,
+                    start_dt,
+                    end_dt,
+                    limit=fetch_limit,
+                )
+            except Exception as exc:
+                rows = exc
+            if not isinstance(rows, Exception):
+                if len(rows) >= fetch_limit:
+                    raise self._record_limit_error(limit=record_budget)
+                remaining_records = max(0, remaining_records - len(rows))
+            series_list.append(rows)
 
         timeline: dict[datetime, str] = {}
         point_value_maps: dict[int, dict[str, str | int | float]] = {}
@@ -219,14 +244,8 @@ class HistoryService:
                     continue
 
                 total_record_count += 1
-                if total_record_count > self.settings.perspective_max_records_per_query:
-                    raise ApiError(
-                        400,
-                        (
-                            "History query result exceeds the session protection limit "
-                            f"({self.settings.perspective_max_records_per_query} records)"
-                        ),
-                    )
+                if total_record_count > record_budget:
+                    raise self._record_limit_error(limit=record_budget)
 
                 normalized_time = self._format_timestamp(ts_value)
                 normalized_value = self._normalize_point_value(point.var_type, value)
@@ -296,6 +315,8 @@ class HistoryService:
         else:
             calc_interval = interval
 
+        record_budget = self._record_budget()
+        remaining_records = record_budget
         series_results = []
         for point in points:
             # 对布尔类型强制使用 LAST 聚合，避免产生 0.5 这样的无效插值
@@ -303,9 +324,19 @@ class HistoryService:
             current_aggregate = "last" if is_bool else aggregate
             agg_func = self._map_aggregate_function(current_aggregate)
             
+            fetch_limit = max(1, remaining_records + 1)
             rows = await self._fetch_downsampled_series(
-                device, point, start_dt, end_dt, calc_interval, agg_func
+                device,
+                point,
+                start_dt,
+                end_dt,
+                calc_interval,
+                agg_func,
+                limit=fetch_limit,
             )
+            if len(rows) >= fetch_limit:
+                raise self._record_limit_error(limit=record_budget)
+            remaining_records = max(0, remaining_records - len(rows))
             series_results.append(rows)
 
         if not any(series_results):
@@ -852,6 +883,47 @@ class HistoryService:
         }
         return mapping.get(aggregate.lower(), "AVG")
 
+    def _record_budget(self, *, export: bool = False) -> int:
+        max_records = int(
+            self.settings.export_max_records
+            if export
+            else self.settings.perspective_max_records_per_query
+        )
+        if max_records <= 0:
+            raise ApiError(503, "History export/query protection limit is not configured")
+        return max_records
+
+    def _record_limit_error(
+        self,
+        *,
+        export: bool = False,
+        limit: int | None = None,
+    ) -> ApiError:
+        limit = (
+            int(limit)
+            if limit is not None
+            else (
+                self.settings.export_max_records
+                if export
+                else self.settings.perspective_max_records_per_query
+            )
+        )
+        return ApiError(
+            400,
+            (
+                "History query result exceeds the session protection limit "
+                f"({limit} records)"
+            ),
+        )
+
+    @staticmethod
+    def _sql_limit(limit: int | None) -> str:
+        if limit is None:
+            return ""
+        if isinstance(limit, bool) or int(limit) <= 0:
+            raise ValueError("history query limit must be positive")
+        return f" LIMIT {int(limit)}"
+
     async def _fetch_downsampled_series(
         self,
         device: HistoryDevice,
@@ -860,6 +932,7 @@ class HistoryService:
         end_dt: datetime,
         interval: str,
         agg_func: str,
+        limit: int | None = None,
     ) -> list[tuple[Any, Any]]:
         database_name = self._resolve_current_tdengine_database()
         legacy_database_name = self._resolve_tdengine_database(device)
@@ -880,7 +953,7 @@ class HistoryService:
                     f"FROM {child_table} "
                     f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
                     f"INTERVAL({td_interval}) "
-                    f"ORDER BY ts ASC"
+                    f"ORDER BY ts ASC{self._sql_limit(limit)}"
                 )
                 rows = await self.tdengine.fetch_all(query, database=database_name)
                 if rows:
@@ -909,7 +982,7 @@ class HistoryService:
             f"FROM {table_name} "
             f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
             f"INTERVAL({td_interval}) "
-            f"ORDER BY ts ASC"
+            f"ORDER BY ts ASC{self._sql_limit(limit)}"
         )
 
         try:
@@ -929,7 +1002,7 @@ class HistoryService:
             f"WHERE var_seq = {point.var_seq} "
             f"AND ts >= {start_sql} AND ts <= {end_sql} "
             f"INTERVAL({td_interval}) "
-            f"ORDER BY ts ASC"
+            f"ORDER BY ts ASC{self._sql_limit(limit)}"
         )
 
         try:
@@ -957,6 +1030,7 @@ class HistoryService:
             var_seqs=var_seqs,
             start_time=start_time,
             end_time=end_time,
+            max_records=self._record_budget(export=True),
         )
 
         output = io.StringIO()
@@ -977,6 +1051,7 @@ class HistoryService:
         var_seqs: list[int],
         start_time: str,
         end_time: str,
+        owner_id: int | str | None = None,
     ) -> str:
         """创建异步导出任务"""
         # 预先验证设备和点位
@@ -994,6 +1069,7 @@ class HistoryService:
                 "end_time": end_time,
                 "device_name": device.device_name,
                 "device_code": device.device_code,
+                "owner_id": owner_id,
             }
         )
 
@@ -1039,15 +1115,34 @@ class HistoryService:
                 
                 current_start = start_dt
                 processed_duration = timedelta(0)
+                records_fetched = 0
+                record_budget = self._record_budget(export=True)
                 
                 while current_start < end_dt:
                     current_end = min(current_start + chunk_delta, end_dt)
-                    
-                    # 获取该时段内所有点位的数据
-                    series_list = await asyncio.gather(
-                        *(self._fetch_point_series(device, point, current_start, current_end) for point in points),
-                        return_exceptions=True
-                    )
+                    remaining = max(0, record_budget - records_fetched)
+
+                    # Fetch points sequentially with the remaining budget;
+                    # each query gets one sentinel row to detect overflow.
+                    series_list: list[list[tuple[Any, Any]] | Exception] = []
+                    for point in points:
+                        fetch_limit = max(1, remaining + 1)
+                        try:
+                            rows = await self._fetch_point_series(
+                                device,
+                                point,
+                                current_start,
+                                current_end,
+                                limit=fetch_limit,
+                            )
+                        except Exception as exc:
+                            rows = exc
+                        if not isinstance(rows, Exception):
+                            if len(rows) >= fetch_limit:
+                                raise self._record_limit_error(limit=record_budget)
+                            remaining = max(0, remaining - len(rows))
+                            records_fetched += len(rows)
+                        series_list.append(rows)
 
                     # 对齐数据
                     timeline: dict[datetime, dict[int, Any]] = {}
@@ -1284,6 +1379,7 @@ class HistoryService:
         point: HistoryPoint,
         start_dt: datetime,
         end_dt: datetime,
+        limit: int | None = None,
     ) -> list[tuple[Any, Any]]:
         database_name = self._resolve_current_tdengine_database()
         legacy_database_name = self._resolve_tdengine_database(device)
@@ -1302,7 +1398,7 @@ class HistoryService:
                     (
                         f"SELECT ts, {col} FROM {child_table} "
                         f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
-                        f"ORDER BY ts ASC"
+                        f"ORDER BY ts ASC{self._sql_limit(limit)}"
                     ),
                     database=database_name,
                 )
@@ -1340,7 +1436,7 @@ class HistoryService:
                     (
                         f"SELECT ts, `value` FROM {table_name} "
                         f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
-                        f"ORDER BY ts ASC"
+                        f"ORDER BY ts ASC{self._sql_limit(limit)}"
                     ),
                     database=legacy_database_name,
                 )
@@ -1362,7 +1458,7 @@ class HistoryService:
                     f"SELECT ts, `value` FROM {stable_name} "
                     f"WHERE var_seq = {int(point.var_seq)} "
                     f"AND ts >= {start_sql} AND ts <= {end_sql} "
-                    f"ORDER BY ts ASC"
+                    f"ORDER BY ts ASC{self._sql_limit(limit)}"
                 )
             )
         stable_statements.append(
@@ -1370,7 +1466,7 @@ class HistoryService:
                 f"SELECT ts, `value` FROM {stable_name} "
                 f"WHERE variable_id = {point.point_id} "
                 f"AND ts >= {start_sql} AND ts <= {end_sql} "
-                f"ORDER BY ts ASC"
+                f"ORDER BY ts ASC{self._sql_limit(limit)}"
             )
         )
         for statement in stable_statements:

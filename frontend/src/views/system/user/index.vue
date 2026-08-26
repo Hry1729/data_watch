@@ -222,14 +222,17 @@
    * 重置密码
    */
   const handleResetPassword = (row: UserListItem): void => {
-    ElMessageBox.confirm(`确定要重置用户 "${row.userName}" 的密码为 123456 吗？`, '重置密码', {
+    ElMessageBox.confirm(`确定为用户 "${row.userName}" 生成一次性临时密码吗？用户首次登录后必须修改。`, '重置密码', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
     }).then(async () => {
       try {
-        await fetchResetUserPassword(row.id)
-        ElMessage.success('密码已重置为 123456')
+        const result = await fetchResetUserPassword(row.id)
+        await ElMessageBox.alert(`临时密码：${result.temporaryPassword}\n\n请通过安全渠道交付给用户；关闭后不会再次显示，也不会保存到浏览器。`, '临时密码（仅显示本次）', {
+          confirmButtonText: '我已安全交付',
+          type: 'success'
+        })
       } catch (error: any) {
         ElMessage.error(error?.message || '重置密码失败')
       }

@@ -7,7 +7,8 @@ Maps (device_code, group_code) → GroupMapping which contains:
   - var_map: dict[var_id → td_column_name]
   - var_type: dict[var_id → var_type_str]
 
-Cache is invalidated when the stream's config_version changes.
+The permanent mapping is retained for decoding historical config versions.
+The runtime cache can be explicitly reloaded when a new point is observed.
 """
 
 from __future__ import annotations
@@ -63,6 +64,22 @@ class MysqlMapper:
         mapping = self.load(device_code, group_code)
         if mapping is None:
             return None
+        mapping.config_version = stream_config_version
+        self._cache[key] = mapping
+        return mapping
+
+    def reload(
+        self,
+        device_code: str,
+        group_code: str,
+        stream_config_version: int,
+    ) -> GroupMapping | None:
+        """强制从永久 mapping 重载一个设备/分组。"""
+        key = f"{device_code}:{group_code}"
+        mapping = self.load(device_code, group_code)
+        if mapping is None:
+            return None
+        # 版本只用于日志上下文；永久 mapping 仍负责旧 entry 的解码。
         mapping.config_version = stream_config_version
         self._cache[key] = mapping
         return mapping
