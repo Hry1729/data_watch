@@ -299,7 +299,10 @@ class DashboardService:
         bucket_starts = self._build_bucket_starts(start_dt, end_dt, bucket_delta)
         metric_keys = self._normalize_metric_keys(params.get("metricKeys"))
 
-        trend_devices = await self._fetch_trend_devices()
+        configured_trend_devices = await self._fetch_trend_devices()
+        trend_devices = await self._filter_trend_devices_with_existing_tables(
+            configured_trend_devices
+        )
         collect_count_by_bucket: dict[datetime, int] = defaultdict(int)
         active_devices_by_bucket: dict[datetime, set[int]] = defaultdict(set)
 
@@ -1023,6 +1026,7 @@ class DashboardService:
                         COALESCE(d.status, 0) AS raw_status
                     FROM device AS d
                     LEFT JOIN device_type AS dt ON dt.id = d.type_id
+                    WHERE COALESCE(d.enable, 0) = 1
                     ORDER BY d.id ASC
                     """
                 )
@@ -1052,7 +1056,8 @@ class DashboardService:
                         d.device_code AS device_code
                     FROM device AS d
                     JOIN device_variable AS dv ON dv.device_id = d.id
-                    WHERE dv.var_seq IS NOT NULL
+                    WHERE COALESCE(d.enable, 0) = 1
+                      AND dv.var_seq IS NOT NULL
                       AND dv.var_seq > 0
                       AND COALESCE(dv.enable, 1) = 1
                       AND COALESCE(dv.deleted, 0) = 0
@@ -1068,6 +1073,32 @@ class DashboardService:
                 device_code=str(row["device_code"] or ""),
             )
             for row in rows
+        ]
+
+    async def _filter_trend_devices_with_existing_tables(
+        self,
+        devices: list[DashboardTrendDevice],
+    ) -> list[DashboardTrendDevice]:
+        if not devices:
+            return []
+
+        database_name = self._resolve_current_tdengine_database()
+        try:
+            rows = await self.tdengine.fetch_all("SHOW TABLES", database=database_name)
+        except Exception as exc:
+            logger.warning("[dashboard] trend table discovery failed: %s", exc)
+            return []
+
+        existing_tables = {
+            str(row[0]).strip().casefold()
+            for row in rows
+            if row and row[0] is not None
+        }
+        return [
+            device
+            for device in devices
+            if self._resolve_current_child_table_name(device.device_code).casefold()
+            in existing_tables
         ]
 
     async def _fetch_device_bucket_counts(
@@ -1095,7 +1126,12 @@ class DashboardService:
 
         try:
             rows = await self.tdengine.fetch_all(statement, database=database_name)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "[dashboard] 趋势采集量查询失败 device=%s: %s",
+                device.device_code,
+                exc,
+            )
             return {}
 
         return self._normalize_bucket_rows(rows, granularity)
@@ -1144,9 +1180,14 @@ class DashboardService:
             devices_by_type.setdefault(type_code, []).append(device)
 
         if not devices_by_type:
-            return {}
+            return dict(redis_times)
 
-        type_codes = list(devices_by_type.keys())
+        type_codes = await self._filter_existing_stable_types(
+            database_name,
+            list(devices_by_type.keys()),
+        )
+        if not type_codes:
+            return dict(redis_times)
         results = await asyncio.gather(
             *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
             return_exceptions=True,
@@ -1167,6 +1208,34 @@ class DashboardService:
             if latest_time is not None:
                 out[device.device_code] = latest_time
         return out
+
+    async def _filter_existing_stable_types(
+        self,
+        database_name: str,
+        type_codes: list[str],
+    ) -> list[str]:
+        if not type_codes:
+            return []
+
+        try:
+            rows = await self.tdengine.fetch_all(
+                "SHOW STABLES",
+                database=database_name,
+            )
+        except Exception as exc:
+            logger.warning("[dashboard] stable discovery failed: %s", exc)
+            return []
+
+        existing_stables = {
+            str(row[0]).strip().casefold()
+            for row in rows
+            if row and row[0] is not None
+        }
+        return [
+            type_code
+            for type_code in type_codes
+            if f"sd{type_code}".casefold() in existing_stables
+        ]
 
     async def _fetch_type_latest_collect_times(
         self,
@@ -1414,7 +1483,7 @@ class DashboardService:
     ) -> str:
         if bucket_delta >= timedelta(days=1):
             return bucket_start.strftime("%m-%d")
-        if range_end - range_start > timedelta(days=1):
+        if range_end - range_start >= timedelta(days=1):
             return bucket_start.strftime("%m-%d %H:%M")
         return bucket_start.strftime("%H:%M")
 

@@ -49,7 +49,10 @@ stateDiagram-v2
     BadData --> DLQ: push_dlq 成功
     DLQ --> Acked: XACK
     Retry --> Buffered: 下轮 flush
-    Acked --> [*]
+    Acked --> Deleted: XDEL 成功
+    Acked --> DeleteRetry: XDEL 失败
+    DeleteRetry --> Deleted: _retry_pending_deletes
+    Deleted --> [*]
 ```
 
 核心不变式：
@@ -58,6 +61,7 @@ stateDiagram-v2
 - **DLQ 成功才 ACK**：坏数据只有成功写入死信队列后才 ACK。
 - **RETRY 不 ACK**：连接类/未知错误保留在 buffer 或 PEL，等待恢复。
 - **ACK 失败要补偿**：写库成功但 ACK 失败的消息进入 `_ack_retry`，下轮优先补 ACK。
+- **删除失败不重写**：XDEL 失败的已 ACK 条目进入 `_delete_retry`，只重试删除，不重新写 TDengine。
 
 ---
 
@@ -66,6 +70,7 @@ stateDiagram-v2
 ```text
 StreamConsumer.run_loop(stream_keys)
   -> _retry_pending_acks()
+  -> _retry_pending_deletes()
   -> drain_pending()                 # 周期性，也在启动时执行
   -> xreadgroup('>')                 # 读新消息
   -> _handle_entry(entry)
@@ -79,7 +84,7 @@ StreamConsumer.run_loop(stream_keys)
        -> LANDED / BAD_DATA / RETRY 分流
 ```
 
-主循环先补偿 ACK，再重认领 pending，最后读新消息。这个顺序很重要：如果先 XAUTOCLAIM，再补 ACK，已经落库但 ACK 失败的消息会被当作未处理重新写入。
+主循环先补偿 ACK 和已确认条目的删除，再重认领 pending，最后读新消息。这个顺序很重要：如果先 XAUTOCLAIM，再补 ACK，已经落库但 ACK 失败的消息会被当作未处理重新写入；删除重试与 PEL 解耦，不触发再次入库。
 
 ---
 
@@ -91,6 +96,7 @@ Redis consumer group 的 PEL 保存“已经投递给消费者但尚未 ACK”�
 |------|----------------|-----------------|
 | writer 读到消息后崩溃 | 消息留在 PEL | 新实例启动 `drain_pending()`，用 XAUTOCLAIM / XCLAIM 重认领 |
 | TDengine 写成功但 ACK 失败 | 消息仍在 PEL，writer 记录 `_ack_retry` | 下轮先重试 XACK，避免被重复认领 |
+| XACK 成功但 XDEL 失败 | 消息已离开 PEL，但 entry 仍占 Stream 内存 | 记录 `_delete_retry`，只重试 XDEL |
 | TDengine 连接失败 | 消息未 ACK，buffer 保留 | 退避后重试，恢复后落库并 ACK |
 | 消息多次失败超过阈值 | PEL delivery count 增长 | push DLQ 成功后 ACK，避免毒丸永久堵塞 |
 

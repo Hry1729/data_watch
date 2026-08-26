@@ -121,7 +121,9 @@ class StorageEngine:
                     logger.exception("Storage command failed: %s", command.action)
                 finally:
                     if command.action == "frame.commit":
-                        self._latencies_ms.append((time.perf_counter() - started) * 1000)
+                        self._latencies_ms.append(
+                            (time.perf_counter() - command.queued_at) * 1000
+                        )
                     command.done.set()
         finally:
             config.close()
@@ -248,6 +250,7 @@ class StorageHttpServer(ThreadingHTTPServer):
 
 
 class StorageRequestHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
     server: StorageHttpServer
 
     def do_GET(self) -> None:

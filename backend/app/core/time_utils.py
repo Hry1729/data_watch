@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import isfinite
 
 
 LOCAL_TIMEZONE_NAME = "Asia/Shanghai"
@@ -26,10 +27,31 @@ def parse_local_datetime(value: object) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return to_local_naive(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        epoch = float(value)
+        if not isfinite(epoch):
+            return None
+        magnitude = abs(epoch)
+        if magnitude >= 100_000_000_000_000_000:
+            epoch /= 1_000_000_000
+        elif magnitude >= 100_000_000_000_000:
+            epoch /= 1_000_000
+        elif magnitude >= 100_000_000_000:
+            epoch /= 1_000
+        try:
+            return to_local_naive(datetime.fromtimestamp(epoch, tz=LOCAL_TZ))
+        except (OSError, OverflowError, ValueError):
+            return None
     if isinstance(value, str):
         raw = value.strip()
         if not raw:
             return None
+        try:
+            numeric = float(raw)
+        except ValueError:
+            numeric = None
+        if numeric is not None and abs(numeric) >= 100_000_000:
+            return parse_local_datetime(numeric)
         normalized = raw.replace("Z", "+00:00")
         candidates = [normalized]
         if "T" in normalized:

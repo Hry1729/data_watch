@@ -98,6 +98,7 @@ class StreamConsumer:
         self._last_pending_drain: float = time.monotonic()
         self._pending_drain_interval_s: float = 60.0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
+        self._delete_retry: dict[str, set[str]] = {}  # 已终态且已 ACK，待重试 XDEL 的 entry_id
         self._consecutive_flush_fail: int = 0  # M6：连续 flush 失败次数，用于退避与日志降噪
         # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
         self._last_dlq_moved_log: float | None = None
@@ -130,6 +131,7 @@ class StreamConsumer:
             # 必须早于 drain：否则已成功落库但 XACK 失败、又满足 idle 条件的条目
             # 会被 drain reclaim 触发重写，违背 M5 「避免重复写入」的目标。
             self._retry_pending_acks()
+            self._retry_pending_deletes()
 
             # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
@@ -818,6 +820,7 @@ class StreamConsumer:
             chunk = ids[i : i + chunk_size]
             try:
                 self._r.xack(stream_key, self._group_name, *chunk)
+                self._delete_ids(stream_key, chunk)
             except Exception as exc:
                 logger.warning("[consumer] xack failed for %s: %s", stream_key, exc)
                 self._ack_retry.setdefault(stream_key, set()).update(chunk)
@@ -825,6 +828,7 @@ class StreamConsumer:
     def _ack_single(self, stream_key: str, entry_id: str) -> None:
         try:
             self._r.xack(stream_key, self._group_name, entry_id)
+            self._delete_ids(stream_key, [entry_id])
         except Exception as exc:
             logger.warning("[consumer] xack single failed %s: %s", entry_id, exc)
             self._ack_retry.setdefault(stream_key, set()).add(entry_id)
@@ -847,6 +851,7 @@ class StreamConsumer:
                 try:
                     self._r.xack(stream_key, self._group_name, *chunk)
                     pending.difference_update(chunk)
+                    self._delete_ids(stream_key, chunk)
                 except Exception as exc:
                     logger.warning(
                         "[consumer] xack retry still failing for %s (%d ids pending): %s",
@@ -856,6 +861,38 @@ class StreamConsumer:
             if not pending:
                 del self._ack_retry[stream_key]
 
+    def _delete_ids(self, stream_key: str, ids: list[str]) -> None:
+        """删除已经终态并完成 XACK 的 Stream 条目。"""
+        chunk_size = 500
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i : i + chunk_size]
+            try:
+                self._r.xdel(stream_key, *chunk)
+            except Exception as exc:
+                logger.warning("[consumer] xdel failed for %s: %s", stream_key, exc)
+                self._delete_retry.setdefault(stream_key, set()).update(chunk)
+
+    def _retry_pending_deletes(self) -> None:
+        """重试已 ACK 条目的 XDEL；失败不会触发 TDengine 重写。"""
+        if not self._delete_retry:
+            return
+        chunk_size = 500
+        for stream_key in list(self._delete_retry.keys()):
+            pending = self._delete_retry[stream_key]
+            ids = list(pending)
+            for i in range(0, len(ids), chunk_size):
+                chunk = ids[i : i + chunk_size]
+                try:
+                    self._r.xdel(stream_key, *chunk)
+                    pending.difference_update(chunk)
+                except Exception as exc:
+                    logger.warning(
+                        "[consumer] xdel retry still failing for %s (%d ids pending): %s",
+                        stream_key, len(pending), exc,
+                    )
+                    break
+            if not pending:
+                del self._delete_retry[stream_key]
     # ------------------------------------------------------------------
     # 设置辅助函数
     # ------------------------------------------------------------------

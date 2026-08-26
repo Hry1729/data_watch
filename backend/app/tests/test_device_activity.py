@@ -61,5 +61,25 @@ async def test_fetch_latest_collect_times_uses_all_point_groups(monkeypatch):
     assert int(result["QC01"].timestamp() * 1000) == 1_721_800_001_000
 
 
+@pytest.mark.asyncio
+async def test_fetch_latest_collect_times_matches_device_case_and_string_timestamp(monkeypatch):
+    values = {
+        "rt:latest:qc100:g001": {
+            "1": json.dumps({"v": 1, "t": "1785981600000", "q": 0}),
+        },
+    }
+    monkeypatch.setattr(
+        device_activity,
+        "get_redis_client",
+        lambda: _async_value(FakeRedis(values)),
+    )
+
+    result, connected = await device_activity.fetch_latest_collect_times(["QC100"])
+
+    assert connected is True
+    assert list(result) == ["QC100"]
+    assert result["QC100"] == datetime(2026, 8, 6, 10, 0, 0)
+
+
 async def _async_value(value):
     return value

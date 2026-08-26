@@ -14,6 +14,8 @@ import msgspec
 from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
 
 
+SENT_RETENTION_MS = 60_000
+
 OUTBOX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS outbox (
     batch_id TEXT PRIMARY KEY,
@@ -66,6 +68,14 @@ CREATE TABLE IF NOT EXISTS local_latest (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (device_code, group_code, var_id)
 );
+
+CREATE TABLE IF NOT EXISTS local_latest_frame (
+    device_code TEXT NOT NULL,
+    group_code TEXT NOT NULL,
+    values_json BLOB NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (device_code, group_code)
+) WITHOUT ROWID;
 """
 
 
@@ -114,6 +124,7 @@ class OutboxStore:
 
     def _initialize(self) -> None:
         with self._lock:
+            self._connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA synchronous=NORMAL")
             self._connection.execute("PRAGMA busy_timeout=5000")
@@ -251,22 +262,13 @@ class OutboxStore:
                 qualities=qualities,
                 now=now,
             )
-            rows = [
-                (device_code, group_code, str(var_id), msgspec.json.encode(value), now)
-                for var_id, value in latest_fields.items()
-            ]
-            if rows:
-                connection.executemany(
-                    """
-                    INSERT INTO local_latest(
-                        device_code, group_code, var_id, value_json, updated_at
-                    ) VALUES(?, ?, ?, ?, ?)
-                    ON CONFLICT(device_code, group_code, var_id) DO UPDATE SET
-                        value_json=excluded.value_json,
-                        updated_at=excluded.updated_at
-                    """,
-                    rows,
-                )
+            self._write_local_latest_frame(
+                connection,
+                device_code,
+                group_code,
+                latest_fields,
+                now,
+            )
             return record
 
     def write_local_latest(
@@ -276,25 +278,28 @@ class OutboxStore:
         fields: dict[str, dict[str, Any]],
     ) -> None:
         now = self._clock_ms()
-        rows = [
-            (device_code, group_code, str(var_id), msgspec.json.encode(value), now)
-            for var_id, value in fields.items()
-        ]
         with self._transaction() as connection:
-            connection.executemany(
-                """
-                INSERT INTO local_latest(
-                    device_code, group_code, var_id, value_json, updated_at
-                ) VALUES(?, ?, ?, ?, ?)
-                ON CONFLICT(device_code, group_code, var_id) DO UPDATE SET
-                    value_json=excluded.value_json,
-                    updated_at=excluded.updated_at
-                """,
-                rows,
+            self._write_local_latest_frame(
+                connection,
+                device_code,
+                group_code,
+                fields,
+                now,
             )
 
     def read_local_latest(self, device_code: str, group_code: str) -> dict[str, Any]:
         with self._lock:
+            frame = self._connection.execute(
+                """
+                SELECT values_json
+                FROM local_latest_frame
+                WHERE device_code = ? AND group_code = ?
+                """,
+                (device_code, group_code),
+            ).fetchone()
+            if frame is not None:
+                values = msgspec.json.decode(frame["values_json"])
+                return dict(values) if isinstance(values, dict) else {}
             rows = self._connection.execute(
                 """
                 SELECT var_id, value_json
@@ -354,8 +359,9 @@ class OutboxStore:
                   AND local_seq <= ?
                   AND state IN ('pending', 'retry_wait', 'inflight')
                 ORDER BY local_seq
+                LIMIT ?
                 """,
-                (session_id, target_seq),
+                (session_id, target_seq, max_items),
             ).fetchall()
             selected: list[sqlite3.Row] = []
             total_bytes = 0
@@ -590,7 +596,8 @@ class OutboxStore:
         if retention_days < 1:
             raise ValueError("retention_days must be positive")
         now = self._clock_ms()
-        cutoff = now - retention_days * 24 * 60 * 60 * 1000
+        sent_cutoff = now - SENT_RETENTION_MS
+        retention_cutoff = now - retention_days * 24 * 60 * 60 * 1000
         dropped_records = 0
         session_switched = False
         with self._transaction() as connection:
@@ -600,7 +607,7 @@ class OutboxStore:
                 WHERE (state='sent' AND acked_at IS NOT NULL AND acked_at < ?)
                    OR (state='dead' AND dead_at IS NOT NULL AND dead_at < ?)
                 """,
-                (cutoff, cutoff),
+                (sent_cutoff, retention_cutoff),
             )
             deleted_terminal = int(terminal.rowcount or 0)
             oldest = connection.execute(
@@ -612,15 +619,22 @@ class OutboxStore:
             backlog_expired = bool(
                 oldest is not None
                 and oldest["value"] is not None
-                and int(oldest["value"]) < cutoff
+                and int(oldest["value"]) < retention_cutoff
             )
 
         checkpoint = "passive"
+        reclaimed_pages = 0
         try:
             with self._lock:
                 mode = "TRUNCATE" if deleted_terminal else "PASSIVE"
                 self._connection.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
                 checkpoint = mode.lower()
+                auto_vacuum = int(self._connection.execute("PRAGMA auto_vacuum").fetchone()[0])
+                if deleted_terminal and auto_vacuum == 2:
+                    before = int(self._connection.execute("PRAGMA freelist_count").fetchone()[0])
+                    self._connection.execute("PRAGMA incremental_vacuum(4096)")
+                    after = int(self._connection.execute("PRAGMA freelist_count").fetchone()[0])
+                    reclaimed_pages = max(0, before - after)
         except sqlite3.OperationalError:
             checkpoint = "busy"
 
@@ -677,6 +691,7 @@ class OutboxStore:
             "dropped_records": dropped_records,
             "session_switched": session_switched,
             "checkpoint": checkpoint,
+            "reclaimed_pages": reclaimed_pages,
             **self._disk_status(),
         }
 
@@ -716,6 +731,10 @@ class OutboxStore:
             last_seq = int(self._metadata(self._connection, "last_seq"))
             dropped_records = int(self._metadata(self._connection, "dropped_records"))
             sent_records_total = int(self._metadata(self._connection, "sent_records_total"))
+            page_count = int(self._connection.execute("PRAGMA page_count").fetchone()[0])
+            page_size = int(self._connection.execute("PRAGMA page_size").fetchone()[0])
+            free_pages = int(self._connection.execute("PRAGMA freelist_count").fetchone()[0])
+            auto_vacuum = int(self._connection.execute("PRAGMA auto_vacuum").fetchone()[0])
         counts = {str(row["state"]): int(row["count"]) for row in rows}
         oldest_at = int(oldest["value"]) if oldest and oldest["value"] is not None else None
         files = (self.path, Path(str(self.path) + "-wal"), Path(str(self.path) + "-shm"))
@@ -728,6 +747,10 @@ class OutboxStore:
             "upload_interval_ms": self.upload_interval_ms(),
             "session_switch_pending": pending_switch is not None,
             "database_bytes": sum(path.stat().st_size for path in files if path.exists()),
+            "database_live_bytes": max(0, page_count - free_pages) * page_size,
+            "database_reclaimable_bytes": free_pages * page_size,
+            "database_free_page_ratio": round(free_pages / page_count, 4) if page_count else 0.0,
+            "auto_vacuum_mode": auto_vacuum,
             "dropped_records": dropped_records,
             "sent_records_total": sent_records_total,
             **self._disk_status(),
@@ -827,6 +850,28 @@ class OutboxStore:
 
     def _transaction(self):
         return _Transaction(self._connection, self._lock)
+
+    @staticmethod
+    def _write_local_latest_frame(
+        connection: sqlite3.Connection,
+        device_code: str,
+        group_code: str,
+        fields: dict[str, dict[str, Any]],
+        now: int,
+    ) -> None:
+        if not fields:
+            return
+        connection.execute(
+            """
+            INSERT INTO local_latest_frame(
+                device_code, group_code, values_json, updated_at
+            ) VALUES(?, ?, ?, ?)
+            ON CONFLICT(device_code, group_code) DO UPDATE SET
+                values_json=excluded.values_json,
+                updated_at=excluded.updated_at
+            """,
+            (device_code, group_code, msgspec.json.encode(fields), now),
+        )
 
     @staticmethod
     def _metadata(connection: sqlite3.Connection, key: str) -> str:

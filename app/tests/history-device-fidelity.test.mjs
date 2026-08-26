@@ -6,6 +6,7 @@ const deviceSource = await readFile(new URL("../src/pages/DeviceManagementPage.t
 const pointSource = await readFile(new URL("../src/pages/PointManagementPage.tsx", import.meta.url), "utf8");
 const historySource = await readFile(new URL("../src/pages/HistoryDataPage.tsx", import.meta.url), "utf8");
 const clientSource = await readFile(new URL("../src/lib/backend-client.ts", import.meta.url), "utf8");
+const chartSource = await readFile(new URL("../src/components/ui/chart.tsx", import.meta.url), "utf8");
 
 test("device rows navigate to the selected device points and the point page consumes the query", () => {
   assert.match(deviceSource, /useNavigate/);
@@ -56,4 +57,9 @@ test("history failures preserve the backend diagnostic message", () => {
   assert.match(historySource, /function historyErrorMessage/);
   assert.match(historySource, /historyErrorMessage\(reason, "历史数据查询失败"\)/);
   assert.match(historySource, /historyErrorMessage\(reason, "历史数据矩阵加载失败"\)/);
+});
+
+test("chart tooltip formatters receive the raw numeric x-axis label", () => {
+  assert.match(chartSource, /labelFormatter\(label, payload\)/);
+  assert.doesNotMatch(chartSource, /labelFormatter\(value, payload\)/);
 });

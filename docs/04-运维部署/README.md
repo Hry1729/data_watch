@@ -340,11 +340,12 @@ docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此�
 
 **关于 `stream_maxlen`（stream 容量上限）**
 
-stream 内存只由 collector 的 `XADD MAXLEN` 控制（writer 消费只 XACK 不删 entry），仓库默认 `50000/shard`：
+正常消费时，Writer 对已落 TDengine 或已成功进入 DLQ 的终态条目执行 `XACK + XDEL`；`stream_maxlen` 是 Writer 停止、持续滞后或删除暂时失败时的应急上限，仓库默认 `50000/shard`：
 
-- **内存预算**：`50000 × ~9KB ≈ 450MB/shard`；`shard_count=4` 时单个 `(device_type, group)` 组合约 1.8GB。此预算假设只有一个同量级 stream 组合，组合数增多需按 `maxmemory 3gb` 重算（如 2 组同量级 ≈ 3.6GB，会超保险丝）。
+- **最坏内存预算**：Writer 无法推进时，`50000 × ~9KB ≈ 450MB/shard`；`shard_count=4` 时单个 `(device_type, group)` 组合约 1.8GB。此预算假设只有一个同量级 stream 组合，组合数增多需按 `maxmemory 3gb` 重算（如 2 组同量级 ≈ 3.6GB，会超保险丝）。
 - **缓冲窗口变短（重要）**：旧值 500000 名义“3 分钟容量”，但在本机内存放不下、必然 OOM；降到 50000 后，writer 掉线/滞后时每 shard 仅缓冲约几十秒~1 分钟，超出的旧数据会被 MAXLEN 裁掉丢失。本质是用“短缓冲 + 不崩”换“长缓冲 + 崩”。
-- **已部署机器生效路径**：改仓库这几份配置只影响新部署/dev；已在运行的目标机必须改 `C:\ProgramData\DataWatch\collector\config\settings.toml` 并重启 collector，`XADD MAXLEN` 才会变，只改仓库不会让线上生效。
+- **已部署机器生效路径**：中心式由 Collector 的 `stream_maxlen` 生效；分布式中心由 `INGEST_STREAM_MAXLEN` 生效。修改目标机实际配置后必须重启对应 Collector 或 Ingest，只改仓库不会让已安装实例生效。
+- **升级前存量**：新版 Writer 只会自动 XDEL 它实际完成终态确认的条目。升级前已经 ACK 的旧 entry 仍可能保留；测试环境需要先停止 Collector/Uploader/Ingest 等写入源，让 Writer 追平后停止 Writer，确认所有消费组 `pending=0` 且 `lag=0`，再对目标 Stream 执行 `XTRIM <key> MAXLEN 0`。正式环境执行前必须备份并逐 Stream 核对，禁止直接 `FLUSHDB`。
 
 ### 5.5 查看和访问
 

@@ -92,6 +92,11 @@ class HistoryService:
             message = "历史数据源不可用"
             if "license expired" in str(exc).lower():
                 message = "TDengine 许可证已过期，请部署社区版镜像后重试"
+            elif (
+                "authentication failure" in str(exc).lower()
+                or "0x0357" in str(exc).lower()
+            ):
+                message = "TDengine 认证失败，请检查后端 TDENGINE_USER/TDENGINE_PASSWORD 配置"
             raise ApiError(503, message, status_code=503) from exc
 
     async def get_devices(self) -> list[dict[str, Any]]:
@@ -1425,18 +1430,7 @@ class HistoryService:
         return normalized
 
     def _coerce_datetime(self, value: Any) -> datetime | None:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return to_local_naive(value) if value.tzinfo is not None else value
-        if isinstance(value, str):
-            normalized = value.replace("Z", "+00:00")
-            try:
-                parsed = datetime.fromisoformat(normalized)
-            except ValueError:
-                return None
-            return to_local_naive(parsed) if parsed.tzinfo is not None else parsed
-        return None
+        return parse_local_datetime(value)
 
     def _format_timestamp(self, value: datetime) -> str:
         return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]

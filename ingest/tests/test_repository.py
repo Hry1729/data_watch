@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -10,6 +13,64 @@ import ingest.app.repository as repository_module
 from ingest.app.repository import MySQLIngestRepository
 from ingest.app.schemas import UploadBatch, UploadItem
 
+
+@pytest.mark.asyncio
+async def test_repository_create_can_skip_worker_schema_migration(monkeypatch) -> None:
+    class FakePool:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return None
+
+    pool = FakePool()
+    create_pool = AsyncMock(return_value=pool)
+    migrate = AsyncMock()
+    monkeypatch.setattr(repository_module.aiomysql, "create_pool", create_pool)
+    monkeypatch.setattr(repository_module, "migrate_distributed_schema", migrate)
+    settings = SimpleNamespace(
+        mysql_host="127.0.0.1",
+        mysql_port=3306,
+        mysql_user="root",
+        mysql_password="secret",
+        mysql_database="device_watch",
+        mysql_pool_maxsize=5,
+        control_cache_ttl_ms=30_000,
+    )
+
+    repository = await MySQLIngestRepository.create(
+        settings,
+        migrate_schema=False,
+    )
+
+    migrate.assert_not_awaited()
+    assert repository._pool is pool
+    await repository.close()
+    assert pool.closed is True
+
+
+@pytest.mark.asyncio
+async def test_parent_schema_preflight_marks_workers_ready(monkeypatch) -> None:
+    import ingest.main as ingest_entrypoint
+
+    repository = SimpleNamespace(close=AsyncMock())
+    create = AsyncMock(return_value=repository)
+    monkeypatch.delenv(ingest_entrypoint._SCHEMA_READY_ENV, raising=False)
+    monkeypatch.setattr(
+        ingest_entrypoint,
+        "MySQLIngestRepository",
+        SimpleNamespace(create=create),
+    )
+    settings = SimpleNamespace()
+
+    await ingest_entrypoint._prepare_schema_for_workers(settings)
+
+    create.assert_awaited_once_with(settings)
+    repository.close.assert_awaited_once_with()
+    assert os.environ[ingest_entrypoint._SCHEMA_READY_ENV] == "1"
 
 def test_invalid_quality_value_becomes_malformed_envelope() -> None:
     payload = {

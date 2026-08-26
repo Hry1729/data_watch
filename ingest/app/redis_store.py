@@ -40,6 +40,30 @@ local trim_every_items = tonumber(ARGV[4])
 local results = {}
 local changes = {}
 local touched_streams = {}
+local pending_latest = {}
+local pending_latest_keys = {}
+
+local function is_newer(incoming, current)
+    local current_epoch = tonumber(current.e or 0)
+    return incoming.t > current.t or (
+        incoming.t == current.t and incoming.e > current_epoch
+    )
+end
+
+local function stage_latest(latest_key, updates)
+    local staged = pending_latest[latest_key]
+    if staged == nil then
+        staged = {}
+        pending_latest[latest_key] = staged
+        table.insert(pending_latest_keys, latest_key)
+    end
+    for var_id, incoming in pairs(updates) do
+        local previous = staged[var_id]
+        if previous == nil or is_newer(incoming, previous) then
+            staged[var_id] = incoming
+        end
+    end
+end
 
 for index, item in ipairs(items) do
     local local_seq = tonumber(item.local_seq)
@@ -79,18 +103,7 @@ for index, item in ipairs(items) do
             break
         end
 
-        for var_id, incoming in pairs(item.latest_updates) do
-            local current = redis.call("HGET", KEYS[latest_key_index], var_id)
-            if current then
-                local cur = cjson.decode(current)
-                local cur_e = tonumber(cur.e or 0)
-                if incoming.t > cur.t or (incoming.t == cur.t and incoming.e > cur_e) then
-                    redis.call("HSET", KEYS[latest_key_index], var_id, cjson.encode(incoming))
-                end
-            else
-                redis.call("HSET", KEYS[latest_key_index], var_id, cjson.encode(incoming))
-            end
-        end
+        stage_latest(KEYS[latest_key_index], item.latest_updates)
 
         redis.call("SET", KEYS[1], local_seq)
         hw = local_seq
@@ -98,6 +111,44 @@ for index, item in ipairs(items) do
         touched_streams[touched_stream] = (touched_streams[touched_stream] or 0) + 1
         table.insert(changes, item.change)
         table.insert(results, "ack")
+    end
+end
+
+local latest_chunk_size = 128
+for _, latest_key in ipairs(pending_latest_keys) do
+    local updates = pending_latest[latest_key]
+    local var_ids = {}
+    for var_id, _ in pairs(updates) do
+        table.insert(var_ids, var_id)
+    end
+    table.sort(var_ids)
+
+    local first = 1
+    while first <= #var_ids do
+        local last = math.min(first + latest_chunk_size - 1, #var_ids)
+        local get_args = {latest_key}
+        for index = first, last do
+            table.insert(get_args, var_ids[index])
+        end
+        local current_values = redis.call("HMGET", unpack(get_args))
+        local set_args = {latest_key}
+        for index = first, last do
+            local var_id = var_ids[index]
+            local incoming = updates[var_id]
+            local current_json = current_values[index - first + 1]
+            local should_write = true
+            if current_json then
+                should_write = is_newer(incoming, cjson.decode(current_json))
+            end
+            if should_write then
+                table.insert(set_args, var_id)
+                table.insert(set_args, cjson.encode(incoming))
+            end
+        end
+        if #set_args > 1 then
+            redis.call("HSET", unpack(set_args))
+        end
+        first = last + 1
     end
 end
 

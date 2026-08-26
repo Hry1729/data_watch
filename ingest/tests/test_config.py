@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from ingest.app.config import IngestSettings
@@ -34,12 +36,25 @@ def test_invalid_capacity_environment(monkeypatch, name, value, message) -> None
     with pytest.raises(ValueError, match=message):
         IngestSettings.from_env()
 
-def test_capacity_defaults(monkeypatch) -> None:
+def test_capacity_defaults_use_physical_cpu_count(monkeypatch) -> None:
     monkeypatch.delenv("INGEST_WORKERS", raising=False)
+    monkeypatch.setattr(
+        "ingest.app.config.psutil",
+        SimpleNamespace(cpu_count=lambda logical: 8 if logical is False else 16),
+    )
+
+    settings = IngestSettings.from_env()
+
+    assert settings.workers == 4
+    assert settings.control_cache_ttl_ms == 30_000
+    assert settings.mysql_pool_maxsize == 5
+
+
+def test_capacity_defaults_fall_back_to_logical_cpu_estimate(monkeypatch) -> None:
+    monkeypatch.delenv("INGEST_WORKERS", raising=False)
+    monkeypatch.setattr("ingest.app.config.psutil", None)
     monkeypatch.setattr("ingest.app.config.os.cpu_count", lambda: 14)
 
     settings = IngestSettings.from_env()
 
-    assert settings.workers == 12
-    assert settings.control_cache_ttl_ms == 30_000
-    assert settings.mysql_pool_maxsize == 5
+    assert settings.workers == 4

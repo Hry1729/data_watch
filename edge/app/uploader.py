@@ -24,6 +24,7 @@ from .storage_client import EdgeStorageClient, StorageUnavailable
 
 
 logger = logging.getLogger(__name__)
+UPLOAD_SUMMARY_INTERVAL_SECONDS = 10.0
 
 
 class UploaderPaused(RuntimeError):
@@ -110,6 +111,11 @@ class Uploader:
         self._paused_records: list[OutboxRecord] | None = None
         self._next_maintenance_at = 0.0
         self._startup_phase_applied = False
+        self._summary_started_at = time.monotonic()
+        self._summary_batches = 0
+        self._summary_records = 0
+        self._summary_payload_bytes = 0
+        self._summary_batch_ms: list[float] = []
         self._store.recover_inflight(self._lease_owner)
 
     async def close(self) -> None:
@@ -119,11 +125,14 @@ class Uploader:
     def stop(self) -> None:
         self._stopped.set()
 
+    async def _store_call(self, method, *args, **kwargs):
+        return await asyncio.to_thread(method, *args, **kwargs)
+
     async def run_forever(self) -> None:
         while not self._stopped.is_set():
             try:
-                self._maintain_if_due()
-                interval_ms = self._store.upload_interval_ms()
+                await self._maintain_if_due()
+                interval_ms = await self._store_call(self._store.upload_interval_ms)
             except StorageUnavailable as exc:
                 logger.warning("Edge Storage unavailable: %s", exc)
                 await self._sleep(1.0)
@@ -141,7 +150,8 @@ class Uploader:
             started = time.monotonic()
             try:
                 await self.run_cycle()
-            except UploaderPaused:
+            except UploaderPaused as exc:
+                logger.warning("Uploader paused: %s; retrying in 5 seconds", exc)
                 await self._sleep(5.0)
             except StorageUnavailable as exc:
                 logger.warning("Edge Storage unavailable during upload cycle: %s", exc)
@@ -149,15 +159,18 @@ class Uploader:
             elapsed = time.monotonic() - started
             await self._sleep(max(0.0, interval_ms / 1000 - elapsed))
 
-    def _maintain_if_due(self) -> None:
+    async def _maintain_if_due(self) -> None:
         now = time.monotonic()
         if now < self._next_maintenance_at:
             return
-        self._store.maintenance(self._settings.max_offline_retention_days)
+        await self._store_call(
+            self._store.maintenance,
+            self._settings.max_offline_retention_days,
+        )
         self._next_maintenance_at = now + self._settings.maintenance_interval_seconds
 
     async def run_cycle(self) -> None:
-        pending_switch = self._store.pending_session_switch()
+        pending_switch = await self._store_call(self._store.pending_session_switch)
         if pending_switch is not None:
             await self._complete_session_switch(pending_switch)
         if self._paused_records is not None:
@@ -165,9 +178,10 @@ class Uploader:
             self._paused_records = None
             if not await self._upload_records(records):
                 return
-        target_seq = self._store.snapshot_target_seq()
+        target_seq = await self._store_call(self._store.snapshot_target_seq)
         while not self._stopped.is_set():
-            records = self._store.claim_batch(
+            records = await self._store_call(
+                self._store.claim_batch,
                 target_seq=target_seq,
                 lease_owner=self._lease_owner,
                 lease_ms=self._settings.lease_ms,
@@ -181,6 +195,8 @@ class Uploader:
                 return
 
     async def _upload_records(self, records: list[OutboxRecord]) -> bool:
+        batch_started = time.perf_counter()
+        payload_bytes = sum(len(record.payload) for record in records)
         payload = self._upload_payload(records)
         try:
             response = await self._client.post(
@@ -189,20 +205,50 @@ class Uploader:
                 headers=self._signer.headers("POST", "/ingest", payload),
             )
         except httpx.HTTPError as exc:
-            self._retry_records(records, str(exc), None)
+            logger.warning(
+                "Upload request failed center=%s records=%d payload_bytes=%d error=%s",
+                self._settings.center_url,
+                len(records),
+                payload_bytes,
+                exc,
+            )
+            await self._retry_records(records, str(exc), None)
             return False
 
         if response.status_code in (401, 403):
+            logger.error(
+                "Upload authentication rejected status=%d records=%d response=%s",
+                response.status_code,
+                len(records),
+                self._response_detail(response),
+            )
             self._paused_records = records
             raise UploaderPaused("node authentication rejected")
         if response.status_code == 429 or response.status_code >= 500:
-            self._retry_records(records, response.text, response.status_code)
+            logger.warning(
+                "Upload deferred status=%d records=%d response=%s",
+                response.status_code,
+                len(records),
+                self._response_detail(response),
+            )
+            await self._retry_records(records, response.text, response.status_code)
             return False
         if response.status_code == 400:
+            logger.error(
+                "Upload contract rejected status=400 records=%d response=%s; switching session",
+                len(records),
+                self._response_detail(response),
+            )
             await self._abandon_and_switch()
             return False
         if response.status_code != 200:
-            self._retry_records(records, response.text, response.status_code)
+            logger.warning(
+                "Upload returned unexpected status=%d records=%d response=%s",
+                response.status_code,
+                len(records),
+                self._response_detail(response),
+            )
+            await self._retry_records(records, response.text, response.status_code)
             return False
 
         try:
@@ -216,7 +262,13 @@ class Uploader:
                 for result in results
             }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            self._retry_records(records, f"malformed_ack:{exc}", 200)
+            logger.error(
+                "Upload acknowledgement malformed records=%d error=%s response=%s",
+                len(records),
+                exc,
+                self._response_detail(response),
+            )
+            await self._retry_records(records, f"malformed_ack:{exc}", 200)
             return False
 
         completions: list[OutboxCompletion] = []
@@ -224,12 +276,24 @@ class Uploader:
             key = (record.batch_id, record.upload_session_id, record.local_seq)
             result = result_map.get(key)
             if result is None:
-                self._retry_records(records, "missing_ack", 200)
+                logger.error(
+                    "Upload acknowledgement missing batch_id=%s local_seq=%d records=%d",
+                    record.batch_id,
+                    record.local_seq,
+                    len(records),
+                )
+                await self._retry_records(records, "missing_ack", 200)
                 return False
             status = str(result.get("status") or "")
             if status in {"ack", "duplicate", "stale_config_warning"}:
                 completions.append(OutboxCompletion(record, "sent"))
             elif status == "rejected_consumed":
+                logger.error(
+                    "Upload record permanently rejected batch_id=%s local_seq=%d reason=%s",
+                    record.batch_id,
+                    record.local_seq,
+                    result.get("reason") or "rejected_consumed",
+                )
                 completions.append(
                     OutboxCompletion(
                         record,
@@ -238,20 +302,76 @@ class Uploader:
                     )
                 )
             elif status in {"seq_reject", "commit_unknown"}:
+                logger.error(
+                    "Upload sequence rejected status=%s local_seq=%d; switching session",
+                    status,
+                    record.local_seq,
+                )
                 await self._abandon_and_switch()
                 return False
             elif status == "session_obsolete":
-                if record.upload_session_id != self._store.current_session_id():
+                logger.warning(
+                    "Upload session obsolete session=%s local_seq=%d; reconciling",
+                    record.upload_session_id,
+                    record.local_seq,
+                )
+                current_session_id = await self._store_call(
+                    self._store.current_session_id
+                )
+                if record.upload_session_id != current_session_id:
                     return False
                 switched = await self._reconcile_obsolete_session()
                 if not switched:
-                    self._retry_records(records, "session_obsolete", 200)
+                    await self._retry_records(records, "session_obsolete", 200)
                 return False
             else:
-                self._retry_records(records, f"unknown_ack:{status}", 200)
+                logger.error(
+                    "Upload acknowledgement unknown status=%s local_seq=%d",
+                    status or "<empty>",
+                    record.local_seq,
+                )
+                await self._retry_records(records, f"unknown_ack:{status}", 200)
                 return False
-        self._store.complete_batch(completions, self._lease_owner)
+        await self._store_call(
+            self._store.complete_batch,
+            completions,
+            self._lease_owner,
+        )
+        self._record_success(
+            records=len(records),
+            payload_bytes=payload_bytes,
+            batch_ms=(time.perf_counter() - batch_started) * 1000,
+        )
         return True
+
+    def _record_success(self, *, records: int, payload_bytes: int, batch_ms: float) -> None:
+        self._summary_batches += 1
+        self._summary_records += records
+        self._summary_payload_bytes += payload_bytes
+        self._summary_batch_ms.append(batch_ms)
+        now = time.monotonic()
+        elapsed = now - self._summary_started_at
+        if elapsed < UPLOAD_SUMMARY_INTERVAL_SECONDS:
+            return
+        samples = sorted(self._summary_batch_ms)
+        p99_index = max(0, min(len(samples) - 1, int(len(samples) * 0.99)))
+        logger.info(
+            "Upload summary batches=%d records=%d payload_mb=%.2f rate_records_s=%.1f batch_p99_ms=%.1f",
+            self._summary_batches,
+            self._summary_records,
+            self._summary_payload_bytes / (1024 * 1024),
+            self._summary_records / max(elapsed, 0.001),
+            samples[p99_index],
+        )
+        self._summary_started_at = now
+        self._summary_batches = 0
+        self._summary_records = 0
+        self._summary_payload_bytes = 0
+        self._summary_batch_ms.clear()
+
+    @staticmethod
+    def _response_detail(response: httpx.Response) -> str:
+        return response.text[:500].replace("\r", " ").replace("\n", " ")
 
     def _upload_payload(self, records: list[OutboxRecord]) -> dict[str, Any]:
         items = []
@@ -275,8 +395,7 @@ class Uploader:
             "items": items,
         }
 
-
-    def _retry_records(
+    async def _retry_records(
         self,
         records: list[OutboxRecord],
         error: str,
@@ -292,7 +411,8 @@ class Uploader:
             )
             for record in records
         ]
-        self._store.mark_retry_batch(
+        await self._store_call(
+            self._store.mark_retry_batch,
             retries,
             self._lease_owner,
             error=error,
@@ -300,7 +420,7 @@ class Uploader:
         )
 
     async def _abandon_and_switch(self) -> None:
-        state = self._store.prepare_session_switch()
+        state = await self._store_call(self._store.prepare_session_switch)
         await self._complete_session_switch(state)
 
     async def _complete_session_switch(self, state: SessionSwitchState) -> None:
@@ -327,12 +447,12 @@ class Uploader:
             return
         status = str(response.json().get("status") or "")
         if status in {"switched", "already_switched"}:
-            self._store.complete_session_switch(state)
+            await self._store_call(self._store.complete_session_switch, state)
         elif status == "session_conflict":
             raise UploaderPaused("active session conflict")
 
     async def _reconcile_obsolete_session(self) -> bool:
-        current = self._store.current_session_id()
+        current = await self._store_call(self._store.current_session_id)
         path = f"/ingest/session/{self._settings.node_uuid}"
         response = await self._client.get(
             path,
@@ -345,9 +465,9 @@ class Uploader:
         active = response.json().get("active_session_id")
         if active == current:
             return False
-        state = self._store.prepare_session_switch()
+        state = await self._store_call(self._store.prepare_session_switch)
         await self._complete_session_switch(state)
-        return self._store.pending_session_switch() is None
+        return (await self._store_call(self._store.pending_session_switch)) is None
 
 
 class SingleInstanceLock(AbstractContextManager):

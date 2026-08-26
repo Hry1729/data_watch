@@ -190,6 +190,7 @@ function TrendChart({
   }
 
   const Chart = chartType === "area" ? AreaChart : LineChart;
+  const boolOnly = points.every((point) => (point.dataType ?? "").toUpperCase() === "BOOL");
   const latestSampleAt = Number(samples[samples.length - 1]?.sampleAt ?? Date.now());
   const firstSampleAt = Number(samples[0]?.sampleAt ?? latestSampleAt);
   const observedSpan = Math.max(latestSampleAt - firstSampleAt, 1000);
@@ -212,16 +213,23 @@ function TrendChart({
             minTickGap={28}
             tickFormatter={(value) => formatSampleTime(Number(value)).slice(0, 8)}
           />
-          <YAxis tickLine={false} axisLine={false} width={52} />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            width={52}
+            domain={boolOnly ? [-0.15, 1.15] : undefined}
+            ticks={boolOnly ? [0, 1] : undefined}
+            tickFormatter={boolOnly ? (value) => Number(value) === 1 ? "ON" : "OFF" : undefined}
+          />
           <ChartTooltip
             labelFormatter={(value) => formatSampleTime(Number(value))}
             content={<ChartTooltipContent indicator="line" />}
           />
           <ChartLegend content={<ChartLegendContent />} />
           {points.map((point, index) => chartType === "area" ? (
-            <Area key={point.varSeq} type="monotone" dataKey={`v${point.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />
+            <Area key={point.varSeq} type={boolOnly ? "stepAfter" : "monotone"} dataKey={`v${point.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />
           ) : (
-            <Line key={point.varSeq} type="monotone" dataKey={`v${point.varSeq}`} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line key={point.varSeq} type={boolOnly ? "stepAfter" : "monotone"} dataKey={`v${point.varSeq}`} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />
           ))}
         </Chart>
       </ChartContainer>

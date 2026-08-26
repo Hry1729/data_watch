@@ -4,3 +4,4 @@ aiomysql==0.3.2
 cryptography==49.0.0
 msgspec==0.21.1
 redis>=5.0.0
+psutil==7.2.2

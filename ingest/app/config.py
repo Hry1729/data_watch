@@ -4,6 +4,11 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+try:
+    import psutil
+except ImportError:  # pragma: no cover - packaged Ingest declares psutil
+    psutil = None
+
 
 @dataclass(frozen=True, slots=True)
 class IngestSettings:
@@ -79,8 +84,22 @@ def _env_bool(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean")
 
 
+def _physical_cpu_count() -> int:
+    if psutil is not None:
+        try:
+            physical = psutil.cpu_count(logical=False)
+        except Exception:
+            physical = None
+        if physical is not None and physical > 0:
+            return int(physical)
+
+    logical = os.cpu_count() or 4
+    return max(1, (logical + 1) // 2)
+
+
 def _default_workers() -> int:
-    return min(12, max(4, (os.cpu_count() or 4) - 2))
+    physical = _physical_cpu_count()
+    return min(8, max(2, (physical + 1) // 2))
 
 
 @lru_cache(maxsize=1)

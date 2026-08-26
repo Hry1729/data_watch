@@ -70,7 +70,12 @@ class MySQLIngestRepository:
         ] = {}
 
     @classmethod
-    async def create(cls, settings: IngestSettings) -> "MySQLIngestRepository":
+    async def create(
+        cls,
+        settings: IngestSettings,
+        *,
+        migrate_schema: bool = True,
+    ) -> "MySQLIngestRepository":
         pool = await aiomysql.create_pool(
             host=settings.mysql_host,
             port=settings.mysql_port,
@@ -82,12 +87,13 @@ class MySQLIngestRepository:
             minsize=1,
             maxsize=settings.mysql_pool_maxsize,
         )
-        try:
-            await migrate_distributed_schema(pool)
-        except Exception:
-            pool.close()
-            await pool.wait_closed()
-            raise
+        if migrate_schema:
+            try:
+                await migrate_distributed_schema(pool)
+            except Exception:
+                pool.close()
+                await pool.wait_closed()
+                raise
         return cls(
             pool,
             control_cache_ttl_seconds=settings.control_cache_ttl_ms / 1000,

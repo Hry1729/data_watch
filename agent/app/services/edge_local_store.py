@@ -298,16 +298,11 @@ class EdgeLocalStore:
                     """,
                     (device["device_code"], group_code),
                 ).fetchall()
-                latest = {
-                    str(row["var_id"]): self._decode_json(row["value_json"])
-                    for row in connection.execute(
-                        """
-                        SELECT var_id, value_json FROM local_latest
-                        WHERE device_code=? AND group_code=?
-                        """,
-                        (device["device_code"], group_code),
-                    ).fetchall()
-                }
+                latest = self._read_latest_values(
+                    connection,
+                    str(device["device_code"]),
+                    group_code,
+                )
         except sqlite3.OperationalError:
             return self._empty_realtime(device_id)
         data = []
@@ -345,17 +340,42 @@ class EdgeLocalStore:
             return {"values": {}, "deviceOffline": True}
         try:
             with self._connect() as connection:
-                rows = connection.execute(
-                    """
-                    SELECT var_id, value_json FROM local_latest
-                    WHERE device_code=? AND group_code=?
-                    """,
-                    (device_code, group_code),
-                ).fetchall()
+                values = self._read_latest_values(connection, device_code, group_code)
         except sqlite3.OperationalError:
-            rows = []
-        values = {str(row["var_id"]): self._decode_json(row["value_json"]) for row in rows}
+            values = {}
         return {"values": values, "deviceOffline": not bool(values)}
+
+    def _read_latest_values(
+        self,
+        connection: sqlite3.Connection,
+        device_code: str,
+        group_code: str,
+    ) -> dict[str, Any]:
+        try:
+            frame = connection.execute(
+                """
+                SELECT values_json FROM local_latest_frame
+                WHERE device_code=? AND group_code=?
+                """,
+                (device_code, group_code),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            frame = None
+        if frame is not None:
+            values = self._decode_json(frame["values_json"])
+            return dict(values) if isinstance(values, dict) else {}
+
+        rows = connection.execute(
+            """
+            SELECT var_id, value_json FROM local_latest
+            WHERE device_code=? AND group_code=?
+            """,
+            (device_code, group_code),
+        ).fetchall()
+        return {
+            str(row["var_id"]): self._decode_json(row["value_json"])
+            for row in rows
+        }
 
     def history_devices(self) -> list[dict[str, Any]]:
         return [

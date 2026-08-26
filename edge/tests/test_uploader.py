@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -56,7 +59,7 @@ def test_startup_phase_is_deterministic_and_bounded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ack_batch_is_ordered_and_marked_sent(tmp_path: Path) -> None:
+async def test_ack_batch_is_ordered_and_marked_sent(tmp_path: Path, caplog) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     seed(store)
     seen_items = []
@@ -84,10 +87,13 @@ async def test_ack_batch_is_ordered_and_marked_sent(tmp_path: Path) -> None:
         transport=httpx.MockTransport(handler),
     )
     uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+    uploader._summary_started_at = time.monotonic() - 11
+    caplog.set_level(logging.INFO)
 
     await uploader.run_cycle()
 
     assert [item["local_seq"] for item in seen_items] == [1, 2]
+    assert "Upload summary" in caplog.text
     assert all(item["assignment_epoch"] == 7 for item in seen_items)
     assert store.stats() == {"sent": 2}
     await client.aclose()
@@ -95,7 +101,7 @@ async def test_ack_batch_is_ordered_and_marked_sent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_server_error_retries_same_session(tmp_path: Path) -> None:
+async def test_server_error_retries_same_session(tmp_path: Path, caplog) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     seed(store, 1)
     session_id = store.current_session_id()
@@ -109,6 +115,30 @@ async def test_server_error_retries_same_session(tmp_path: Path) -> None:
 
     assert store.current_session_id() == session_id
     assert store.stats() == {"retry_wait": 1}
+    assert "Upload deferred status=503" in caplog.text
+    await client.aclose()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_network_error_is_logged_and_retried(tmp_path: Path, caplog) -> None:
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://center.test",
+        transport=httpx.MockTransport(handler),
+    )
+    uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+
+    await uploader.run_cycle()
+
+    assert store.stats() == {"retry_wait": 1}
+    assert "Upload request failed" in caplog.text
+    assert "connection refused" in caplog.text
     await client.aclose()
     store.close()
 
@@ -157,7 +187,7 @@ async def test_seq_reject_abandons_session_and_cas_switches(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_auth_rejection_pauses_without_changing_row_state(tmp_path: Path) -> None:
+async def test_auth_rejection_pauses_without_changing_row_state(tmp_path: Path, caplog) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     seed(store, 1)
     calls = [0]
@@ -190,6 +220,7 @@ async def test_auth_rejection_pauses_without_changing_row_state(tmp_path: Path) 
     with pytest.raises(UploaderPaused):
         await uploader.run_cycle()
     assert store.stats() == {"inflight": 1}
+    assert "Upload authentication rejected status=401" in caplog.text
 
     await uploader.run_cycle()
     assert store.stats() == {"sent": 1}
@@ -230,5 +261,34 @@ async def test_session_obsolete_with_current_active_session_retries_batch(tmp_pa
 
     assert store.current_session_id() == current_session
     assert store.stats() == {"retry_wait": 1}
+    await client.aclose()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_blocking_storage_call_does_not_block_event_loop(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = OutboxStore(tmp_path / "edge.db")
+    original_snapshot = store.snapshot_target_seq
+
+    def slow_snapshot() -> int:
+        time.sleep(0.2)
+        return original_snapshot()
+
+    monkeypatch.setattr(store, "snapshot_target_seq", slow_snapshot)
+    client = httpx.AsyncClient(
+        base_url="https://center.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(500)),
+    )
+    uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+
+    cycle = asyncio.create_task(uploader.run_cycle())
+    await asyncio.sleep(0.02)
+
+    assert cycle.done() is False
+
+    await cycle
     await client.aclose()
     store.close()

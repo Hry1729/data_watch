@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import signal
 import sys
@@ -14,6 +15,19 @@ from edge.app.uploader import (
     Uploader,
     UploaderSettings,
 )
+
+
+logger = logging.getLogger("edge.uploader")
+
+
+def configure_logging() -> None:
+    level_name = os.environ.get("DATAWATCH_LOG_LEVEL", "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        force=True,
+    )
 
 
 def settings_from_env() -> tuple[UploaderSettings, RequestSigner]:
@@ -64,6 +78,13 @@ def _positive_int_env(name: str, default: int) -> int:
 
 async def main() -> int:
     settings, signer = settings_from_env()
+    logger.info(
+        "Uploader starting node=%s center=%s max_batch_items=%d max_batch_bytes=%d",
+        settings.node_uuid,
+        settings.center_url,
+        settings.max_batch_items,
+        settings.max_batch_bytes,
+    )
     store = EdgeStorageClient()
     uploader = Uploader(store, settings, signer=signer)
     loop = asyncio.get_running_loop()
@@ -79,10 +100,12 @@ async def main() -> int:
     finally:
         await uploader.close()
         store.close()
+        logger.info("Uploader stopped")
     return 0
 
 
 if __name__ == "__main__":
+    configure_logging()
     exit_code = asyncio.run(main())
     if exit_code:
         raise SystemExit(exit_code)

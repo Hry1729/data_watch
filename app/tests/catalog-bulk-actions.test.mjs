@@ -32,6 +32,12 @@ test("device management renders selection, batch delete, import, and export cont
   for (const label of ["批量删除", "导入", "导出", "下载模板"]) assert.match(deviceSource, new RegExp(label));
 });
 
+test("device status changes preserve backend diagnostics", () => {
+  assert.match(deviceSource, /catch \(reason\)/);
+  assert.match(deviceSource, /\(reason as \{ message\?: string \}\)\?\.message/);
+  assert.ok((deviceSource.match(/catch \(reason\)/g) ?? []).length >= 2);
+});
+
 test("point management renders all bulk operations including template import", () => {
   assert.match(pointSource, /selectedIds/);
   assert.match(pointSource, /backendClient\.batchDeletePoints/);

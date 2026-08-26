@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import UUID
@@ -50,7 +51,10 @@ async def get_runtime() -> IngestRuntime:
     async with _runtime_lock:
         if _runtime is None:
             settings = get_settings()
-            repository = await MySQLIngestRepository.create(settings)
+            repository = await MySQLIngestRepository.create(
+                settings,
+                migrate_schema=os.getenv("DATAWATCH_INGEST_SCHEMA_READY") != "1",
+            )
             store = IngestRedisStore.create(settings)
             runtime = IngestRuntime(
                 repository=repository,

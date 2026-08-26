@@ -680,7 +680,7 @@ class CatalogService:
         ).scalar_one_or_none()
         if current is None:
             raise ApiError(404, "Device not found")
-        if bool(current) == enabled:
+        if bool(int(current or 0)) == enabled:
             return {"id": device_id}
         result = await self.session.execute(
             text(

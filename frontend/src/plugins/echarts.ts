@@ -14,6 +14,7 @@ import * as echarts from 'echarts/core'
 // 导入图表类型
 import {
   BarChart,
+  GaugeChart,
   LineChart,
   PieChart,
   ScatterChart,
@@ -44,6 +45,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([
   // 图表类型
   BarChart,
+  GaugeChart,
   LineChart,
   PieChart,
   ScatterChart,

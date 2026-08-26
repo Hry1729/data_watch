@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import os
+import threading
 from typing import Any
 from uuid import uuid4
 
 import httpx
+import msgspec
 
 from edge.app.outbox import (
     OutboxCompletion,
@@ -36,9 +38,10 @@ class EdgeStorageClient:
         self._client = client or httpx.Client(
             base_url=self.base_url,
             timeout=timeout_seconds,
-            limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+            limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
         )
         self._owns_client = client is None
+        self._request_lock = threading.Lock()
 
     def close(self) -> None:
         if self._owns_client:
@@ -247,12 +250,20 @@ class EdgeStorageClient:
 
     def _command(self, action: str, payload: dict[str, Any] | None = None) -> Any:
         body = {"action": action, "payload": payload or {}}
+        encoded = msgspec.json.encode(body)
         last_error: Exception | None = None
         for _attempt in range(2):
             try:
-                response = self._client.post("/v1/command", json=body)
+                with self._request_lock:
+                    response = self._client.post(
+                        "/v1/command",
+                        content=encoded,
+                        headers={"Content-Type": "application/json"},
+                    )
                 response.raise_for_status()
-                envelope = response.json()
+                envelope = msgspec.json.decode(response.content)
+                if not isinstance(envelope, dict):
+                    raise ValueError("storage response must be an object")
                 if not envelope.get("ok"):
                     raise StorageUnavailable(str(envelope.get("error") or "storage command failed"))
                 return envelope.get("data")

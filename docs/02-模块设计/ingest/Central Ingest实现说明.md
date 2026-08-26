@@ -44,7 +44,7 @@ HTTP JSON 编解码使用 `msgspec`；兼容层缓存路由 handler 元数据，
 3. 批内 high_watermark 严格序号裁决。
 4. `duplicate`、`seq_reject`、`rejected_consumed` 和 `commit_unknown` 语义。
 5. StreamEnvelope v1/v2 独立字段 XADD；`values` 与 `qualities` 已在应用层预编码为 Writer 所需 JSON 字符串。
-6. latest 按时间戳和 assignment epoch 防倒退更新，旧 `{v,t,q}` 缺少 epoch 时按 `e=0`。
+6. latest 按时间戳和 assignment epoch 防倒退更新，旧 `{v,t,q}` 缺少 epoch 时按 `e=0`。Lua 先在批内合并每个设备的最新点位，再以 128 个字段为一组执行 `HMGET/HSET`，避免对每个点位分别执行 Redis Hash 命令。
 7. 每个接纳批次合并为一次 `PUBLISH rt:change` 数组；Backend 同时兼容旧单对象负载。
 8. 每个 Stream 在 Redis Hash `ingest:stream_trim_item_counts` 中独立累计接纳条目。达到 5000 时才执行一次 `XTRIM MAXLEN ~` 并保留余数，低频 Stream 不会因错过全局计数点而失去裁剪。
 
@@ -54,9 +54,9 @@ HTTP JSON 编解码使用 `msgspec`；兼容层缓存路由 handler 元数据，
 
 未显式配置 `INGEST_WORKERS` 时，默认 worker 数为：
 
-`min(12, max(4, cpu_count - 2))`
+`min(8, max(2, ceil(physical_cpu_count / 2)))`
 
-该值为目标部署的起点，不替代压测。1000 QPS、30 分钟本机共享资源基线已通过；2000 QPS、5 分钟测试达到 1999.99 QPS 且零错误，但本机共享资源下 HTTP P99 为 125.64ms，未通过 100ms 延迟门禁。最终突发 P99 必须由独立压测机在目标中心资源上复核，详见 [Ingest容量压测](../../04-运维部署/Ingest容量压测.md)。
+物理核心数由 `psutil.cpu_count(logical=False)` 获取；不可用时按逻辑线程数折半估算。8 个物理核心默认 4 个 worker，`INGEST_WORKERS` 可显式覆盖。该值只是目标部署的起点，不替代压测。1000 QPS、30 分钟本机共享资源基线已通过；2000 QPS、5 分钟测试达到 1999.99 QPS 且零错误，但本机共享资源下 HTTP P99 为 125.64ms，未通过 100ms 延迟门禁。最终突发 P99 必须由独立压测机在目标中心资源上复核，详见 [Ingest容量压测](../../04-运维部署/Ingest容量压测.md)。
 
 ## 6. Writer 边界
 

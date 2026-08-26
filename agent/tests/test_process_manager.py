@@ -7,10 +7,13 @@ import asyncio
 import os
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
-from app.services.process_manager import ProcessManagerError
+import app.services.process_manager as process_manager_module
+
+from app.services.process_manager import ProcessInfo, ProcessManagerError
 
 
 async def _wait(cond, timeout=6.0, interval=0.05):
@@ -147,3 +150,66 @@ async def test_restart_increments_persisted_count(make_pm):
         assert pm.status(name).restart_count >= 1
     finally:
         await pm.stop(name)
+
+
+class _FakeProcess:
+    def __init__(
+        self,
+        pid: int,
+        *,
+        rss_mb: float,
+        cpu_percent: float,
+        children: list["_FakeProcess"] | None = None,
+    ) -> None:
+        self.pid = pid
+        self._rss = int(rss_mb * 1024 * 1024)
+        self._cpu_percent = cpu_percent
+        self._children = children or []
+
+    def children(self, recursive: bool = False):
+        return list(self._children)
+
+    def memory_info(self):
+        return SimpleNamespace(rss=self._rss)
+
+    def cpu_percent(self, interval=None):
+        return self._cpu_percent
+
+    def create_time(self):
+        return float(self.pid)
+
+
+def test_memory_aggregates_parent_and_descendants(make_pm):
+    pm, name = make_pm()
+    child = _FakeProcess(102, rss_mb=20.0, cpu_percent=0.0)
+    root = _FakeProcess(101, rss_mb=10.0, cpu_percent=0.0, children=[child])
+
+    info = pm._info_running(
+        name,
+        root,
+        {"create_time": time.time(), "started_at": "2026-08-23 12:00:00"},
+    )
+
+    assert info.memory_mb == 30.0
+
+
+def test_cpu_aggregates_parent_and_descendants(make_pm, monkeypatch):
+    pm, name = make_pm()
+    child = _FakeProcess(202, rss_mb=0.0, cpu_percent=20.0)
+    root = _FakeProcess(201, rss_mb=0.0, cpu_percent=30.0, children=[child])
+    monkeypatch.setattr(process_manager_module.psutil, "Process", lambda pid: root)
+    monkeypatch.setattr(process_manager_module, "_LOGICAL_CPUS", 10)
+
+    pm._sample_cpu(
+        name,
+        ProcessInfo(
+            name=name,
+            status="running",
+            pid=root.pid,
+            started_at=None,
+            uptime_seconds=0,
+        ),
+    )
+
+    assert pm._cpu_cache[name] == 5.0
+    assert len(pm._cpu_procs[name]) == 2

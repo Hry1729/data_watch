@@ -144,6 +144,31 @@ def test_local_latest_is_available_offline(tmp_path: Path) -> None:
     }
     store.close()
 
+
+def test_local_latest_prefers_compact_frame_and_keeps_legacy_fallback(tmp_path: Path) -> None:
+    store = OutboxStore(tmp_path / "edge.db")
+    with store._lock:
+        store._connection.execute(
+            """
+            INSERT INTO local_latest(device_code, group_code, var_id, value_json, updated_at)
+            VALUES('QC100', 'g001', '1', '{"v":"legacy","t":1,"q":0}', 1)
+            """
+        )
+    assert store.read_local_latest("QC100", "g001")["1"]["v"] == "legacy"
+
+    store.write_local_latest(
+        "QC100",
+        "g001",
+        {"1": {"v": "compact", "t": 2, "q": 192}},
+    )
+    assert store.read_local_latest("QC100", "g001")["1"]["v"] == "compact"
+    with store._lock:
+        assert store._connection.execute(
+            "SELECT COUNT(*) FROM local_latest_frame"
+        ).fetchone()[0] == 1
+    store.close()
+
+
 def test_overflow_abandons_whole_session_and_tracks_drops(tmp_path: Path, monkeypatch) -> None:
     store = OutboxStore(tmp_path / "edge.db")
     configure(store, "QC100", 1, 100)
@@ -169,6 +194,51 @@ def test_overflow_abandons_whole_session_and_tracks_drops(tmp_path: Path, monkey
     assert store.snapshot_target_seq() == 0
     assert store.operational_status()["dropped_records"] == 2
     store.close()
+
+
+def test_maintenance_keeps_dead_for_retention_but_removes_sent_after_sixty_seconds(
+    tmp_path: Path,
+) -> None:
+    now = [1_721_800_000_000]
+    store = OutboxStore(tmp_path / "edge.db", clock_ms=lambda: now[0])
+    configure(store, "QC100", 1, 100)
+    append(store)
+    append(store)
+    claimed = store.claim_batch(
+        target_seq=2,
+        lease_owner="owner-1",
+        lease_ms=5000,
+        max_items=2,
+        max_bytes=10000,
+    )
+    store.mark_sent(claimed[0], "owner-1")
+    store.mark_dead(claimed[1], "owner-1", "invalid mapping")
+
+    now[0] += 60_001
+    result = store.maintenance(7)
+    assert result["deleted_terminal"] == 1
+    assert store.stats() == {"dead": 1}
+
+    now[0] += 7 * 24 * 60 * 60 * 1000
+    result = store.maintenance(7)
+    assert result["deleted_terminal"] == 1
+    assert store.stats() == {}
+    store.close()
+
+
+def test_new_database_enables_incremental_vacuum_and_reports_free_pages(
+    tmp_path: Path,
+) -> None:
+    store = OutboxStore(tmp_path / "edge.db")
+
+    status = store.operational_status()
+
+    assert status["auto_vacuum_mode"] == 2
+    assert status["database_live_bytes"] > 0
+    assert status["database_reclaimable_bytes"] >= 0
+    assert 0 <= status["database_free_page_ratio"] <= 1
+    store.close()
+
 
 def test_outbox_initialization_does_not_import_collector_config(
     tmp_path: Path,

@@ -62,7 +62,7 @@ class ProcessManager:
         # CPU 采样缓存：仅在事件循环线程内写（health loop）/读（async status 路由），
         # 不跨线程，故无需加锁；若未来从线程池调用 status() 需重新评估。
         self._cpu_cache: dict[str, float] = {}
-        self._cpu_procs: dict[str, psutil.Process] = {}
+        self._cpu_procs: dict[str, dict[tuple[int, float], psutil.Process]] = {}
         self._locks: dict[str, asyncio.Lock] = {
             name: asyncio.Lock() for name in modules
         }
@@ -323,32 +323,57 @@ class ProcessManager:
 
         return self._info_running(name, proc, record)
 
-    def _sample_cpu(self, name: str, info: ProcessInfo) -> None:
-        """在监控循环中调用：维护每模块的持久 psutil.Process 并缓存 CPU%。
+    @staticmethod
+    def _process_tree(proc: psutil.Process) -> list[psutil.Process]:
+        processes = [proc]
+        try:
+            descendants = proc.children(recursive=True)
+        except psutil.Error:
+            descendants = []
 
-        cpu_percent(interval=None) 非阻塞，返回自上次对同一 Process 对象调用以来的
-        占用；故必须复用同一 Process 对象，pid 变化时重建（重建后首轮为基线 0.0，
-        下一轮才有真实增量）。
+        seen = {proc.pid}
+        for child in descendants:
+            if child.pid not in seen:
+                seen.add(child.pid)
+                processes.append(child)
+        return processes
+
+    def _sample_cpu(self, name: str, info: ProcessInfo) -> None:
+        """在监控循环中采样父进程及全部后代的整机 CPU 占比。
+
+        每个进程的 psutil.Process 对象按 pid + create_time 复用，使
+        cpu_percent(interval=None) 在下一轮获得真实增量；退出的 worker 会自动
+        从缓存移除，新 worker 即使复用 PID 也不会继承旧采样基线。
         """
         if info.status != "running" or info.pid is None:
             self._cpu_procs.pop(name, None)
             self._cpu_cache[name] = 0.0
             return
-        proc = self._cpu_procs.get(name)
-        if proc is None or proc.pid != info.pid:
-            try:
-                proc = psutil.Process(info.pid)
-            except psutil.Error:
-                self._cpu_procs.pop(name, None)
-                self._cpu_cache[name] = 0.0
-                return
-            self._cpu_procs[name] = proc
+
         try:
-            self._cpu_cache[name] = round(proc.cpu_percent(interval=None) / _LOGICAL_CPUS, 2)
+            root = psutil.Process(info.pid)
         except psutil.Error:
             self._cpu_procs.pop(name, None)
             self._cpu_cache[name] = 0.0
+            return
 
+        cached = self._cpu_procs.get(name, {})
+        current: dict[tuple[int, float], psutil.Process] = {}
+        total_cpu = 0.0
+        for discovered in self._process_tree(root):
+            try:
+                identity = (discovered.pid, discovered.create_time())
+            except psutil.Error:
+                continue
+            tracked = cached.get(identity, discovered)
+            try:
+                total_cpu += tracked.cpu_percent(interval=None)
+            except psutil.Error:
+                continue
+            current[identity] = tracked
+
+        self._cpu_procs[name] = current
+        self._cpu_cache[name] = round(total_cpu / _LOGICAL_CPUS, 2)
     async def health_check_loop(
         self,
         interval: float = _HEALTH_CHECK_INTERVAL,
@@ -388,10 +413,13 @@ class ProcessManager:
     ) -> ProcessInfo:
         create_time = float(record.get("create_time", proc.create_time()))
         uptime = max(0, int(time.time() - create_time))
-        try:
-            memory_mb = proc.memory_info().rss / (1024 * 1024)
-        except psutil.Error:
-            memory_mb = 0.0
+        memory_bytes = 0
+        for member in self._process_tree(proc):
+            try:
+                memory_bytes += member.memory_info().rss
+            except psutil.Error:
+                continue
+        memory_mb = memory_bytes / (1024 * 1024)
         return ProcessInfo(
             name=name,
             status="running",

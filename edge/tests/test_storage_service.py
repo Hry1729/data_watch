@@ -7,7 +7,7 @@ import threading
 from edge.app.config_snapshot import snapshot_checksum
 from edge.app.outbox import OutboxCompletion
 from edge.app.storage_client import EdgeStorageClient
-from edge.app.storage_service import StorageEngine, StorageHttpServer
+from edge.app.storage_service import StorageEngine, StorageHttpServer, StorageRequestHandler
 
 
 def _snapshot() -> dict:
@@ -42,6 +42,9 @@ def _snapshot() -> dict:
         "devices": devices,
     }
 
+
+def test_storage_http_uses_keepalive_protocol() -> None:
+    assert StorageRequestHandler.protocol_version == "HTTP/1.1"
 
 def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> None:
     engine = StorageEngine(tmp_path / "edge.db", max_queue=256)

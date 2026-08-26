@@ -58,6 +58,13 @@ test("realtime trend stays inside the viewport and compacts the bool chart", () 
   assert.match(pageSource, /compact className="h-full"/);
   assert.doesNotMatch(pageSource, /h-\[420px\]/);
 });
+
+test("bool trends use a visible step line with a padded binary axis", () => {
+  assert.match(pageSource, /const boolOnly = points\.every/);
+  assert.match(pageSource, /domain=\{boolOnly \? \[-0\.15, 1\.15\] : undefined\}/);
+  assert.match(pageSource, /ticks=\{boolOnly \? \[0, 1\] : undefined\}/);
+  assert.match(pageSource, /type=\{boolOnly \? "stepAfter" : "monotone"\}/);
+});
 test("realtime page loads and switches point groups without hardcoding g001", () => {
   assert.match(pageSource, /monitorClient\.realtimePointGroups/);
   assert.match(pageSource, /selectedGroupCode/);

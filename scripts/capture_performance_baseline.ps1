@@ -7,8 +7,9 @@ param(
 
     [string]$OutputRoot = "D:\data_watch_release\performance-baselines",
     [int]$RandomSeed = 20260619,
-    [string[]]$ProcessNames = @("data-watch-collector", "data-watch-writer"),
+    [string[]]$ProcessNames = @("data-watch-agent", "data-watch-collector", "data-watch-ingest", "data-watch-writer"),
     [string]$RedisContainer = "data-watch-redis",
+    [string]$RedisPassword = $env:REDIS_PASSWORD,
     [string]$RedisConsumerGroup = "writer_cg",
     [ValidateRange(1, 3600)]
     [int]$RedisDetailEverySamples = 6,
@@ -46,6 +47,18 @@ function Invoke-NativeText {
     }
 }
 
+function Invoke-RedisText {
+    param([string[]]$RedisArguments)
+
+    $DockerArguments = @("exec")
+    if (-not [string]::IsNullOrWhiteSpace($RedisPassword)) {
+        $DockerArguments += @("--env", "REDISCLI_AUTH=$RedisPassword")
+    }
+    $DockerArguments += @($RedisContainer, "redis-cli", "--no-auth-warning", "--raw")
+    $DockerArguments += $RedisArguments
+    return Invoke-NativeText { & docker @DockerArguments }
+}
+
 $GitCommit = Invoke-NativeText { git -C $RepoRoot rev-parse HEAD }
 $GitStatus = Invoke-NativeText { git -C $RepoRoot status --short }
 $DockerVersion = Invoke-NativeText { docker version --format "{{json .}}" }
@@ -70,6 +83,11 @@ foreach ($RelativePath in @(
     }
 }
 
+$CapturedCommand = $MyInvocation.Line
+if (-not [string]::IsNullOrWhiteSpace($RedisPassword)) {
+    $CapturedCommand = $CapturedCommand.Replace($RedisPassword, "***")
+}
+
 $Manifest = [ordered]@{
     schema_version = 1
     captured_at = (Get-Date).ToString("o")
@@ -79,9 +97,10 @@ $Manifest = [ordered]@{
     repository_root = $RepoRoot
     git_commit = $GitCommit
     git_status = $GitStatus
-    command = $MyInvocation.Line
+    command = $CapturedCommand
     process_names = $ProcessNames
     redis_container = $RedisContainer
+    redis_auth_configured = -not [string]::IsNullOrWhiteSpace($RedisPassword)
     redis_consumer_group = $RedisConsumerGroup
     redis_detail_every_samples = $RedisDetailEverySamples
     tdengine_container = $TdengineContainer
@@ -177,24 +196,21 @@ while ((Get-Date) -lt $Deadline) {
     }
 
     "===== $Now =====" | Add-Content -LiteralPath $RedisInfo -Encoding utf8
-    Invoke-NativeText {
-        docker exec $RedisContainer redis-cli --no-auth-warning INFO memory persistence stats
-    } | Add-Content -LiteralPath $RedisInfo -Encoding utf8
+    foreach ($Section in @("memory", "clients", "persistence", "stats", "commandstats", "errorstats")) {
+        "----- INFO $Section -----" | Add-Content -LiteralPath $RedisInfo -Encoding utf8
+        Invoke-RedisText -RedisArguments @("INFO", $Section) |
+            Add-Content -LiteralPath $RedisInfo -Encoding utf8
+    }
 
     if ($SampleNumber % $RedisDetailEverySamples -eq 1) {
         $StreamKeys = @(
-            Invoke-NativeText {
-                docker exec $RedisContainer redis-cli --no-auth-warning --raw --scan --pattern "rt:stream:*"
-            } -split "`r?`n" | Where-Object { $_ -like "rt:stream:*" }
+            (Invoke-RedisText -RedisArguments @("--scan", "--pattern", "rt:stream:*")) -split "`r?`n" |
+                Where-Object { $_ -like "rt:stream:*" }
         )
         foreach ($StreamKey in $StreamKeys) {
-            $LengthText = Invoke-NativeText {
-                docker exec $RedisContainer redis-cli --no-auth-warning --raw XLEN $StreamKey
-            }
+            $LengthText = Invoke-RedisText -RedisArguments @("XLEN", $StreamKey)
             $PendingLines = @(
-                Invoke-NativeText {
-                    docker exec $RedisContainer redis-cli --no-auth-warning --raw XPENDING $StreamKey $RedisConsumerGroup
-                } -split "`r?`n"
+                (Invoke-RedisText -RedisArguments @("XPENDING", $StreamKey, $RedisConsumerGroup)) -split "`r?`n"
             )
             [int64]$PendingCount = 0
             [void][int64]::TryParse($PendingLines[0], [ref]$PendingCount)
@@ -235,5 +251,10 @@ if (Test-Path -LiteralPath $WriterLog) {
     inspect_output = Invoke-NativeText { docker inspect $TdengineContainer }
 } | ConvertTo-Json -Depth 4 |
     Set-Content -LiteralPath (Join-Path $OutputDir "tdengine-inspect.json") -Encoding utf8
+
+Invoke-NativeText { docker logs --tail 200 $RedisContainer } |
+    Set-Content -LiteralPath (Join-Path $OutputDir "redis-container-tail.log") -Encoding utf8
+Invoke-NativeText { docker logs --tail 200 $TdengineContainer } |
+    Set-Content -LiteralPath (Join-Path $OutputDir "tdengine-container-tail.log") -Encoding utf8
 
 Write-Host "Performance baseline captured: $OutputDir"

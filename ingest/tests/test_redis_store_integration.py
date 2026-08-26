@@ -44,6 +44,7 @@ def item(
     ts: int = 1000,
     device_code: str = "QC100",
     group_code: str = "g001",
+    value: str = "12.5",
 ) -> UploadItem:
     return UploadItem(
         batch_id=str(uuid4()),
@@ -56,7 +57,7 @@ def item(
         scan_rate=100,
         ts=ts,
         config_version=12,
-        values={"1": "12.5"},
+        values={"1": value},
         contract_version=2,
         qualities={"1": 192},
     )
@@ -113,6 +114,30 @@ async def test_real_lua_sequence_stream_latest_and_session_fence() -> None:
     await pubsub.aclose()
     await store.close()
 
+
+@pytest.mark.asyncio
+async def test_real_lua_batches_latest_updates_and_keeps_newest_value() -> None:
+    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
+    await client.flushdb()
+    store = IngestRedisStore(client, settings())
+    node_uuid = str(uuid4())
+    session_id = str(uuid4())
+
+    results = await store.process_items(
+        node_uuid,
+        [
+            (item(1, session_id, ts=1000, value="first"), "accept"),
+            (item(2, session_id, ts=1100, value="second"), "accept"),
+        ],
+        nonce="batched-latest",
+    )
+
+    latest = json.loads(await client.hget("rt:latest:QC100:g001", "1"))
+    assert [result.status for result in results] == ["ack", "ack"]
+    assert latest["v"] == "second"
+    assert latest["t"] == 1100
+
+    await store.close()
 
 @pytest.mark.asyncio
 async def test_real_lua_rejected_consumed_advances_watermark() -> None:

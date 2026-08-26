@@ -50,6 +50,20 @@ async def test_device_status_same_value_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_status_parses_string_zero_before_enabling() -> None:
+    update_result = MagicMock(rowcount=1)
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[_scalar_result("0"), update_result])
+    service = CatalogService(session=session, tdengine=MagicMock())
+    service._bump_assigned_node_config_versions = AsyncMock()
+
+    assert await service.update_device_status(7, enabled=True, actor="admin") == {"id": 7}
+    assert session.execute.await_count == 2
+    service._bump_assigned_node_config_versions.assert_awaited_once_with(7)
+    session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_point_status_change_updates_group_and_revision() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(

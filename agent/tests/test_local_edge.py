@@ -311,3 +311,29 @@ async def test_local_monitor_reads_catalog_latest_and_retained_history(monkeypat
     assert realtime["data"][0]["value"] == "12.5"
     assert chart["series"][0]["data"][0][1] == 12.5
     assert matrix["rows"][0]["v1"] == "12.5"
+
+
+def test_local_monitor_prefers_compact_latest_frame(tmp_path):
+    path = tmp_path / "edge" / "edge.db"
+    _seed_monitor(path)
+    compact = json.dumps({"11": {"v": "27.5", "t": 2000, "q": 192}}).encode()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE local_latest_frame (
+                device_code TEXT,
+                group_code TEXT,
+                values_json BLOB,
+                updated_at INTEGER,
+                PRIMARY KEY(device_code, group_code)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO local_latest_frame VALUES(?, ?, ?, ?)",
+            ("QC01", "g001", compact, 2000),
+        )
+
+    result = EdgeLocalStore(path).latest_values("QC01", "g001")
+
+    assert result["values"]["11"]["v"] == "27.5"

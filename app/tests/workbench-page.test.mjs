@@ -8,6 +8,7 @@ const source = await readFile(new URL("../src/pages/WorkbenchPage.tsx", import.m
 const appSource = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
 const themeSource = await readFile(new URL("../src/index.css", import.meta.url), "utf8");
 const pipelineSource = await readFile(new URL("../src/hooks/usePipelineHealth.ts", import.meta.url), "utf8");
+const chartSource = await readFile(new URL("../src/components/ui/chart.tsx", import.meta.url), "utf8");
 
 test("Workbench is an implemented route rather than a placeholder", () => {
   assert.equal(getPageMeta("/dashboard/workbench")?.kind, "existing");
@@ -76,6 +77,10 @@ test("Workbench uses the requested shadcn chart variants", () => {
   assert.match(source, /<BarChart[\s\S]*stackId="devices"/);
 });
 
+test("Workbench tooltip falls back to the active row for the newest bucket", () => {
+  assert.match(chartSource, /item\.value \?\?[\s\S]*item\.payload\?\.\[item\.dataKey\]/);
+  assert.match(chartSource, /formatter\(itemValue/);
+});
 test("Workbench uses the blue preset chart palette instead of neutral grays", () => {
   const rootTheme = themeSource.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
 

@@ -1,8 +1,9 @@
 """消费者端测试，验证刷新时的二分搜索降级功能。Consumer-side tests for §7.6 binary-search degrade wiring in _flush.
 
 Verifies the per-row status contract from write_multi_table is honored:
-LANDED → XACK; BAD_DATA → DLQ then XACK only on success; RETRY (and DLQ-push
-failure) → kept buffered, never acked (hard constraints ② and ④).
+LANDED → XACK + XDEL; BAD_DATA → DLQ then XACK + XDEL only on success;
+RETRY (and DLQ-push failure) → kept buffered, never acked or deleted
+(hard constraints ② and ④).
 """
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -61,6 +62,7 @@ async def test_bad_data_pushed_to_dlq_then_acked():
 
     dlq.assert_called_once()
     redis_client.xack.assert_called_once()
+    redis_client.xdel.assert_called_once()
     assert consumer._buffer == []  # 坏行已隔离离开 buffer
 
 
@@ -77,6 +79,7 @@ async def test_bad_data_dlq_failure_keeps_buffer_and_does_not_ack():
         await consumer._flush()
 
     redis_client.xack.assert_not_called()  # DLQ 失败 → 绝不 ACK
+    redis_client.xdel.assert_not_called()
     assert consumer._buffer == [row]  # 留 buffer，不丢
 
 
@@ -94,6 +97,7 @@ async def test_retry_status_keeps_buffer_and_does_not_ack():
 
     dlq.assert_not_called()  # RETRY 绝不进 DLQ
     redis_client.xack.assert_not_called()
+    redis_client.xdel.assert_not_called()
     assert consumer._buffer == [row]
 
 
@@ -114,4 +118,41 @@ async def test_mixed_landed_bad_retry_split_correctly():
     # LANDED + 成功 DLQ 的坏行 → ACK；RETRY 行留 buffer
     acked = {eid for call in redis_client.xack.call_args_list for eid in call.args[2:]}
     assert acked == {"1-0", "2-0"}
+    deleted = {eid for call in redis_client.xdel.call_args_list for eid in call.args[1:]}
+    assert deleted == {"1-0", "2-0"}
     assert consumer._buffer == [rows[2]]
+
+
+def test_xack_failure_never_deletes_and_retries_ack_first():
+    writer = MagicMock()
+    redis_client = MagicMock()
+    redis_client.xack.side_effect = [RuntimeError("redis unavailable"), 1]
+    consumer = _consumer(writer, redis_client)
+
+    consumer._ack_ids("rt:stream:qc:g001:0", ["1-0"])
+
+    redis_client.xdel.assert_not_called()
+    assert consumer._ack_retry == {"rt:stream:qc:g001:0": {"1-0"}}
+
+    consumer._retry_pending_acks()
+
+    redis_client.xdel.assert_called_once_with("rt:stream:qc:g001:0", "1-0")
+    assert consumer._ack_retry == {}
+
+
+def test_xdel_failure_is_retried_without_repeating_xack():
+    writer = MagicMock()
+    redis_client = MagicMock()
+    redis_client.xdel.side_effect = [RuntimeError("redis unavailable"), 1]
+    consumer = _consumer(writer, redis_client)
+
+    consumer._ack_ids("rt:stream:qc:g001:0", ["1-0"])
+
+    redis_client.xack.assert_called_once()
+    assert consumer._delete_retry == {"rt:stream:qc:g001:0": {"1-0"}}
+
+    consumer._retry_pending_deletes()
+
+    redis_client.xack.assert_called_once()
+    assert redis_client.xdel.call_count == 2
+    assert consumer._delete_retry == {}

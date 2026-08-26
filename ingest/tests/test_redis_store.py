@@ -129,3 +129,7 @@ async def test_process_item_publishes_change_on_atomic_ack_path() -> None:
     assert "trim_count >= trim_every_items" in script
     assert 'redis.call("XTRIM", touched_stream, "MAXLEN", "~", stream_maxlen)' in script
     assert '"MAXLEN", "~", stream_maxlen, "*"' not in script
+    assert 'redis.call("HMGET", unpack(get_args))' in script
+    assert 'redis.call("HSET", unpack(set_args))' in script
+    assert 'redis.call("HGET"' not in script
+    assert "local latest_chunk_size = 128" in script

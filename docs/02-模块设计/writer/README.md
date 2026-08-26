@@ -99,10 +99,11 @@ flowchart TD
 `writer/consumer.py:61`。主循环 `run_loop` (`consumer.py:105`) 每轮依次：
 
 1. **补偿失败的 XACK**（`_retry_pending_acks`）——必须早于 drain，避免已落库但 ACK 失败的条目被重新认领重写；
-2. **周期重认领**（`drain_pending`，默认 60s）——回收本消费者或崩溃消费者遗留的闲置消息；
-3. **读新消息**（`xreadgroup`）——缓冲未满时读；满则跳过读、立即 flush（背压）；
-4. **flush**——达时间或缓冲阈值时批量落库；
-5. **连续失败退避**——flush 失败递增退避（上限 10s）并降噪日志。
+2. **补偿失败的 XDEL**（`_retry_pending_deletes`）——只清理已终态且已 ACK 的条目，不触发 TDengine 重写；
+3. **周期重认领**（`drain_pending`，默认 60s）——回收本消费者或崩溃消费者遗留的闲置消息；
+4. **读新消息**（`xreadgroup`）——缓冲未满时读；满则跳过读、立即 flush（背压）；
+5. **flush**——达时间或缓冲阈值时批量落库；
+6. **连续失败退避**——flush 失败递增退避（上限 10s）并降噪日志。
 
 每条消息经 `_handle_entry`：先做 DLQ 检查，再解析字段；永久 mapping 缓存命中时走事件循环内快路径，只有首次加载进入 executor/MySQL；随后完成列名翻译、类型和质量码校验并进入缓冲。
 
@@ -150,7 +151,7 @@ sequenceDiagram
     participant MAP as MysqlMapper
     participant TW as TDengineWriter
     participant DLQ as DLQ
-    SC->>SC: 补偿失败 XACK / 周期 drain_pending
+    SC->>SC: 补偿失败 XACK / XDEL / 周期 drain_pending
     SC->>R: xreadgroup(>)
     R-->>SC: entries
     loop 每条
@@ -160,7 +161,7 @@ sequenceDiagram
     end
     SC->>TW: write_multi_table(buffered)  [到时/到阈值]
     TW-->>SC: 每块 (LANDED/BAD_DATA/RETRY)
-    SC->>R: XACK (LANDED)
+    SC->>R: XACK + XDEL (LANDED)
     SC->>DLQ: push (BAD_DATA)
     SC->>SC: RETRY 留 buffer
 ```
@@ -169,11 +170,11 @@ sequenceDiagram
 
 `_flush` (`consumer.py:505`) 拿到 `write_multi_table` 的逐块结果后按状态分流：
 
-- **LANDED** → 加入待 ACK，同一 Stream 最多 500 个 entry id 合并为一次 XACK；
-- **BAD_DATA** → 逐行 `push_dlq`，**推送成功才 ACK**，失败留 buffer；
+- **LANDED** → 加入待确认集合，同一 Stream 最多 500 个 entry id 合并 XACK，ACK 成功后同批 XDEL；
+- **BAD_DATA** → 逐行 `push_dlq`，**推送成功才 XACK + XDEL**，失败留 buffer；
 - **RETRY** → 不 ACK、不进 DLQ，留 buffer 下轮重试。
 
-> **不丢数据的硬约束**：只有"已落库（LANDED）"或"已成功进 DLQ 的坏行"才 ACK；任何 RETRY 或 DLQ 推送失败的行都留在 buffer，绝不丢弃。
+> **不丢数据的硬约束**：只有"已落库（LANDED）"或"已成功进 DLQ 的坏行"才 XACK，并只在 ACK 成功后 XDEL；任何 RETRY、ACK 失败或 DLQ 推送失败的行都不会删除。XDEL 失败进入独立清理重试，不重复写 TDengine。
 
 ### 6.3 待处理消息重认领（崩溃恢复）
 
