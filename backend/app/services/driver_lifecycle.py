@@ -140,7 +140,10 @@ class DriverLifecycleService:
         )
         if agent_info is None:
             raise ApiError(409, f"Agent 未安装驱动 {driver_id}")
-        if str(agent_info.get("status") or "") != "loaded":
+        verified_stopped = (agent_info.get("install_status") == "installed"
+                            and agent_info.get("preflight_verified") is True
+                            and agent_info.get("runtime_status") == "collector_stopped")
+        if str(agent_info.get("status") or "") != "loaded" and not verified_stopped:
             raise ApiError(
                 409,
                 f"Agent 驱动 {driver_id} 未成功加载: "
@@ -234,8 +237,6 @@ class DriverLifecycleService:
             )
 
         key = _normalize_protocol(protocol)
-        if key in {_normalize_protocol(p) for p in _BUILTIN_PROTOCOLS}:
-            raise ApiError(409, "内置驱动不可卸载")
 
         await self._ensure_installed_driver_table()
         await self._ensure_driver_operation_table()
@@ -335,13 +336,7 @@ class DriverLifecycleService:
             )
             await self.session.commit()
 
-            deleted = False
-            if row is not None:
-                await self.session.execute(
-                    text("DELETE FROM comm_protocol WHERE id = :id"),
-                    {"id": int(row["id"])},
-                )
-                deleted = True
+            deleted = False  # Local package removal never deletes the global protocol catalog.
             await self.session.execute(
                 text("DELETE FROM installed_driver WHERE protocol = :protocol"),
                 {"protocol": protocol},
@@ -666,24 +661,13 @@ class DriverLifecycleService:
             info.get("description") or info.get("name") or protocol
         ).strip()
         version = str(
-            op.get("target_version") or info.get("version") or ""
+            info.get("version") or ""
         ).strip()
 
-        # 如果没有版本号，默认 1.0.0
-        if not version:
-            version = "1.0.0"
-
-        # 覆盖安装时，版本号递增 0.0.1
-        existing_driver = await self._fetch_installed_driver_by_protocol(protocol)
-        if existing_driver:
-            old_version = str(existing_driver.get("driver_version") or "0.0.0")
-            try:
-                parts = old_version.split(".")
-                if len(parts) == 3:
-                    major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
-                    version = f"{major}.{minor}.{patch + 1}"
-            except (ValueError, IndexError):
-                pass  # 保持原 version
+        if not version or info.get("status") not in {"loaded", "installed"}:
+            return False
+        if info.get("status") == "installed" and not info.get("preflight_verified"):
+            return False
 
         sha256 = str(info.get("sha256") or "").strip()
         existing = await self._fetch_protocol_row(protocol)
@@ -699,19 +683,13 @@ class DriverLifecycleService:
         return True
 
     async def _reconcile_uninstall(self, op: dict[str, Any]) -> bool:
-        """Agent 已卸载成功时，补删 MySQL 目录行。"""
+        """Agent 已卸载成功时，仅清理安装映射，保留全局协议目录。"""
         driver_id = str(op.get("driver_id") or "").strip()
         if not driver_id:
             return False
         meta = await self._fetch_installed_driver_by_id(driver_id)
         protocol = str((meta or {}).get("protocol") or "").strip()
         if protocol:
-            row = await self._fetch_protocol_row(protocol)
-            if row is not None:
-                await self.session.execute(
-                    text("DELETE FROM comm_protocol WHERE id = :id"),
-                    {"id": int(row["id"])},
-                )
             await self.session.execute(
                 text("DELETE FROM installed_driver WHERE protocol = :protocol"),
                 {"protocol": protocol},
@@ -1075,7 +1053,9 @@ class DriverLifecycleService:
             if protocol_id is not None:
                 bound = await self._bound_device_count(protocol_id)
                 if bound > 0:
-                    raise ApiError(409, f"仍有 {bound} 台设备绑定该驱动，无法卸载")
+                    devices = (await self.session.execute(text("SELECT device_code FROM device WHERE protocol_id = :protocol_id ORDER BY device_code LIMIT 20"), {"protocol_id": protocol_id})).mappings().all()
+                    names = ", ".join(str(item.get("device_code") or "") for item in devices)
+                    raise ApiError(409, f"仍有 {bound} 台设备绑定该驱动，无法卸载：{names}")
 
             await self.session.execute(
                 text(

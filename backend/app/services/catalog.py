@@ -161,9 +161,9 @@ class CatalogService:
             protocol = row["driver_name"] or ""
             driver_id = str(row["driver_id"] or "").strip()
             install_source = str(row["install_source"] or "").strip()
-            # 安装包内置驱动优先于历史 installed_driver 记录，始终受保护。
+            # 来源只描述发布来源；卸载条件由绑定关系和安装事务决定。
             if self._is_builtin_protocol(protocol):
-                source = "bundled"
+                source = "official"
             elif driver_id or install_source:
                 source = "installed"
             else:
@@ -177,7 +177,7 @@ class CatalogService:
                 "boundDeviceCount": int(row["bound_device_count"] or 0),
                 "updateTime": self._format_datetime(self._coerce_datetime(row["create_time"])),
                 "source": source,
-                "protected": source == "bundled",
+                "protected": False,
                 "driverId": driver_id or None,
                 "version": str(row["driver_version"] or "").strip() or None,
                 "sha256": str(row["driver_sha256"] or "").strip() or None,

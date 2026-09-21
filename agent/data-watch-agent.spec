@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # config 运行期走 DATAWATCH_DATA_ROOT\config.toml（_default_config 程序生成），
@@ -29,7 +31,7 @@ hiddenimports += collect_submodules('jose')
 
 a = Analysis(
     ['main.py'],
-    pathex=['.'],
+    pathex=['.', str(Path(SPECPATH).resolve().parent)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

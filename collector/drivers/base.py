@@ -10,6 +10,10 @@ from core.quality_codes import QUALITY_GOOD
 from core.exceptions import ReadError
 
 
+# Explicit missing mapped block; distinct from a driver sample with no value.
+MISSING_RESULT = object()
+
+
 class ReadBlock:
     """批量采集块定义：同设备连续地址合并读取"""
 

@@ -171,3 +171,14 @@ def test_satisfied_collector_requirement_passes(tmp_path):
 def test_absent_requirement_skips_version_check(tmp_path):
     manifest, root = _write_package(tmp_path)
     validate_package_compatibility(manifest, root, collector_version="0.0.1")
+
+@pytest.mark.parametrize("components", ['{ arbitrary_service = "1.0" }', '{ opcda_proxy = "2.0" }'])
+def test_rejects_unmanaged_components(tmp_path, components):
+    path = _write_toml(tmp_path, _valid_toml(managed_components=components))
+    with pytest.raises(DriverManifestError, match="opcda_proxy 1.0"):
+        load_driver_toml(path)
+
+
+def test_declares_fixed_opcda_proxy_contract(tmp_path):
+    path = _write_toml(tmp_path, _valid_toml(managed_components='{ opcda_proxy = "1.0" }'))
+    assert load_driver_toml(path).managed_components == (("opcda_proxy", "1.0"),)

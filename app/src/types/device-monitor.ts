@@ -16,7 +16,7 @@ export interface DriverListItem {
   status?: string;
   boundDeviceCount?: number;
   /** 安装包内置 / 旧版内置 / 已安装 / Agent 独有未注册 / 状态异常 */
-  source?: "bundled" | "builtin" | "installed" | "unregistered" | "unknown" | "missing";
+  source?: "official" | "bundled" | "builtin" | "installed" | "unregistered" | "unknown" | "missing";
   /** 内置驱动不可被外部包覆盖或卸载 */
   protected?: boolean;
   /** Manifest.id，Agent 安装目录名（可与 protocol 不同） */
@@ -27,6 +27,7 @@ export interface DriverListItem {
   installSource?: string;
   /** Agent 本机加载状态：loaded / installed / load_failed / rollback / unknown / missing 等 */
   loadStatus?: string;
+  installStatus?: string;
   capabilities?: string[];
   error?: string;
 }

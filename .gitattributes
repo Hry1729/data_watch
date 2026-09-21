@@ -1,0 +1,2 @@
+# Preserve driver package bytes used by catalog and signature verification.
+packages/** -text

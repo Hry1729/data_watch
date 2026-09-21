@@ -35,6 +35,9 @@ _MODBUS_UNIT_ID_MAX = 247
 # 覆盖旧驱动前 disconnect 超时（秒）；超时后继续推进，避免重连永久卡住
 _DRIVER_DISCONNECT_TIMEOUT_SEC = 5.0
 
+# P0 修复：进程级锁保护注册表初始化，避免多线程并发初始化时重复扫描/导入
+_REGISTRY_INIT_LOCK = threading.Lock()
+
 
 def _modbus_unit_id_from_slot(slot: Optional[int]) -> int:
     """将 device.slot 映射为 Modbus unit_id；仅 slot is None 时默认 1。"""
@@ -330,7 +333,10 @@ class DeviceManager:
         # VM endpoint 到代理端口的映射器
         self._port_mapper: Optional[EndpointPortMapper] = None
         # 统一驱动注册表；None 时合并 bundled 与 DATAWATCH_DATA_ROOT/drivers 后懒加载
-        self._driver_registry: Optional["DriverRegistry"] = driver_registry
+        with _REGISTRY_INIT_LOCK:
+            self._driver_registry: Optional["DriverRegistry"] = (
+                driver_registry
+            )
         self._driver_registry_scanned = driver_registry is not None
 
     def _build_connection_config(self, dev_cfg: DeviceConfig) -> Dict[str, Any]:
@@ -597,7 +603,7 @@ class DeviceManager:
         return registry.has_failed(protocol) or bool(
             registration
             and (
-                registration.source == "installed"
+                registration.source in {"installed", "official"}
                 or registration.build_read_plan is not None
             )
         )
@@ -1074,23 +1080,32 @@ class DeviceManager:
         """Return the unified bundled/installed registry, discovering it lazily."""
         from drivers.registry import DriverRegistry, default_drivers_root
 
+        # P0 修复：已初始化时直接返回现有快照，不再重复扫描或合并
         if self._driver_registry is not None:
-            self._driver_registry = self._driver_registry.with_bundled()
             return self._driver_registry
 
-        self._driver_registry_scanned = True
-        drivers_root = default_drivers_root()
-        try:
-            self._driver_registry = DriverRegistry.discover(drivers_root)
-            logger.info(
-                "统一驱动注册表加载完成 root=%s protocols=%s",
-                drivers_root,
-                self._driver_registry.protocols(),
-            )
-        except Exception as exc:
-            logger.warning("统一驱动注册表加载失败 root=%s: %s", drivers_root, exc)
-            self._driver_registry = DriverRegistry.discover()
-        return self._driver_registry
+        # P0 修复：进程级锁保护初始化，避免多线程并发初始化
+        with _REGISTRY_INIT_LOCK:
+            # 双重检查：可能在等锁期间已被其他线程初始化
+            if self._driver_registry is not None:
+                return self._driver_registry
+
+            # 首次初始化：使用 DriverRegistry.discover() 一次性完成扫描+合并
+            self._driver_registry_scanned = True
+            drivers_root = default_drivers_root()
+            try:
+                # discover() 内部已经调用了 scan() + 合并 bundled，返回完整注册表
+                self._driver_registry = DriverRegistry.discover(drivers_root)
+                logger.info(
+                    "统一驱动注册表加载完成 root=%s protocols=%s",
+                    drivers_root,
+                    self._driver_registry.protocols(),
+                )
+            except Exception as exc:
+                logger.warning("统一驱动注册表加载失败 root=%s: %s", drivers_root, exc)
+                # 失败时回退到仅内置驱动
+                self._driver_registry = DriverRegistry()
+            return self._driver_registry
 
     def _create_driver(self, protocol: str) -> "BaseDriver":
         """Create every polling driver through the unified registry."""

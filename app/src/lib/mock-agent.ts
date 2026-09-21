@@ -344,6 +344,17 @@ export const mockAgent: AgentClient = {
     ];
   },
 
+  async previewDriver(input) {
+    return { driver: { id: input.restore_id || "demo", name: "Mock Driver", version: "1.0.0", sha256: "abc" } };
+  },
+
+  async restoreDriver(driverId) {
+    await delay(800);
+    return { driver: { id: driverId, protocol: driverId, name: driverId,
+      version: "1.0.0", description: "Mock restored", sha256: "abc", status: "installed", source: "official",
+      install_status: "installed", runtime_status: "collector_stopped" } };
+  },
+
   async installDriver(_packageBase64) {
     await delay(800);
     return {

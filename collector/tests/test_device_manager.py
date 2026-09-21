@@ -486,11 +486,12 @@ def test_device_manager_authoritative_center_port(tmp_path):
     assert manager.devices["VM001"].connection_config["proxy_port"] == 9091
 
 
-def test_device_manager_authoritative_missing_center_endpoint_raises(tmp_path):
+def test_device_manager_authoritative_missing_center_endpoint_is_config_error(tmp_path):
     path = _write_mapping(tmp_path, {"172.27.18.221": 9091})
     manager = DeviceManager(_center_config("10.0.0.99"), port_mapping_file=path)
-    with pytest.raises(PortMappingError):
-        manager.register_devices()
+    manager.register_devices()
+    assert manager.devices["VM001"].status == DeviceStatus.CONFIG_ERROR
+    assert manager.devices["VM001"].scan_tasks == []
 
 
 def test_device_manager_center_missing_endpoint_reloads_once():
@@ -638,13 +639,29 @@ def test_ge_connection_config_uses_global_payload_and_device_override():
     assert overridden["ge_batch_deadline_ms"] == 100
 
 def test_device_manager_creates_bundled_aliases_through_unified_registry():
-    from drivers.opcua_driver import OPCUADriver
-    from drivers.s7_driver import S7Driver
+    from packages.opcua.opcua.driver import OPCUADriver
+    from packages.s7.s7.driver import S7Driver
 
     manager = DeviceManager(CollectorConfig())
 
     registry = manager._resolve_driver_registry()
-    assert registry.get("s7").source == "bundled"
-    assert registry.get("s7").protected is True
-    assert isinstance(manager._create_driver("snap7"), S7Driver)
-    assert isinstance(manager._create_driver("opc"), OPCUADriver)
+    assert registry.get("s7").source == "official"
+    assert registry.get("s7").protected is False
+    assert type(manager._create_driver("snap7")).__name__ == "S7Driver"
+    assert type(manager._create_driver("opc")).__name__ == "OPCUADriver"
+
+
+def test_registry_initialization_is_once_under_concurrent_reads(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from drivers.registry import DriverRegistry
+    manager = DeviceManager(CollectorConfig(devices=[], variables=[]))
+    registry = DriverRegistry()
+    calls = []
+    def discover(*args):
+        calls.append(1)
+        return registry
+    monkeypatch.setattr(DriverRegistry, "discover", discover)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: manager._resolve_driver_registry(), range(32)))
+    assert len(calls) == 1
+    assert all(result is registry for result in results)

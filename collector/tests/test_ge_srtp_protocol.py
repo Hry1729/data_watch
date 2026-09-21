@@ -9,10 +9,10 @@ import pytest
 GESRTP_ROOT = Path(__file__).resolve().parents[1] / "drivers" / "gesrtp-py-main"
 sys.path.insert(0, os.fspath(GESRTP_ROOT))
 
-from src import exceptions, protocol  # noqa: E402
-from src.connection import SRTPConnection  # noqa: E402
-from src.driver import GE_SRTP_Driver  # noqa: E402
-from src.packet import SRTPPacket  # noqa: E402
+from packages.ge_srtp.ge_srtp.transport import exceptions, protocol  # noqa: E402
+from packages.ge_srtp.ge_srtp.transport.connection import SRTPConnection  # noqa: E402
+from packages.ge_srtp.ge_srtp.transport.driver import GE_SRTP_Driver  # noqa: E402
+from packages.ge_srtp.ge_srtp.transport.packet import SRTPPacket  # noqa: E402
 
 
 class FakeSocket:

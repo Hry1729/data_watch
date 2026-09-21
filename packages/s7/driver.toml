@@ -1,0 +1,17 @@
+manifest_version = 1
+driver_api = "1.0"
+id = "s7"
+protocol = "s7"
+name = "s7"
+description = "DataWatch s7 只读采集驱动"
+version = "1.0.0"
+entry = "s7.driver:create_driver"
+python_abi = "cp314t"
+os = ["windows"]
+architectures = ["x86_64"]
+capabilities = ["poll", "read", "batch_contiguous", "health_check"]
+read_write = "只读"
+aliases = ["s7", "snap7", "siemens", "siemens_s7", "siemens_snap7"]
+publisher = "datawatch"
+min_collector_version = "0.1.0"
+dependencies = ["snap7==3.0.0"]

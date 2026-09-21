@@ -44,3 +44,28 @@ def test_driver_status_server_serves_drivers():
         assert payload["drivers"][0]["id"] == "demo"
     finally:
         server.stop()
+
+
+def test_status_endpoints_share_identity_and_one_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
+    calls = []
+    def snapshot():
+        calls.append(1)
+        return {"generation": len(calls), "drivers": [{"id": "s7", "generation": len(calls)}]}
+    server = DriverStatusServer(port=0, get_snapshot=snapshot)
+    server.start()
+    port = server._server.server_address[1]
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/drivers", timeout=2) as response:
+            drivers = json.load(response)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
+            health = json.load(response)
+        assert len(calls) == 2
+        assert drivers["generation"] == drivers["drivers"][0]["generation"]
+        assert drivers["instance"] == health["instance"]
+        assert drivers["instance"]["data_root"] == str(tmp_path.resolve())
+        assert drivers["instance"]["role"] == "collector"
+        assert drivers["instance"]["boot_id"]
+        assert drivers["instance"]["build_id"]
+    finally:
+        server.stop()

@@ -357,9 +357,9 @@ def test_device_manager_uses_registry_for_external_protocol(tmp_path):
     )
     driver = manager._create_driver("demo_proto")
     assert isinstance(driver, BaseDriver)
-    # 内置 s7 不受注册表影响
-    s7 = manager._create_driver("s7")
-    assert type(s7).__name__ == "S7Driver"
+    from core.exceptions import DeviceConnectionError
+    with pytest.raises(DeviceConnectionError, match="Unsupported protocol"):
+        manager._create_driver("s7")
 
 
 def test_modbus_tcp_vendor_metadata_is_exposed():
@@ -373,8 +373,8 @@ def test_modbus_tcp_vendor_metadata_is_exposed():
     assert registration.vendor_metadata.version == "3.14.0"
     assert registration.vendor_metadata.license
     assert len(registration.vendor_metadata.sha256) == 64
-    assert registration.source == "bundled"
-    assert registration.protected is True
+    assert registration.source == "official"
+    assert registration.protected is False
     assert not registry.has_failed("modbus_tcp")
 
 
@@ -426,7 +426,7 @@ def test_modbus_tcp_loads_pymodbus_from_vendor_without_site_packages(monkeypatch
         assert Path(sys.modules["pymodbus"].__file__).resolve().is_relative_to(
             _MODBUS_PACKAGE_ROOT / "vendor"
         )
-        assert vendor_path not in sys.path
+        assert vendor_path in sys.path
     finally:
         for key in list(sys.modules):
             if key == "pymodbus" or key.startswith("pymodbus."):
@@ -742,44 +742,63 @@ def test_create_rejects_external_driver_that_overrides_write(tmp_path):
 
         registry.create("writer_proto")
 
-def test_discover_exposes_bundled_sources_aliases_and_protection(tmp_path):
+def test_discover_missing_activation_never_loads_preinstalled_archive(tmp_path):
     registry = DriverRegistry.discover(tmp_path / "missing-drivers")
+    assert registry.list_loaded() == []
+    assert not registry.has("s7")
 
-    assert registry.has("s7")
-    assert registry.has("snap7")
-    assert registry.has("siemens_s7")
-    assert registry.has("ge_srtp")
-    assert registry.has("opc")
-    assert registry.has("opc_ua")
-    assert registry.has("opcda_center")
 
-    assert registry.has("modbus_tcp")
+def test_official_packages_use_same_registry_and_aliases():
+    registry = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
     items = {item["id"]: item for item in registry.list_loaded()}
     assert set(items) == {"s7", "ge_srtp", "opcua", "opcda_center", "modbus_tcp"}
-    assert items["s7"]["source"] == "bundled"
-    assert items["s7"]["protected"] is True
-    assert items["s7"]["readWriteType"] == "只读"
-    assert "snap7" in items["s7"]["aliases"]
-    assert items["modbus_tcp"]["source"] == "bundled"
-    assert items["modbus_tcp"]["protected"] is True
-    assert items["modbus_tcp"]["readWriteType"] == "只读"
+    assert all(item["source"] == "official" and not item["protected"] for item in items.values())
+    assert all(len(item["tree_sha256"]) == 64 for item in items.values())
+    for alias in ("s7", "snap7", "siemens", "siemens_s7"):
+        assert registry.get(alias) is registry.get("s7")
+        assert type(registry.create(alias)).__name__ == "S7Driver"
+    assert type(registry.create("opc_ua")).__name__ == "OPCUADriver"
 
 
-def test_bundled_aliases_create_through_same_registry_factory(tmp_path):
-    from drivers.ge_srtp_driver import GESRTPDriver
-    from drivers.opcua_driver import OPCUADriver
-    from drivers.s7_driver import S7Driver
+def test_status_queries_do_not_import_or_scan(monkeypatch):
+    registry = DriverRegistry.scan(_MODBUS_PACKAGE_ROOT.parent)
+    def unexpected(*args, **kwargs):
+        raise AssertionError("read path imported a driver")
+    monkeypatch.setattr("drivers.registry._load_driver_package", unexpected)
+    monkeypatch.setattr(DriverRegistry, "scan", unexpected)
+    for _ in range(3):
+        assert len(registry.list_status()) == 5
+        assert registry.get("s7") is not None
 
-    registry = DriverRegistry.discover(tmp_path / "missing-drivers")
 
-    assert isinstance(registry.create("siemens"), S7Driver)
-    assert isinstance(registry.create("ge_srtp"), GESRTPDriver)
-    assert isinstance(registry.create("opc_ua"), OPCUADriver)
+def test_transitive_vendor_conflict_is_rejected_before_import(tmp_path):
+    from drivers.registry import _resolve_vendor_ownership
+    from drivers.manifest import load_driver_toml
+    candidates = []
+    for name, content in (("first", "VERSION = 1"), ("second", "VERSION = 2")):
+        root = _write_driver_package(tmp_path, name, name) / name
+        dependency = root / "vendor/shared_dependency"
+        dependency.mkdir(parents=True)
+        (dependency / "__init__.py").write_text(content, encoding="utf-8")
+        candidates.append((root, load_driver_toml(root / "driver.toml"), name))
+    rejected = _resolve_vendor_ownership(candidates)
+    assert "first" not in rejected
+    assert "shared_dependency" in rejected["second"]
 
 
-def test_with_bundled_is_idempotent_after_first_merge(tmp_path):
-    registry = DriverRegistry.scan(tmp_path / "missing-drivers")
-
-    bundled = registry.with_bundled()
-
-    assert bundled.with_bundled() is bundled
+def test_conflicting_loaded_dependency_is_not_evicted(tmp_path, monkeypatch):
+    import types
+    from drivers.registry import _verify_loaded_vendor_modules
+    root = tmp_path / "package"
+    vendor = root / "vendor/shared_dependency"
+    vendor.mkdir(parents=True)
+    (vendor / "__init__.py").write_text("VERSION=2", encoding="utf-8")
+    original = tmp_path / "original/shared_dependency"
+    original.mkdir(parents=True)
+    (original / "__init__.py").write_text("VERSION=1", encoding="utf-8")
+    module = types.ModuleType("shared_dependency")
+    module.__file__ = str(original / "__init__.py")
+    monkeypatch.setitem(sys.modules, "shared_dependency", module)
+    with pytest.raises(DriverRegistryError, match="拒绝替换"):
+        _verify_loaded_vendor_modules(root)
+    assert sys.modules["shared_dependency"] is module

@@ -14,7 +14,9 @@ from unittest.mock import patch
 
 import pytest
 
-from device.device import Device, Variable
+from device.device import Variable
+from tests.package_support import PackageDevice as Device
+from packages.ge_srtp.ge_srtp.planner import Decoder, Planner
 from drivers.base import ReadBlock
 from collector.bounded_executor import ExecutorSaturatedError
 from collector.executor import TaskExecutor
@@ -656,7 +658,7 @@ class TestGEValueExtraction:
             "word_offset": 1,
             "data_type": "INT",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) == 200
+        assert Decoder._extract_mapped_ge_value(raw, mapping) == 200
 
     def test_extract_negative_int_from_register_block(self):
         """从寄存器块提取负数 INT（gesrtp-py 已返回 signed）"""
@@ -666,7 +668,7 @@ class TestGEValueExtraction:
             "word_offset": 0,
             "data_type": "INT",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) == -1
+        assert Decoder._extract_mapped_ge_value(raw, mapping) == -1
 
     def test_extract_int_from_unsigned_input(self):
         """unsigned 输入兼容转换为 signed INT"""
@@ -676,7 +678,7 @@ class TestGEValueExtraction:
             "word_offset": 0,
             "data_type": "INT",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) == -1  # signed
+        assert Decoder._extract_mapped_ge_value(raw, mapping) == -1  # signed
 
     def test_extract_word_from_register_block(self):
         """从寄存器块提取 WORD（无符号）"""
@@ -686,7 +688,7 @@ class TestGEValueExtraction:
             "word_offset": 1,
             "data_type": "WORD",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) == 65535
+        assert Decoder._extract_mapped_ge_value(raw, mapping) == 65535
 
     def test_unsupported_word_order_raises_error(self):
         """不支持 word_order 时抛错"""
@@ -699,7 +701,7 @@ class TestGEValueExtraction:
             "word_order": "high_low",  # 不支持
         }
         with pytest.raises(ValueError, match="Unsupported GE word_order"):
-            TaskExecutor._extract_mapped_ge_value(raw, mapping)
+            Decoder._extract_mapped_ge_value(raw, mapping)
 
     def test_extract_2_word_type_requires_enough_words(self):
         """2-word 类型 word 不足时抛错，避免静默返回低 word。"""
@@ -711,7 +713,7 @@ class TestGEValueExtraction:
             "data_type": "DINT",
         }
         with pytest.raises(ValueError, match="GE 2-word type DINT needs words"):
-            TaskExecutor._extract_mapped_ge_value(raw, mapping)
+            Decoder._extract_mapped_ge_value(raw, mapping)
 
     def test_extract_dint_from_register_block(self):
         """从寄存器块提取 DINT（2 words 组合）"""
@@ -722,7 +724,7 @@ class TestGEValueExtraction:
             "word_length": 2,
             "data_type": "DINT",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) == 1
+        assert Decoder._extract_mapped_ge_value(raw, mapping) == 1
 
         # 负数测试
         raw2 = [0, 0xFFFF, 0xFFFF]  # low=65535, high=65535 -> DINT=-1
@@ -732,7 +734,7 @@ class TestGEValueExtraction:
             "word_length": 2,
             "data_type": "DINT",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw2, mapping2) == -1
+        assert Decoder._extract_mapped_ge_value(raw2, mapping2) == -1
 
     def test_extract_real_from_register_block(self):
         """从寄存器块提取 REAL（2 words 组合）"""
@@ -750,7 +752,7 @@ class TestGEValueExtraction:
             "word_length": 2,
             "data_type": "REAL",
         }
-        result = TaskExecutor._extract_mapped_ge_value(raw, mapping)
+        result = Decoder._extract_mapped_ge_value(raw, mapping)
         assert abs(result - 10.5) < 0.01
 
     def test_log_ge_nonfinite_value_reports_raw_words_and_word_order_candidates(self):
@@ -764,11 +766,11 @@ class TestGEValueExtraction:
             "data_type": "REAL",
         }
         variable = Variable(variable_id="v1", address="%R100", data_type="REAL")
-        value = TaskExecutor._extract_mapped_ge_value(raw, mapping)
+        value = Decoder._extract_mapped_ge_value(raw, mapping)
 
         assert math.isnan(value)
-        with patch("collector.executor.logger.warning") as warning:
-            TaskExecutor._log_ge_nonfinite_value(
+        with patch("packages.ge_srtp.ge_srtp.planner.logger.warning") as warning:
+            Decoder._log_ge_nonfinite_value(
                 "qc100", variable, raw, mapping, value
             )
 
@@ -794,14 +796,14 @@ class TestGEValueExtraction:
             "bit_offset": 2,
             "data_type": "BOOL",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping) is True
+        assert Decoder._extract_mapped_ge_value(raw, mapping) is True
 
         mapping2 = {
             "area": "I",
             "bit_offset": 1,
             "data_type": "BOOL",
         }
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping2) is False
+        assert Decoder._extract_mapped_ge_value(raw, mapping2) is False
 
     def test_extract_bool_from_discrete_byte_block(self):
         """从 byte 模式离散块提取 BOOL（LSB-first 拆位）"""
@@ -811,15 +813,15 @@ class TestGEValueExtraction:
         def mapping(bit):
             return {"area": "I", "bit_offset": bit, "data_type": "BOOL", "packing": "byte"}
 
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(1)) is True
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(0)) is False
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(8)) is True
-        assert TaskExecutor._extract_mapped_ge_value(raw, mapping(9)) is False
+        assert Decoder._extract_mapped_ge_value(raw, mapping(1)) is True
+        assert Decoder._extract_mapped_ge_value(raw, mapping(0)) is False
+        assert Decoder._extract_mapped_ge_value(raw, mapping(8)) is True
+        assert Decoder._extract_mapped_ge_value(raw, mapping(9)) is False
 
     def test_extract_bool_from_single_int_byte_block(self):
         """count=1 时 driver 返回单 int 的退化：归一化后仍可拆位"""
         mapping = {"area": "I", "bit_offset": 1, "data_type": "BOOL", "packing": "byte"}
-        assert TaskExecutor._extract_mapped_ge_value(0x02, mapping) is True
+        assert Decoder._extract_mapped_ge_value(0x02, mapping) is True
 
     @pytest.mark.parametrize("area", ["T", "S", "SA", "SB", "SC", "G"])
     def test_extract_bool_from_additional_discrete_memory(self, area):
@@ -830,7 +832,7 @@ class TestGEValueExtraction:
             "data_type": "BOOL",
             "packing": "byte",
         }
-        assert TaskExecutor._extract_mapped_ge_value([0x02], mapping) is True
+        assert Decoder._extract_mapped_ge_value([0x02], mapping) is True
 
     def test_extract_byte_packed_out_of_range_raises(self):
         """bit_offset 超出块字节数 -> 带上下文的 ValueError 而非裸 IndexError"""
@@ -842,7 +844,7 @@ class TestGEValueExtraction:
             "block_address": "%I00001",
         }
         with pytest.raises(ValueError, match="out of range"):
-            TaskExecutor._extract_mapped_ge_value([0x00, 0x00], mapping)
+            Decoder._extract_mapped_ge_value([0x00, 0x00], mapping)
 
 
 class _FakeGeDriver:
@@ -880,7 +882,7 @@ class TestGEDriverByteMode:
     """driver 适配层：BYTE 离散块走 byte 模式（地址 //8），BIT 块保留 bit 路径"""
 
     def _make_driver(self):
-        from drivers.ge_srtp_driver import GESRTPDriver
+        from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
         drv = GESRTPDriver()
         drv._driver = _FakeGeDriver()
         drv._connected = True
@@ -929,7 +931,7 @@ class _RejectingExecutor:
 @pytest.mark.asyncio
 async def test_ge_read_propagates_executor_saturation():
     """读池背压必须交给 TaskExecutor 处理，不能退化为普通块失败。"""
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
 
     drv = GESRTPDriver(read_executor=_RejectingExecutor())
     drv._driver = _FakeGeDriver()
@@ -942,8 +944,8 @@ async def test_ge_read_propagates_executor_saturation():
 @pytest.mark.asyncio
 async def test_ge_read_aborts_remaining_blocks_when_connection_is_lost():
     """致命连接错误后不得继续读取同批次后续 Block。"""
-    from drivers.ge_srtp_driver import GESRTPDriver
-    from src import exceptions as ge_exceptions
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.transport import exceptions as ge_exceptions
 
     class FatalGeDriver:
         def __init__(self):
@@ -975,7 +977,7 @@ async def test_ge_read_aborts_remaining_blocks_when_connection_is_lost():
 @pytest.mark.asyncio
 async def test_ge_read_records_block_and_batch_metrics():
     """GE 指标应记录请求数量、区域、字节量、RTT 与批次结果。"""
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
     from monitor.performance import PerformanceMetrics
 
     class MetricsGeDriver(_FakeGeDriver):
@@ -1063,7 +1065,7 @@ class TestGEIntegration:
             if mapped:
                 raw_values = mock_result.get(mapped["block_address"])
                 if raw_values:
-                    value = TaskExecutor._extract_mapped_ge_value(raw_values, mapped)
+                    value = Decoder._extract_mapped_ge_value(raw_values, mapped)
                     points.append(value)
 
         # 验证点数等于变量数
@@ -1077,22 +1079,22 @@ class TestGEWordSize:
     """测试 GE word 宽度计算"""
 
     def test_int_word_size(self):
-        assert Device._ge_word_size("INT") == 1
+        assert Planner._ge_word_size("INT") == 1
 
     def test_word_word_size(self):
-        assert Device._ge_word_size("WORD") == 1
+        assert Planner._ge_word_size("WORD") == 1
 
     def test_dint_word_size(self):
-        assert Device._ge_word_size("DINT") == 2
+        assert Planner._ge_word_size("DINT") == 2
 
     def test_real_word_size(self):
-        assert Device._ge_word_size("REAL") == 2
+        assert Planner._ge_word_size("REAL") == 2
 
     def test_float_word_size(self):
-        assert Device._ge_word_size("FLOAT") == 2
+        assert Planner._ge_word_size("FLOAT") == 2
 
     def test_unknown_type_defaults_to_one(self):
-        assert Device._ge_word_size("UNKNOWN") == 1
+        assert Planner._ge_word_size("UNKNOWN") == 1
 
 
 @pytest.mark.parametrize(
@@ -1136,7 +1138,7 @@ def test_ge_planner_rejects_invalid_payload_size():
 
 @pytest.mark.asyncio
 async def test_ge_connect_creates_isolated_parallel_channels(monkeypatch):
-    import drivers.ge_srtp_driver as ge_module
+    import packages.ge_srtp.ge_srtp.driver as ge_module
 
     class FakeConnection:
         instances = []
@@ -1180,7 +1182,7 @@ async def test_ge_connect_creates_isolated_parallel_channels(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ge_parallel_read_round_robins_blocks_per_isolated_channel():
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
 
     class Channel:
         def __init__(self, name):
@@ -1214,9 +1216,9 @@ async def test_ge_parallel_read_round_robins_blocks_per_isolated_channel():
 
 @pytest.mark.asyncio
 async def test_ge_parallel_read_fails_over_remaining_blocks_to_survivor():
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
     from monitor.performance import PerformanceMetrics
-    from src import exceptions as ge_exceptions
+    from packages.ge_srtp.ge_srtp.transport import exceptions as ge_exceptions
 
     class FailedChannel:
         def __init__(self):
@@ -1271,7 +1273,7 @@ async def test_ge_parallel_read_fails_over_remaining_blocks_to_survivor():
 async def test_ge_single_channel_deadline_stops_before_next_block():
     import time as wall_time
 
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
     from monitor.performance import PerformanceMetrics
 
     class SlowChannel:
@@ -1313,7 +1315,7 @@ async def test_ge_single_channel_deadline_stops_before_next_block():
 async def test_ge_parallel_channels_share_one_batch_deadline():
     import time as wall_time
 
-    from drivers.ge_srtp_driver import GESRTPDriver
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
     from monitor.performance import PerformanceMetrics
 
     class SlowChannel:

@@ -19,3 +19,6 @@ capabilities = [
 ]
 
 read_write = "只读"
+
+aliases = ["modbus_tcp"]
+publisher = "datawatch"

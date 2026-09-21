@@ -24,6 +24,10 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if (_REPO_ROOT / "data_watch_shared").is_dir():
     sys.path.insert(0, str(_REPO_ROOT))
 
+if "--driver-preflight" in sys.argv:
+    from driver_preflight import main as _preflight_main
+    raise SystemExit(_preflight_main())
+
 from core.config import (
     CollectorConfig,
     DeviceConfig,
@@ -238,21 +242,17 @@ class CollectorApp:
             )
 
         # 5b. 驱动加载状态探针（供 Agent 确认真实 loaded）
-        def _list_loaded_drivers():
-            registry = self.device_manager._resolve_driver_registry()
-            if registry is None:
-                return []
-            return registry.list_status()
+        # P0 修复：提前获取注册表快照，避免每次回调都触发 _resolve_driver_registry()
+        registry_snapshot = self.device_manager._resolve_driver_registry()
 
-        def _registry_generation() -> int:
-            registry = self.device_manager._resolve_driver_registry()
-            if registry is None:
-                return 0
-            return int(getattr(registry, "generation", 0) or 0)
+        def _driver_snapshot():
+            return {
+                "generation": int(getattr(registry_snapshot, "generation", 0) or 0),
+                "drivers": registry_snapshot.list_status() if registry_snapshot is not None else [],
+            }
 
         self.driver_status_server = DriverStatusServer(
-            list_drivers=_list_loaded_drivers,
-            get_generation=_registry_generation,
+            get_snapshot=_driver_snapshot,
         )
         try:
             self.driver_status_server.start()

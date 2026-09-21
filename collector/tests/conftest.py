@@ -1,6 +1,10 @@
 """pytest配置和fixtures"""
 
 import asyncio
+import sys
+from pathlib import Path
+for _driver in ("s7", "opcua", "modbus_tcp"):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / _driver / "vendor"))
 import pytest
 import tempfile
 from unittest.mock import AsyncMock, MagicMock
@@ -86,3 +90,19 @@ def temp_dir():
     """临时目录"""
     with tempfile.TemporaryDirectory() as tmp_dir:
         yield tmp_dir
+
+
+@pytest.fixture(scope="session")
+def activated_test_packages(tmp_path_factory):
+    import shutil
+    from pathlib import Path
+    root = tmp_path_factory.mktemp("activated-drivers")
+    source = Path(__file__).resolve().parents[2] / "packages"
+    for driver_id in ("s7", "ge_srtp", "opcua", "opcda_center", "modbus_tcp"):
+        shutil.copytree(source / driver_id, root / "drivers" / driver_id, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    return root
+
+
+@pytest.fixture(autouse=True)
+def isolated_driver_activation(monkeypatch, activated_test_packages):
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(activated_test_packages))

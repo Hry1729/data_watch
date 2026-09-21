@@ -1,6 +1,6 @@
 # Python
 __pycache__/
-*.py[cod]
+*.py[co]
 *.pyo
 .pytest_cache/
 .mypy_cache/
@@ -9,20 +9,24 @@ __pycache__/
 # 虚拟环境
 collector/.venv/
 collector/.venv-pack/
+writer/.venv/
+writer/.venv-pack/
 agent/.venv/
+agent/.venv-pack/
+backend/.venv-314t/
 # backend/.py314t-site/ 是项目基础设施（含运行依赖），不忽略
 
 # 构建输出
 dist/
 artifacts/
+build/
 agent/build/
 collector/build/
-writer/build/
 collector/dist/
-artifacts/
+writer/build/
 frontend/dist/
-artifacts/
-build/
+app/dist/
+app/src-tauri/target/
 deploy/*.zip
 deploy/images/*.tar
 
@@ -31,6 +35,7 @@ docs/_archive/
 
 # 前端
 frontend/node_modules/
+app/node_modules/
 
 # 工具缓存
 .uv-cache/
@@ -77,6 +82,11 @@ collector/sidecars/*/bin/*.exe
 
 # 数据导出
 backend/exports/
+outputs/
+
+# 根目录历史快照
+data_watch_full_*.zip
+executables_*.zip
 
 # IDE
 .idea/
@@ -84,6 +94,14 @@ backend/exports/
 *.swp
 *.swo
 
+# 本地授权与发布签名密钥
+*.key
+
 # CLI release signing private keys
 packaging/keys/
 backend/cli-releases/
+
+# 前端未完成功能（本地保留，不上传）
+frontend/src/views/landing/
+frontend/src/views/monitor-screen/
+frontend/src/views/monitor-light/

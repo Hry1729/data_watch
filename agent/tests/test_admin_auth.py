@@ -159,3 +159,13 @@ async def test_edge_login_uses_center_mysql(monkeypatch):
     assert response.token == "edge-token"
     assert response.roles == ["R_ADMIN"]
     assert opened["value"] is True
+
+
+def test_driver_inventory_allows_viewer_but_mutation_requires_admin(monkeypatch):
+    from app.core.deps import get_current_user_or_driver_service
+    monkeypatch.setattr("app.core.deps.load_config", lambda: {"agent": {"jwt_secret": "test-secret"}})
+    token = create_access_token("viewer", "test-secret", 1, roles=["R_USER"])
+    assert get_current_user_or_driver_service("Bearer " + token, None) == "viewer"
+    with pytest.raises(HTTPException) as error:
+        get_current_admin("Bearer " + token)
+    assert error.value.status_code == 403

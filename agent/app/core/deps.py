@@ -81,3 +81,13 @@ def get_current_admin_or_driver_service(
     if service_token:
         return get_driver_service(service_token)
     return get_current_admin(authorization)
+
+
+def get_current_user_or_driver_service(
+    authorization: Optional[str] = Header(default=None),
+    service_token: Optional[str] = Header(default=None, alias="X-DataWatch-Service-Token"),
+) -> str:
+    """Read-only driver inventory is available to authenticated viewers."""
+    if service_token:
+        return get_driver_service(service_token)
+    return get_current_user(authorization)

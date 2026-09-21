@@ -128,6 +128,8 @@ async def _recover_drivers_sync_collector(app: FastAPI) -> None:
             restart_collector=_restart,
             collector_alive=_alive,
         )
+        if not installer.recovery_blocked:
+            await installer.initialize_preinstalled(restart_collector=_restart, collector_alive=_alive)
         app.state.driver_recovery_blocked = installer.recovery_blocked
         for item in results:
             if item.get("verified"):
@@ -166,7 +168,7 @@ async def lifespan(app: FastAPI):
     if app.state.sidecar_manager is not None:
         app.state.sidecar_manager.claim_existing_proxies()
     # 外置驱动安装根：DATAWATCH_DATA_ROOT/drivers
-    app.state.driver_installer = DriverInstaller(data_root() / "drivers")
+    app.state.driver_installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: pm.stop("collector"), collector_pid=lambda: pm.status("collector").pid)
     app.state.driver_installer.ensure_layout()
     if build_role() == "edge":
         app.state.edge_storage = EdgeStorageClient(_edge_storage_url(), timeout_seconds=2.0)

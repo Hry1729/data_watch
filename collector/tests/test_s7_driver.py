@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from drivers.base import ReadBlock
-from drivers.s7_driver import S7Driver
+from packages.s7.s7.driver import S7Driver
 
 
 class FakeS7Client:

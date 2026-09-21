@@ -1,27 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 repo_root = str(Path(SPECPATH).resolve().parent)
 
-datas = [
-    ('drivers\\gesrtp-py-main', 'drivers\\gesrtp-py-main'),
-    (str(Path(repo_root) / 'packages' / 'modbus_tcp'), 'bundled_drivers\\modbus_tcp'),
-]
+datas = []
 binaries = []
-hiddenimports = ['drivers.s7_driver', 'drivers.ge_srtp_driver', 'drivers.opcda_center_driver', 'drivers.opcua_driver']
-tmp_ret = collect_all('snap7')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('cryptography')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('pymysql')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('aiomysql')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('msgspec')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-
+hiddenimports = ['driver_preflight', 'data_watch_driver_manifest', 'data_watch_driver_catalog']
+hiddenimports += ['shelve', 'ctypes.wintypes', 'netrc', 'getpass']
+hiddenimports += collect_submodules('xml') + collect_submodules('sqlite3') + collect_submodules('dbm')
+for package in ('pymysql', 'aiomysql', 'httpx', 'msgspec'):
+    package_data, package_binaries, package_hidden = collect_all(package)
+    datas += package_data
+    binaries += package_binaries
+    hiddenimports += package_hidden
 
 a = Analysis(
     ['main.py'],
@@ -64,3 +57,12 @@ coll = COLLECT(
     upx_exclude=[],
     name='data-watch-collector',
 )
+
+# Offline archives are installed once into the data-root activation directory.
+import sys
+import runpy
+sys.path.insert(0, str(repo_root))
+from data_watch_driver_catalog import write_catalog
+version = runpy.run_path(str(Path(repo_root) / 'collector/core/version.py'))['__version__']
+artifact_root = Path(coll.name)
+write_catalog(Path(repo_root) / 'packages', artifact_root / 'driver-catalog/catalog.json', version, executable='data-watch-collector.exe')

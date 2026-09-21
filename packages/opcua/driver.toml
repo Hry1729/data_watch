@@ -1,0 +1,17 @@
+manifest_version = 1
+driver_api = "1.0"
+id = "opcua"
+protocol = "opcua"
+name = "opcua"
+description = "DataWatch opcua 只读采集驱动"
+version = "1.0.0"
+entry = "opcua.driver:create_driver"
+python_abi = "cp314t"
+os = ["windows"]
+architectures = ["x86_64"]
+capabilities = ["poll", "read", "health_check"]
+read_write = "只读"
+aliases = ["opcua", "opc", "opc_ua"]
+publisher = "datawatch"
+min_collector_version = "0.1.0"
+dependencies = ["asyncua==1.1.5", "cryptography==49.0.0", "cffi==2.0.0"]

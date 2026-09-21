@@ -20,7 +20,7 @@ from app.core.config import (
 )
 from app.core.deps import (
     get_current_admin,
-    get_current_admin_or_driver_service,
+    get_current_user_or_driver_service,
     get_driver_service,
 )
 from app.core.security import dpapi_decrypt
@@ -241,6 +241,9 @@ async def _ensure_edge_storage(request: Request) -> None:
 
 @router.post("/processes/{name}/start")
 async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
+    installer = getattr(request.app.state, "driver_installer", None)
+    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
+        raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
     pm = request.app.state.pm
     _require_known(pm, name)
     if pm.status(name).status == "running":
@@ -270,6 +273,9 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
 @router.post("/processes/{name}/stop")
 async def stop_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
+    installer = getattr(request.app.state, "driver_installer", None)
+    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
+        raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
     pm = request.app.state.pm
     _require_known(pm, name)
     if name == "storage":
@@ -289,6 +295,9 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
 
 @router.post("/processes/{name}/restart")
 async def restart_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
+    installer = getattr(request.app.state, "driver_installer", None)
+    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
+        raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
     pm = request.app.state.pm
     _require_known(pm, name)
 
@@ -373,7 +382,7 @@ async def health_check(
 def _get_installer(request: Request) -> DriverInstaller:
     installer = getattr(request.app.state, "driver_installer", None)
     if installer is None:
-        installer = DriverInstaller(data_root() / "drivers")
+        installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: request.app.state.pm.stop("collector"), collector_pid=lambda: request.app.state.pm.status("collector").pid)
         request.app.state.driver_installer = installer
     return installer
 
@@ -424,10 +433,16 @@ def _raise_driver_internal_error(exc: Exception) -> None:
 @router.get("/drivers")
 async def list_drivers(
     request: Request,
-    _user: str = Depends(get_current_admin_or_driver_service),
+    _user: str = Depends(get_current_user_or_driver_service),
 ):
     installer = _get_installer(request)
-    drivers = await installer.list_drivers()
+    status, pid = "unknown", None
+    try:
+        process = request.app.state.pm.status("collector")
+        status, pid = process.status, process.pid
+    except (AttributeError, KeyError, ProcessManagerError):
+        pass
+    drivers = await installer.list_drivers(collector_status=status, collector_pid=pid)
     return {
         "drivers": drivers,
         "recovery": installer.recovery_status(),
@@ -460,6 +475,23 @@ async def retry_driver_recovery(
         "results": results,
         "recovery": installer.recovery_status(),
     }
+
+
+@router.post("/drivers/preview")
+async def preview_driver(request: Request, user: str = Depends(get_current_admin)):
+    body = await request.json()
+    installer = _get_installer(request)
+    try:
+        if body.get("restore_id"):
+            archive = await asyncio.to_thread(installer.restoration_archive, str(body["restore_id"]))
+        else:
+            try:
+                archive = base64.b64decode(body.get("package_base64", ""), validate=True)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=400, detail="无效驱动 ZIP") from exc
+        return {"driver": await installer.preview(archive)}
+    except (DriverZipError, DriverInstallError) as exc:
+        _raise_driver_error(exc)
 
 
 @router.post("/drivers", status_code=201)
@@ -552,6 +584,21 @@ async def uninstall_driver(
     async def _alive() -> bool:
         return await _collector_is_alive(request)
 
+    # The center checks global references; an edge also checks its durable local config.
+    from app.core.role import build_role
+    if build_role() == "edge":
+        from app.services.edge_local_store import EdgeLocalStore
+        from data_watch_driver_catalog import OFFICIAL_ALIASES
+        record = installer.get_driver(driver_id) or {}
+        aliases = set(record.get("aliases") or OFFICIAL_ALIASES.get(driver_id, (record.get("protocol", driver_id),)))
+        try:
+            devices = await asyncio.to_thread(EdgeLocalStore(data_root() / "edge/edge.db").devices)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="无法核实本节点设备引用，已取消卸载") from exc
+        references = [str(item["device_code"]) for item in devices["devices"] if str(item.get("protocol", "")).lower() in aliases]
+        if references:
+            raise HTTPException(status_code=409, detail="驱动仍被本节点设备引用：" + ", ".join(references[:20]))
+
     try:
         result = await installer.uninstall(
             driver_id,
@@ -566,3 +613,18 @@ async def uninstall_driver(
         _raise_driver_internal_error(exc)
 
     return {"driver": result}
+
+
+@router.post("/drivers/{driver_id}/restore")
+async def restore_driver(driver_id: str, request: Request, user: str = Depends(get_current_admin)):
+    installer = _get_installer(request)
+    async def restart():
+        await _restart_collector_for_drivers(request)
+    async def alive():
+        return await _collector_is_alive(request)
+    try:
+        archive = await asyncio.to_thread(installer.restoration_archive, driver_id)
+        result = await installer.install(archive, restart_collector=restart, collector_alive=alive, operator=user)
+        return {"driver": result.driver}
+    except (DriverZipError, DriverInstallError) as exc:
+        _raise_driver_error(exc)

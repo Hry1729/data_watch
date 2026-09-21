@@ -106,6 +106,9 @@ export interface AgentDriverInfo {
   source?: string;
   protected?: boolean;
   status: string;
+  install_status?: string;
+  runtime_status?: string;
+  instance?: { role: string; deployment_role: string; build_id: string; boot_id: string; pid: number; data_root: string };
   error?: string | null;
   updated_at?: string;
 }
@@ -223,6 +226,8 @@ export interface AgentClient {
     config?: Partial<DbConfig>
   ): Promise<{ success: boolean; message?: string }>;
   listDrivers(): Promise<AgentDriverInfo[]>;
+  previewDriver(input: { package_base64?: string; restore_id?: string }): Promise<{ driver: { id: string; name: string; version: string; sha256: string } }>;
+  restoreDriver(driverId: string): Promise<{ driver: AgentDriverInfo }>;
   installDriver(packageBase64: string): Promise<{ driver: AgentDriverInfo }>;
   uninstallDriver(driverId: string): Promise<{ driver: { id: string; status: string } }>;
 }
@@ -431,6 +436,11 @@ function makeRealAgent(): AgentClient {
       return data.drivers ?? [];
     },
 
+    previewDriver: (input) => agentFetch("POST", "/admin/drivers/preview", input, undefined, 180),
+
+    restoreDriver: (driverId) =>
+      agentFetch<{ driver: AgentDriverInfo }>("POST", `/admin/drivers/${encodeURIComponent(driverId)}/restore`, undefined, undefined, 180),
+
     installDriver: (packageBase64) =>
       agentFetch<{ driver: AgentDriverInfo }>(
         "POST",
@@ -511,6 +521,8 @@ export const agentClient: AgentClient = {
   putConfig:                   (cfg)     => via((c) => c.putConfig(cfg)),
   checkHealth:                 (target, config) => via((c) => c.checkHealth(target, config)),
   listDrivers:                 ()        => via((c) => c.listDrivers()),
+  previewDriver:               (input)   => via((c) => c.previewDriver(input)),
+  restoreDriver:               (id)      => via((c) => c.restoreDriver(id)),
   installDriver:               (b64)     => via((c) => c.installDriver(b64)),
   uninstallDriver:             (id)      => via((c) => c.uninstallDriver(id)),
 };

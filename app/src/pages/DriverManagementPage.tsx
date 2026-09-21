@@ -31,9 +31,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { BUILD_ROLE } from "@/config/build-role";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { agentClient } from "@/lib/agent-client";
+import { resolveStatusBadge } from "@/lib/driver-status";
 import { backendClient } from "@/lib/backend-client";
 import type { DriverListItem } from "@/types/device-monitor";
 
@@ -63,35 +65,8 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function resolveStatusBadge(row: DriverListItem): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  // Agent 查询失败：明确「状态未知」，勿伪装成内置可用
-  if (row.source === "unknown" || row.loadStatus === "unknown") {
-    return { label: "状态未知", variant: "secondary" };
-  }
-  // 已注册外置包在 Agent 侧缺失或加载失败
-  if (row.source === "missing" || row.loadStatus === "missing") {
-    return { label: "包缺失/异常", variant: "destructive" };
-  }
-  // Agent 独有、尚未写入 MySQL catalog
-  if (row.source === "unregistered") {
-    return { label: "未注册", variant: "destructive" };
-  }
-  if (row.loadStatus && row.loadStatus !== "loaded" && (row.source === "installed" || row.source === "bundled")) {
-    return { label: "异常", variant: "destructive" };
-  }
-  if (row.status === "disabled") {
-    return { label: "不可用", variant: "secondary" };
-  }
-  if (row.loadStatus === "loaded" || row.source === "bundled" || row.source === "builtin") {
-    return { label: "可用", variant: "outline" };
-  }
-  if (row.source === "installed") {
-    return { label: "已安装", variant: "secondary" };
-  }
-  return { label: row.status === "available" ? "可用" : "未使用", variant: "outline" };
-}
-
 function resolveSourceLabel(source: DriverListItem["source"]): string {
+  if (source === "official") return "官方预装";
   if (source === "bundled") return "安装包内置";
   if (source === "installed") return "已安装";
   if (source === "unregistered") return "未注册";
@@ -102,8 +77,9 @@ function resolveSourceLabel(source: DriverListItem["source"]): string {
 
 export default function DriverManagementPage() {
   const { auth } = useAuth();
+  const [installTarget, setInstallTarget] = useState<{ file?: File; driverId?: string; name: string; version: string } | null>(null);
   const canManage =
-    auth?.user?.buttons?.includes("device_monitor:driver:manage") ?? false;
+    BUILD_ROLE !== "distributed-center" && (auth?.user?.buttons?.includes("device_monitor:driver:manage") ?? false);
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -136,6 +112,8 @@ export default function DriverManagementPage() {
         version?: string;
         sha256?: string;
         status?: string;
+        install_status?: string;
+        runtime_status?: string;
         capabilities?: string[];
         error?: string | null;
         readWriteType?: string;
@@ -152,6 +130,8 @@ export default function DriverManagementPage() {
           version: item.version,
           sha256: item.sha256,
           status: item.status,
+          install_status: item.install_status,
+          runtime_status: item.runtime_status,
           capabilities: item.capabilities,
           error: item.error,
           readWriteType: item.readWriteType,
@@ -175,29 +155,21 @@ export default function DriverManagementPage() {
       const matchedKeys = new Set<string>();
       const mergedList: DriverListItem[] = catalogAll.list.map((row) => {
         const key = normalizeKey(row.driverName);
+        if (BUILD_ROLE === "distributed-center") return { ...row, installStatus: "not_applicable", loadStatus: "unknown" };
         const local = nextMap[key];
         if (!local) {
           // Agent 不可达：保留保护标记，但运行时状态明确为未知。
           if (!agentResult.ok) {
             return { ...row, source: "unknown" as const, loadStatus: "unknown" };
           }
+          // Agent 未报告不能证明 Collector 已停止，也不能证明包缺失
           if (row.source === "bundled" || row.source === "builtin" || row.protected) {
             return {
               ...row,
               source: "bundled" as const,
               protected: true,
-              loadStatus: "missing",
-              error: row.error || "Agent 未报告该安装包内置驱动",
-            };
-          }
-          const registeredExternal =
-            row.source === "installed" || Boolean(row.driverId) || Boolean(row.installSource);
-          if (registeredExternal) {
-            return {
-              ...row,
-              source: "missing" as const,
-              loadStatus: "missing",
-              error: row.error || "Agent 本机未找到已注册驱动包",
+              loadStatus: "unknown",
+              error: row.error || "Agent 未报告该驱动，无法核验本机状态",
             };
           }
           return { ...row, source: "unknown" as const, loadStatus: "unknown" };
@@ -205,16 +177,17 @@ export default function DriverManagementPage() {
         matchedKeys.add(key);
         // Agent 已核对目录/collector：missing / load_failed 直接透出
         const agentMissing = local.status === "missing";
-        const bundled = row.source === "bundled" || row.protected === true || local.source === "bundled" || local.protected === true;
+        const official = local.source === "official";
 
         return {
           ...row,
-          source: bundled ? ("bundled" as const) : agentMissing ? ("missing" as const) : ("installed" as const),
-          protected: bundled,
+          source: official ? ("official" as const) : agentMissing ? ("missing" as const) : ("installed" as const),
+          protected: false,
           driverId: local.id || row.driverId,
           version: local.version || row.version,
           sha256: local.sha256 || row.sha256,
-          loadStatus: local.status,
+          loadStatus: local.runtime_status ?? local.status,
+          installStatus: local.install_status ?? (local.status === "missing" ? "missing" : undefined),
           capabilities: local.capabilities,
           error: local.error ?? undefined,
           readWriteType: local.readWriteType || row.readWriteType,
@@ -232,22 +205,23 @@ export default function DriverManagementPage() {
           const key = keys[0] || normalizeKey(item.id);
           const name = item.protocol || item.id;
           const desc = item.description || item.name || "";
-          const bundled = item.source === "bundled" || item.protected === true;
+          const official = item.source === "official";
           if (kw && !name.toLowerCase().includes(kw) && !desc.toLowerCase().includes(kw)) {
             continue;
           }
           mergedList.push({
             id: -Math.abs(hashText(key)) || -1,
             driverName: name,
-            driverDesc: desc || (bundled ? "安装包内置驱动" : "Agent 本机已安装，尚未注册到 catalog"),
+            driverDesc: desc || (official ? "官方预装驱动" : "Agent 本机已安装，尚未注册到 catalog"),
             readWriteType: item.readWriteType || "-",
             updateTime: item.updated_at || "",
-            source: bundled ? "bundled" : "unregistered",
-            protected: bundled,
+            source: official ? "official" : "unregistered",
+            protected: false,
             driverId: item.id,
             version: item.version,
             sha256: item.sha256,
-            loadStatus: item.status,
+            loadStatus: item.runtime_status ?? item.status,
+            installStatus: item.install_status ?? (item.status === "missing" ? "missing" : undefined),
             capabilities: item.capabilities,
             error: item.error ?? undefined,
             boundDeviceCount: 0,
@@ -272,11 +246,29 @@ export default function DriverManagementPage() {
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
 
   const warningText = useMemo(
-    () => "安装驱动等同于允许其在 collector 进程内执行代码，请仅安装受控来源的内部驱动包。",
+    () => BUILD_ROLE === "distributed-center"
+      ? "此处为平台协议目录，中心机不运行采集。驱动安装与运行状态请在目标边缘节点查看。"
+      : "当前目标：本机采集节点。安装和卸载影响本节点；只接受官方或内部审核通过的驱动包。",
     [],
   );
 
-  async function handleInstallFile(file: File) {
+  async function prepareInstall(file?: File, driverId?: string) {
+    if (!canManage || busy) return;
+    setBusy(true);
+    try {
+      const result = await agentClient.previewDriver(driverId
+        ? { restore_id: driverId }
+        : { package_base64: await fileToBase64(file!) });
+      setInstallTarget({ file, driverId, name: result.driver.name, version: result.driver.version });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "驱动预检失败");
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function handleInstallFile(file: File | undefined, restoreId?: string) {
     if (!canManage) {
       toast.error("缺少驱动管理权限");
       return;
@@ -285,14 +277,15 @@ export default function DriverManagementPage() {
       toast.error("请先完成登录");
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".zip")) {
+    if (file && !file.name.toLowerCase().endsWith(".zip")) {
       toast.error("请选择 ZIP 驱动包");
       return;
     }
     setBusy(true);
     try {
-      const b64 = await fileToBase64(file);
-      const installed = await agentClient.installDriver(b64);
+      const installed = restoreId
+        ? await agentClient.restoreDriver(restoreId)
+        : await agentClient.installDriver(await fileToBase64(file!));
       const driver = installed.driver;
       await backendClient.registerDriver(auth.backendToken, {
         protocol: driver.protocol || driver.id,
@@ -378,7 +371,7 @@ export default function DriverManagementPage() {
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
-                  if (file) void handleInstallFile(file);
+                  if (file) void prepareInstall(file);
                 }}
               />
               <Button
@@ -424,14 +417,14 @@ export default function DriverManagementPage() {
                       // 外置已安装 / Agent 已有但未注册：均可卸载（内置无按钮）
                       const canUninstall =
                         canManage
-                        && (row.source === "installed" || row.source === "unregistered")
+                        && (row.source === "official" || row.source === "installed" || row.source === "unregistered")
                         && !row.protected
                         && (row.boundDeviceCount ?? 0) === 0
                         && !busy
                         && Boolean(row.driverId || row.driverName);
                       const showUninstall =
-                        !row.protected
-                        && (row.source === "installed" || row.source === "unregistered");
+                        row.installStatus !== "not_installed" && !row.protected
+                        && (row.source === "official" || row.source === "installed" || row.source === "unregistered");
                       return (
                         <TableRow key={row.id} className="h-12">
                           <TableCell className="max-w-0 overflow-hidden text-center font-medium">
@@ -466,7 +459,9 @@ export default function DriverManagementPage() {
                             <span className="block truncate">{row.updateTime || "-"}</span>
                           </TableCell>
                           <TableCell className="text-center">
-                            {showUninstall ? (
+                            {row.source === "official" && ["not_installed", "missing", "invalid"].includes(row.installStatus ?? "") ? (
+                              <Button variant="outline" size="sm" disabled={!canManage || busy} onClick={() => void prepareInstall(undefined, row.driverId || row.driverName)}>恢复安装</Button>
+                            ) : showUninstall ? (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -545,12 +540,28 @@ export default function DriverManagementPage() {
         </CardContent>
       </Card>
 
+      <AlertDialog open={Boolean(installTarget)} onOpenChange={(open) => { if (!open && !busy) setInstallTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认{installTarget?.driverId ? "恢复" : "安装或升级"}驱动</AlertDialogTitle>
+            <AlertDialogDescription>
+              {installTarget?.name} {installTarget?.version} 已通过兼容性预检，确认后将切换驱动包。
+              若采集正在运行，本节点所有设备的采集会暂停后恢复；已停止的采集保持停止。失败时恢复旧包。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={busy} onClick={() => { if (installTarget) { void handleInstallFile(installTarget.file, installTarget.driverId); setInstallTarget(null); } }}>确认变更</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={Boolean(uninstallTarget)} onOpenChange={(open) => !open && setUninstallTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>卸载驱动</AlertDialogTitle>
             <AlertDialogDescription>
-              确认卸载外置驱动“{uninstallTarget?.driverName}”吗？将重启 collector 冷加载，且不可恢复包内容（可重新安装 ZIP）。
+              确认卸载驱动“{uninstallTarget?.driverName}”吗？若采集正在运行，本节点所有设备的采集会暂停后恢复；已停止的采集保持停止。协议目录和历史数据会保留，官方驱动可通过恢复安装重新启用。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,0 +1,18 @@
+manifest_version = 1
+driver_api = "1.0"
+id = "opcda_center"
+protocol = "opcda_center"
+name = "opcda_center"
+description = "DataWatch opcda_center 只读采集驱动"
+version = "1.0.0"
+entry = "opcda_center.driver:create_driver"
+python_abi = "cp314t"
+os = ["windows"]
+architectures = ["x86_64"]
+capabilities = ["poll", "read", "health_check", "native_quality", "source_timestamp"]
+read_write = "只读"
+aliases = ["opcda_center"]
+publisher = "datawatch"
+min_collector_version = "0.1.0"
+
+managed_components = { opcda_proxy = "1.0" }

@@ -10,8 +10,8 @@ from datetime import datetime
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from drivers import opcda_center_driver
-from drivers.opcda_center_driver import OpcDaCenterDriver
+from packages.opcda_center.opcda_center import driver as opcda_center_driver
+from packages.opcda_center.opcda_center.driver import OpcDaCenterDriver
 
 
 def _patch_pool(monkeypatch, *, connect_result):
@@ -54,8 +54,8 @@ async def test_connect_failure_error_includes_endpoint_port_progid(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ipc_connect_opc_server_failure_log_has_context(monkeypatch, caplog):
-    from core import opcda_ipc_client
-    from core.opcda_ipc_protocol import ResponseStatus
+    from packages.opcda_center.opcda_center import opcda_ipc_client
+    from packages.opcda_center.opcda_center.opcda_ipc_protocol import ResponseStatus
 
     client = opcda_ipc_client.OpcDaIpcClient(host="127.0.0.1", port=9090)
     resp = MagicMock()
@@ -74,8 +74,8 @@ async def test_ipc_connect_opc_server_failure_log_has_context(monkeypatch, caplo
 
 @pytest.mark.asyncio
 async def test_ipc_read_items_isolates_bad_result_item(caplog):
-    from core import opcda_ipc_client
-    from core.opcda_ipc_protocol import ResponseStatus
+    from packages.opcda_center.opcda_center import opcda_ipc_client
+    from packages.opcda_center.opcda_center.opcda_ipc_protocol import ResponseStatus
     from core.quality_codes import QUALITY_GOOD
     from drivers.base import DriverSample
 
@@ -121,7 +121,7 @@ async def test_ipc_read_items_isolates_bad_result_item(caplog):
 @pytest.mark.asyncio
 async def test_pool_get_client_returns_connected_without_ping():
     """已连接的 client 直接借出，不触发 ping（消除锁内网络往返）。"""
-    from core.opcda_ipc_client import OpcDaIpcClientPool
+    from packages.opcda_center.opcda_center.opcda_ipc_client import OpcDaIpcClientPool
 
     pool = OpcDaIpcClientPool()
     existing = MagicMock()
@@ -140,8 +140,8 @@ async def test_pool_get_client_returns_connected_without_ping():
 @pytest.mark.asyncio
 async def test_pool_get_client_rebuilds_when_disconnected(monkeypatch):
     """is_connected=False 的失效连接被清理重建，全程不 ping。"""
-    from core import opcda_ipc_client
-    from core.opcda_ipc_client import OpcDaIpcClientPool
+    from packages.opcda_center.opcda_center import opcda_ipc_client
+    from packages.opcda_center.opcda_center.opcda_ipc_client import OpcDaIpcClientPool
 
     pool = OpcDaIpcClientPool()
     stale = MagicMock()

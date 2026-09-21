@@ -1,8 +1,10 @@
 import pytest
 
-from device.device import Device, Variable
+from device.device import Variable
+from tests.package_support import PackageDevice as Device
+from packages.s7.s7.planner import Decoder
 from drivers.base import ReadBlock
-from drivers.s7_driver import S7Driver
+from packages.s7.s7.driver import S7Driver
 from collector.executor import TaskExecutor
 
 
@@ -143,16 +145,16 @@ def test_executor_extracts_db_values_from_merged_block():
     # DBB0..7：INT(123) 地址0, BYTE 地址2, BYTE 地址3, REAL(10.0) 地址4
     raw = [0x00, 0x7B, 0x12, 0x34, 0x41, 0x20, 0x00, 0x00]
 
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw, {"byte_offset": 0, "bit": None, "data_type": "INT"}
     ) == 123
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw, {"byte_offset": 2, "bit": None, "data_type": "BYTE"}
     ) == 0x12
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw, {"byte_offset": 4, "bit": None, "data_type": "REAL"}
     ) == pytest.approx(10.0)
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         [0b01000000], {"byte_offset": 0, "bit": 6, "data_type": "BOOL"}
     ) is True
 
@@ -199,15 +201,15 @@ def test_device_build_scan_tasks_merges_contiguous_s7_area_bytes():
 def test_executor_extracts_values_from_merged_s7_area_byte_block():
     raw = [0b00000010, 0x2C, 0x00, 0x2B]
 
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw,
         {"byte_offset": 0, "bit": 1, "data_type": "BOOL"},
     ) is True
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw,
         {"byte_offset": 1, "bit": None, "data_type": "BYTE"},
     ) == 44
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         raw,
         {"byte_offset": 2, "bit": None, "data_type": "INT"},
     ) == 43
@@ -355,7 +357,7 @@ def test_device_build_scan_tasks_handles_timer_counter():
 
 
 def test_executor_extracts_values_from_merged_timer_counter_block():
-    assert TaskExecutor._extract_mapped_s7_value(
+    assert Decoder._extract_mapped_s7_value(
         [500, 12300],
         {"value_offset": 1, "data_type": "TIMER_MS"},
     ) == 12300

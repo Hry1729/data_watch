@@ -1,20 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 repo_root = Path(SPECPATH).resolve().parent
 collector_root = repo_root / 'collector'
 
-datas = [(str(collector_root / 'drivers' / 'gesrtp-py-main'), 'drivers\\gesrtp-py-main')]
+datas = []
 binaries = []
-hiddenimports = [
-    'drivers.s7_driver',
-    'drivers.ge_srtp_driver',
-    'drivers.opcda_center_driver',
-    'drivers.opcua_driver',
-]
-for package in ('snap7', 'cryptography', 'pymysql', 'aiomysql', 'httpx', 'msgspec'):
+hiddenimports = ['driver_preflight', 'data_watch_driver_manifest', 'data_watch_driver_catalog']
+hiddenimports += ['shelve', 'ctypes.wintypes', 'netrc', 'getpass']
+hiddenimports += collect_submodules('xml') + collect_submodules('sqlite3') + collect_submodules('dbm')
+for package in ('pymysql', 'aiomysql', 'httpx', 'msgspec'):
     package_data, package_binaries, package_hidden = collect_all(package)
     datas += package_data
     binaries += package_binaries
@@ -55,3 +52,12 @@ coll = COLLECT(
     name='data-watch-edge-collector',
 )
 
+
+# Offline archives are installed once into the data-root activation directory.
+import sys
+import runpy
+sys.path.insert(0, str(repo_root))
+from data_watch_driver_catalog import write_catalog
+version = runpy.run_path(str(Path(repo_root) / 'collector/core/version.py'))['__version__']
+artifact_root = Path(coll.name)
+write_catalog(Path(repo_root) / 'packages', artifact_root / 'driver-catalog/catalog.json', version, executable='data-watch-edge-collector.exe')

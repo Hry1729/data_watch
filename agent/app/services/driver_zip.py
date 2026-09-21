@@ -13,6 +13,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+from data_watch_driver_manifest import load_driver_toml, DriverManifestError
+from data_watch_driver_catalog import verify_identity, read_catalog, default_catalog_path
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +114,17 @@ class ValidatedDriverPackage:
     python_abi: str
     sha256: str
     package_root_name: str  # ZIP 内唯一包根目录名（应等于 driver_id）
+    aliases: tuple[str, ...] = ()
+    publisher: str = ""
+    tree_sha256: str = ""
+    signature_verified: bool = False
 
 
 def compute_sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def validate_and_extract(zip_bytes: bytes, staging_dir: Path) -> ValidatedDriverPackage:
+def validate_and_extract(zip_bytes: bytes, staging_dir: Path, *, catalog_path: Path | None = None) -> ValidatedDriverPackage:
     """校验 ZIP 并安全解压到 staging_dir，返回清单元数据。
 
     staging_dir 必须为空或不存在；解压后应仅含一个包根（含 driver.toml）。
@@ -153,15 +159,19 @@ def validate_and_extract(zip_bytes: bytes, staging_dir: Path) -> ValidatedDriver
             f"包根目录名 {package_root.name!r} 必须与 id {manifest['id']!r} 一致",
             status_code=422,
         )
-    if manifest["id"] in BUILTIN_PROTOCOLS:
-        raise DriverZipError(
-            f"驱动 id {manifest['id']!r} 与内置驱动保留名冲突", status_code=409
-        )
-    if manifest["protocol"] in BUILTIN_PROTOCOLS:
-        raise DriverZipError(
-            f"协议码 {manifest['protocol']!r} 与内置驱动冲突",
-            status_code=409,
-        )
+    try:
+        catalog = read_catalog(catalog_path or default_catalog_path())
+    except (OSError, ValueError):
+        catalog = None
+    try:
+        from data_watch_driver_signatures import verify_package_signature
+        from data_watch_driver_catalog import tree_digest
+        parsed = load_driver_toml(manifest_path)
+        signature_verified = verify_package_signature(package_root, parsed, catalog)
+        signed_record = {"publisher": parsed.publisher, "tree_sha256": tree_digest(package_root), "approved_source": True} if signature_verified else None
+        package_digest = verify_identity(package_root, parsed, catalog, signed_record)
+    except ValueError as exc:
+        raise DriverZipError(str(exc), status_code=409) from exc
 
     return ValidatedDriverPackage(
         driver_id=manifest["id"],
@@ -175,6 +185,7 @@ def validate_and_extract(zip_bytes: bytes, staging_dir: Path) -> ValidatedDriver
         python_abi=manifest["python_abi"],
         sha256=sha256,
         package_root_name=package_root.name,
+        aliases=tuple(manifest["aliases"]), publisher=manifest["publisher"], tree_sha256=package_digest, signature_verified=signature_verified,
     )
 
 
@@ -190,6 +201,8 @@ def _assert_no_dangerous_entries(zf: zipfile.ZipFile) -> None:
 
     for info in zf.infolist():
         name = info.filename.replace("\\", "/")
+        if name.lower().endswith(".pyc") or "__pycache__" in name.lower().split("/"):
+            raise DriverZipError("驱动 ZIP 不允许预编译字节码或 __pycache__，避免绕过源码签名", status_code=400)
         if not name or name.endswith("/"):
             if name:
                 _assert_safe_member_path(name.rstrip("/"))
@@ -460,131 +473,26 @@ def _resolve_single_package_root(staging_dir: Path) -> Path:
 
 def _load_and_validate_manifest(path: Path, package_root: Path) -> dict[str, Any]:
     try:
-        with path.open("rb") as fp:
-            data = tomllib.load(fp)
-    except tomllib.TOMLDecodeError as exc:
-        raise DriverZipError(f"driver.toml 解析失败: {exc}", status_code=422) from exc
-    except OSError as exc:
-        logger.exception("无法读取 driver.toml")
-        raise DriverZipError("无法读取 driver.toml", status_code=422) from exc
-
-    if not isinstance(data, dict):
-        raise DriverZipError("driver.toml 根节点必须是表", status_code=422)
-
-    for field in _REQUIRED_FIELDS:
-        if field not in data:
-            raise DriverZipError(f"缺少必填字段 {field!r}", status_code=422)
-
-    if data["manifest_version"] != 1:
-        raise DriverZipError("manifest_version 第一期仅支持 1", status_code=422)
-    if data["driver_api"] != "1.0":
-        raise DriverZipError("driver_api 第一期仅支持 '1.0'", status_code=422)
-
-    driver_id = data["id"]
-    if not is_valid_driver_id(driver_id):
-        raise DriverZipError("id 必须符合 [a-z][a-z0-9_]{1,63}", status_code=422)
-
-    protocol = data["protocol"]
-    if not isinstance(protocol, str) or not protocol.strip():
-        raise DriverZipError("protocol 必须为非空字符串", status_code=422)
-    protocol = protocol.strip()
-    if len(protocol) > MAX_PROTOCOL_CHARS:
-        raise DriverZipError(
-            f"protocol 最大长度为 {MAX_PROTOCOL_CHARS} 字符", status_code=422
-        )
-
-    version = data["version"]
-    if not isinstance(version, str) or not _SEMVER_PATTERN.match(version):
-        raise DriverZipError("version 必须为 SemVer X.Y.Z", status_code=422)
-    if len(version) > MAX_VERSION_CHARS:
-        raise DriverZipError(
-            f"version 最大长度为 {MAX_VERSION_CHARS} 字符", status_code=422
-        )
-
-    name = data.get("name", "")
-    if isinstance(name, str) and len(name) > MAX_NAME_CHARS:
-        raise DriverZipError(
-            f"name 最大长度为 {MAX_NAME_CHARS} 字符", status_code=422
-        )
-
-    description = data.get("description", "")
-    if isinstance(description, str) and len(description) > MAX_DESCRIPTION_CHARS:
-        raise DriverZipError(
-            f"description 最大长度为 {MAX_DESCRIPTION_CHARS} 字符",
-            status_code=422,
-        )
-
-    entry = data["entry"]
-    if not isinstance(entry, str) or ":" not in entry:
-        raise DriverZipError("entry 必须为 package.module:function", status_code=422)
-    module_path, _, func_name = entry.partition(":")
-    if not module_path or not func_name:
-        raise DriverZipError("entry 格式非法", status_code=422)
-    top = module_path.split(".", 1)[0]
-    if top != driver_id:
-        raise DriverZipError(
-            f"entry 顶层包名必须为驱动 id {driver_id!r}",
-            status_code=422,
-        )
-    # 入口模块文件必须存在（静态落点检查，不 import）
-    rel_parts = module_path.split(".")
-    candidate = package_root.joinpath(*rel_parts[:-1], rel_parts[-1] + ".py")
-    candidate_pkg = package_root.joinpath(*rel_parts, "__init__.py")
-    if not candidate.is_file() and not candidate_pkg.is_file():
-        raise DriverZipError(f"entry 模块不在驱动包内: {entry}", status_code=422)
-
-    python_abi = data["python_abi"]
-    if python_abi != EXPECTED_COLLECTOR_ABI:
-        raise DriverZipError(
-            f"python_abi={python_abi!r} 与 collector 要求 {EXPECTED_COLLECTOR_ABI!r} 不匹配",
-            status_code=422,
-        )
-
-    os_list = data["os"]
-    if not isinstance(os_list, list) or not os_list:
-        raise DriverZipError("os 必须为非空列表", status_code=422)
-    if "windows" not in {str(x).lower() for x in os_list}:
-        raise DriverZipError("第一期仅支持 os 含 windows", status_code=422)
-
-    arch_list = data["architectures"]
-    if not isinstance(arch_list, list) or not arch_list:
-        raise DriverZipError("architectures 必须为非空列表", status_code=422)
-    allowed_arch = {_normalize_arch(str(x)) for x in arch_list}
-    if "x86_64" not in allowed_arch:
-        raise DriverZipError("第一期仅支持 architectures 含 x86_64", status_code=422)
-
-    caps = data["capabilities"]
-    if not isinstance(caps, list) or not caps:
-        raise DriverZipError("capabilities 必须为非空列表", status_code=422)
-    unknown = [c for c in caps if c not in _ALLOWED_CAPABILITIES]
-    if unknown:
-        raise DriverZipError(f"capabilities 含未知项 {unknown}", status_code=422)
-    if len(caps) != len(set(caps)):
-        raise DriverZipError("capabilities 不得重复", status_code=422)
-
-    read_write = data["read_write"]
-    if read_write not in ("只读", "读写"):
-        raise DriverZipError("read_write 必须为 '只读' 或 '读写'", status_code=422)
-    if read_write != "只读":
-        raise DriverZipError("生产驱动仅允许 read_write=只读", status_code=422)
-    if "write" in caps:
-        raise DriverZipError("生产驱动不得声明 write 能力", status_code=422)
-
-    for text_field in ("name", "description"):
-        if not isinstance(data[text_field], str) or not str(data[text_field]).strip():
-            raise DriverZipError(f"{text_field} 必须为非空字符串", status_code=422)
-
-    return {
-        "id": driver_id,
-        "protocol": protocol,
-        "version": version,
-        "name": str(data["name"]).strip(),
-        "description": str(data["description"]).strip(),
-        "entry": entry,
-        "capabilities": [str(c) for c in caps],
-        "read_write": read_write,
-        "python_abi": python_abi,
-    }
+        manifest = load_driver_toml(path)
+    except DriverManifestError as exc:
+        # Keep filesystem details in the log, not in the API response.
+        logger.warning("清单校验失败: %s", exc)
+        message = str(exc).replace(str(path), "driver.toml")
+        raise DriverZipError(message, status_code=422) from exc
+    if manifest.python_abi != EXPECTED_COLLECTOR_ABI:
+        raise DriverZipError(f"python_abi={manifest.python_abi!r} 与目标 Collector 不匹配", status_code=422)
+    if "windows" not in manifest.os or "x86_64" not in {_normalize_arch(v) for v in manifest.architectures}:
+        raise DriverZipError("驱动要求 windows/x86_64", status_code=422)
+    module, _, function = manifest.entry.partition(":")
+    parts = module.split(".")
+    if parts[0] != manifest.id or any(not part.isidentifier() for part in parts) or not function.isidentifier():
+        raise DriverZipError("entry 顶层包名必须为驱动 id，且模块名称合法", status_code=422)
+    if not (package_root.joinpath(*parts).with_suffix(".py").is_file() or package_root.joinpath(*parts, "__init__.py").is_file()):
+        raise DriverZipError("entry 模块不在驱动包内", status_code=422)
+    return {"id": manifest.id, "protocol": manifest.protocol, "version": manifest.version,
+            "name": manifest.name, "description": manifest.description, "entry": manifest.entry,
+            "capabilities": list(manifest.capabilities), "read_write": manifest.read_write,
+            "python_abi": manifest.python_abi, "aliases": manifest.aliases, "publisher": manifest.publisher}
 
 
 def _normalize_arch(value: str) -> str:

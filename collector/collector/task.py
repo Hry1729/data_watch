@@ -46,6 +46,7 @@ class ScanTaskSnapshot:
     variables: Tuple[VariableSnapshot, ...]
     read_blocks: Tuple[ReadBlockSnapshot, ...]
     result_map: Mapping[str, Mapping[str, Any]]
+    decode_read_results: Any = None
 
     @classmethod
     def from_scan_task(cls, scan_task: ScanTask) -> "ScanTaskSnapshot":
@@ -70,6 +71,7 @@ class ScanTaskSnapshot:
                 for block in scan_task.read_blocks
             ),
             result_map=result_map,
+            decode_read_results=scan_task.decode_read_results,
         )
 
 

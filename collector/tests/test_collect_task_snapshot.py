@@ -5,7 +5,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from collector.task import CollectTask
-from device.device import Device, Variable
+from device.device import Variable
+from tests.package_support import PackageDevice as Device
 
 
 def test_collect_task_freezes_scan_metadata() -> None:

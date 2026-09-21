@@ -2,7 +2,7 @@
 
 import pytest
 
-from drivers.opcua_driver import OPCUADriver
+from packages.opcua.opcua.driver import OPCUADriver
 
 
 @pytest.mark.asyncio

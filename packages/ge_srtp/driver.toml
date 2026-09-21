@@ -1,0 +1,18 @@
+manifest_version = 1
+driver_api = "1.0"
+id = "ge_srtp"
+protocol = "ge_srtp"
+name = "ge_srtp"
+description = "DataWatch ge_srtp 只读采集驱动"
+version = "1.0.0"
+entry = "ge_srtp.driver:create_driver"
+python_abi = "cp314t"
+os = ["windows"]
+architectures = ["x86_64"]
+capabilities = ["poll", "read", "batch_contiguous", "health_check"]
+read_write = "只读"
+aliases = ["ge_srtp"]
+publisher = "datawatch"
+min_collector_version = "0.1.0"
+
+resources = ["GE-SRTP-LICENSE"]

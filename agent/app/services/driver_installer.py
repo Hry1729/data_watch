@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import socket
 import json
 import logging
 import os
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -109,10 +112,18 @@ class DriverInstaller:
         self,
         drivers_root: Path,
         *,
+        stop_collector: RestartCollectorFn | None = None,
+        collector_pid: Callable[[], int | None] | None = None,
+        catalog_path: Path | None = None,
         health_wait_seconds: float = _HEALTH_WAIT_SECONDS,
         health_poll_interval: float = _HEALTH_POLL_INTERVAL,
     ):
         self.drivers_root = Path(drivers_root)
+        self._collector_pid = collector_pid
+        self._previous_boot_id: str | None = None
+        self._stop_collector = stop_collector
+        self._catalog_path_override = catalog_path
+        self._operation_was_running = True
         self.staging_root = self.drivers_root / ".staging"
         self.backup_root = self.drivers_root / ".backup"
         self.trash_root = self.drivers_root / ".trash"
@@ -223,7 +234,11 @@ class DriverInstaller:
         restart_collector: RestartCollectorFn,
         collector_alive: CollectorAliveFn,
     ) -> list[dict[str, Any]]:
+        operations = self._latest_incomplete_operations()
+        if operations:
+            await self._stop_before_switch(collector_alive)
         plans = self.apply_disk_recovery()
+        restore_running = any(op.get("was_running", True) for op in operations)
         if not plans:
             self._update_recovery_block_from_results([])
             return []
@@ -237,20 +252,21 @@ class DriverInstaller:
 
         if verify_plans:
             try:
-                await restart_collector()
-                alive = await self._wait_alive(collector_alive)
-                if not alive:
-                    logger.error("恢复后 collector 未在超时内恢复，保留未完成事务")
-                    results.extend(
-                        {
-                            **plan,
-                            "verified": False,
-                            "error": "collector 未恢复运行",
-                        }
-                        for plan in verify_plans
-                    )
-                    self._update_recovery_block_from_results(results)
-                    return results
+                if restore_running:
+                    await restart_collector()
+                    alive = await self._wait_alive(collector_alive)
+                    if not alive:
+                        logger.error("恢复后 collector 未在超时内恢复，保留未完成事务")
+                        results.extend(
+                            {
+                                **plan,
+                                "verified": False,
+                                "error": "collector 未恢复运行",
+                            }
+                            for plan in verify_plans
+                        )
+                        self._update_recovery_block_from_results(results)
+                        return results
             except Exception as exc:
                 logger.exception("恢复后重启 collector 失败，保留未完成事务")
                 results.extend(
@@ -262,6 +278,7 @@ class DriverInstaller:
 
             for plan in verify_plans:
                 try:
+                    self._operation_was_running = bool(plan.get("was_running", True))
                     ok = await self._verify_recover_plan(plan)
                     if not ok:
                         logger.error(
@@ -342,6 +359,9 @@ class DriverInstaller:
 
     def _assert_mutation_allowed(self, driver_id: str = "") -> None:
         """恢复失败或同驱动未完成事务时，拒绝新的安装/卸载。"""
+        from app.core.role import managed_module_names
+        if "collector" not in managed_module_names():
+            raise DriverInstallError("此节点不运行 Collector，请在目标采集节点管理驱动", status_code=409)
         if self._recovery_blocked:
             raise DriverInstallError(
                 "驱动恢复未完成（driver_recovery_blocked），请先 POST /admin/drivers/recovery/retry",
@@ -355,93 +375,254 @@ class DriverInstaller:
                     f"驱动 {want} 仍有未完成事务 phase={op.get('phase')}，拒绝新变更",
                     status_code=503,
                 )
-            if not want and op_driver:
-                # 安装前尚不知 driver_id：任一未完成事务都阻止（避免交叉改目录）
+            if op_driver:
+                # All packages share one Collector; incomplete work blocks other mutations too.
                 raise DriverInstallError(
                     f"存在未完成驱动事务 driver={op_driver} phase={op.get('phase')}，拒绝新安装",
                     status_code=503,
                 )
 
-    async def list_drivers(self) -> list[dict[str, Any]]:
-        """三方并集：state ∪ 磁盘目录 ∪ collector registry。"""
+    def _node_identity(self) -> dict[str, str]:
+        from app.core.role import build_role
+        host = socket.gethostname()
+        key = host + "|" + str(self.drivers_root.parent.resolve()).casefold()
+        return {"id": hashlib.sha256(key.encode("utf-8")).hexdigest()[:24], "host": host, "deployment_role": build_role()}
+
+    def _catalog_path(self) -> Path:
+        if self._catalog_path_override is not None:
+            return self._catalog_path_override
+        from app.core.config import install_root, module_paths
+        executable, _ = module_paths("collector")
+        if getattr(sys, "frozen", False) or executable.is_file():
+            return executable.parent / "driver-catalog/catalog.json"
+        return install_root() / "packages/driver-catalog/catalog.json"
+
+    def _bundled_inventory(self) -> list[dict[str, Any]]:
+        from app.core.role import managed_module_names
+        from data_watch_driver_catalog import read_catalog
+        if "collector" not in managed_module_names():
+            return []
+        try:
+            return [{**item, "source": "official", "protected": False} for item in read_catalog(self._catalog_path())["drivers"]]
+        except (OSError, ValueError) as exc:
+            logger.warning("无法读取离线驱动目录: %s", exc)
+            return []
+
+    async def _stop_before_switch(self, collector_alive: CollectorAliveFn) -> None:
+        if not await collector_alive():
+            return
+        if self._stop_collector is None:
+            raise DriverInstallError("未配置 Collector 停止操作，不能切换驱动目录", status_code=409)
+        try:
+            old = await asyncio.to_thread(self._fetch_json, f"{_COLLECTOR_STATUS_URL}/drivers")
+            if self._valid_instance(old):
+                self._previous_boot_id = old["instance"]["boot_id"]
+        except Exception:
+            pass
+        await self._stop_collector()
+        if await collector_alive():
+            raise DriverInstallError("Collector 尚未退出，已取消驱动目录切换", status_code=409)
+
+    def _assert_trusted_package(self, validated: ValidatedDriverPackage) -> None:
+        if validated.signature_verified or validated.publisher == "datawatch":
+            return  # Static validation already pins official packages to the release catalog.
+        from data_watch_driver_catalog import read_catalog
+        try:
+            catalog = read_catalog(self._catalog_path())
+        except (OSError, ValueError) as exc:
+            raise DriverInstallError("缺少可信发布目录，不能安装第三方驱动", status_code=403) from exc
+        approved = any(item.get("id") == validated.driver_id
+            and item.get("publisher") == validated.publisher and bool(validated.publisher)
+            and item.get("version") == validated.version
+            and item.get("tree_sha256") == validated.tree_sha256
+            for item in catalog.get("approved_packages", []))
+        if not approved:
+            raise DriverInstallError("此驱动未经过内部来源审核；请由发布管理员审核并加入可信目录", status_code=403)
+
+    async def _preflight_package(self, package: Path) -> dict[str, Any]:
+        from app.core.config import install_root, module_paths
+        executable, _ = module_paths("collector")
+        if executable.is_file():
+            command = [str(executable)]
+        else:
+            root = install_root()
+            python = root / "collector/.venv-pack/Scripts/python.exe"
+            if not python.is_file():
+                raise DriverInstallError("找不到目标 Collector 运行时，无法预检", status_code=503)
+            command = [str(python), str(root / "collector/driver_preflight.py")]
+        env = dict(os.environ, PYTHONIOENCODING="utf-8", DATAWATCH_DATA_ROOT=str(self.drivers_root.parent), DATAWATCH_DRIVER_CATALOG_ROOT=str(self._catalog_path().parent))
+        approval_args = []
+        from data_watch_driver_manifest import load_driver_toml
+        from data_watch_driver_signatures import verify_package_signature
+        from data_watch_driver_catalog import read_catalog, tree_digest
+        if (package / "signature.json").is_file() and verify_package_signature(package, load_driver_toml(package / "driver.toml"), read_catalog(self._catalog_path())):
+            approval_args = ["--approved-digest", tree_digest(package)]
+        process = await asyncio.create_subprocess_exec(*command, *approval_args, "--driver-preflight", str(package), "--active-drivers", str(self.drivers_root), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=45)
+        except (TimeoutError, asyncio.CancelledError):
+            process.kill()
+            await process.wait()
+            raise
+        try:
+            result = json.loads(stdout.decode("utf-8").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            raise DriverInstallError("Collector 预检未返回有效结果: " + stderr.decode("utf-8", errors="replace")[-2000:], status_code=422)
+        if process.returncode or result.get("status") != "verified":
+            raise DriverInstallError("驱动预检失败: " + str(result.get("error") or "unknown"), status_code=422)
+        return result
+
+    async def initialize_preinstalled(self, *, restart_collector: RestartCollectorFn, collector_alive: CollectorAliveFn) -> list[str]:
+        """First installation only. A completed catalog never restores user removals."""
+        from data_watch_driver_catalog import read_catalog, file_digest
+        async with self._lock:
+            self.ensure_layout()
+            state = self._read_state()
+            if state.get("preinstall_completed"):
+                return []
+            catalog_path = self._catalog_path()
+            catalog = read_catalog(catalog_path)
+            was_running = state.get("preinstall_was_running", await collector_alive())
+            state["preinstall_was_running"] = was_running
+            self._write_state(state)
+            await self._stop_before_switch(collector_alive)
+            installed = []
+            async def stopped():
+                return False
+            for item in catalog["drivers"]:
+                current = self._read_state()
+                if item["id"] in current.get("removed", []) or item["id"] in current.get("drivers", {}) or (self.drivers_root / item["id"]).exists():
+                    continue
+                archive = catalog_path.parent / item["archive"]
+                if file_digest(archive) != item["sha256"]:
+                    raise DriverInstallError(f"离线包校验失败: {item['id']}", status_code=422)
+                await self._install_locked(archive.read_bytes(), restart_collector=restart_collector, collector_alive=stopped, operator="preinstall")
+                installed.append(item["id"])
+            if was_running:
+                await restart_collector()
+                if not await self._wait_alive(collector_alive):
+                    raise DriverInstallError("预装后 Collector 未恢复运行", status_code=503)
+                for driver_id, record in self._read_state().get("drivers", {}).items():
+                    if not await self._wait_for_driver_loaded(driver_id=driver_id, version=record.get("version", "")):
+                        raise DriverInstallError(f"预装后驱动未加载: {driver_id}", status_code=503)
+            state = self._read_state()
+            state["preinstall_completed"] = True
+            state.pop("preinstall_was_running", None)
+            self._write_state(state)
+            return installed
+
+    def restoration_archive(self, driver_id: str) -> bytes:
+        from data_watch_driver_catalog import read_catalog, file_digest
+        path = self._catalog_path()
+        item = next((item for item in read_catalog(path)["drivers"] if item["id"] == driver_id), None)
+        if item is None:
+            raise DriverInstallError("离线目录没有该驱动", status_code=404)
+        archive = path.parent / item["archive"]
+        if file_digest(archive) != item["sha256"]:
+            raise DriverInstallError("离线恢复包校验失败", status_code=422)
+        return archive.read_bytes()
+
+    async def list_drivers(self, *, collector_status: str = "unknown", collector_pid: int | None = None) -> list[dict[str, Any]]:
+        """Static installation inventory and runtime observations are independent."""
         self.ensure_layout()
-        state = self._read_state()
-        state_map: dict[str, dict[str, Any]] = {}
-        for raw in state.get("drivers", {}).values():
-            if isinstance(raw, dict) and raw.get("id"):
-                state_map[str(raw["id"]).strip()] = dict(raw)
-
-        disk_ids: set[str] = set()
-        for child in self.drivers_root.iterdir():
-            if not child.is_dir() or child.name.startswith("."):
-                continue
-            if (child / "driver.toml").is_file():
-                disk_ids.add(child.name)
-
-        collector_map = await self._probe_collector_drivers()
-        collector_ids = set(collector_map.keys()) if collector_map is not None else set()
-
-        all_ids = set(state_map) | disk_ids | collector_ids
-        items: list[dict[str, Any]] = []
-        for driver_id in sorted(all_ids):
-            runtime_info = (
-                dict(collector_map.get(driver_id) or {})
-                if collector_map is not None
-                else {}
-            )
-            if runtime_info.get("source") == "bundled":
-                runtime_info["source"] = "bundled"
-                runtime_info["protected"] = True
-                runtime_info["status"] = str(
-                    runtime_info.get("status") or "loaded"
-                )
-                runtime_info["runtime_status"] = runtime_info["status"]
-                items.append(runtime_info)
-                continue
-            base = dict(state_map.get(driver_id) or {"id": driver_id, "source": "installed"})
-            toml_ok = driver_id in disk_ids
-            in_state = driver_id in state_map
-            if not in_state:
-                base["source"] = "untracked"
-
-            # 磁盘完整性优先：无目录/toml 一律 missing（即使旧进程仍加载）
-            if not toml_ok:
-                base["status"] = "missing"
-                if collector_map is not None and driver_id in collector_ids:
-                    info = collector_map[driver_id]
-                    base["runtime_status"] = "loaded"
-                    if info.get("version"):
-                        base["version"] = info["version"]
-                    base["error"] = (
-                        "驱动目录或 driver.toml 缺失（当前 collector 进程仍加载，重启后将消失）"
-                    )
-                elif collector_map is None:
-                    base["runtime_status"] = "unknown"
-                    base["error"] = base.get("error") or (
-                        "驱动目录或 driver.toml 缺失；collector 不可达"
-                    )
-                else:
-                    base["error"] = base.get("error") or "驱动目录或 driver.toml 缺失"
-                items.append(base)
-                continue
-
-            if collector_map is None:
-                base["status"] = "unknown"
-                base["error"] = base.get("error") or "collector 不可达，加载状态未知"
-            elif driver_id in collector_ids:
-                info = collector_map[driver_id]
-                runtime_status = str(info.get("status") or "loaded")
-                base["status"] = runtime_status
-                base["runtime_status"] = runtime_status
-                if info.get("version"):
-                    base["version"] = info["version"]
-                base["error"] = info.get("error") if runtime_status != "loaded" else None
+        state_map = {
+            str(raw["id"]).strip(): dict(raw)
+            for raw in self._read_state().get("drivers", {}).values()
+            if isinstance(raw, dict) and raw.get("id")
+        }
+        removed_map = self._read_state().get("removed_drivers", {})
+        disk_ids = {
+            child.name for child in self.drivers_root.iterdir()
+            if child.is_dir() and not child.name.startswith(".")
+            and (child / "driver.toml").is_file()
+        }
+        bundled = {item["id"]: item for item in await asyncio.to_thread(self._bundled_inventory)}
+        stopped = collector_status in {"stopped", "crashed"}
+        collector_map = None if stopped else await self._probe_collector_drivers()
+        if collector_map:
+            for runtime in collector_map.values():
+                identity = runtime.get("instance", {})
+                if collector_pid is not None and identity.get("pid") != collector_pid:
+                    collector_map = None
+                    break
+        runtime_ids = set(collector_map or {})
+        items = []
+        for driver_id in sorted(set(bundled) | set(state_map) | set(removed_map) | disk_ids | runtime_ids):
+            runtime = dict((collector_map or {}).get(driver_id) or {})
+            base = {**bundled.get(driver_id, {}), **removed_map.get(driver_id, {}), **state_map.get(driver_id, {}), "id": driver_id}
+            base["node"] = self._node_identity()
+            base["protected"] = False
+            if driver_id in disk_ids:
+                installation = "installed"
+                try:
+                    from data_watch_driver_manifest import load_driver_toml
+                    from data_watch_driver_catalog import tree_digest
+                    manifest = load_driver_toml(self.drivers_root / driver_id / "driver.toml")
+                    base.update(protocol=manifest.protocol, version=manifest.version, aliases=list(manifest.aliases), capabilities=list(manifest.capabilities), readWriteType=manifest.read_write, publisher=manifest.publisher)
+                    expected = state_map.get(driver_id, {}).get("tree_sha256")
+                    if expected and await asyncio.to_thread(tree_digest, self.drivers_root / driver_id) != expected:
+                        installation = "invalid"
+                        base["error"] = "激活包完整性校验失败"
+                    else:
+                        base.pop("error", None)
+                except (OSError, ValueError) as exc:
+                    installation = "invalid"
+                    base["error"] = str(exc)
+            elif driver_id in state_map:
+                installation = "missing"
+                base["error"] = "驱动目录或 driver.toml 缺失"
             else:
+                installation = "not_installed"
+                base.pop("error", None)
+            base["source"] = "official" if base.get("publisher") == "datawatch" else "installed" if driver_id in state_map else "untracked"
+            base["install_status"] = installation
+            if stopped:
+                runtime_status = "collector_stopped"
+            elif collector_map is None:
+                runtime_status = "unknown"
+            elif driver_id in runtime_ids:
+                runtime_status = str(runtime.get("status") or "loaded")
+            else:
+                runtime_status = "not_loaded"
+            base["runtime_status"] = runtime_status
+            if runtime.get("instance"):
+                base["instance"] = runtime["instance"]
+            if installation in {"missing", "invalid", "unknown", "not_installed"}:
+                base["status"] = installation
+                if installation == "missing" and runtime_status == "loaded":
+                    base["error"] += "（当前 collector 进程仍加载）"
+            elif runtime_status == "loaded":
+                base["status"] = "loaded"
+                base["error"] = None
+            elif runtime_status in {"load_failed", "not_loaded"}:
                 base["status"] = "load_failed"
-                base["runtime_status"] = "absent"
-                base["error"] = base.get("error") or "collector 未加载该驱动"
+                base["error"] = runtime.get("error") or "collector 未加载该驱动"
+            else:
+                base["status"] = "installed"
+                base["error"] = None if stopped else "Collector 状态不可核验：探针不可达或实例身份不匹配"
+            if driver_id not in bundled and runtime.get("version"):
+                base["version"] = runtime["version"]
             items.append(base)
         return items
+
+    def _valid_instance(self, payload: Any, *, require_new: bool = False) -> bool:
+        from app.core.role import build_role
+        if not isinstance(payload, dict):
+            return False
+        identity = payload.get("instance")
+        if not isinstance(identity, dict):
+            return False
+        valid = (identity.get("role") == "collector"
+            and identity.get("deployment_role") == build_role()
+            and bool(identity.get("boot_id")) and bool(identity.get("build_id"))
+            and isinstance(identity.get("data_root"), str)
+            and Path(identity["data_root"]).resolve() == self.drivers_root.parent.resolve())
+        if self._collector_pid is not None:
+            pid = self._collector_pid()
+            valid = valid and pid is not None and identity.get("pid") == pid
+        if require_new and self._previous_boot_id:
+            valid = valid and identity.get("boot_id") != self._previous_boot_id
+        return bool(valid)
 
     async def _probe_collector_drivers(self) -> Optional[dict[str, dict[str, Any]]]:
         """异步拉取 collector /drivers；不可达返回 None。"""
@@ -451,7 +632,10 @@ class DriverInstaller:
         except Exception as exc:
             logger.debug("列表合并 collector /drivers 失败: %s", exc)
             return None
-        drivers = payload.get("drivers") if isinstance(payload, dict) else None
+        if not self._valid_instance(payload):
+            return None
+        identity = payload["instance"]
+        drivers = payload.get("drivers")
         if not isinstance(drivers, list):
             return None
         result: dict[str, dict[str, Any]] = {}
@@ -460,12 +644,37 @@ class DriverInstaller:
                 continue
             driver_id = str(item.get("id") or "").strip()
             if driver_id:
-                result[driver_id] = item
+                result[driver_id] = {**item, "instance": identity}
         return result
 
     def get_driver(self, driver_id: str) -> Optional[dict[str, Any]]:
         self.ensure_layout()
         return self._read_state().get("drivers", {}).get(driver_id)
+
+    async def preview(self, zip_bytes: bytes) -> dict[str, Any]:
+        """Validate the proposed package without stopping collection or activating files."""
+        from data_watch_driver_catalog import tree_digest
+        async with self._lock:
+            self._assert_mutation_allowed()
+            self.ensure_layout()
+            staging = self.staging_root / uuid.uuid4().hex
+            try:
+                validated = validate_and_extract(zip_bytes, staging, catalog_path=self._catalog_path())
+                self._assert_trusted_package(validated)
+                package = staging / validated.package_root_name
+                if not package.is_dir():
+                    package = staging
+                result = await self._preflight_package(package)
+                if result.get("tree_sha256") != validated.tree_sha256 or tree_digest(package) != validated.tree_sha256:
+                    raise DriverInstallError("预检期间驱动内容发生变化", status_code=409)
+                return {"id": validated.driver_id, "name": validated.name, "version": validated.version,
+                        "sha256": validated.sha256, "preflight_verified": True}
+            except StagingPathConflictError:
+                staging = None
+                raise
+            finally:
+                if staging is not None:
+                    shutil.rmtree(staging, ignore_errors=True)
 
     async def install(
         self,
@@ -497,7 +706,7 @@ class DriverInstaller:
         staging_dir = self.staging_root / operation_id
 
         try:
-            validated = validate_and_extract(zip_bytes, staging_dir)
+            validated = validate_and_extract(zip_bytes, staging_dir, catalog_path=self._catalog_path())
         except StagingPathConflictError:
             # 目录非本次操作创建，绝不能清理攻击者或另一进程预置的路径。
             raise
@@ -515,24 +724,12 @@ class DriverInstaller:
             package_src = staging_dir
 
         existing = self.get_driver(validated.driver_id)
-        # 幂等：同 ID 同版本同 SHA，且激活目录真实存在
-        if (
-            existing
-            and existing.get("version") == validated.version
-            and existing.get("sha256") == validated.sha256
-        ):
-            active_check = self.drivers_root / validated.driver_id
-            if not active_check.is_dir():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                raise InconsistentStateError(
-                    f"驱动 {validated.driver_id} 在 state.json 中有记录但激活目录不存在"
-                )
-            # 可选：state 已有 sha256 字段时再确认包清单文件在场（ZIP SHA 已在上方比对）
-            if existing.get("sha256") and not (active_check / "driver.toml").is_file():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-                raise InconsistentStateError(
-                    f"驱动 {validated.driver_id} 激活目录缺少 driver.toml（与 state 不一致）"
-                )
+        # Only a matching on-disk tree is idempotent; missing/damaged packages can be repaired.
+        from data_watch_driver_catalog import tree_digest
+        active_check = self.drivers_root / validated.driver_id
+        if (existing and existing.get("version") == validated.version
+                and existing.get("sha256") == validated.sha256
+                and active_check.is_dir() and tree_digest(active_check) == validated.tree_sha256):
             shutil.rmtree(staging_dir, ignore_errors=True)
             return InstallResult(driver=existing, created=False)
 
@@ -552,6 +749,16 @@ class DriverInstaller:
         backup_dir: Optional[Path] = None
         previous_record = dict(existing) if existing else None
 
+        try:
+            self._assert_trusted_package(validated)
+            preflight = await self._preflight_package(package_src)
+            if preflight.get("tree_sha256") != validated.tree_sha256 or tree_digest(package_src) != validated.tree_sha256:
+                raise DriverInstallError("预检期间驱动内容发生变化", status_code=409)
+        except BaseException:
+            self._cleanup_staging(operation_id)
+            raise
+        self._operation_was_running = await collector_alive()
+
         # 进入 staging：记录事务日志（崩溃后据此回滚）
         self._persist_operation(
             operation_id,
@@ -561,6 +768,13 @@ class DriverInstaller:
             previous_record=previous_record,
             operator=operator,
         )
+
+        try:
+            await self._stop_before_switch(collector_alive)
+        except Exception:
+            self._persist_operation(operation_id, _PHASE_ROLLED_BACK, validated.driver_id, validated.version, previous_record=previous_record, operator=operator)
+            self._cleanup_staging(operation_id)
+            raise
 
         try:
             # 备份现有激活目录
@@ -623,31 +837,32 @@ class DriverInstaller:
                 operator=operator,
             )
 
-            # 冷加载：重启 collector → 进程存活 → 注册表真实 loaded
-            try:
-                await restart_collector()
-                alive = await self._wait_alive(collector_alive)
-                if not alive:
-                    raise DriverInstallError(
-                        "collector 重启后未在超时内恢复运行",
-                        status_code=503,
+            if self._operation_was_running:
+                # 冷加载：重启 collector → 进程存活 → 注册表真实 loaded
+                try:
+                    await restart_collector()
+                    alive = await self._wait_alive(collector_alive)
+                    if not alive:
+                        raise DriverInstallError(
+                            "collector 重启后未在超时内恢复运行",
+                            status_code=503,
+                        )
+                    loaded = await self._wait_for_driver_loaded(
+                        driver_id=validated.driver_id,
+                        version=validated.version,
                     )
-                loaded = await self._wait_for_driver_loaded(
-                    driver_id=validated.driver_id,
-                    version=validated.version,
-                )
-                if not loaded:
+                    if not loaded:
+                        raise DriverInstallError(
+                            f"collector 未成功加载驱动 {validated.driver_id}@{validated.version}",
+                            status_code=503,
+                        )
+                except DriverInstallError:
+                    raise
+                except Exception as exc:
                     raise DriverInstallError(
-                        f"collector 未成功加载驱动 {validated.driver_id}@{validated.version}",
+                        f"collector 重启失败: {exc}",
                         status_code=503,
-                    )
-            except DriverInstallError:
-                raise
-            except Exception as exc:
-                raise DriverInstallError(
-                    f"collector 重启失败: {exc}",
-                    status_code=503,
-                ) from exc
+                    ) from exc
 
             # 探针通过后才允许启动恢复提交；此前崩溃必须回滚
             self._persist_operation(
@@ -658,7 +873,7 @@ class DriverInstaller:
                 previous_record=previous_record,
                 operator=operator,
             )
-            record = self._build_record(validated, status="loaded", operator=operator)
+            record = self._build_record(validated, status="loaded" if self._operation_was_running else "installed", operator=operator)
             self._upsert_driver_record(record)
             self._prune_driver_backups(
                 validated.driver_id,
@@ -674,10 +889,19 @@ class DriverInstaller:
             )
             # 成功后仅保留一份上一版本备份（已在 backup_dir）；清理 staging 残留
             self._cleanup_staging(operation_id)
+            state = self._read_state()
+            state["removed"] = [key for key in state.get("removed", []) if key != validated.driver_id]
+            state.get("removed_drivers", {}).pop(validated.driver_id, None)
+            self._write_state(state)
             return InstallResult(driver=record, created=previous_record is None)
 
         except Exception as exc:
             logger.exception("驱动安装失败，执行回滚: %s", validated.driver_id)
+            try:
+                await self._stop_before_switch(collector_alive)
+            except Exception as stop_error:
+                self.mark_recovery_blocked(str(stop_error))
+                raise
             self._rollback_activate(
                 driver_id=validated.driver_id,
                 active_dir=active_dir,
@@ -734,8 +958,6 @@ class DriverInstaller:
         self.ensure_layout()
         if not is_valid_driver_id(driver_id):
             raise DriverInstallError(f"非法驱动 id: {driver_id!r}", status_code=400)
-        if allow_builtin_guard and driver_id in BUILTIN_PROTOCOLS:
-            raise DriverInstallError("内置驱动不可卸载", status_code=409)
 
         record = self.get_driver(driver_id)
         root_resolved = self.drivers_root.resolve()
@@ -751,6 +973,8 @@ class DriverInstaller:
         if record is None and not active_dir.exists():
             raise DriverInstallError(f"驱动未安装: {driver_id}", status_code=404)
 
+        self._operation_was_running = await collector_alive()
+
         operation_id = uuid.uuid4().hex
         trash_dir = self.trash_root / operation_id / driver_id
         saved_record = dict(record) if record else None
@@ -765,6 +989,12 @@ class DriverInstaller:
             operator=operator,
             op_type="uninstall",
         )
+
+        try:
+            await self._stop_before_switch(collector_alive)
+        except Exception:
+            self._persist_operation(operation_id, _PHASE_ROLLED_BACK, driver_id, version, previous_record=saved_record, operator=operator, op_type="uninstall")
+            raise
 
         try:
             if active_dir.exists():
@@ -789,27 +1019,28 @@ class DriverInstaller:
             state.get("drivers", {}).pop(driver_id, None)
             self._write_state(state)
 
-            try:
-                await restart_collector()
-                alive = await self._wait_alive(collector_alive)
-                if not alive:
+            if self._operation_was_running:
+                try:
+                    await restart_collector()
+                    alive = await self._wait_alive(collector_alive)
+                    if not alive:
+                        raise DriverInstallError(
+                            "卸载后 collector 未在超时内恢复",
+                            status_code=503,
+                        )
+                    unloaded = await self._wait_for_driver_unloaded(driver_id)
+                    if not unloaded:
+                        raise DriverInstallError(
+                            f"collector 重启后仍加载驱动 {driver_id}，卸载未生效",
+                            status_code=503,
+                        )
+                except DriverInstallError:
+                    raise
+                except Exception as exc:
                     raise DriverInstallError(
-                        "卸载后 collector 未在超时内恢复",
+                        f"collector 重启失败: {exc}",
                         status_code=503,
-                    )
-                unloaded = await self._wait_for_driver_unloaded(driver_id)
-                if not unloaded:
-                    raise DriverInstallError(
-                        f"collector 重启后仍加载驱动 {driver_id}，卸载未生效",
-                        status_code=503,
-                    )
-            except DriverInstallError:
-                raise
-            except Exception as exc:
-                raise DriverInstallError(
-                    f"collector 重启失败: {exc}",
-                    status_code=503,
-                ) from exc
+                    ) from exc
 
             # registry 已确认无此驱动：崩溃后应完成 trash 清理，不可还原
             self._persist_operation(
@@ -821,6 +1052,10 @@ class DriverInstaller:
                 operator=operator,
                 op_type="uninstall",
             )
+            state = self._read_state()
+            state["removed"] = sorted(set(state.get("removed", [])) | {driver_id})
+            state.setdefault("removed_drivers", {})[driver_id] = saved_record or {"id": driver_id}
+            self._write_state(state)
             shutil.rmtree(trash_dir.parent, ignore_errors=True)
             self._persist_operation(
                 operation_id,
@@ -839,6 +1074,11 @@ class DriverInstaller:
             }
         except Exception as exc:
             logger.exception("驱动卸载失败，执行还原: %s", driver_id)
+            try:
+                await self._stop_before_switch(collector_alive)
+            except Exception as stop_error:
+                self.mark_recovery_blocked(str(stop_error))
+                raise
             # 还原目录与 state
             if trash_dir.exists() and not active_dir.exists():
                 shutil.move(str(trash_dir), str(active_dir))
@@ -884,30 +1124,36 @@ class DriverInstaller:
             op_type=op_type,
         )
         try:
-            await restart_collector()
-            alive = await self._wait_alive(collector_alive)
-            if not alive:
-                raise DriverInstallError(
-                    "回滚后 collector 未在超时内恢复",
-                    status_code=503,
-                )
-            if expect_present:
-                ok = await self._wait_for_driver_loaded(
-                    driver_id=driver_id,
-                    version=version,
-                )
-                if not ok:
-                    raise DriverInstallError(
-                        f"回滚后 collector 未加载驱动 {driver_id}@{version}",
-                        status_code=503,
-                    )
+            if not self._operation_was_running:
+                if expect_present:
+                    await self._preflight_package(self.drivers_root / driver_id)
+                elif (self.drivers_root / driver_id).exists():
+                    raise DriverInstallError("回滚后激活目录仍存在", status_code=503)
             else:
-                ok = await self._wait_for_driver_unloaded(driver_id)
-                if not ok:
+                await restart_collector()
+                alive = await self._wait_alive(collector_alive)
+                if not alive:
                     raise DriverInstallError(
-                        f"全新安装回滚后 collector 仍加载驱动 {driver_id}",
+                        "回滚后 collector 未在超时内恢复",
                         status_code=503,
                     )
+                if expect_present:
+                    ok = await self._wait_for_driver_loaded(
+                        driver_id=driver_id,
+                        version=version,
+                    )
+                    if not ok:
+                        raise DriverInstallError(
+                            f"回滚后 collector 未加载驱动 {driver_id}@{version}",
+                            status_code=503,
+                        )
+                else:
+                    ok = await self._wait_for_driver_unloaded(driver_id)
+                    if not ok:
+                        raise DriverInstallError(
+                            f"全新安装回滚后 collector 仍加载驱动 {driver_id}",
+                            status_code=503,
+                        )
         except DriverInstallError:
             # 保留 rollback_verifying，置位恢复门禁
             self._recovery_blocked = True
@@ -958,6 +1204,14 @@ class DriverInstaller:
         previous_record: Optional[dict[str, Any]],
         error: str,
     ) -> None:
+        # A failed backup move must never delete the still-active previous package.
+        if previous_record is not None and active_dir.exists() and (backup_dir is None or not backup_dir.exists()):
+            from data_watch_driver_manifest import load_driver_toml
+            manifest = load_driver_toml(active_dir / "driver.toml")
+            from data_watch_driver_catalog import tree_digest
+            if manifest.version == previous_record.get("version") and (not previous_record.get("tree_sha256") or tree_digest(active_dir) == previous_record["tree_sha256"]):
+                self._upsert_driver_record(previous_record)
+                return
         # 移走失败的新目录
         failed = self.trash_root / f"failed_{uuid.uuid4().hex}"
         if active_dir.exists():
@@ -1006,6 +1260,7 @@ class DriverInstaller:
             "version": version,
             "ts": _utc_now(),
             "type": op_type,
+            "was_running": self._operation_was_running,
         }
         if previous_record is not None:
             entry["previous_record"] = previous_record
@@ -1035,6 +1290,7 @@ class DriverInstaller:
                     "operator": operator,
                     "started_at": entry["ts"],
                     "previous_record": previous_record,
+                    "was_running": self._operation_was_running,
                 }
             )
 
@@ -1140,6 +1396,7 @@ class DriverInstaller:
                     "driver_id": state_op.get("driver_id") or "",
                     "version": state_op.get("version") or "",
                     "previous_record": state_op.get("previous_record"),
+                    "was_running": state_op.get("was_running", True),
                     "type": op_type,
                 }
 
@@ -1175,6 +1432,7 @@ class DriverInstaller:
             "action": action,
             "expect": expect,
             "previous_record": previous_record,
+            "was_running": op.get("was_running", True),
         }
 
     def _apply_install_rollback_disk(self, op: dict[str, Any]) -> dict[str, Any]:
@@ -1334,6 +1592,10 @@ class DriverInstaller:
             return
 
         if action == "commit" and op_type == "uninstall":
+            state = self._read_state()
+            state["removed"] = sorted(set(state.get("removed", [])) | {driver_id})
+            state.setdefault("removed_drivers", {})[driver_id] = previous_record or {"id": driver_id}
+            self._write_state(state)
             shutil.rmtree(self.trash_root / op_id, ignore_errors=True)
             self._persist_operation(
                 op_id,
@@ -1359,6 +1621,13 @@ class DriverInstaller:
         expect = str(plan.get("expect") or "")
         driver_id = str(plan.get("driver_id") or "")
         version = str(plan.get("version") or "")
+        if not plan.get("was_running", True):
+            if expect == "absent":
+                return not (self.drivers_root / driver_id).exists()
+            if expect == "present":
+                await self._preflight_package(self.drivers_root / driver_id)
+                return True
+            return False
         if expect == "absent":
             return await self._wait_for_driver_unloaded(driver_id)
         if expect == "present":
@@ -1394,7 +1663,7 @@ class DriverInstaller:
         while True:
             try:
                 payload = await asyncio.to_thread(self._fetch_json, url)
-                drivers = payload.get("drivers") if isinstance(payload, dict) else None
+                drivers = payload.get("drivers") if self._valid_instance(payload, require_new=True) else None
                 if isinstance(drivers, list):
                     for item in drivers:
                         if not isinstance(item, dict):
@@ -1403,7 +1672,10 @@ class DriverInstaller:
                             continue
                         if str(item.get("status") or "loaded") != "loaded":
                             continue
-                        # version 为空时只匹配 id（恢复回滚无版本信息时）
+                        from data_watch_driver_catalog import tree_digest
+                        active = self.drivers_root / driver_id
+                        if not active.is_dir() or item.get("tree_sha256") != tree_digest(active):
+                            continue
                         if not version or str(item.get("version") or "") == version:
                             return True
             except Exception as exc:
@@ -1425,7 +1697,7 @@ class DriverInstaller:
         while True:
             try:
                 payload = await asyncio.to_thread(self._fetch_json, url)
-                drivers = payload.get("drivers") if isinstance(payload, dict) else None
+                drivers = payload.get("drivers") if self._valid_instance(payload, require_new=True) else None
                 if isinstance(drivers, list):
                     still_there = any(
                         isinstance(item, dict)
@@ -1461,6 +1733,7 @@ class DriverInstaller:
         operator: str,
     ) -> dict[str, Any]:
         return {
+            "node": self._node_identity(),
             "id": validated.driver_id,
             "protocol": validated.protocol,
             "name": validated.name,
@@ -1471,8 +1744,12 @@ class DriverInstaller:
             "capabilities": list(validated.capabilities),
             "readWriteType": validated.read_write,
             "pythonAbi": validated.python_abi,
-            "source": "installed",
+            "source": "official" if validated.publisher == "datawatch" else "installed",
+            "publisher": validated.publisher, "aliases": list(validated.aliases),
+            "tree_sha256": validated.tree_sha256, "preflight_verified": True, "approved_source": True, "signature_verified": validated.signature_verified,
             "status": status,
+            "install_status": "installed",
+            "runtime_status": "loaded" if status == "loaded" else "collector_stopped",
             "error": None,
             "operator": operator,
             "updated_at": _utc_now(),
@@ -1499,13 +1776,13 @@ class DriverInstaller:
         try:
             with self.state_path.open("r", encoding="utf-8") as fp:
                 data = json.load(fp)
-            if not isinstance(data, dict):
-                return {"drivers": {}, "operation": None}
+            if not isinstance(data, dict) or not isinstance(data.get("drivers", {}), dict):
+                raise InconsistentStateError("驱动安装记录格式损坏，已停止自动恢复")
             data.setdefault("drivers", {})
             data.setdefault("operation", None)
             return data
-        except (OSError, json.JSONDecodeError):
-            return {"drivers": {}, "operation": None}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise InconsistentStateError("无法读取驱动安装记录，已停止自动预装") from exc
 
     def _write_state(self, state: dict[str, Any]) -> None:
         self.drivers_root.mkdir(parents=True, exist_ok=True)

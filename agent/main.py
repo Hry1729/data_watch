@@ -1,5 +1,11 @@
 import logging
 import signal
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if (_REPO_ROOT / "data_watch_driver_catalog.py").is_file():
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import uvicorn
 

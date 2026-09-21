@@ -127,6 +127,59 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
 
         assert apply_db.await_args.kwargs["version"] == "2.0.0"
         assert apply_db.await_args.kwargs["sha256"] == "agent-sha"
+    async def test_register_accepts_verified_install_without_starting_collector(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        apply_db = AsyncMock(
+            return_value={"id": 1, "protocol": "ext", "driverId": "drv1"}
+        )
+        with patch("app.services.driver_lifecycle._agent_token", return_value="svc"), patch.object(
+            service,
+            "_list_agent_drivers",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "drv1",
+                        "protocol": "ext",
+                        "status": "installed",
+                        "install_status": "installed",
+                        "runtime_status": "collector_stopped",
+                        "preflight_verified": True,
+                        "version": "2.0.0",
+                        "sha256": "agent-sha",
+                        "name": "Agent Driver",
+                        "readWriteType": "只读",
+                        "capabilities": ["poll", "read"],
+                    }
+                ]
+            ),
+        ), patch.object(service, "_fetch_protocol_row", new=AsyncMock(return_value=None)), patch.object(
+            service, "_begin_operation", new=AsyncMock(return_value="op-1")
+        ), patch.object(service, "_apply_register_db", new=apply_db), patch.object(
+            service, "_update_operation_phases", new=AsyncMock()
+        ):
+            await service.register_protocol(
+                {
+                    "protocol": "ext",
+                    "driverId": "drv1",
+                    "version": "forged",
+                    "sha256": "forged",
+                }
+            )
+
+        assert apply_db.await_args.kwargs["version"] == "2.0.0"
+        assert apply_db.await_args.kwargs["sha256"] == "agent-sha"
+    async def test_official_uninstall_preserves_global_protocol_and_history(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        with patch.object(service, "_fetch_protocol_row", new=AsyncMock(return_value={"id": 1})), patch.object(service, "_begin_uninstall_operation", new=AsyncMock(return_value="op-preserve")), patch.object(service, "_call_agent_uninstall", new=AsyncMock(return_value={"status": "uninstalled"})), patch.object(service, "_update_operation_phases", new=AsyncMock()):
+            result = await service.uninstall(protocol="s7", driver_id="s7", agent_token="service")
+        assert result["catalogDeleted"] is False
+        statements = "\n".join(str(call.args[0]) for call in session.execute.await_args_list)
+        assert "DELETE FROM installed_driver" in statements
+        assert "DELETE FROM comm_protocol" not in statements
+        assert "DELETE FROM device" not in statements
+
     async def test_register_rejects_agent_write_capability(self):
         service = DriverLifecycleService(AsyncMock())
         with patch("app.services.driver_lifecycle._agent_token", return_value="svc"), patch.object(
@@ -539,6 +592,7 @@ class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
                     [{"lifecycle_status": "active", "lifecycle_operation_id": None}]
                 ),
                 _mapping_result([{"cnt": 1}]),
+                _mapping_result([{"device_code": "PLC-01"}]),
             ]
         )
 
@@ -676,6 +730,7 @@ class TestDriverLifecycleReconcile(unittest.IsolatedAsyncioTestCase):
                     "protocol": "ext_proto",
                     "name": "Ext",
                     "description": "Ext Driver",
+                    "status": "loaded",
                     "version": "1.0.0",
                     "sha256": "a" * 64,
                 }

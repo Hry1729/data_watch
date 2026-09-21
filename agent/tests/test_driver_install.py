@@ -144,6 +144,9 @@ def test_validate_rejects_manifest_values_exceeding_database_columns(tmp_path: P
 def test_agent_rejects_readwrite_driver_manifest(tmp_path: Path):
     package_root = tmp_path / "demo_drv"
     package_root.mkdir()
+    module = package_root / "demo_drv"
+    module.mkdir()
+    (module / "driver.py").write_text("def create_driver(context): pass", encoding="utf-8")
     manifest_path = package_root / "driver.toml"
     manifest_path.write_text(
         _minimal_driver_toml().replace(
@@ -295,7 +298,7 @@ def test_validate_rejects_bad_abi(tmp_path: Path):
 def test_validate_rejects_builtin_protocol(tmp_path: Path, protocol: str):
     data = _build_zip(tmp_path, driver_id=f"{protocol}_ext", protocol=protocol)
     # id 与 entry 顶层包需一致；协议冲突在 manifest 校验后触发
-    with pytest.raises(DriverZipError, match="内置"):
+    with pytest.raises(DriverZipError, match="官方协议名称"):
         validate_and_extract(data, tmp_path / "staging")
 
 
@@ -373,6 +376,8 @@ def test_validate_rejects_overlong_final_path(
 def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DriverInstaller:
     root = tmp_path / "drivers"
     inst = DriverInstaller(root, health_wait_seconds=2.0, health_poll_interval=0.05)
+    monkeypatch.setattr(inst, "_bundled_inventory", lambda: [])
+    monkeypatch.setattr(inst, "_assert_trusted_package", lambda validated: None)
 
     async def _fake_loaded(**kwargs):
         return True
@@ -380,6 +385,13 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DriverInstalle
     async def _fake_unloaded(*_args, **_kwargs):
         return True
 
+    # Transaction unit tests isolate subprocess import and process control.
+    # Actual target-runtime and stop ordering are covered in test_driver_lifecycle.py.
+    async def preflight(package):
+        from data_watch_driver_catalog import tree_digest
+        return {"status": "verified", "tree_sha256": tree_digest(package)}
+    monkeypatch.setattr(inst, "_preflight_package", preflight)
+    monkeypatch.setattr(inst, "_stop_before_switch", _fake_unloaded)
     monkeypatch.setattr(inst, "_wait_for_driver_loaded", _fake_loaded)
     monkeypatch.setattr(inst, "_wait_for_driver_unloaded", _fake_unloaded)
     return inst
@@ -544,8 +556,11 @@ async def test_install_rollback_when_collector_not_alive(
     # 升级包
     data_v2 = _build_zip(tmp_path, version="2.0.0")
 
+    checks = 0
     async def bad_alive():
-        return False
+        nonlocal checks
+        checks += 1
+        return checks == 1
 
     with pytest.raises(DriverInstallError) as exc_info:
         await installer.install(
@@ -625,7 +640,7 @@ async def test_uninstall_rejects_directory_without_manifest(installer: DriverIns
 def test_validate_rejects_builtin_driver_id_with_external_protocol(tmp_path: Path):
     data = _build_zip(tmp_path, driver_id="s7", protocol="demo_proto")
 
-    with pytest.raises(DriverZipError, match="保留名"):
+    with pytest.raises(DriverZipError, match="官方协议名称"):
         validate_and_extract(data, tmp_path / "stage")
 
 
@@ -1153,7 +1168,9 @@ async def test_list_drivers_unknown_when_collector_unreachable(
 
     monkeypatch.setattr(installer, "_probe_collector_drivers", probe)
     items = await installer.list_drivers()
-    assert items[0]["status"] == "unknown"
+    assert items[0]["status"] == "installed"
+    assert items[0]["install_status"] == "installed"
+    assert items[0]["runtime_status"] == "unknown"
 
 
 @pytest.mark.asyncio
@@ -1215,7 +1232,7 @@ async def test_list_drivers_collector_only_without_disk(
     monkeypatch.setattr(installer, "_probe_collector_drivers", probe)
     items = await installer.list_drivers()
     ghost = next(i for i in items if i["id"] == "ghost_drv")
-    assert ghost["status"] == "missing"
+    assert ghost["status"] == "not_installed"
     assert ghost["runtime_status"] == "loaded"
     assert ghost["source"] == "untracked"
 
@@ -1414,10 +1431,10 @@ async def test_install_rollback_keeps_verifying_when_old_driver_not_loaded(
 
 
 @pytest.mark.asyncio
-async def test_idempotent_rejects_missing_active_dir(
+async def test_reinstall_repairs_missing_active_dir(
     installer: DriverInstaller, tmp_path: Path
 ):
-    """state 有同版本同 SHA 记录但激活目录缺失 → 不一致错误。"""
+    """A validated explicit reinstall repairs a missing activation directory."""
     data = _build_zip(tmp_path)
     sha = compute_sha256(data)
     installer.ensure_layout()
@@ -1438,8 +1455,8 @@ async def test_idempotent_rejects_missing_active_dir(
     async def alive():
         return True
 
-    with pytest.raises(InconsistentStateError, match="激活目录不存在"):
-        await installer.install(data, restart_collector=restart, collector_alive=alive)
+    await installer.install(data, restart_collector=restart, collector_alive=alive)
+    assert (installer.drivers_root / "demo_drv/driver.toml").is_file()
 
 
 @pytest.mark.asyncio
@@ -1475,6 +1492,7 @@ async def test_list_drivers_keeps_bundled_runtime_without_installed_directory(
     installer: DriverInstaller, monkeypatch: pytest.MonkeyPatch
 ):
     installer.ensure_layout()
+    monkeypatch.setattr(installer, "_bundled_inventory", lambda: [{"id": "s7", "source": "bundled", "protected": True, "install_status": "installed"}])
 
     async def probe():
         return {
@@ -1492,18 +1510,10 @@ async def test_list_drivers_keeps_bundled_runtime_without_installed_directory(
     monkeypatch.setattr(installer, "_probe_collector_drivers", probe)
     items = await installer.list_drivers()
 
-    assert items == [
-        {
-            "id": "s7",
-            "protocol": "s7",
-            "status": "loaded",
-            "runtime_status": "loaded",
-            "source": "bundled",
-            "protected": True,
-            "readWriteType": "只读",
-            "capabilities": ["poll", "read"],
-        }
-    ]
+    assert items[0]["install_status"] == "not_installed"
+    assert items[0]["runtime_status"] == "loaded"
+    assert items[0]["protected"] is False
+
 
 
 
