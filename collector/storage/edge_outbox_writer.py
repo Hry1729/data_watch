@@ -45,7 +45,7 @@ class EdgeOutboxWriter:
         ):
             self.store.write_local_latest(device_code, group_code, fields)
             return
-        if not pending["values"]:
+        if not pending["values"] and not fields:
             self.store.write_local_latest(device_code, group_code, fields)
             return
         self.store.commit_frame(

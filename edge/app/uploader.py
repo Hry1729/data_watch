@@ -46,6 +46,7 @@ class UploaderSettings:
     max_attempts: int = 10
     max_offline_retention_days: int = 7
     maintenance_interval_seconds: float = 60.0
+    sent_retention_ms: int = 24 * 60 * 60 * 1000
 
 
 class RequestSigner:
@@ -167,6 +168,7 @@ class Uploader:
         maintenance = await self._store_call(
             self._store.maintenance,
             self._settings.max_offline_retention_days,
+            self._settings.sent_retention_ms,
         )
         if maintenance.get("degraded"):
             logger.error(
@@ -509,6 +511,14 @@ class Uploader:
         if status in {"switched", "already_switched"}:
             await self._store_call(self._store.complete_session_switch, state)
         elif status == "session_conflict":
+            # 记录冲突错误并不盲目重发，避免永久阻塞上传循环
+            logger.error(
+                "Active session conflict for node=%s: local old=%s, new=%s. "
+                "Will reconcile with center state.",
+                self._settings.node_uuid,
+                state.old_session_id,
+                state.new_session_id,
+            )
             raise UploaderPaused("active session conflict")
 
     async def _reconcile_obsolete_session(self) -> bool:
@@ -525,7 +535,11 @@ class Uploader:
         active = response.json().get("active_session_id")
         if active == current:
             return False
-        state = await self._store_call(self._store.prepare_session_switch)
+        # 中心预期了不同的会话；使用中心真实活跃会话作为切换基准，避免中心比较失败
+        state = await self._store_call(
+            self._store.prepare_session_switch,
+            expected_old_session_id=active,
+        )
         await self._complete_session_switch(state)
         return (await self._store_call(self._store.pending_session_switch)) is None
 

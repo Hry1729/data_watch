@@ -15,7 +15,7 @@ import msgspec
 from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
 
 
-SENT_RETENTION_MS = 60_000
+SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploader 传入 24h 参数
 logger = logging.getLogger("edge.outbox")
 
 OUTBOX_SCHEMA = """
@@ -216,6 +216,7 @@ class OutboxStore:
         values: dict[str, str],
         qualities: dict[str, int] | None,
         batch_id: str | None = None,
+        latest_fields: dict[str, dict[str, Any]] | None = None,
     ) -> OutboxRecord:
         self._ensure_disk_writable()
         now = self._clock_ms()
@@ -232,6 +233,7 @@ class OutboxStore:
                 config_version=config_version,
                 values=values,
                 qualities=qualities,
+                latest_fields=latest_fields,
                 now=now,
             )
 
@@ -264,6 +266,7 @@ class OutboxStore:
                 config_version=config_version,
                 values=values,
                 qualities=qualities,
+                latest_fields=latest_fields,
                 now=now,
             )
             self._write_local_latest_frame(
@@ -536,18 +539,33 @@ class OutboxStore:
                         continue
                     raise RuntimeError("outbox retry transition lost lease")
 
-    def prepare_session_switch(self) -> SessionSwitchState:
+    def prepare_session_switch(
+        self,
+        expected_old_session_id: str | None = None,
+    ) -> SessionSwitchState:
         new_session_id = str(uuid4())
         with self._transaction() as connection:
             existing = connection.execute(
                 "SELECT value FROM metadata WHERE key='pending_session_switch_old_id'"
             ).fetchone()
             if existing:
+                # 若外部显式提供了中心预期会话且与待切换记录不同，进行修正
+                if expected_old_session_id and str(existing["value"]) != expected_old_session_id:
+                    connection.execute(
+                        "UPDATE metadata SET value=? WHERE key='pending_session_switch_old_id'",
+                        (expected_old_session_id,),
+                    )
+                    return SessionSwitchState(
+                        old_session_id=expected_old_session_id,
+                        new_session_id=self._metadata(connection, "upload_session_id"),
+                    )
                 return SessionSwitchState(
                     old_session_id=str(existing["value"]),
                     new_session_id=self._metadata(connection, "upload_session_id"),
                 )
-            old_session_id = self._metadata(connection, "upload_session_id")
+            old_session_id = expected_old_session_id or self._metadata(
+                connection, "upload_session_id"
+            )
             connection.execute(
                 "INSERT INTO metadata(key, value) VALUES('pending_session_switch_old_id', ?)",
                 (old_session_id,),
@@ -622,11 +640,16 @@ class OutboxStore:
             ).fetchall()
         return {str(row["state"]): int(row["count"]) for row in rows}
 
-    def maintenance(self, retention_days: int) -> dict[str, Any]:
+    def maintenance(
+        self,
+        retention_days: int,
+        sent_retention_ms: int | None = None,
+    ) -> dict[str, Any]:
         if retention_days < 1:
             raise ValueError("retention_days must be positive")
         now = self._clock_ms()
-        sent_cutoff = now - SENT_RETENTION_MS
+        actual_sent_retention = sent_retention_ms if sent_retention_ms is not None else SENT_RETENTION_MS
+        sent_cutoff = now - actual_sent_retention
         retention_cutoff = now - retention_days * 24 * 60 * 60 * 1000
         dropped_records = 0
         session_switched = False
@@ -786,6 +809,7 @@ class OutboxStore:
         values: dict[str, str],
         qualities: dict[str, int] | None,
         now: int,
+        latest_fields: dict[str, dict[str, Any]] | None = None,
     ) -> OutboxRecord:
         existing = connection.execute(
             """
@@ -833,6 +857,14 @@ class OutboxStore:
         if qualities is not None:
             payload["contract_version"] = 2
             payload["qualities"] = qualities
+        if latest_fields is not None:
+            # 完整实时字段与历史子集分离
+            payload["latest_values"] = {
+                str(k): str(v["v"]) for k, v in latest_fields.items() if "v" in v
+            }
+            payload["latest_qualities"] = {
+                str(k): int(v.get("q", 0)) for k, v in latest_fields.items()
+            }
         encoded = msgspec.json.encode(payload)
         connection.execute(
             """
@@ -877,6 +909,31 @@ class OutboxStore:
     ) -> None:
         if not fields:
             return
+        row = connection.execute(
+            "SELECT values_json FROM local_latest_frame WHERE device_code = ? AND group_code = ?",
+            (device_code, group_code),
+        ).fetchone()
+        merged: dict[str, Any] = {}
+        if row is not None and row["values_json"]:
+            try:
+                decoded = msgspec.json.decode(row["values_json"])
+                if isinstance(decoded, dict):
+                    merged = dict(decoded)
+            except Exception:
+                merged = {}
+
+        # 检查当前配置中存在的有效变量，过滤已被删除的点位，避免已删点位永久残留
+        active_vars_rows = connection.execute(
+            "SELECT variable_id FROM edge_variable WHERE device_code = ? AND group_code = ?",
+            (device_code, group_code),
+        ).fetchall()
+        if active_vars_rows:
+            active_ids = {str(r["variable_id"]) for r in active_vars_rows}
+            merged = {k: v for k, v in merged.items() if k in active_ids}
+
+        # 用当前采集任务的增量字段更新，保留其他周期的字段及各自时间戳
+        merged.update(fields)
+
         connection.execute(
             """
             INSERT INTO local_latest_frame(
@@ -886,7 +943,7 @@ class OutboxStore:
                 values_json=excluded.values_json,
                 updated_at=excluded.updated_at
             """,
-            (device_code, group_code, msgspec.json.encode(fields), now),
+            (device_code, group_code, msgspec.json.encode(merged), now),
         )
 
     @staticmethod

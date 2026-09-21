@@ -5,12 +5,19 @@ import os
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 import redis.asyncio as redis
 
 from ingest.app import redis_store as redis_store_module
 from ingest.app.config import IngestSettings
 from ingest.app.redis_store import IngestRedisStore, NonceReplayError
 from ingest.app.schemas import UploadItem
+from ingest.tests.redis_test_guard import (
+    ALLOW_REMOTE_ENV,
+    MARKER_KEY,
+    RedisTestGuardError,
+    validate_test_redis_url,
+)
 
 
 pytestmark = pytest.mark.skipif(
@@ -35,6 +42,33 @@ def settings() -> IngestSettings:
         nonce_ttl_seconds=600,
         max_batch_items=500,
     )
+
+
+@pytest_asyncio.fixture
+async def guarded_client():
+    """Client for a guarded, disposable test Redis.
+
+    FLUSHDB only ever runs here, after validate_test_redis_url accepted the
+    target (loopback + non-zero DB) and a marker round-trip proved write
+    access to the exact DB this URL selects.
+    """
+    url = validate_test_redis_url(
+        os.environ["INGEST_TEST_REDIS_URL"],
+        allow_remote=os.getenv(ALLOW_REMOTE_ENV) == "1",
+    )
+    client = redis.from_url(url, decode_responses=True)
+    marker_value = str(uuid4())
+    await client.set(MARKER_KEY, marker_value)
+    if await client.get(MARKER_KEY) != marker_value:
+        await client.aclose()
+        raise RedisTestGuardError(
+            "marker round-trip failed; refusing to flush an unverifiable Redis target"
+        )
+    yield client
+    try:
+        await client.flushdb()
+    finally:
+        await client.aclose()
 
 
 def item(
@@ -64,9 +98,8 @@ def item(
 
 
 @pytest.mark.asyncio
-async def test_real_lua_sequence_stream_latest_and_session_fence() -> None:
-    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
-    await client.flushdb()
+async def test_real_lua_sequence_stream_latest_and_session_fence(guarded_client) -> None:
+    client = guarded_client
     store = IngestRedisStore(client, settings())
     pubsub = client.pubsub()
     await pubsub.subscribe("rt:change")
@@ -116,9 +149,8 @@ async def test_real_lua_sequence_stream_latest_and_session_fence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_real_lua_batches_latest_updates_and_keeps_newest_value() -> None:
-    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
-    await client.flushdb()
+async def test_real_lua_batches_latest_updates_and_keeps_newest_value(guarded_client) -> None:
+    client = guarded_client
     store = IngestRedisStore(client, settings())
     node_uuid = str(uuid4())
     session_id = str(uuid4())
@@ -140,9 +172,8 @@ async def test_real_lua_batches_latest_updates_and_keeps_newest_value() -> None:
     await store.close()
 
 @pytest.mark.asyncio
-async def test_real_lua_rejected_consumed_advances_watermark() -> None:
-    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
-    await client.flushdb()
+async def test_real_lua_rejected_consumed_advances_watermark(guarded_client) -> None:
+    client = guarded_client
     store = IngestRedisStore(client, settings())
     node_uuid = str(uuid4())
     session_id = str(uuid4())
@@ -160,10 +191,9 @@ async def test_real_lua_rejected_consumed_advances_watermark() -> None:
     await store.close()
 
 @pytest.mark.asyncio
-async def test_real_lua_tracks_trim_counts_per_stream(monkeypatch) -> None:
+async def test_real_lua_tracks_trim_counts_per_stream(guarded_client, monkeypatch) -> None:
     monkeypatch.setattr(redis_store_module, "STREAM_TRIM_EVERY_ITEMS", 2)
-    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
-    await client.flushdb()
+    client = guarded_client
     store = IngestRedisStore(client, settings())
     node_uuid = str(uuid4())
     session_id = str(uuid4())
@@ -197,9 +227,8 @@ async def test_real_lua_tracks_trim_counts_per_stream(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_real_lua_rejects_replayed_nonce_atomically() -> None:
-    client = redis.from_url(os.environ["INGEST_TEST_REDIS_URL"], decode_responses=True)
-    await client.flushdb()
+async def test_real_lua_rejects_replayed_nonce_atomically(guarded_client) -> None:
+    client = guarded_client
     store = IngestRedisStore(client, settings())
     node_uuid = str(uuid4())
     session_id = str(uuid4())

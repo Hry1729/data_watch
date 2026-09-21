@@ -80,35 +80,38 @@ for index, item in ipairs(items) do
         local stream_key_index = 2 * index + 2
         local latest_key_index = stream_key_index + 1
         local envelope_data = item.envelope
-        local xadd_args = {
-            KEYS[stream_key_index], "*",
-            "device_code", envelope_data.device_code,
-            "device_type", envelope_data.device_type,
-            "group_code", envelope_data.group_code,
-            "scan_rate", tostring(envelope_data.scan_rate),
-            "ts", tostring(envelope_data.ts),
-            "config_version", tostring(envelope_data.config_version),
-            "values", envelope_data.values_json
-        }
-        if envelope_data.contract_version == 2 then
-            table.insert(xadd_args, "contract_version")
-            table.insert(xadd_args, "2")
-            table.insert(xadd_args, "qualities")
-            table.insert(xadd_args, envelope_data.qualities_json)
-        end
+        local has_stream_values = envelope_data.values_json ~= nil and envelope_data.values_json ~= "{}"
+        if has_stream_values then
+            local xadd_args = {
+                KEYS[stream_key_index], "*",
+                "device_code", envelope_data.device_code,
+                "device_type", envelope_data.device_type,
+                "group_code", envelope_data.group_code,
+                "scan_rate", tostring(envelope_data.scan_rate),
+                "ts", tostring(envelope_data.ts),
+                "config_version", tostring(envelope_data.config_version),
+                "values", envelope_data.values_json
+            }
+            if envelope_data.contract_version == 2 then
+                table.insert(xadd_args, "contract_version")
+                table.insert(xadd_args, "2")
+                table.insert(xadd_args, "qualities")
+                table.insert(xadd_args, envelope_data.qualities_json)
+            end
 
-        local reply = redis.pcall("XADD", unpack(xadd_args))
-        if type(reply) == "table" and reply.err then
-            table.insert(results, "commit_unknown")
-            break
+            local reply = redis.pcall("XADD", unpack(xadd_args))
+            if type(reply) == "table" and reply.err then
+                table.insert(results, "commit_unknown")
+                break
+            end
+            local touched_stream = KEYS[stream_key_index]
+            touched_streams[touched_stream] = (touched_streams[touched_stream] or 0) + 1
         end
 
         stage_latest(KEYS[latest_key_index], item.latest_updates)
 
         redis.call("SET", KEYS[1], local_seq)
         hw = local_seq
-        local touched_stream = KEYS[stream_key_index]
-        touched_streams[touched_stream] = (touched_streams[touched_stream] or 0) + 1
         table.insert(changes, item.change)
         table.insert(results, "ack")
     end
@@ -308,11 +311,13 @@ class IngestRedisStore:
                     item.qualities or {}
                 ).decode("utf-8")
 
+            realtime_vals = item.latest_values if item.latest_values is not None else item.values
+            realtime_quals = item.latest_qualities if item.latest_qualities is not None else item.qualities
             latest_updates = build_latest_updates(
-                item.values,
+                realtime_vals,
                 ts=item.ts,
                 assignment_epoch=item.assignment_epoch,
-                qualities=item.qualities,
+                qualities=realtime_quals,
             )
             keys.extend(
                 (

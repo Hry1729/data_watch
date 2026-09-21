@@ -25,6 +25,8 @@ class UploadItem:
     contract_version: int = 1
     qualities: dict[str, int] | None = None
     envelope_error: str | None = None
+    latest_values: dict[str, str] | None = None
+    latest_qualities: dict[str, int] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "UploadItem":
@@ -33,6 +35,8 @@ class UploadItem:
         local_seq = _required_positive_int(payload, "local_seq")
 
         envelope_error = None
+        latest_values = None
+        latest_qualities = None
         try:
             assignment_epoch = _required_non_negative_int(payload, "assignment_epoch")
             device_code = _required_text(payload, "device_code")
@@ -48,6 +52,10 @@ class UploadItem:
                 if "qualities" in payload
                 else None
             )
+            if "latest_values" in payload and isinstance(payload.get("latest_values"), dict):
+                latest_values = _string_map(payload.get("latest_values"), "latest_values")
+            if "latest_qualities" in payload and isinstance(payload.get("latest_qualities"), dict):
+                latest_qualities = _int_map(payload.get("latest_qualities"), "latest_qualities")
         except (RequestValidationError, TypeError, ValueError) as exc:
             assignment_epoch = _safe_int(payload.get("assignment_epoch"))
             device_code = str(payload.get("device_code") or "")
@@ -80,6 +88,8 @@ class UploadItem:
                 else None
             ),
             envelope_error=envelope_error,
+            latest_values=latest_values,
+            latest_qualities=latest_qualities,
         )
 
 

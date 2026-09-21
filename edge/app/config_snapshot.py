@@ -245,6 +245,15 @@ class ConfigSnapshotStore:
                 """,
                 (config_revision, checksum, read_timeout_ms, now),
             )
+            # 清理在配置中已完全被移除的设备的 local_latest_frame
+            if seen_devices:
+                placeholders = ",".join("?" * len(seen_devices))
+                connection.execute(
+                    f"DELETE FROM local_latest_frame WHERE device_code NOT IN ({placeholders})",
+                    tuple(seen_devices),
+                )
+            else:
+                connection.execute("DELETE FROM local_latest_frame")
         return SnapshotInfo(config_revision, checksum, read_timeout_ms, now)
 
     def snapshot_info(self) -> SnapshotInfo | None:
