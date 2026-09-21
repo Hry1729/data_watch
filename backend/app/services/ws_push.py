@@ -41,14 +41,143 @@ async def _check_tdengine() -> bool | None:
         return False
 
 
+def _coalesce_ws_message(existing: dict | None, incoming: dict) -> dict:
+    """同一订阅至多保留一帧：snapshot/offline 覆盖，diff 合并点位。"""
+    incoming_copy = {
+        **incoming,
+        "values": dict(incoming["values"]) if isinstance(incoming.get("values"), dict) else incoming.get("values"),
+    }
+    if existing is None:
+        return incoming_copy
+    incoming_type = incoming.get("type")
+    if incoming_type in {"snapshot", "offline"}:
+        return incoming_copy
+    if incoming_type == "diff":
+        if existing.get("type") == "offline":
+            return incoming_copy
+        if existing.get("type") in {"diff", "snapshot"}:
+            merged = {
+                **existing,
+                "values": dict(existing.get("values") or {}),
+            }
+            merged["values"].update(incoming.get("values") or {})
+            return merged
+    return incoming_copy
+
+
+class _ConnectionSender:
+    """每连接一个发送协程：待发队列按订阅键有界，慢客户端超时断开。"""
+
+    def __init__(self, ws, *, send_timeout: float, on_dead) -> None:
+        self.ws = ws
+        self._send_timeout = send_timeout
+        self._on_dead = on_dead
+        self._pending: dict[tuple[str, str], dict] = {}
+        self._wakeup = asyncio.Event()
+        self._closed = False
+        self._task = asyncio.create_task(self._run(), name="ws-sender")
+
+    def enqueue(self, key: tuple[str, str], msg: dict) -> None:
+        if self._closed:
+            return
+        self._pending[key] = _coalesce_ws_message(self._pending.get(key), msg)
+        self._wakeup.set()
+
+    def drop_key(self, key: tuple[str, str]) -> None:
+        self._pending.pop(key, None)
+
+    def drop_all(self) -> None:
+        self._pending.clear()
+
+    async def send_now(self, msg: dict) -> None:
+        if self._closed:
+            return
+        try:
+            await asyncio.wait_for(self.ws.send_json(msg), timeout=self._send_timeout)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._fail()
+
+    async def close(self) -> None:
+        self._closed = True
+        self._pending.clear()
+        self._wakeup.set()
+        task = self._task
+        if task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _run(self) -> None:
+        try:
+            while not self._closed:
+                await self._wakeup.wait()
+                self._wakeup.clear()
+                while self._pending and not self._closed:
+                    key, msg = next(iter(self._pending.items()))
+                    del self._pending[key]
+                    try:
+                        await asyncio.wait_for(
+                            self.ws.send_json(msg),
+                            timeout=self._send_timeout,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        await self._fail()
+                        return
+        except asyncio.CancelledError:
+            return
+
+    async def _fail(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._pending.clear()
+        callback = self._on_dead
+        self._on_dead = None
+        if callback is not None:
+            await callback(self.ws)
+
+
 class WsPushManager:
-    def __init__(self):
+    def __init__(self, send_timeout_seconds: float | None = None):
         self._subscribers: dict[tuple, set] = {}
         self._tasks: dict[tuple, asyncio.Task] = {}
         self._snapshots: dict[tuple, dict] = {}
         self._offline: dict[tuple, bool] = {}
         self._events: dict[tuple, asyncio.Event] = {}
         self._change_task: asyncio.Task | None = None
+        self._senders: dict[Any, _ConnectionSender] = {}
+        if send_timeout_seconds is None:
+            try:
+                from app.core.config import get_settings
+
+                send_timeout_seconds = get_settings().realtime_ws_send_timeout_seconds
+            except Exception:
+                send_timeout_seconds = 2.0
+        self._send_timeout = max(0.05, float(send_timeout_seconds))
+
+    def _sender_for(self, ws) -> _ConnectionSender:
+        sender = self._senders.get(ws)
+        if sender is None:
+            sender = _ConnectionSender(
+                ws,
+                send_timeout=self._send_timeout,
+                on_dead=self.remove_all_subscriptions,
+            )
+            self._senders[ws] = sender
+        return sender
+
+    def pending_count(self, ws) -> int:
+        sender = self._senders.get(ws)
+        return 0 if sender is None else len(sender._pending)
+
+    def sender_task_count(self) -> int:
+        return sum(1 for sender in self._senders.values() if not sender._task.done())
 
     async def subscribe(self, ws, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
@@ -66,7 +195,8 @@ class WsPushManager:
         self._snapshots[key] = snapshot
         self._offline[key] = offline
         td_ok = await _check_tdengine()
-        await ws.send_json(
+        sender = self._sender_for(ws)
+        await sender.send_now(
             {
                 "type": "snapshot",
                 "device_code": device_code,
@@ -81,6 +211,9 @@ class WsPushManager:
         key = (device_code, group_code)
         subs = self._subscribers.get(key, set())
         subs.discard(ws)
+        sender = self._senders.get(ws)
+        if sender is not None:
+            sender.drop_key(key)
         if not subs:
             task = self._tasks.pop(key, None)
             if task:
@@ -89,15 +222,30 @@ class WsPushManager:
             self._snapshots.pop(key, None)
             self._offline.pop(key, None)
             self._events.pop(key, None)
+        still_subscribed = any(ws in members for members in self._subscribers.values())
+        if not still_subscribed:
+            await self._close_sender(ws)
         if not self._subscribers and self._change_task is not None:
             self._change_task.cancel()
             self._change_task = None
 
     async def remove_all_subscriptions(self, ws) -> None:
-        keys = list(self._subscribers.keys())
+        keys = [key for key, members in list(self._subscribers.items()) if ws in members]
         for key in keys:
-            if ws in self._subscribers.get(key, set()):
-                await self.unsubscribe(ws, key[0], key[1])
+            await self.unsubscribe(ws, key[0], key[1])
+        await self._close_sender(ws)
+
+    async def revoke_connection(self, ws) -> None:
+        """撤权/失效：先清空待发队列，再退订，避免继续推送受保护数据。"""
+        sender = self._senders.get(ws)
+        if sender is not None:
+            sender.drop_all()
+        await self.remove_all_subscriptions(ws)
+
+    async def _close_sender(self, ws) -> None:
+        sender = self._senders.pop(ws, None)
+        if sender is not None:
+            await sender.close()
 
     async def _read_latest(self, device_code: str, group_code: str) -> dict[str, Any] | None:
         """Read latest values; None means Redis unavailable, {} means no data."""
@@ -223,14 +371,11 @@ class WsPushManager:
                 )
 
     async def _broadcast(self, key: tuple, msg: dict) -> None:
-        dead: set = set()
         for ws in list(self._subscribers.get(key, set())):
-            try:
-                await ws.send_json(msg)
-            except Exception:
-                dead.add(ws)
-        for ws in dead:
-            await self.unsubscribe(ws, key[0], key[1])
+            sender = self._senders.get(ws)
+            if sender is None:
+                sender = self._sender_for(ws)
+            sender.enqueue(key, msg)
 
 _manager: WsPushManager | None = None
 

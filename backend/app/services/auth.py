@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
 from app.core.log_writer import write_system_log
+from app.core.login_limiter import get_login_limiter
+from app.core.password_worker import PasswordWorkerBusy, run_password_op
 from app.core.time_utils import now_local
 from app.core.security import (
     create_signed_token,
@@ -26,6 +28,10 @@ class AuthService:
         self.settings = get_settings()
 
     async def login(self, *, user_name: str, password: str, client_ip: str) -> dict[str, Any]:
+        limiter = get_login_limiter()
+        if limiter.is_blocked(user_name, client_ip):
+            raise ApiError(429, "登录失败次数过多，请稍后再试")
+
         user = await self._fetch_user_by_name(user_name)
 
         # 用户不存在或已删除
@@ -37,6 +43,7 @@ class AuthService:
                 content=f"登录失败: 用户不存在 [{user_name}]",
                 detail={"user_name": user_name, "client_ip": client_ip, "reason": "user_not_found"},
             )
+            limiter.record_failure(user_name, client_ip)
             raise ApiError(401, "用户名或密码错误")
 
         # 账号不可用
@@ -50,8 +57,13 @@ class AuthService:
             )
             raise ApiError(403, "当前账号不可用，请联系管理员")
 
-        # 密码错误
-        if not verify_password(password, user.password_hash):
+        # 密码错误（PBKDF2 走有界线程池，超载立即 503）
+        try:
+            password_ok = await run_password_op(verify_password, password, user.password_hash)
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
+        if not password_ok:
+            limiter.record_failure(user_name, client_ip)
             await write_system_log(
                 level="WARN",
                 log_type="auth",
@@ -75,6 +87,7 @@ class AuthService:
             raise ApiError(403, "当前账号未分配角色")
 
         # 登录成功
+        limiter.reset(user_name, client_ip)
         user.last_login_time = now_local()
         user.last_login_ip = client_ip
         user.update_by = user.user_name
@@ -196,7 +209,11 @@ class AuthService:
         if user is None or user.deleted:
             raise ApiError(401, "当前登录状态无效")
 
-        if not verify_password(payload.old_password, user.password_hash):
+        try:
+            old_ok = await run_password_op(verify_password, payload.old_password, user.password_hash)
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
+        if not old_ok:
             await write_system_log(
                 level="WARN",
                 log_type="auth",
@@ -206,10 +223,19 @@ class AuthService:
             )
             raise ApiError(400, "当前密码不正确")
 
-        if verify_password(payload.new_password, user.password_hash):
+        try:
+            same_as_old = await run_password_op(
+                verify_password, payload.new_password, user.password_hash
+            )
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
+        if same_as_old:
             raise ApiError(400, "新密码不能与当前密码相同")
 
-        user.password_hash = hash_password(payload.new_password)
+        try:
+            user.password_hash = await run_password_op(hash_password, payload.new_password)
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
         user.must_change_password = False
         user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
         user.update_by = user.user_name
@@ -269,6 +295,10 @@ class AuthService:
             raise ApiError(403, "首次登录必须修改密码")
 
         roles = await self._fetch_user_roles(user.id)
+        try:
+            token_exp = int(claims.get("exp", 0) or 0)
+        except (TypeError, ValueError):
+            token_exp = 0
         return {
             "user_id": user.id,
             "user_name": user.user_name,
@@ -277,6 +307,7 @@ class AuthService:
             "roles": roles,
             "token_version": current_token_version,
             "must_change_password": must_change_password,
+            "token_exp": token_exp,
         }
 
     async def _fetch_user_by_name(self, user_name: str) -> SysUser | None:

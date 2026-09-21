@@ -27,6 +27,11 @@ async def test_change_password_clears_force_change_and_invalidates_tokens(monkey
     service._fetch_user_by_id = AsyncMock(return_value=user)
     monkeypatch.setattr(auth_module, "verify_password", lambda value, _hash: value == "old")
     monkeypatch.setattr(auth_module, "hash_password", lambda value: f"hash:{value}")
+
+    async def _run_password_op(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(auth_module, "run_password_op", _run_password_op)
     monkeypatch.setattr(auth_module, "write_system_log", AsyncMock())
 
     result = await service.change_password(

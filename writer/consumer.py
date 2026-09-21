@@ -111,6 +111,9 @@ class StreamConsumer:
         self._consumer_name: str = rc["consumer_name"]
 
         self._buffer: list[_BufferedRow] = []
+        # 缓冲中 (stream_key, entry_id) 集合：flush 失败行既留缓冲又留 PEL，
+        # drain 重新领取同一消息时靠此集合防止重复入缓冲、重复写库（DW-02）。
+        self._buffered_keys: set[tuple[str, str]] = set()
         self._last_flush: float = time.monotonic()
         self._last_pending_drain: float = time.monotonic()
         self._pending_drain_interval_s: float = 60.0
@@ -137,6 +140,10 @@ class StreamConsumer:
         return await loop.run_in_executor(
             None, lambda: func(*args, **kwargs)
         )
+
+    def _remaining_capacity(self) -> int:
+        """缓冲剩余容量（DW-02：新消息读取与积压回收共用此预算）。"""
+        return self._max_buffer_rows - len(self._buffer)
 
     def _move_entry_to_dlq(
         self,
@@ -204,9 +211,10 @@ class StreamConsumer:
                     await self.drain_pending(sk, self._consumer_name)
                 self._last_pending_drain = time.monotonic()
 
-            # --- 读取新消息（缓冲区满时跳过以施加背压）---
+            # --- 读取新消息（缓冲区满时跳过以施加背压；count 按剩余容量截断）---
             if len(self._buffer) < self._max_buffer_rows:
                 streams_arg = {sk: ">" for sk in stream_keys}
+                read_count = min(self._batch_count, self._remaining_capacity())
                 try:
                     response = await asyncio.get_running_loop().run_in_executor(
                         None,
@@ -214,7 +222,7 @@ class StreamConsumer:
                             groupname=self._group_name,
                             consumername=self._consumer_name,
                             streams=streams_arg,
-                            count=self._batch_count,
+                            count=read_count,
                             block=block_ms,
                         ),
                     )
@@ -313,15 +321,25 @@ class StreamConsumer:
         loop = asyncio.get_running_loop()
         start_id = "0-0"
         while True:
+            # DW-02：回收路径与新消息读取共用容量预算。缓冲满先 flush 腾空间，
+            # 仍无空间则停止翻页（未领取条目留 PEL 等下一轮 drain），不超预算领取。
+            if self._remaining_capacity() <= 0:
+                await self._flush()
+                if self._remaining_capacity() <= 0:
+                    logger.info(
+                        "[consumer] buffer full, pausing pending reclaim for %s", stream_key
+                    )
+                    break
+            claim_count = min(self._batch_count, self._remaining_capacity())
             result = await loop.run_in_executor(
                 None,
-                lambda: self._r.xautoclaim(
+                lambda sid=start_id, cnt=claim_count: self._r.xautoclaim(
                     stream_key,
                     self._group_name,
                     consumer_name,
                     min_idle_time=self._pending_min_idle_ms,
-                    start_id=start_id,
-                    count=self._batch_count,
+                    start_id=sid,
+                    count=cnt,
                 ),
             )
             # 结果为 (next_start_id, [(entry_id, data), ...], deleted_ids)
@@ -353,6 +371,14 @@ class StreamConsumer:
         loop = asyncio.get_running_loop()
         cursor = "-"
         while True:
+            # DW-02：与 XAUTOCLAIM 路径共用容量预算；无空间先 flush，仍满则停。
+            if self._remaining_capacity() <= 0:
+                await self._flush()
+                if self._remaining_capacity() <= 0:
+                    logger.info(
+                        "[consumer] buffer full, pausing pending reclaim for %s", stream_key
+                    )
+                    break
             pending_entries = await loop.run_in_executor(
                 None,
                 lambda: self._r.xpending_range(
@@ -371,15 +397,19 @@ class StreamConsumer:
                 for p in pending_entries
                 if p.get("time_since_delivered", 0) >= self._pending_min_idle_ms
             ]
-            if eligible_ids:
+            # DW-02：领取数量按剩余容量截断；本页未领取的条目留在 PEL，
+            # 等下一轮 drain 回收，不静默丢弃。
+            claim_ids = eligible_ids[: self._remaining_capacity()]
+            truncated = len(claim_ids) < len(eligible_ids)
+            if claim_ids:
                 claimed = await loop.run_in_executor(
                     None,
-                    lambda: self._r.xclaim(
+                    lambda ids=claim_ids: self._r.xclaim(
                         stream_key,
                         self._group_name,
                         consumer_name,
                         min_idle_time=self._pending_min_idle_ms,
-                        message_ids=eligible_ids,
+                        message_ids=ids,
                     ),
                 )
                 for entry_id, entry_data in claimed:
@@ -399,6 +429,10 @@ class StreamConsumer:
 
                 if claimed:
                     await self._flush()
+
+            if truncated:
+                # 本页有未领取条目，停在当前游标，留给下一轮 drain，避免翻页跳过。
+                break
 
             last_id = pending_entries[-1]["message_id"]
             cursor = f"({last_id}"  # exclusive：下一页从此 ID 之后开始
@@ -439,6 +473,13 @@ class StreamConsumer:
         entry_data: dict,
         delivery_count: int,
     ) -> None:
+        key = (stream_key, entry_id)
+        if key in self._buffered_keys:
+            # flush 失败行既在缓冲又在 PEL，drain 重新领取同一条目时直接跳过，
+            # 防止重复入缓冲、重复写库（DW-02）。
+            logger.debug("[consumer] entry %s already buffered, skipping duplicate", entry_id)
+            return
+
         if not isinstance(entry_data, dict):
             await self._run_blocking(
                 self._move_entry_to_dlq,
@@ -844,6 +885,7 @@ class StreamConsumer:
                 delivery_count=delivery_count,
             )
         )
+        self._buffered_keys.add(key)
         self._metrics.set_buffer_rows(len(self._buffer))
 
     # ------------------------------------------------------------------
@@ -920,6 +962,10 @@ class StreamConsumer:
             except Exception:
                 logger.warning("[consumer] metrics hincrby failed", exc_info=True)
         self._buffer = failed_rows
+        # DW-02：缓冲键集合与缓冲行同步，保持去重口径一致
+        self._buffered_keys = {
+            (row.stream_key, row.entry_id) for row in failed_rows
+        }
         self._metrics.set_buffer_rows(len(self._buffer))
         self._metrics.record_flush(
             (time.perf_counter() - flush_started) * 1000,
