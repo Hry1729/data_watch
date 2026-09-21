@@ -108,6 +108,13 @@ class Settings:
     export_max_retained_tasks: int = 100
     export_max_records: int = 200000
     realtime_ws_max_subscriptions_per_connection: int = 20
+    realtime_ws_send_timeout_seconds: float = 2.0
+    realtime_ws_reauth_interval_seconds: int = 30
+    realtime_ws_reauth_fail_closed: int = 3
+    password_worker_max_workers: int = 2
+    password_worker_max_queue: int = 8
+    login_fail_max: int = 5
+    login_fail_window_seconds: int = 60
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -214,5 +221,24 @@ def get_settings() -> Settings:
         export_max_records=int(read_setting("EXPORT_MAX_RECORDS", 200000)),
         realtime_ws_max_subscriptions_per_connection=int(
             read_setting("REALTIME_WS_MAX_SUBSCRIPTIONS_PER_CONNECTION", 20)
+        ),
+        realtime_ws_send_timeout_seconds=float(
+            read_setting("REALTIME_WS_SEND_TIMEOUT_SECONDS", 2)
+        ),
+        realtime_ws_reauth_interval_seconds=int(
+            read_setting("REALTIME_WS_REAUTH_INTERVAL_SECONDS", 30)
+        ),
+        realtime_ws_reauth_fail_closed=int(
+            read_setting("REALTIME_WS_REAUTH_FAIL_CLOSED", 3)
+        ),
+        password_worker_max_workers=int(
+            read_setting("PASSWORD_WORKER_MAX_WORKERS", 2)
+        ),
+        password_worker_max_queue=int(
+            read_setting("PASSWORD_WORKER_MAX_QUEUE", 8)
+        ),
+        login_fail_max=int(read_setting("LOGIN_FAIL_MAX", 5)),
+        login_fail_window_seconds=int(
+            read_setting("LOGIN_FAIL_WINDOW_SECONDS", 60)
         ),
     )
