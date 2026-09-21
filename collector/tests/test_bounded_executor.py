@@ -130,3 +130,18 @@ def test_thread_pool_rejects_submit_beyond_capacity() -> None:
     assert first.result(timeout=2) == "done"
     assert executor.submit(lambda: "next").result(timeout=2) == "next"
     executor.shutdown(wait=True)
+
+
+def test_cancelled_queued_thread_task_releases_exactly_one_slot():
+    executor = BoundedThreadPoolExecutor(name="cancel-test", max_workers=1, max_pending=2)
+    started=threading.Event();release=threading.Event()
+    def work():started.set();release.wait(2)
+    first=executor.submit(work)
+    assert started.wait(2)
+    queued=executor.submit(lambda:None)
+    assert queued.cancel()
+    assert executor.pending==1
+    release.set();first.result(2)
+    assert executor.pending==0
+    assert executor.submit(lambda:7).result(2)==7
+    executor.shutdown()

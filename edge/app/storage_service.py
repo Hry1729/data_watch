@@ -263,7 +263,7 @@ class StorageEngine:
         if action == "session.current":
             return outbox.current_session_id()
         if action == "maintenance":
-            return outbox.maintenance(int(payload["retention_days"]))
+            return outbox.maintenance(int(payload["retention_days"]), payload.get("sent_retention_ms"))
         if action == "config.revision":
             return config.revision()
         if action == "config.apply":

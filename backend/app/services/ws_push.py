@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import time as _time
+import weakref
 from typing import Any
 
 from app.core.status_thresholds import UNSTABLE_MAX_AGE_SECONDS
@@ -61,6 +62,8 @@ def _coalesce_ws_message(existing: dict | None, incoming: dict) -> dict:
                 "values": dict(existing.get("values") or {}),
             }
             merged["values"].update(incoming.get("values") or {})
+            if merged.get("type") == "snapshot" and incoming.get("values"):
+                merged["deviceOffline"] = False
             return merged
     return incoming_copy
 
@@ -75,6 +78,8 @@ class _ConnectionSender:
         self._pending: dict[tuple[str, str], dict] = {}
         self._wakeup = asyncio.Event()
         self._closed = False
+        self._sending = None
+        self._inflight_key = None
         self._task = asyncio.create_task(self._run(), name="ws-sender")
 
     def enqueue(self, key: tuple[str, str], msg: dict) -> None:
@@ -85,19 +90,11 @@ class _ConnectionSender:
 
     def drop_key(self, key: tuple[str, str]) -> None:
         self._pending.pop(key, None)
+        if self._inflight_key == key and self._sending is not None:
+            self._sending.cancel()
 
     def drop_all(self) -> None:
         self._pending.clear()
-
-    async def send_now(self, msg: dict) -> None:
-        if self._closed:
-            return
-        try:
-            await asyncio.wait_for(self.ws.send_json(msg), timeout=self._send_timeout)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            await self._fail()
 
     async def close(self) -> None:
         self._closed = True
@@ -119,16 +116,20 @@ class _ConnectionSender:
                 while self._pending and not self._closed:
                     key, msg = next(iter(self._pending.items()))
                     del self._pending[key]
+                    self._inflight_key = key
+                    self._sending = asyncio.create_task(self.ws.send_json(msg))
                     try:
-                        await asyncio.wait_for(
-                            self.ws.send_json(msg),
-                            timeout=self._send_timeout,
-                        )
+                        await asyncio.wait_for(self._sending, timeout=self._send_timeout)
                     except asyncio.CancelledError:
-                        raise
+                        if self._closed:
+                            raise
+                        # A single subscription was removed; serve other keys.
                     except Exception:
                         await self._fail()
                         return
+                    finally:
+                        self._sending = None
+                        self._inflight_key = None
         except asyncio.CancelledError:
             return
 
@@ -152,6 +153,7 @@ class WsPushManager:
         self._events: dict[tuple, asyncio.Event] = {}
         self._change_task: asyncio.Task | None = None
         self._senders: dict[Any, _ConnectionSender] = {}
+        self._revoked = weakref.WeakSet()
         if send_timeout_seconds is None:
             try:
                 from app.core.config import get_settings
@@ -167,7 +169,7 @@ class WsPushManager:
             sender = _ConnectionSender(
                 ws,
                 send_timeout=self._send_timeout,
-                on_dead=self.remove_all_subscriptions,
+                on_dead=self._disconnect_slow,
             )
             self._senders[ws] = sender
         return sender
@@ -181,31 +183,28 @@ class WsPushManager:
 
     async def subscribe(self, ws, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
+        if ws in self._revoked:
+            return
+        latest = await self._read_latest(device_code, group_code)
+        td_ok = await _check_tdengine()
+        if ws in self._revoked:
+            return
+        offline = latest is None or _latest_is_stale(latest)
+        snapshot = {} if offline else latest
+        sender = self._sender_for(ws)
+        # Queue the initial snapshot before making this connection visible to
+        # broadcasts. One sender owns all data sends, including initialization.
+        sender.enqueue(key, {"type": "snapshot", "device_code": device_code,
+            "group_code": group_code, "values": snapshot,
+            "tdengineConnected": td_ok, "deviceOffline": offline})
         self._subscribers.setdefault(key, set()).add(ws)
         self._events.setdefault(key, asyncio.Event())
         if self._change_task is None or self._change_task.done():
             self._change_task = asyncio.create_task(self._change_loop())
         if key not in self._tasks:
-            self._tasks[key] = asyncio.create_task(
-                self._push_loop(device_code, group_code)
-            )
-        latest = await self._read_latest(device_code, group_code)
-        offline = latest is None or _latest_is_stale(latest)
-        snapshot = {} if offline else latest
-        self._snapshots[key] = snapshot
-        self._offline[key] = offline
-        td_ok = await _check_tdengine()
-        sender = self._sender_for(ws)
-        await sender.send_now(
-            {
-                "type": "snapshot",
-                "device_code": device_code,
-                "group_code": group_code,
-                "values": snapshot,
-                "tdengineConnected": td_ok,
-                "deviceOffline": offline,
-            }
-        )
+            self._snapshots[key] = snapshot
+            self._offline[key] = offline
+            self._tasks[key] = asyncio.create_task(self._push_loop(device_code, group_code))
 
     async def unsubscribe(self, ws, device_code: str, group_code: str) -> None:
         key = (device_code, group_code)
@@ -237,10 +236,18 @@ class WsPushManager:
 
     async def revoke_connection(self, ws) -> None:
         """撤权/失效：先清空待发队列，再退订，避免继续推送受保护数据。"""
+        self._revoked.add(ws)
         sender = self._senders.get(ws)
         if sender is not None:
-            sender.drop_all()
+            await sender.close()
         await self.remove_all_subscriptions(ws)
+
+    async def _disconnect_slow(self, ws):
+        await self.revoke_connection(ws)
+        try:
+            await asyncio.wait_for(ws.close(), timeout=self._send_timeout)
+        except (AttributeError, Exception):
+            pass
 
     async def _close_sender(self, ws) -> None:
         sender = self._senders.pop(ws, None)

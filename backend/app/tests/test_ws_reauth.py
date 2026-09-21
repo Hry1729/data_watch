@@ -69,3 +69,56 @@ async def test_revoke_clears_pending_protected_data() -> None:
     assert manager.pending_count(ws) == 0
     assert manager.sender_task_count() == 0
     gate.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [401,403])
+async def test_live_route_revokes_before_stalled_error_send(monkeypatch, failure):
+    from types import SimpleNamespace
+    from app.api.routes import monitor
+    class App:
+        def websocket(self, path):
+            def register(fn):self.handler=fn;return fn
+            return register
+    class WS:
+        headers={"authorization":"Bearer t"};query_params={}
+        async def accept(self):pass
+        async def receive_json(self):await asyncio.Event().wait()
+        async def send_json(self,msg):await asyncio.Event().wait()
+        async def close(self):pass
+    manager=SimpleNamespace(revoke_connection=AsyncMock(),remove_all_subscriptions=AsyncMock())
+    checks=0
+    async def access(auth):
+        nonlocal checks
+        checks+=1
+        if checks>1:raise ApiError(failure,"revoked")
+        return {"token_exp":int(time.time())+60},True
+    monkeypatch.setattr(monitor,"evaluate_realtime_ws_access",access)
+    monkeypatch.setattr(monitor,"get_ws_manager",lambda:manager)
+    monkeypatch.setattr(monitor,"get_settings",lambda:SimpleNamespace(
+        realtime_ws_max_subscriptions_per_connection=20,realtime_ws_reauth_interval_seconds=1,
+        realtime_ws_reauth_fail_closed=3))
+    app=App();monitor.register_ws_push_websocket(app)
+    task=asyncio.create_task(app.handler(WS()))
+    try:
+        deadline=time.monotonic()+2
+        while manager.revoke_connection.await_count==0 and time.monotonic()<deadline:
+            await asyncio.sleep(.01)
+        assert manager.revoke_connection.await_count==1
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):await task
+
+
+@pytest.mark.asyncio
+async def test_revocation_during_snapshot_read_cannot_resubscribe():
+    class WS:
+        async def send_json(self,msg):raise AssertionError("revoked data leaked")
+    ws=WS();manager=WsPushManager();entered=asyncio.Event();release=asyncio.Event()
+    async def latest(*args):entered.set();await release.wait();return {"1":{"t":time.time()*1000}}
+    manager._read_latest=latest
+    with patch("app.services.ws_push._check_tdengine",AsyncMock(return_value=True)):
+        task=asyncio.create_task(manager.subscribe(ws,"D","g"))
+        await entered.wait();await manager.revoke_connection(ws);release.set();await task
+    assert not manager._subscribers
+    assert manager.sender_task_count()==0

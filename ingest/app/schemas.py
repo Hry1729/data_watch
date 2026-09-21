@@ -27,6 +27,7 @@ class UploadItem:
     envelope_error: str | None = None
     latest_values: dict[str, str] | None = None
     latest_qualities: dict[str, int] | None = None
+    latest_timestamps: dict[str, int] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "UploadItem":
@@ -37,6 +38,7 @@ class UploadItem:
         envelope_error = None
         latest_values = None
         latest_qualities = None
+        latest_timestamps = None
         try:
             assignment_epoch = _required_non_negative_int(payload, "assignment_epoch")
             device_code = _required_text(payload, "device_code")
@@ -52,10 +54,20 @@ class UploadItem:
                 if "qualities" in payload
                 else None
             )
-            if "latest_values" in payload and isinstance(payload.get("latest_values"), dict):
+            if "latest_values" in payload:
                 latest_values = _string_map(payload.get("latest_values"), "latest_values")
-            if "latest_qualities" in payload and isinstance(payload.get("latest_qualities"), dict):
+            if "latest_qualities" in payload:
                 latest_qualities = _int_map(payload.get("latest_qualities"), "latest_qualities")
+            if "latest_timestamps" in payload:
+                latest_timestamps = _int_map(payload["latest_timestamps"], "latest_timestamps")
+            for label, mapping in (("latest_qualities", latest_qualities), ("latest_timestamps", latest_timestamps)):
+                if mapping is not None and (latest_values is None or set(mapping) != set(latest_values)):
+                    raise RequestValidationError(f"{label} keys must match latest_values")
+            if latest_qualities is not None and any(v < 0 or v > 65535 for v in latest_qualities.values()):
+                raise RequestValidationError("invalid latest quality")
+            if latest_timestamps is not None and any(v < 0 for v in latest_timestamps.values()):
+                raise RequestValidationError("invalid latest timestamp")
+
         except (RequestValidationError, TypeError, ValueError) as exc:
             assignment_epoch = _safe_int(payload.get("assignment_epoch"))
             device_code = str(payload.get("device_code") or "")
@@ -90,6 +102,7 @@ class UploadItem:
             envelope_error=envelope_error,
             latest_values=latest_values,
             latest_qualities=latest_qualities,
+            latest_timestamps=latest_timestamps,
         )
 
 
@@ -133,6 +146,8 @@ class AckResult:
             "local_seq": self.local_seq,
             "status": self.status,
         }
+        if self.status in {"ack", "duplicate", "stale_config_warning"}:
+            data["durability"] = "redis-aof"
         if self.reason:
             data["reason"] = self.reason
         return data

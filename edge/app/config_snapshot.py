@@ -245,15 +245,17 @@ class ConfigSnapshotStore:
                 """,
                 (config_revision, checksum, read_timeout_ms, now),
             )
-            # 清理在配置中已完全被移除的设备的 local_latest_frame
-            if seen_devices:
-                placeholders = ",".join("?" * len(seen_devices))
-                connection.execute(
-                    f"DELETE FROM local_latest_frame WHERE device_code NOT IN ({placeholders})",
-                    tuple(seen_devices),
-                )
-            else:
-                connection.execute("DELETE FROM local_latest_frame")
+            for row in connection.execute("SELECT device_code, group_code, values_json FROM local_latest_frame").fetchall():
+                valid = {str(v[0]) for v in connection.execute(
+                    "SELECT variable_id FROM edge_variable WHERE device_code=? AND group_code=?", (row["device_code"], row["group_code"]))}
+                values = json.loads(row["values_json"])
+                kept = {k: v for k, v in values.items() if k in valid}
+                if kept:
+                    connection.execute("UPDATE local_latest_frame SET values_json=? WHERE device_code=? AND group_code=?",
+                        (json.dumps(kept), row["device_code"], row["group_code"]))
+                else:
+                    connection.execute("DELETE FROM local_latest_frame WHERE device_code=? AND group_code=?", (row["device_code"], row["group_code"]))
+            connection.execute("DELETE FROM local_latest WHERE NOT EXISTS (SELECT 1 FROM edge_variable v WHERE v.device_code=local_latest.device_code AND v.group_code=local_latest.group_code AND v.variable_id=local_latest.var_id)")
         return SnapshotInfo(config_revision, checksum, read_timeout_ms, now)
 
     def snapshot_info(self) -> SnapshotInfo | None:

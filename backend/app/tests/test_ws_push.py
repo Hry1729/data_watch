@@ -34,6 +34,10 @@ class TestWsPushFreshness(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.ws_push._check_tdengine", AsyncMock(return_value=True)):
             await manager.subscribe(ws, "PLC001", "g001")
 
+        for _ in range(20):
+            if ws.messages:
+                break
+            await asyncio.sleep(0.01)
         self.assertEqual(ws.messages[0]["values"], {})
         self.assertTrue(ws.messages[0]["deviceOffline"])
         await manager.unsubscribe(ws, "PLC001", "g001")
@@ -101,6 +105,10 @@ class TestWsPushFreshness(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.ws_push._check_tdengine", AsyncMock(return_value=True)):
             await manager.subscribe(fast, "PLC001", "g001")
             await manager.subscribe(slow, "PLC001", "g001")
+        for _ in range(50):
+            if fast.messages and slow.messages:
+                break
+            await asyncio.sleep(0.01)
 
         await manager._broadcast(
             ("PLC001", "g001"),
@@ -155,3 +163,27 @@ class TestWsPushFreshness(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestUnsubscribeInFlight(unittest.IsolatedAsyncioTestCase):
+    async def test_unsubscribe_cancels_only_target_send(self):
+        from app.services.ws_push import _ConnectionSender
+        entered=asyncio.Event();cancelled=asyncio.Event();messages=[]
+        class WS:
+            async def send_json(self,msg):
+                if msg["device_code"]=="slow":
+                    entered.set()
+                    try:await asyncio.Event().wait()
+                    finally:cancelled.set()
+                else:messages.append(msg)
+        sender=_ConnectionSender(WS(),send_timeout=5,on_dead=AsyncMock())
+        sender.enqueue(("slow","g"),{"device_code":"slow"})
+        await entered.wait()
+        sender.enqueue(("fast","g"),{"device_code":"fast"})
+        sender.drop_key(("slow","g"))
+        await asyncio.wait_for(cancelled.wait(),1)
+        for _ in range(20):
+            if messages:break
+            await asyncio.sleep(.01)
+        self.assertEqual(messages,[{"device_code":"fast","values":None}])
+        await sender.close()

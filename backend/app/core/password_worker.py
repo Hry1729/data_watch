@@ -37,7 +37,12 @@ class PasswordWorker:
                 raise PasswordWorkerBusy()
             self._in_flight += 1
 
-        cfut = self._executor.submit(functools.partial(func, *args, **kwargs))
+        try:
+            cfut = self._executor.submit(functools.partial(func, *args, **kwargs))
+        except RuntimeError as exc:
+            with self._lock:
+                self._in_flight -= 1
+            raise PasswordWorkerBusy() from exc
 
         def _release(_fut: object = None) -> None:
             with self._lock:
@@ -76,3 +81,11 @@ def get_password_worker() -> PasswordWorker:
 
 async def run_password_op(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     return await get_password_worker().run(func, *args, **kwargs)
+
+
+async def close_password_worker() -> None:
+    global _worker
+    with _worker_lock:
+        worker, _worker = _worker, None
+    if worker is not None:
+        await asyncio.to_thread(worker.shutdown)

@@ -48,7 +48,7 @@ from collector.scheduler import TaskScheduler
 from collector.executor import TaskExecutor
 from collector.task import CollectTask
 from storage.redis_client import get_redis
-from storage.redis_writer import RedisWriter
+from storage.durable_redis_writer import DurableRedisWriter
 from monitor.health import HealthChecker
 from monitor.ingest_server import InterfaceIngestServer
 from monitor.driver_status_server import DriverStatusServer
@@ -142,9 +142,10 @@ class CollectorApp:
         self.scheduler = TaskScheduler(metrics=self.performance_metrics)
         if writer_factory is None:
             redis_client = get_redis(config)
-            self.redis_writer = RedisWriter(
+            self.redis_writer = DurableRedisWriter(
                 redis_client,
                 config,
+                outbox_path=Path(os.environ.get("DATAWATCH_DATA_ROOT") or os.environ.get("DATAWATCH_HOME") or r"C:\ProgramData\DataWatch") / "runtime" / "collector-retry.db",
                 metrics=self.performance_metrics,
             )
         else:

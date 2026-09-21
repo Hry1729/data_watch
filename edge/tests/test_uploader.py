@@ -75,7 +75,7 @@ async def test_ack_batch_is_ordered_and_marked_sent(tmp_path: Path, caplog) -> N
                         "batch_id": item["batch_id"],
                         "upload_session_id": item["upload_session_id"],
                         "local_seq": item["local_seq"],
-                        "status": "ack",
+                        "status": "ack", "durability": "redis-aof",
                     }
                     for item in payload["items"]
                 ]
@@ -211,7 +211,7 @@ async def test_auth_rejection_pauses_without_changing_row_state(tmp_path: Path, 
                         "batch_id": item["batch_id"],
                         "upload_session_id": item["upload_session_id"],
                         "local_seq": item["local_seq"],
-                        "status": "ack",
+                        "status": "ack", "durability": "redis-aof",
                     }
                 ]
             },
@@ -297,4 +297,39 @@ async def test_blocking_storage_call_does_not_block_event_loop(
 
     await cycle
     await client.aclose()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_only_ack_retains_local_backlog(tmp_path):
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 1)
+    def handler(request):
+        item = __import__("json").loads(request.content)["items"][0]
+        return httpx.Response(200, json={"results": [{
+            "batch_id": item["batch_id"], "upload_session_id": item["upload_session_id"],
+            "local_seq": item["local_seq"], "status": "ack"}]})
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+        await uploader.run_cycle()
+        assert store.stats() == {"retry_wait": 1}
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_session_network_failure_does_not_end_upload_loop(tmp_path):
+    from unittest.mock import AsyncMock
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 1)
+    async with httpx.AsyncClient(base_url="https://center.test") as client:
+        uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+        uploader._startup_phase_applied = True
+        uploader._maintain_if_due = AsyncMock()
+        uploader.run_cycle = AsyncMock(side_effect=httpx.ConnectError("offline"))
+        async def stop_after_retry(seconds):
+            uploader._stopped.set()
+        uploader._sleep = stop_after_retry
+        await uploader.run_forever()
+        uploader.run_cycle.assert_awaited_once()
+        assert store.stats() == {"pending": 1}
     store.close()

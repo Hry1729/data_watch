@@ -28,13 +28,18 @@ class LoginLimiter:
         key = self._key(user_name, client_ip)
         now = time.monotonic()
         with self._lock:
-            return len(self._prune_locked(key, now)) >= self._max_failures
+            for old_key in list(self._failures):
+                self._prune_locked(old_key, now)
+            return (key not in self._failures and len(self._failures) >= 10000) or len(self._prune_locked(key, now)) >= self._max_failures
 
     def record_failure(self, user_name: str, client_ip: str) -> None:
         key = self._key(user_name, client_ip)
         now = time.monotonic()
         with self._lock:
             stamps = self._prune_locked(key, now)
+            if key not in self._failures and len(self._failures) >= 10000:
+                return
+            stamps = stamps[-(self._max_failures - 1):] if self._max_failures > 1 else []
             stamps.append(now)
             self._failures[key] = stamps
 

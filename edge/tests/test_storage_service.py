@@ -103,6 +103,7 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
             [OutboxCompletion(record, "sent") for record in claimed],
             "test-uploader",
         )
+        client.maintenance(7, 24 * 60 * 60 * 1000)
         status = client.status()
         assert status["counts"] == {"sent": 100}
         assert status["sent_records_total"] == 100

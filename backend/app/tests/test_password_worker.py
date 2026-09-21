@@ -152,3 +152,11 @@ async def test_change_password_maps_worker_overload(monkeypatch) -> None:
             ChangePasswordPayload(old_password="old", new_password="new-password"),
         )
     assert err.value.code == 503
+
+
+@pytest.mark.asyncio
+async def test_submit_after_shutdown_does_not_leak_capacity():
+    worker=PasswordWorker(1,0)
+    worker.shutdown()
+    with pytest.raises(PasswordWorkerBusy):await worker.run(lambda:True)
+    assert worker._in_flight==0

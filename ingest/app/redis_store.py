@@ -214,7 +214,7 @@ class IngestRedisStore:
 
     @classmethod
     def create(cls, settings: IngestSettings) -> "IngestRedisStore":
-        client = redis.from_url(settings.redis_url, decode_responses=True)
+        client = redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=3, socket_timeout=5)
         return cls(client, settings)
 
     async def close(self) -> None:
@@ -319,6 +319,9 @@ class IngestRedisStore:
                 assignment_epoch=item.assignment_epoch,
                 qualities=realtime_quals,
             )
+            if item.latest_timestamps is not None:
+                for var_id, timestamp in item.latest_timestamps.items():
+                    latest_updates[var_id]["t"] = timestamp
             keys.extend(
                 (
                     stream_key(
@@ -350,16 +353,19 @@ class IngestRedisStore:
         )
 
         try:
-            result = await self._client.eval(
-                INGEST_BATCH_LUA,
-                len(keys),
-                *keys,
-                first_item.upload_session_id,
-                str(self._settings.stream_maxlen),
-                msgspec.json.encode(payload).decode("utf-8"),
-                str(STREAM_TRIM_EVERY_ITEMS),
-                str(self._settings.nonce_ttl_seconds),
-            )
+            async with self._client.pipeline(transaction=False) as pipe:
+                pipe.eval(
+                    INGEST_BATCH_LUA, len(keys), *keys,
+                    first_item.upload_session_id, "0",  # never trim unconsumed data
+                    msgspec.json.encode(payload).decode("utf-8"),
+                    str(STREAM_TRIM_EVERY_ITEMS), str(self._settings.nonce_ttl_seconds),
+                )
+                # EVAL reserves a new nonce even for duplicate batches. The
+                # same connection's AOF offset includes all preceding writes.
+                pipe.execute_command("WAITAOF", 1, 0, 2000)
+                result, persisted = await pipe.execute()
+                if not isinstance(persisted, (list, tuple)) or int(persisted[0]) < 1:
+                    raise CommitUnknownError("Redis AOF persistence not confirmed")
         except RedisError as exc:
             raise CommitUnknownError(str(exc)) from exc
         statuses = msgspec.json.decode(_decode_result(result))

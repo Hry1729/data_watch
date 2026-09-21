@@ -15,9 +15,26 @@ class FakeRedis:
     def __init__(self) -> None:
         self.eval_call = None
 
-    async def eval(self, script, numkeys, *args):
+    def pipeline(self, transaction=False):
+        assert transaction is False
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    def eval(self, script, numkeys, *args):
         self.eval_call = (script, numkeys, args)
-        return json.dumps(["ack"])
+        return self
+
+    def execute_command(self, *args):
+        assert args == ("WAITAOF", 1, 0, 2000)
+        return self
+
+    async def execute(self):
+        return [json.dumps(["ack"]), getattr(self, "persisted", [1, 0])]
 
     async def aclose(self) -> None:
         return None
@@ -133,3 +150,29 @@ async def test_process_item_publishes_change_on_atomic_ack_path() -> None:
     assert 'redis.call("HSET", unpack(set_args))' in script
     assert 'redis.call("HGET"' not in script
     assert "local latest_chunk_size = 128" in script
+
+@pytest.mark.asyncio
+async def test_missing_aof_confirmation_never_returns_ack():
+    from ingest.app.redis_store import CommitUnknownError
+    client = FakeRedis()
+    client.persisted = [0, 0]
+    store = IngestRedisStore(client, _settings())
+    entry = UploadItem(batch_id=str(uuid4()), upload_session_id=str(uuid4()), local_seq=1,
+        assignment_epoch=1, device_code="x", device_type="qc", group_code="g", scan_rate=100,
+        ts=1000, config_version=1, values={})
+    with pytest.raises(CommitUnknownError, match="persistence"):
+        await store.process_item(str(uuid4()), entry, "accept")
+
+
+@pytest.mark.asyncio
+async def test_realtime_only_payload_preserves_each_timestamp():
+    client = FakeRedis()
+    entry = UploadItem(batch_id=str(uuid4()), upload_session_id=str(uuid4()), local_seq=1,
+        assignment_epoch=1, device_code="x", device_type="qc", group_code="g", scan_rate=100,
+        ts=2000, config_version=1, values={}, latest_values={"fast":"hi","slow":"there"},
+        latest_timestamps={"fast":2000,"slow":1000})
+    await IngestRedisStore(client, _settings()).process_item(str(uuid4()), entry, "accept")
+    payload = json.loads(client.eval_call[2][-3])[0]
+    assert payload["latest_updates"]["slow"]["t"] == 1000
+    assert payload["envelope"]["values_json"] == "{}"
+    assert client.eval_call[2][-4] == "0"  # prohibit lossy trim

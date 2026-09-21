@@ -217,9 +217,9 @@ class EdgeStorageClient:
     def current_session_id(self) -> str:
         return str(self._command("session.current"))
 
-    def maintenance(self, retention_days: int) -> dict[str, Any]:
+    def maintenance(self, retention_days: int, sent_retention_ms: int | None = None) -> dict[str, Any]:
         return dict(
-            self._command("maintenance", {"retention_days": retention_days})
+            self._command("maintenance", {"retention_days": retention_days, "sent_retention_ms": sent_retention_ms})
         )
 
     def revision(self) -> int:

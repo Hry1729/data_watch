@@ -128,7 +128,7 @@ class OutboxStore:
         with self._lock:
             self._connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
             self._connection.execute("PRAGMA journal_mode=WAL")
-            self._connection.execute("PRAGMA synchronous=NORMAL")
+            self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA busy_timeout=5000")
             self._connection.executescript(OUTBOX_SCHEMA)
             self._connection.executescript(CONFIG_SNAPSHOT_SCHEMA)
@@ -543,22 +543,14 @@ class OutboxStore:
         self,
         expected_old_session_id: str | None = None,
     ) -> SessionSwitchState:
+        if expected_old_session_id is not None and expected_old_session_id != self.current_session_id():
+            raise RuntimeError("refusing to replace a foreign active session")
         new_session_id = str(uuid4())
         with self._transaction() as connection:
             existing = connection.execute(
                 "SELECT value FROM metadata WHERE key='pending_session_switch_old_id'"
             ).fetchone()
             if existing:
-                # 若外部显式提供了中心预期会话且与待切换记录不同，进行修正
-                if expected_old_session_id and str(existing["value"]) != expected_old_session_id:
-                    connection.execute(
-                        "UPDATE metadata SET value=? WHERE key='pending_session_switch_old_id'",
-                        (expected_old_session_id,),
-                    )
-                    return SessionSwitchState(
-                        old_session_id=expected_old_session_id,
-                        new_session_id=self._metadata(connection, "upload_session_id"),
-                    )
                 return SessionSwitchState(
                     old_session_id=str(existing["value"]),
                     new_session_id=self._metadata(connection, "upload_session_id"),
@@ -862,6 +854,7 @@ class OutboxStore:
             payload["latest_values"] = {
                 str(k): str(v["v"]) for k, v in latest_fields.items() if "v" in v
             }
+            payload["latest_timestamps"] = {str(k): int(v.get("t", ts)) for k, v in latest_fields.items()}
             payload["latest_qualities"] = {
                 str(k): int(v.get("q", 0)) for k, v in latest_fields.items()
             }
@@ -927,12 +920,13 @@ class OutboxStore:
             "SELECT variable_id FROM edge_variable WHERE device_code = ? AND group_code = ?",
             (device_code, group_code),
         ).fetchall()
-        if active_vars_rows:
+        if connection.execute("SELECT 1 FROM edge_config_meta WHERE singleton=1").fetchone():
             active_ids = {str(r["variable_id"]) for r in active_vars_rows}
             merged = {k: v for k, v in merged.items() if k in active_ids}
-
-        # 用当前采集任务的增量字段更新，保留其他周期的字段及各自时间戳
-        merged.update(fields)
+            fields = {k: v for k, v in fields.items() if k in active_ids}
+        for key, value in fields.items():
+            if key not in merged or int(value.get("t", 0)) >= int(merged[key].get("t", 0)):
+                merged[key] = value
 
         connection.execute(
             """

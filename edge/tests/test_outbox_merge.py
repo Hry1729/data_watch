@@ -140,6 +140,8 @@ def test_local_latest_frame_purges_deleted_variables(tmp_path: Path):
         devices=devices_v2,
     )
 
+    assert "var2" not in store.read_local_latest("DEV1", "GRP1")
+
     # 下一次采集只写 var1，var2 应该被清除（而不是永久残留）
     store.write_local_latest(
         "DEV1",
@@ -151,3 +153,13 @@ def test_local_latest_frame_purges_deleted_variables(tmp_path: Path):
     latest = store.read_local_latest("DEV1", "GRP1")
     assert latest["var1"]["v"] == "1.5"
     assert "var2" not in latest
+
+
+def test_removed_last_point_cleared_without_another_sample(tmp_path):
+    path=tmp_path/"edge.db"
+    store=OutboxStore(path)
+    config=ConfigSnapshotStore(path)
+    store.write_local_latest("D","g",{"v":{"v":"1","t":1}})
+    config.apply_snapshot(config_revision=1,checksum=snapshot_checksum([]),devices=[])
+    assert store.read_local_latest("D","g")=={}
+    store.close();config.close()

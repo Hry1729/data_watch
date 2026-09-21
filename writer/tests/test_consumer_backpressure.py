@@ -290,3 +290,17 @@ async def test_flush_failure_keeps_keys_in_buffered_set():
     await consumer._flush()
     assert consumer._buffer == []
     assert consumer._buffered_keys == set()
+
+
+@pytest.mark.asyncio
+async def test_multistream_read_admission_leaves_overflow_in_pel():
+    writer=MagicMock();_retry_flush(writer)
+    redis_client=MagicMock();c=_consumer(writer,redis_client,max_buffer_rows=2)
+    for stream in ("rt:stream:qc:g001:0","rt:stream:qc:g001:1"):
+        for i in range(2):
+            await c._handle_entry(stream,f"{i+1}-0",_entry_data(str(i)),1)
+    assert len(c._buffer)==2
+    assert len(c._buffered_keys)==2
+    redis_client.xack.assert_not_called()
+    await c._flush()
+    assert len(c._buffer)==2

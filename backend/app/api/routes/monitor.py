@@ -182,7 +182,7 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                 await websocket.close()
                 return
         try:
-            principal, can_subscribe = await evaluate_realtime_ws_access(authorization)
+            principal, can_subscribe = await asyncio.wait_for(evaluate_realtime_ws_access(authorization), timeout=5.0)
         except ApiError as e:
             await websocket.send_json({
                 "type": "error",
@@ -218,15 +218,15 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
             if state["closed"]:
                 return
             state["closed"] = True
-            try:
-                await websocket.send_json(
-                    {"type": "error", "message": message, "code": code}
-                )
-            except Exception:
-                pass
             await _drop_subscriptions()
             try:
-                await websocket.close()
+                await asyncio.wait_for(websocket.send_json(
+                    {"type": "error", "message": message, "code": code}
+                ), timeout=2.0)
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(websocket.close(), timeout=2.0)
             except Exception:
                 pass
 
@@ -237,13 +237,17 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                 await asyncio.sleep(delay)
                 if state["closed"]:
                     return
+                if state["token_exp"] and time.time() >= state["token_exp"]:
+                    await _close_unauthorized(401, "令牌已过期")
+                    return
                 try:
-                    refreshed, can_sub = await evaluate_realtime_ws_access(authorization)
+                    refreshed, can_sub = await asyncio.wait_for(evaluate_realtime_ws_access(authorization), timeout=5.0)
                     consecutive_infra = 0
                     state["can_subscribe"] = can_sub
                     state["token_exp"] = int(refreshed.get("token_exp") or 0)
-                    if not can_sub and subscriptions:
-                        await _drop_subscriptions()
+                    if not can_sub:
+                        await _close_unauthorized(403, "实时订阅权限已失效")
+                        return
                 except ApiError as exc:
                     await _close_unauthorized(exc.code, exc.message)
                     return
@@ -263,7 +267,7 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                 if action == "subscribe" and device_code:
                     key = (device_code, group_code)
                     try:
-                        refreshed, can_sub = await evaluate_realtime_ws_access(authorization)
+                        refreshed, can_sub = await asyncio.wait_for(evaluate_realtime_ws_access(authorization), timeout=5.0)
                         state["can_subscribe"] = can_sub
                         state["token_exp"] = int(refreshed.get("token_exp") or 0)
                     except ApiError as e:
@@ -317,7 +321,7 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                             {"type": "error", "message": "设备或分组不存在", "code": 404}
                         )
                         continue
-                    if state["closed"]:
+                    if state["closed"] or not state["can_subscribe"]:
                         return
                     await manager.subscribe(websocket, device_code, group_code)
                     subscriptions.add(key)

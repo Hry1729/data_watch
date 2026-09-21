@@ -285,13 +285,6 @@ class TaskExecutor:
                     device.device_id,
                     exc,
                 )
-                # 集中式持久化补偿：写入本地 retry_outbox 保存原始采样数据与时间戳
-                retry_outbox = getattr(self, "retry_outbox", None)
-                if retry_outbox is not None:
-                    try:
-                        self._persist_to_retry_outbox(task.device, task.scan_task, points)
-                    except Exception as persist_exc:
-                        logger.error("Failed to persist to retry_outbox: %s", persist_exc)
                 self._record_read_summary(task, len(points), elapsed * 1000, error=True)
                 return
             finally:
@@ -544,83 +537,10 @@ class TaskExecutor:
 
                 self._redis_writer.write_latest(device_code, group_code, fields)
 
-            # Redis 成功写入后，如果本地重试队列有滞留记录，顺便触发重放
-            retry_outbox = getattr(self, "retry_outbox", None)
-            if retry_outbox is not None:
-                try:
-                    retry_outbox.replay_pending(self._redis_writer)
-                except Exception as replay_exc:
-                    logger.debug("Opportunistic retry outbox replay encountered: %s", replay_exc)
         except Exception as exc:
             # 不在此吞掉异常：交由 execute() 的写入分支统一计错并记录 summary
             logger.error("Redis write failed for device %s: %s", device.device_id, exc)
             raise
-
-    def _persist_to_retry_outbox(self, device, scan_task, points: List[DataPoint]) -> None:
-        """把写入失败但读取成功的原始点位持久化到本地 retry_outbox。"""
-        retry_outbox = getattr(self, "retry_outbox", None)
-        if retry_outbox is None or not points:
-            return
-        var_points: Dict[str, DataPoint] = {p.variable_id: p for p in points}
-        scan_rate_ms = int(scan_task.scan_rate * 1000)
-        device_code = device.device_id
-        device_type = device.device_type.lower()
-        var_meta: Dict[str, Any] = {v.variable_id: v for v in scan_task.variables}
-
-        by_group: Dict[str, Dict[str, tuple]] = {}
-        group_versions: Dict[str, int] = {}
-        for var_id, point in var_points.items():
-            var = var_meta.get(var_id)
-            if var is None:
-                continue
-            gc = var.group_code
-            if gc not in by_group:
-                by_group[gc] = {}
-            group_versions[gc] = getattr(var, "group_config_version", 1)
-            by_group[gc][var_id] = (point, var.data_type, var.is_storage)
-
-        for group_code, var_data in by_group.items():
-            fields = {
-                var_id: {
-                    "v": self._format_point_value(point.value),
-                    "t": self._timestamp_to_millis(point.timestamp),
-                    "q": int(getattr(point, "quality", 0)),
-                }
-                for var_id, (point, _, _) in var_data.items()
-            }
-            ts_ms = max(field["t"] for field in fields.values())
-            frame = {
-                "device_code": device_code,
-                "group_code": group_code,
-                "ts": ts_ms,
-                "scan_rate": scan_rate_ms,
-                "values": {
-                    var_id: self._format_point_value(point.value)
-                    for var_id, (point, _, _) in var_data.items()
-                },
-            }
-            stream_values = {
-                var_id: self._format_point_value(point.value)
-                for var_id, (point, dt, is_storage) in var_data.items()
-                if is_storage and dt != "STRING" and point.value is not None
-            }
-            stream_qualities = {
-                var_id: int(getattr(point, "quality", 0))
-                for var_id, (point, dt, is_storage) in var_data.items()
-                if is_storage and dt != "STRING" and point.value is not None
-            }
-            retry_outbox.record_failure(
-                device_code=device_code,
-                group_code=group_code,
-                scan_rate_ms=scan_rate_ms,
-                ts_ms=ts_ms,
-                config_version=group_versions[group_code],
-                device_type=device_type,
-                frame=frame,
-                stream_values=stream_values,
-                stream_qualities=stream_qualities,
-                latest_fields=fields,
-            )
 
     @staticmethod
     def _timestamp_to_millis(timestamp: Any) -> int:

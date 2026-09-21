@@ -45,30 +45,27 @@ def settings() -> IngestSettings:
 
 
 @pytest_asyncio.fixture
-async def guarded_client():
-    """Client for a guarded, disposable test Redis.
-
-    FLUSHDB only ever runs here, after validate_test_redis_url accepted the
-    target (loopback + non-zero DB) and a marker round-trip proved write
-    access to the exact DB this URL selects.
-    """
+async def guarded_client(monkeypatch):
+    """Require a pre-provisioned disposable instance; never clear a database."""
+    global TEST_DEVICE, TEST_GROUP
+    TEST_DEVICE = "QC-" + uuid4().hex
+    TEST_GROUP = "test-" + uuid4().hex
     url = validate_test_redis_url(
         os.environ["INGEST_TEST_REDIS_URL"],
         allow_remote=os.getenv(ALLOW_REMOTE_ENV) == "1",
     )
     client = redis.from_url(url, decode_responses=True)
-    marker_value = str(uuid4())
-    await client.set(MARKER_KEY, marker_value)
-    if await client.get(MARKER_KEY) != marker_value:
+    # Marker must be provisioned outside the test on a disposable instance.
+    expected = os.getenv("INGEST_TEST_REDIS_MARKER")
+    if not expected or await client.get(MARKER_KEY) != expected:
         await client.aclose()
-        raise RedisTestGuardError(
-            "marker round-trip failed; refusing to flush an unverifiable Redis target"
-        )
-    yield client
+        raise RedisTestGuardError("pre-provisioned disposable-instance marker missing or mismatched")
+    # No FLUSHDB: dispose of the isolated instance after testing.
     try:
-        await client.flushdb()
+        yield client
     finally:
         await client.aclose()
+
 
 
 def item(
@@ -76,8 +73,8 @@ def item(
     session_id: str,
     *,
     ts: int = 1000,
-    device_code: str = "QC100",
-    group_code: str = "g001",
+    device_code: str | None = None,
+    group_code: str | None = None,
     value: str = "12.5",
 ) -> UploadItem:
     return UploadItem(
@@ -85,9 +82,9 @@ def item(
         upload_session_id=session_id,
         local_seq=seq,
         assignment_epoch=5,
-        device_code=device_code,
+        device_code=device_code or TEST_DEVICE,
         device_type="qc",
-        group_code=group_code,
+        group_code=group_code or TEST_GROUP,
         scan_rate=100,
         ts=ts,
         config_version=12,
@@ -112,7 +109,7 @@ async def test_real_lua_sequence_stream_latest_and_session_fence(guarded_client)
     change = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
     assert change is not None
     assert json.loads(change["data"]) == [
-        {"device_code": "QC100", "group_code": "g001"}
+        {"device_code": TEST_DEVICE, "group_code": TEST_GROUP}
     ]
     duplicate = await store.process_item(node_uuid, item(1, old_session), "accept")
     gap = await store.process_item(node_uuid, item(3, old_session), "accept")
@@ -122,14 +119,14 @@ async def test_real_lua_sequence_stream_latest_and_session_fence(guarded_client)
         "duplicate",
         "seq_reject",
     )
-    stream_keys = await client.keys("rt:stream:*")
+    stream_keys = await client.keys(f"rt:stream:qc:{TEST_GROUP}*:*")
     assert len(stream_keys) == 1
     entries = await client.xrange(stream_keys[0])
-    assert entries[0][1]["device_code"] == "QC100"
+    assert entries[0][1]["device_code"] == TEST_DEVICE
     assert entries[0][1]["contract_version"] == "2"
     assert json.loads(entries[0][1]["values"]) == {"1": "12.5"}
 
-    latest_key = "rt:latest:QC100:g001"
+    latest_key = f"rt:latest:{TEST_DEVICE}:{TEST_GROUP}"
     await client.hset(latest_key, "1", '{"v":"legacy","t":2000,"q":0}')
     accepted = await store.process_item(
         node_uuid, item(2, old_session, ts=2000), "accept"
@@ -164,7 +161,7 @@ async def test_real_lua_batches_latest_updates_and_keeps_newest_value(guarded_cl
         nonce="batched-latest",
     )
 
-    latest = json.loads(await client.hget("rt:latest:QC100:g001", "1"))
+    latest = json.loads(await client.hget(f"rt:latest:{TEST_DEVICE}:{TEST_GROUP}", "1"))
     assert [result.status for result in results] == ["ack", "ack"]
     assert latest["v"] == "second"
     assert latest["t"] == 1100
@@ -186,12 +183,12 @@ async def test_real_lua_rejected_consumed_advances_watermark(guarded_client) -> 
     assert rejected.status == "rejected_consumed"
     assert accepted.status == "ack"
     assert await client.get(f"hw:{node_uuid}:{session_id}") == "2"
-    assert await client.xlen((await client.keys("rt:stream:*"))[0]) == 1
+    assert await client.xlen((await client.keys(f"rt:stream:qc:{TEST_GROUP}*:*"))[0]) == 1
 
     await store.close()
 
 @pytest.mark.asyncio
-async def test_real_lua_tracks_trim_counts_per_stream(guarded_client, monkeypatch) -> None:
+async def test_real_lua_never_trims_unconsumed_streams(guarded_client, monkeypatch) -> None:
     monkeypatch.setattr(redis_store_module, "STREAM_TRIM_EVERY_ITEMS", 2)
     client = guarded_client
     store = IngestRedisStore(client, settings())
@@ -200,28 +197,29 @@ async def test_real_lua_tracks_trim_counts_per_stream(guarded_client, monkeypatc
 
     await store.process_item(
         node_uuid,
-        item(1, session_id, device_code="QC100", group_code="g001"),
+        item(1, session_id, device_code=TEST_DEVICE, group_code=TEST_GROUP),
         "accept",
     )
     await store.process_item(
         node_uuid,
-        item(2, session_id, device_code="QC200", group_code="g002"),
+        item(2, session_id, device_code=TEST_DEVICE + "-2", group_code=TEST_GROUP + "-2"),
         "accept",
     )
     await store.process_item(
         node_uuid,
-        item(3, session_id, device_code="QC100", group_code="g001"),
+        item(3, session_id, device_code=TEST_DEVICE, group_code=TEST_GROUP),
         "accept",
     )
 
     counts = await client.hgetall("ingest:stream_trim_item_counts")
-    stream_keys = await client.keys("rt:stream:*")
+    stream_keys = await client.keys(f"rt:stream:qc:{TEST_GROUP}*:*")
     stream_by_group = {
         (await client.xrange(key))[0][1]["group_code"]: key
         for key in stream_keys
     }
-    assert counts[stream_by_group["g001"]] == "0"
-    assert counts[stream_by_group["g002"]] == "1"
+    assert counts == {}
+    assert await client.xlen(stream_by_group[TEST_GROUP]) == 2
+    assert await client.xlen(stream_by_group[TEST_GROUP + "-2"]) == 1
 
     await store.close()
 
@@ -243,7 +241,7 @@ async def test_real_lua_rejects_replayed_nonce_atomically(guarded_client) -> Non
         )
 
     assert accepted.status == "ack"
-    stream_keys = await client.keys("rt:stream:*")
+    stream_keys = await client.keys(f"rt:stream:qc:{TEST_GROUP}*:*")
     assert len(stream_keys) == 1
     assert await client.xlen(stream_keys[0]) == 1
 

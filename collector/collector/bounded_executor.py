@@ -63,12 +63,20 @@ class BoundedThreadPoolExecutor(ThreadPoolExecutor):
             self._peak_pending = max(self._peak_pending, self._pending)
             self._set_gauge("pending", self._pending)
             self._set_gauge("peak_pending", self._peak_pending)
+        def invoke():
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                # Release before Future publishes completion to result() waiters.
+                self._release_slot()
+
         try:
-            future = super().submit(fn, *args, **kwargs)
+            future = super().submit(invoke)
         except Exception:
             self._release_slot()
             raise
-        future.add_done_callback(lambda _future: self._release_slot())
+        # A cancelled queued task never runs invoke(). Running tasks cannot cancel.
+        future.add_done_callback(lambda done: self._release_slot() if done.cancelled() else None)
         return future
 
     def _release_slot(self) -> None:

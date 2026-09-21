@@ -17,6 +17,8 @@ def get_redis(config) -> redis.Redis:
             password=config.redis.password or None,
             decode_responses=True,
             max_connections=64,
+            socket_connect_timeout=3,
+            socket_timeout=5,
             timeout=2,
         )
     return redis.Redis(connection_pool=_pool)

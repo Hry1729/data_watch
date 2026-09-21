@@ -16,16 +16,16 @@ def test_guard_rejects_db_zero():
 
 
 def test_guard_rejects_invalid_scheme():
-    with pytest.raises(RedisTestGuardError, match="scheme must be"):
+    with pytest.raises(RedisTestGuardError, match="redis/rediss"):
         validate_test_redis_url("http://127.0.0.1:6379/1")
 
 
 def test_guard_rejects_remote_without_flag(monkeypatch):
     monkeypatch.delenv(ALLOW_REMOTE_ENV, raising=False)
-    with pytest.raises(RedisTestGuardError, match="is not loopback"):
+    with pytest.raises(RedisTestGuardError, match="explicit opt-in"):
         validate_test_redis_url("redis://192.168.1.100:6379/1")
 
-    with pytest.raises(RedisTestGuardError, match="is not loopback"):
+    with pytest.raises(RedisTestGuardError, match="explicit opt-in"):
         validate_test_redis_url("redis://prod-redis.internal:6379/1")
 
 
@@ -48,3 +48,9 @@ def test_guard_allows_loopback_with_nonzero_db():
         validate_test_redis_url("redis://[::1]:6379/2")
         == "redis://[::1]:6379/2"
     )
+
+
+@pytest.mark.parametrize("url", ["redis://localhost/1?db=0", "unix:///tmp/redis.sock", "redis://localhost/-1", "redis://localhost/nope"])
+def test_guard_rejects_overrides_and_ambiguous_databases(url):
+    with pytest.raises(RedisTestGuardError):
+        validate_test_redis_url(url)

@@ -749,6 +749,9 @@ async def lifespan(_: TurboAPI):
         await stop_driver_operation_cleanup()
         logger.info("Driver operation cleanup scheduler stopped")
 
+        from app.core.password_worker import close_password_worker
+        await close_password_worker()
+
         # 关闭 Redis 连接
         await close_redis()
         logger.info("Redis connection closed")

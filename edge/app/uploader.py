@@ -113,6 +113,7 @@ class Uploader:
         self._paused_records: list[OutboxRecord] | None = None
         self._next_maintenance_at = 0.0
         self._startup_phase_applied = False
+        self._session_conflict = False
         self._summary_started_at = time.monotonic()
         self._summary_batches = 0
         self._summary_records = 0
@@ -152,6 +153,9 @@ class Uploader:
             started = time.monotonic()
             try:
                 await self.run_cycle()
+            except httpx.HTTPError as exc:
+                logger.warning("Session verification unavailable: %s", exc)
+                await self._sleep(5.0)
             except UploaderPaused as exc:
                 logger.warning("Uploader paused: %s; retrying in 5 seconds", exc)
                 await self._sleep(5.0)
@@ -180,6 +184,19 @@ class Uploader:
 
     async def run_cycle(self) -> None:
         pending_switch = await self._store_call(self._store.pending_session_switch)
+        if self._session_conflict:
+            current = await self._store_call(self._store.current_session_id)
+            path = f"/ingest/session/{self._settings.node_uuid}"
+            response = await self._client.get(path, headers=self._signer.headers("GET", path, {}))
+            if response.status_code != 200:
+                raise UploaderPaused("session conflict requires center verification")
+            active = response.json().get("active_session_id")
+            allowed = {None, current}
+            if pending_switch is not None:
+                allowed.add(pending_switch.old_session_id)
+            if active not in allowed:
+                raise UploaderPaused("another instance owns the node; no takeover attempted")
+            self._session_conflict = False
         if pending_switch is not None:
             await self._complete_session_switch(pending_switch)
         if self._paused_records is not None:
@@ -302,6 +319,9 @@ class Uploader:
                 return False
             status = str(result.get("status") or "")
             if status in {"ack", "duplicate", "stale_config_warning"}:
+                if result.get("durability") != "redis-aof":
+                    await self._retry_records(records, "center has not confirmed durable acceptance; upgrade center first", 200)
+                    return False
                 completions.append(OutboxCompletion(record, "sent"))
             elif status == "rejected_consumed":
                 logger.error(
@@ -511,6 +531,7 @@ class Uploader:
         if status in {"switched", "already_switched"}:
             await self._store_call(self._store.complete_session_switch, state)
         elif status == "session_conflict":
+            self._session_conflict = True
             # 记录冲突错误并不盲目重发，避免永久阻塞上传循环
             logger.error(
                 "Active session conflict for node=%s: local old=%s, new=%s. "
@@ -535,13 +556,17 @@ class Uploader:
         active = response.json().get("active_session_id")
         if active == current:
             return False
-        # 中心预期了不同的会话；使用中心真实活跃会话作为切换基准，避免中心比较失败
-        state = await self._store_call(
-            self._store.prepare_session_switch,
-            expected_old_session_id=active,
-        )
+        pending = await self._store_call(self._store.pending_session_switch)
+        if pending is not None and active in {pending.old_session_id, pending.new_session_id, None}:
+            await self._complete_session_switch(pending)
+            return (await self._store_call(self._store.pending_session_switch)) is None
+        if active is not None:
+            self._session_conflict = True
+            raise UploaderPaused("another session owns this node; verify the other instance and re-register this node")
+        state = await self._store_call(self._store.prepare_session_switch)
         await self._complete_session_switch(state)
         return (await self._store_call(self._store.pending_session_switch)) is None
+
 
 
 class SingleInstanceLock(AbstractContextManager):

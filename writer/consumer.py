@@ -480,6 +480,9 @@ class StreamConsumer:
             logger.debug("[consumer] entry %s already buffered, skipping duplicate", entry_id)
             return
 
+        if self._remaining_capacity() <= 0:
+            return  # Already delivered by Redis; leave in PEL for a later reclaim.
+
         if not isinstance(entry_data, dict):
             await self._run_blocking(
                 self._move_entry_to_dlq,
