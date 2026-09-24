@@ -71,14 +71,19 @@ END;
 # 拒收缺口台账，**独立数据库**。
 # 有限缓冲触顶时拒绝新帧是设计好的保护策略，但绝不能只保住旧积压就当作没事：
 # 被拒收的采样必须能追溯到设备、分组、采样周期、时间范围、数量和原因。
-# 之所以用独立文件：主 outbox 触顶的原因正是它自己写不下，
-# 把缺口记在同一个库里必然跟着写失败，等于没有记录。
-# 每次启动会 DROP 再重建（见 _init_reject_log），因此它
-#   * 不依赖主库容量，主库满了仍能写；
-#   * 不随运行时长无限增长，最坏就是每个 (设备,分组,周期,原因) 一行；
-#   * 生命周期限定在"本次运行"，避免陈旧行被误读成当前缺口。
+# 为什么用独立文件：主 outbox 触顶的原因正是它自己写不下，把缺口记在同一个库里
+# 必然跟着写失败。但它只能隔离主 SQLite 的容量限制，**不能**隔离整块磁盘写满或
+# 损坏；本表用 WAL + synchronous=NORMAL，进程崩溃/掉电后最近已提交事务仍可能回退，
+# 因此它是"尽力而为的审计线索"，不是强持久审计记录。
+#
+# 生命周期：**跨重启保留**。缺口是历史事实，而运维重启 Collector 恰恰是处理故障的
+# 常见动作——用"清空旧证据"来避免把旧缺口当成当前缺口，等于把审计线索删掉。
+# 区分"当前"与"历史"靠 run_id（每次进程启动一个新的 run），不靠删除；
+# 容量靠 (run_id, 设备, 分组, 周期, 原因) 唯一约束聚合与归档控制，不靠清空。
 REJECT_LOG_SCHEMA = """
 CREATE TABLE IF NOT EXISTS collector_rejected_gaps (
+    run_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
     device_code TEXT NOT NULL,
     group_code TEXT NOT NULL,
     device_type TEXT NOT NULL,
@@ -89,8 +94,10 @@ CREATE TABLE IF NOT EXISTS collector_rejected_gaps (
     frames INTEGER NOT NULL,
     first_rejected_at INTEGER NOT NULL,
     last_rejected_at INTEGER NOT NULL,
-    PRIMARY KEY (device_code, group_code, scan_rate_ms, reason)
+    resolved_at INTEGER,
+    PRIMARY KEY (run_id, device_code, group_code, scan_rate_ms, reason)
 );
+CREATE INDEX IF NOT EXISTS idx_rejected_run ON collector_rejected_gaps(run_id);
 """
 
 _PAYLOAD_SIZE_SQL = (
@@ -111,6 +118,9 @@ class _InsertRequest:
     payload_bytes: int
     done: threading.Event = field(default_factory=threading.Event)
     error: BaseException | None = None
+    # 同一帧可能被两条路径拒收（调用方等待超时、写线程批次超容量），
+    # 台账按唯一键聚合，重复计数会把缺口数量算大，因此只记一次。
+    rejected: bool = False
 
 
 class CollectorRetryOutbox:
@@ -390,6 +400,10 @@ class CollectorRetryOutbox:
             return accepted
 
     def _reject(self, request: _InsertRequest, reason: str) -> None:
+        # 同一帧只记一次缺口：调用方超时与写线程批次超容量可能先后拒收同一帧。
+        if request.rejected:
+            return
+        request.rejected = True
         if self._metrics is not None:
             try:
                 self._metrics.increment("outbox_rejected_frames")
@@ -400,9 +414,11 @@ class CollectorRetryOutbox:
         self._record_rejected_gap(request, reason)
 
     def _init_reject_log(self) -> None:
-        """独立缺口台账；每次启动重建，避免陈旧行被误读为当前缺口。"""
+        """独立缺口台账，**跨重启保留**；当前/历史用 run_id 区分，不靠清空。"""
         self._reject_conn = None
         self._reject_path = self.path.with_name(self.path.name + ".rejects.sqlite")
+        # 本次进程运行的标识：与投递会话同一个值。
+        self._reject_run_id = self._session_id
         # 拒收既可能发生在调用方线程（等待队列超时），也可能发生在写线程
         # （批次超出剩余容量），因此连接允许跨线程，并用独立锁串行化写入。
         self._reject_lock = threading.Lock()
@@ -412,10 +428,10 @@ class CollectorRetryOutbox:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             # 不设 synchronous=FULL：这条路径只在主队列已经拒收时才写，
-            # 不能因为缺口台账自己的 fsync 再拖慢采集；丢失缺口记录虽不理想，
-            # 但比不上丢采样严重，且主日志仍会逐条记录原因。
+            # 不能因为缺口台账自己的 fsync 再拖慢采集。代价是崩溃/掉电后
+            # 最近已提交事务可能回退，所以本表是审计线索而不是强持久记录。
             conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("DROP TABLE IF EXISTS collector_rejected_gaps")
+            # 不 DROP：历史缺口必须能跨重启查询。
             conn.executescript(REJECT_LOG_SCHEMA)
             self._reject_conn = conn
         except Exception:
@@ -423,7 +439,7 @@ class CollectorRetryOutbox:
                              "only be visible in the log and metrics")
 
     def _record_rejected_gap(self, request: _InsertRequest, reason: str) -> None:
-        """按 (设备, 分组, 周期, 原因) 聚合成一行缺口，可在采集未停时随时查询。"""
+        """按 (run, 设备, 分组, 周期, 原因) 聚合一行，可在采集未停时随时查询。"""
         conn = getattr(self, "_reject_conn", None)
         if conn is None:
             return
@@ -432,35 +448,76 @@ class CollectorRetryOutbox:
             with self._reject_lock:
                 conn.execute(
                     """INSERT INTO collector_rejected_gaps (
-                        device_code, group_code, device_type, scan_rate_ms, reason,
-                        first_ts_ms, last_ts_ms, frames, first_rejected_at, last_rejected_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                    ON CONFLICT(device_code, group_code, scan_rate_ms, reason) DO UPDATE SET
+                        run_id, session_id, device_code, group_code, device_type,
+                        scan_rate_ms, reason,
+                        first_ts_ms, last_ts_ms, frames,
+                        first_rejected_at, last_rejected_at, resolved_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NULL)
+                    ON CONFLICT(run_id, device_code, group_code, scan_rate_ms, reason)
+                    DO UPDATE SET
                         last_ts_ms = MAX(last_ts_ms, excluded.last_ts_ms),
                         first_ts_ms = MIN(first_ts_ms, excluded.first_ts_ms),
                         frames = frames + 1,
-                        last_rejected_at = excluded.last_rejected_at""",
-                    (request.params[1], request.params[2], request.params[6],
+                        last_rejected_at = excluded.last_rejected_at,
+                        resolved_at = NULL""",
+                    (self._reject_run_id, self._session_id,
+                     request.params[1], request.params[2], request.params[6],
                      request.params[3], reason, request.params[4], request.params[4],
                      now_ms, now_ms),
                 )
         except Exception:
             logger.exception("collector rejection gap record failed")
 
-    def rejected_gaps(self) -> list[dict[str, Any]]:
-        """当前缺口台账内容；供运维与测试查询，不依赖主队列是否还能写。"""
+    def rejected_gaps(self, *, run_id: str | None = None) -> list[dict[str, Any]]:
+        """查询缺口台账；默认只返回**本次运行**的缺口，历史用 run_id 显式查。
+
+        当前与历史用 run_id 区分，因此既不会被旧缺口误导，
+        也不会因为重启而丢掉历史证据。
+        """
+        conn = getattr(self, "_reject_conn", None)
+        if conn is None:
+            return []
+        try:
+            if run_id is None:
+                cursor = conn.execute(
+                    """SELECT run_id, session_id, device_code, group_code, device_type,
+                              scan_rate_ms, reason, first_ts_ms, last_ts_ms, frames,
+                              first_rejected_at, last_rejected_at, resolved_at
+                       FROM collector_rejected_gaps
+                       WHERE run_id = ? ORDER BY last_rejected_at DESC""",
+                    (self._reject_run_id,),
+                )
+            else:
+                cursor = conn.execute(
+                    """SELECT run_id, session_id, device_code, group_code, device_type,
+                              scan_rate_ms, reason, first_ts_ms, last_ts_ms, frames,
+                              first_rejected_at, last_rejected_at, resolved_at
+                       FROM collector_rejected_gaps
+                       WHERE run_id = ? ORDER BY last_rejected_at DESC""",
+                    (run_id,),
+                )
+            rows = cursor.fetchall()
+        except Exception:
+            logger.exception("collector rejection gap read failed")
+            return []
+        return [dict(row) for row in rows]
+
+    def rejected_gap_runs(self) -> list[dict[str, Any]]:
+        """所有有缺口记录的运行批次，供运维区分当前告警与历史审计。"""
         conn = getattr(self, "_reject_conn", None)
         if conn is None:
             return []
         try:
             rows = conn.execute(
-                """SELECT device_code, group_code, device_type, scan_rate_ms, reason,
-                          first_ts_ms, last_ts_ms, frames,
-                          first_rejected_at, last_rejected_at
-                   FROM collector_rejected_gaps ORDER BY last_rejected_at DESC"""
+                """SELECT run_id, MIN(first_rejected_at) AS started_at,
+                          MAX(last_rejected_at) AS last_at,
+                          SUM(frames) AS frames,
+                          COUNT(*) AS gap_rows
+                   FROM collector_rejected_gaps
+                   GROUP BY run_id ORDER BY last_at DESC"""
             ).fetchall()
         except Exception:
-            logger.exception("collector rejection gap read failed")
+            logger.exception("collector rejection gap run list failed")
             return []
         return [dict(row) for row in rows]
 
@@ -520,6 +577,15 @@ class CollectorRetryOutbox:
                     + len(row["stream_qualities_json"] or b"") + len(row["latest_fields_json"])
                     for row in rows
                 )
+                # 计数与"删除已提交"绑定：只有本地清理真正提交后才累加。
+                # 若 DELETE 事务失败并回滚，上述 raise 会让本行不执行，
+                # 因此同一批帧下次重放不会重复计数（Redis 幂等 ≠ 计数器幂等）。
+                # 用独立指标，不与 stream_points_written（点值数）混用。
+                if self._metrics is not None:
+                    try:
+                        self._metrics.increment("history_frames_confirmed", len(rows))
+                    except Exception:
+                        logger.exception("history frame counter update failed")
                 self._oldest_ms = self._conn.execute(
                     "SELECT MIN(created_at) FROM ("
                     "SELECT created_at FROM collector_retry_outbox UNION ALL "

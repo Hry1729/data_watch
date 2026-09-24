@@ -284,6 +284,9 @@ def window_analysis(samples: list[dict], period_ms: int, devices: int,
             "phase": current.get("phase"),
             "from_s": previous["elapsed_s"],
             "to_s": current["elapsed_s"],
+            "span_s": span,
+            "input_delta": current["submitted"] - previous["submitted"],
+            "confirmed_delta": current["replayed_frames"] - previous["replayed_frames"],
             "input_fps": round((current["submitted"] - previous["submitted"]) / span, 2),
             "replay_confirmed_fps": round(
                 (current["replayed_frames"] - previous["replayed_frames"]) / span, 2),
@@ -291,22 +294,38 @@ def window_analysis(samples: list[dict], period_ms: int, devices: int,
             "outbox_oldest_age_ms": outbox["oldest_age_ms"],
             "outbox_delta": outbox["count"] - previous_outbox["count"],
         })
+    # 趋势只看预热后的生产窗口：预热期的填充本来就表现为"积压上升"，
+    # 混进来会把稳态误判成 growing。
+    trend_windows = [window for window in windows
+                     if window.get("phase") == "production"
+                     and window.get("to_s", 0.0) > warmup_s]
     if not windows:
         return {"windows": [], "trend": "not_tested"}
-    half = len(windows) // 2
-    if half == 0:
+    if not trend_windows:
         trend = "insufficient_windows"
     else:
-        first_avg = sum(window["outbox_frames"] for window in windows[:half]) / half
-        last_avg = sum(window["outbox_frames"] for window in windows[half:]) / (len(windows) - half)
-        if last_avg > first_avg * 1.05 and last_avg - first_avg > devices:
-            trend = "growing"
-        elif last_avg < first_avg * 0.95:
-            trend = "shrinking"
+        half = len(trend_windows) // 2
+        if half == 0:
+            trend = "insufficient_windows"
         else:
-            trend = "flat"
+            first_avg = sum(w["outbox_frames"] for w in trend_windows[:half]) / half
+            last_avg = (sum(w["outbox_frames"] for w in trend_windows[half:])
+                        / (len(trend_windows) - half))
+            if last_avg > first_avg * 1.05 and last_avg - first_avg > devices:
+                trend = "growing"
+            elif last_avg < first_avg * 0.95:
+                trend = "shrinking"
+            else:
+                trend = "flat"
     steady_windows = [window for window in windows
-                      if window["to_s"] > warmup_s and window["phase"] == "production"]
+                      if window["phase"] == "production" and window["from_s"] >= warmup_s]
+    # 聚合速率必须是"窗口总确认量 ÷ 窗口总时长"，不能对各窗口速率取算术平均：
+    # 窗口长度由实际采样时间决定，长短不一，简单平均会被短窗口带偏。
+    # 反例：0.5s 内 700 帧（1400/s）+ 1.5s 内 1200 帧（800/s）
+    #   → 简单平均 1100/s，而总量/总时长 = 1900/2 = 950/s，在 1000/s 门槛附近结论相反。
+    steady_confirmed_total = sum(window["confirmed_delta"] for window in steady_windows)
+    steady_span_total = sum(window["span_s"] for window in steady_windows)
+    steady_input_total = sum(window["input_delta"] for window in steady_windows)
     return {
         "windows": windows,
         "trend": trend,
@@ -317,15 +336,16 @@ def window_analysis(samples: list[dict], period_ms: int, devices: int,
         "max_input_fps": max(window["input_fps"] for window in windows),
         "min_input_fps": min(window["input_fps"] for window in windows),
         "max_replay_confirmed_fps": max(window["replay_confirmed_fps"] for window in windows),
-        # 稳态确认速率 = 预热后各窗口 Δ已确认逻辑帧 / Δt 的均值。异步流水线在
-        # 停止输入瞬间还有正常在途尾批，用"生产期累计确认 ÷ 生产总时长"会把
-        # 这份正常延迟误判成容量不足。
+        # 稳态确认速率 = 预热后各窗口 Δ已确认逻辑帧之和 ÷ 各窗口 Δt 之和。
+        # 异步流水线在停止输入瞬间还有正常在途尾批，用"生产期累计确认 ÷ 生产总时长"
+        # 会把这份正常延迟误判成容量不足。
         "steady_confirmed_fps": (
-            round(sum(window["replay_confirmed_fps"] for window in steady_windows)
-                  / len(steady_windows), 2) if steady_windows else None),
+            round(steady_confirmed_total / steady_span_total, 2)
+            if steady_span_total > 0 else None),
         "steady_input_fps": (
-            round(sum(window["input_fps"] for window in steady_windows)
-                  / len(steady_windows), 2) if steady_windows else None),
+            round(steady_input_total / steady_span_total, 2)
+            if steady_span_total > 0 else None),
+        "steady_span_s": round(steady_span_total, 3),
         "steady_outbox_max": (
             max(window["outbox_frames"] for window in steady_windows)
             if steady_windows else None),

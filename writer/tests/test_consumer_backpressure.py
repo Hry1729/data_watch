@@ -151,6 +151,10 @@ async def test_drain_resumes_after_recovery_and_processes_remaining():
     redis_client.xautoclaim.side_effect = [
         (next_id, entries, []) for (next_id, entries, _) in pages[2:]
     ]
+    # 隔离行按 next_retry_at 退避后才放回；这里把退避时钟推过去，
+    # 模拟"下一个回收周期到来"。生产由回收周期本身驱动，不会热循环。
+    for row in consumer._isolated:
+        row.next_retry_at = 0.0
     # 生产主循环每轮都会 flush；隔离行被放回后需要一次 flush 才真正落库。
     for _ in range(2):
         await consumer.drain_pending("rt:stream:qc:g001:0", "writer-1")

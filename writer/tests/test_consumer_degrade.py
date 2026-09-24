@@ -12,7 +12,7 @@ import pytest
 import consumer as consumer_mod
 from consumer import StreamConsumer, _BufferedRow
 from performance import WriterPerformanceMetrics
-from tdengine_writer import BAD_DATA, LANDED, RETRY
+from tdengine_writer import BAD_DATA, FAILED_INCOMPLETE, LANDED, RETRY
 
 
 def _config() -> dict:
@@ -41,6 +41,11 @@ def _row(entry_id: str) -> _BufferedRow:
         columns={"qc1": 1.0},
         entry_data={"device_code": "qc100", "values": "{}"},
     )
+
+
+def _entry_data(entry_id: str) -> dict:
+    return {"device_code": "qc100", "device_type": "qc", "group_code": "g001",
+            "ts": "1000", "config_version": "0", "values": '{"1": "1.5"}'}
 
 
 def _consumer(writer, redis_client):
@@ -84,7 +89,42 @@ async def test_bad_data_dlq_failure_keeps_buffer_and_does_not_ack():
 
 
 @pytest.mark.asyncio
-async def test_retry_status_keeps_buffer_and_does_not_ack():
+async def test_failed_incomplete_is_isolated_not_counted_as_success():
+    """FAILED_INCOMPLETE 必须持久隔离、不计成功，且只在隔离可靠保存后才 ACK。"""
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[([0], FAILED_INCOMPLETE, 1.0)])
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    row = _row("1-0")
+    consumer._buffer = [row]
+
+    with patch.object(consumer_mod, "push_dlq", return_value=True) as dlq:
+        await consumer._flush()
+
+    dlq.assert_called_once()
+    assert "failed incomplete" in dlq.call_args.kwargs["last_error"]
+    assert redis_client.xack.call_count == 1, "隔离记录保存成功后才允许 ACK"
+    # 关键：不完整帧不得计入完整成功
+    snapshot = consumer._metrics.snapshot()
+    assert snapshot["gauges"]["buffer_rows"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_incomplete_keeps_data_when_isolation_cannot_be_saved():
+    """隔离记录保存不了时，绝不能 ACK、也不能丢原始消息。"""
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[([0], FAILED_INCOMPLETE, 1.0)])
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    row = _row("1-0")
+    consumer._buffer = [row]
+
+    with patch.object(consumer_mod, "push_dlq", return_value=False):
+        await consumer._flush()
+
+    redis_client.xack.assert_not_called()
+    redis_client.xdel.assert_not_called()
+    assert row in consumer._buffer, "隔离未可靠保存前必须保留原始帧"
     writer = MagicMock()
     writer.write_multi_table = AsyncMock(return_value=[([0], RETRY, 1.0)])
     redis_client = MagicMock()
@@ -210,7 +250,13 @@ async def test_isolated_row_does_not_block_healthy_rows_of_same_worker():
 
 @pytest.mark.asyncio
 async def test_isolated_rows_are_readmitted_for_retry_not_abandoned():
-    """隔离不是放弃：按回收周期放回主缓冲重试一次。"""
+    """隔离不是放弃：到期后放回主缓冲重试，且状态迁移必须一次做完。
+
+    覆盖审查指出的状态维护缺陷：放回时如果漏掉身份集合与字节预算，
+    容量核算会失真，且 PEL 再次领取同一消息时去重守卫会失效。
+    """
+    import time as _time
+
     writer = MagicMock()
     writer.write_multi_table = AsyncMock(return_value=[([0], RETRY, 1.0)])
     redis_client = MagicMock()
@@ -221,11 +267,45 @@ async def test_isolated_rows_are_readmitted_for_retry_not_abandoned():
         consumer._buffer = [row]
         await consumer._flush()
     assert [r.entry_id for r in consumer._isolated] == ["1-0"]
+    assert consumer._buffer_bytes == 0
+    assert consumer._isolated_keys == {("rt:stream:qc:g001:0", "1-0")}
 
-    consumer._readmit_isolated()
+    # 退避未到期时不得放回（重试节奏由 next_retry_at 决定，不是缓冲空了就放）
+    consumer._readmit_isolated(now=row.next_retry_at - 1)
+    assert consumer._isolated and not consumer._buffer
+
+    # 到期后放回：列表、身份集合、字节预算、指标四项必须一致
+    consumer._readmit_isolated(now=row.next_retry_at + 1)
     assert consumer._isolated == []
     assert [r.entry_id for r in consumer._buffer] == ["1-0"]
     assert consumer._isolated_keys == set()
+    assert ("rt:stream:qc:g001:0", "1-0") in consumer._buffered_keys, \
+        "放回后必须进入缓冲去重集合，否则 PEL 再次领取同一 ID 会重复入库"
+    assert consumer._buffer_bytes == row.payload_bytes, \
+        "放回后字节预算必须同步，否则容量核算失真"
+    assert consumer._metrics.snapshot()["gauges"]["buffer_rows"] == 1
+
+
+@pytest.mark.asyncio
+async def test_readmitted_identity_is_deduplicated_when_pel_reclaims_same_id():
+    """放回后若 PEL 再次领取同一个 Stream ID，去重守卫必须拦住，不重复入缓冲。"""
+    import time as _time
+
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[([0], RETRY, 1.0)])
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    row = _row("1-0")
+
+    for _ in range(consumer._max_row_retry):
+        consumer._buffer = [row]
+        await consumer._flush()
+    consumer._readmit_isolated(now=row.next_retry_at + 1)
+    assert len(consumer._buffer) == 1
+
+    # 模拟 PEL 回收再次领取同一 entry_id
+    await consumer._handle_entry("rt:stream:qc:g001:0", "1-0", _entry_data("1-0"), 2)
+    assert len(consumer._buffer) == 1, "同一 Stream ID 不得被重复放入缓冲"
 
 
 @pytest.mark.asyncio

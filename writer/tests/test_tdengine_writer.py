@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import tdengine_writer
-from tdengine_writer import BAD_DATA, LANDED, RETRY, TDengineWriter
+from tdengine_writer import BAD_DATA, FAILED_INCOMPLETE, LANDED, RETRY, TDengineWriter
 from quality_schema import QualitySchemaError
 
 
@@ -342,7 +342,14 @@ async def test_large_quality_frame_splits_with_complete_ack_barrier():
 
 
 @pytest.mark.asyncio
-async def test_large_quality_frame_failure_never_lands_partial_frame():
+async def test_large_quality_frame_partial_failure_is_failed_incomplete_not_retry():
+    """一条逻辑帧分段执行时部分成功、另一部分不可恢复 → FAILED_INCOMPLETE。
+
+    原先返回 RETRY。但 RETRY 不会回滚已经执行成功的 SQL：
+    本用例本身就断言"值行执行成功、部分质量行执行成功"，
+    所以"整数帧 RETRY"既不能保证原子性，也让这条帧永远补不齐、无限重试。
+    现在改为显式的不完整失败状态：由调用方持久隔离、计入失败、不再占正常资源。
+    """
     writer, executed = _make_writer({"sdqc": {"qc1"}})
     writer._quality_stable_ready.add("sqqc")
     rows = [{
@@ -362,11 +369,41 @@ async def test_large_quality_frame_failure_never_lands_partial_frame():
         results = await writer.write_multi_table(rows)
     assert all(len(sql.encode("utf-8")) <= 300 for sql in executed)
     assert results[0][0] == [0]
-    assert results[0][1] == RETRY
+    assert results[0][1] == FAILED_INCOMPLETE
     assert writer._last_sql_value_rows_attempted >= 1
     assert writer._last_sql_value_rows_succeeded == 1
     assert writer._last_sql_quality_rows_attempted >= 40
+    # 明确记录了"部分成功"这个事实：既不是全成功，也不是全失败
     assert 0 < writer._last_sql_quality_rows_succeeded < 40
+
+
+@pytest.mark.asyncio
+async def test_multi_part_all_landed_is_landed():
+    writer, _ = _make_writer({"sdqc": {"qc1"}})
+    writer._quality_stable_ready.add("sqqc")
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": {"qc1": 1.0},
+        "qualities": {str(i): 0 for i in range(1, 41)},
+    }]
+    writer._conn.execute = MagicMock(return_value=1)
+    with patch.object(tdengine_writer, "MAX_SQL_BYTES", 300):
+        results = await writer.write_multi_table(rows)
+    assert results[0][1] == LANDED
+
+
+@pytest.mark.asyncio
+async def test_multi_part_retry_segment_stays_retry():
+    """任一分段结果未知/可恢复时仍必须 RETRY，不能当坏帧丢掉。"""
+    writer, _ = _make_writer({"sdqc": {"qc1"}})
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": {"qc1": 1.0},
+        "qualities": {},
+    }]
+    writer._conn.execute = MagicMock(side_effect=ConnectionResetError("reset"))
+    results = await writer.write_multi_table(rows)
+    assert results[0][1] == RETRY
 
 
 @pytest.mark.asyncio

@@ -61,9 +61,16 @@ MAX_SQL_BYTES = 3 * 1024 * 1024
 #   LANDED   已确认落库 → 调用方 XACK
 #   BAD_DATA 明确坏数据，二分到单行仍失败 → 调用方进 DLQ
 #   RETRY    连接错/未知错/二分超限 → 调用方留 buffer 重试（绝不进 DLQ）
+#   FAILED_INCOMPLETE
+#            一条逻辑帧被拆成多段 SQL 时，部分分段已成功、另一部分确认不可恢复。
+#            这不是"整帧成功"，也不能靠永久 RETRY 当作原子性保证：
+#            已经执行成功的 SQL 不会因为返回值是 RETRY 而回滚。
+#            调用方必须把它转入**持久失败隔离**，记录原始帧与各分段状态，
+#            不计入成功，也不再占用正常生产资源。
 LANDED = "landed"
 BAD_DATA = "bad_data"
 RETRY = "retry"
+FAILED_INCOMPLETE = "failed_incomplete"
 
 class SchemaNotReadyError(RuntimeError):
     pass
@@ -112,19 +119,25 @@ def _quality_stable_from_value_stable(stable: str) -> str:
 def _merge_part_status(parts: list[tuple[str, float]]) -> str:
     """把一条逻辑帧的多个 SQL 分段结果归并成一个状态。
 
-    保持既有契约：**不允许一条逻辑帧只落一部分**。
-    一条宽帧会被拆成数值段与质量段；若某一段已 LANDED、另一段没有，
-    直接判 BAD_DATA 进 DLQ 会留下"值已入库、质量缺失"的半截帧。
-    因此只要不是全部分段 LANDED，就判 RETRY，整帧重试。
+    前提：**RETRY 不会撤销已经执行成功的 SQL**。多段写入本来就可能留下
+    "值已入库、部分质量已入库、部分质量未入库"的中间态，把整帧标成 RETRY
+    并不会让它变成原子操作，只会让它无限重试且永不补齐。
 
-    注意这**不是**"坏帧永远进不了 DLQ"的成因。真正的成因是重试没有任何上界，
-    会一直占着缓冲并拖住同 worker 其它 stream——那由 consumer 的隔离机制解决
-    （连续 RETRY 达上限后移出主缓冲，仍在 PEL 中按回收周期重试）。
-
-    若后续要把"明确不可恢复的分段"改判为可进 DLQ，属于改变"允许部分落库"的
-    数据语义，需要产品确认，不能只改这一处归并。
+    归并规则：
+      * 任一分段 RETRY（连接/未知错误、0x0219 过长、二分深度用尽）
+        → RETRY：结果未知或暂时失败，仍有恢复希望，保留原始数据重试。
+      * 否则任一分段 BAD_DATA（明确不可恢复）→ FAILED_INCOMPLETE：
+        整帧不完整，交给调用方持久隔离，记录原始帧与各分段状态，不计成功。
+      * 全部分段 LANDED → LANDED。
     """
-    return LANDED if all(status == LANDED for status, _ in parts) else RETRY
+    statuses = [status for status, _ in parts]
+    if not statuses:
+        return RETRY
+    if RETRY in statuses:
+        return RETRY
+    if all(status == LANDED for status in statuses):
+        return LANDED
+    return FAILED_INCOMPLETE
 
 
 class TDengineWriter:

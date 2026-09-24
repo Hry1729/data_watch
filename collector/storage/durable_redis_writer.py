@@ -372,11 +372,11 @@ class DurableRedisWriter(RedisWriter):
             batch_bytes += wire_bytes
         if batch:
             self._deliver_window(batch, batch_bytes)
-        # 按逻辑帧计数：走到这里说明本批全部窗口都已通过 WAITAOF 确认。调用方
-        # （replay_pending）随后才删除 SQLite 行，因此重试不会重复累加。
-        # 不能用 stream_points_written 除以"标称每帧点数"换算帧数：帧里只有
-        # is_storage 且非 STRING 且值非 None 的点才进 stream，标称点数与实际点集不同。
-        self._metrics.increment("history_frames_confirmed", len(rows))
+        # 注意：history_frames_confirmed 不在这里累加。
+        # 本方法返回后，调用方（replay_pending）才删除 SQLite 行并提交。
+        # 若在这里加计数，而随后的本地 DELETE 事务失败，同一批帧下次重放会再加一次，
+        # 实际唯一帧 100 而计数变 200——Redis 幂等并不等于进程内计数器幂等。
+        # 计数改由调用方在"删除已提交"的同一事务内累加，详见 collector_outbox.replay_pending。
         self._metrics.increment("stream_points_written", sum(len(msgspec.json.decode(r["stream_values_json"])) for r in rows))
 
     def _deliver_window(self, batch, batch_bytes):

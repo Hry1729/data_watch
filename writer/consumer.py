@@ -38,7 +38,7 @@ from dlq import (
 from mysql_mapper import MysqlMapper
 from performance import WriterPerformanceMetrics
 from quality_codes import is_valid_quality
-from tdengine_writer import BAD_DATA, LANDED, RETRY, TDengineWriter
+from tdengine_writer import BAD_DATA, FAILED_INCOMPLETE, LANDED, RETRY, TDengineWriter
 
 logger = logging.getLogger("writer.consumer")
 
@@ -66,6 +66,8 @@ class _BufferedRow:
     # 连续 RETRY 次数。达到上限后该行移入隔离区，不再占用主缓冲容量、
     # 也不再拖住同 worker 其它 stream（仍在 PEL 中，可被按时回收）。
     retry_attempts: int = 0
+    # 隔离行最早可重试的单调时刻；由退避计算，不由"主缓冲是否空了"决定。
+    next_retry_at: float = 0.0
 
 
 @dataclass
@@ -208,6 +210,12 @@ class StreamConsumer:
         self._isolated_keys: set[tuple[str, str]] = set()
         self._max_isolated_rows: int = max(64, self._max_buffer_rows // 4)
         self._max_row_retry: int = max(1, int(w.get("max_row_retry", 3)))
+        # 每个回收周期最多放回多少隔离行重试，以及逐行退避区间：
+        # 持续失败的行按退避节奏重试，不由"主缓冲恰好空了"驱动。
+        self._retry_budget_per_cycle: int = max(1, int(w.get("retry_budget_per_cycle", 64)))
+        self._retry_backoff_base_s: float = max(0.1, float(w.get("retry_backoff_base_s", 1.0)))
+        self._retry_backoff_max_s: float = max(
+            self._retry_backoff_base_s, float(w.get("retry_backoff_max_s", 30.0)))
         # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
         self._last_dlq_moved_log: float | None = None
         self._last_dlq_failed_log: float | None = None
@@ -244,30 +252,63 @@ class StreamConsumer:
             occupied += len(terminal_keys)
         return self._max_buffer_rows - occupied
 
-    def _readmit_isolated(self) -> None:
-        """把隔离区最老的行放回主缓冲，按回收周期重试。
+    def _readmit_isolated(self, *, now: float | None = None) -> None:
+        """把隔离区里到期的行整体放回主缓冲（状态迁移必须一次做完）。
 
-        隔离区只是"不再占用主缓冲容量、不再抑制其它 stream 读取"，
-        不是放弃这些数据：它们始终留在 Redis PEL 中，并按 `pending_drain_interval_s`
-        的节奏被放回来重试一次。若仍失败，`_flush` 会再次把它们隔离。
+        迁移包含四件事，缺一件就会让容量核算或去重守卫失真：
+          1. 身份从 `_isolated_keys` 迁到 `_buffered_keys`；
+          2. 载荷字节计回 `_buffer_bytes`；
+          3. 行进入 `_buffer`；
+          4. 同步指标。
+        只把行加回列表（漏掉 1、2）会导致 `_buffer_bytes` 账面为 0，
+        而 `_handle_entry` 依赖 `_buffered_keys` 去重，
+        于是 PEL 再次领取同一消息时可能重复入缓冲、重复写库。
+
+        重试节奏由每行的 `next_retry_at` 决定，而不是"主缓冲恰好空了"：
+        持续失败的行按退避间隔重试，不会因为缓冲空闲就无限高频重试。
         """
         if not self._isolated:
             return
-        budget = max(1, min(len(self._isolated), self._batch_count))
-        readmitted = self._isolated[:budget]
-        del self._isolated[:budget]
+        now = time.monotonic() if now is None else now
+        due = [row for row in self._isolated if row.next_retry_at <= now]
+        if not due:
+            return
+        budget = max(1, min(len(due), self._retry_budget_per_cycle))
+        readmitted = due[:budget]
+        readmit_ids = {id(row) for row in readmitted}
+        self._isolated = [row for row in self._isolated if id(row) not in readmit_ids]
+
+        readmitted_bytes = 0
         for row in readmitted:
-            self._isolated_keys.discard((row.stream_key, row.entry_id))
+            key = (row.stream_key, row.entry_id)
+            self._isolated_keys.discard(key)
+            self._buffered_keys.add(key)
+            readmitted_bytes += row.payload_bytes
         self._buffer = readmitted + self._buffer
+        self._buffer_bytes += readmitted_bytes
+        self._metrics.set_buffer_bytes(self._buffer_bytes + self._inflight_bytes)
+        self._metrics.set_buffer_rows(len(self._buffer), len(self._isolated))
         logger.info(
-            "[consumer] re-admitting %d isolated row(s) for retry (remaining isolated=%d)",
-            len(readmitted), len(self._isolated),
+            "[consumer] re-admitted %d isolated row(s) for retry "
+            "(remaining isolated=%d, +%d bytes)",
+            len(readmitted), len(self._isolated), readmitted_bytes,
         )
+
+    def _isolate_row(self, row: _BufferedRow, *, now: float | None = None) -> None:
+        """把一行放进隔离区，并设定下一次可重试时间（指数退避、有上界）。"""
+        now = time.monotonic() if now is None else now
+        delay = min(self._retry_backoff_base_s * (2 ** max(0, row.retry_attempts - 1)),
+                    self._retry_backoff_max_s)
+        row.next_retry_at = now + delay
+        self._isolated.append(row)
+        self._isolated_keys.add((row.stream_key, row.entry_id))
+        self._buffered_keys.discard((row.stream_key, row.entry_id))
 
     def oldest_buffered_source_age_ms(self, now_ms: int) -> int | None:
         source_times = [row.ts for row in self._buffer]
         if self._inflight_source_ms is not None:
             source_times.append(self._inflight_source_ms)
+        source_times.extend(row.ts for row in self._isolated)
         return max(0, now_ms - min(source_times)) if source_times else None
 
     def queue_stream_key(self, stream_key: str) -> None:
@@ -1230,7 +1271,7 @@ class StreamConsumer:
             isolated: list[_BufferedRow] = []
             landed_rows_count = 0
             for indices, status, elapsed_ms in chunk_results:
-                if status not in (LANDED, BAD_DATA, RETRY):
+                if status not in (LANDED, BAD_DATA, RETRY, FAILED_INCOMPLETE):
                     raise RuntimeError(f"invalid TDengine row outcome: {status!r}")
                 chunk_rows = [buffered[index] for index in indices]
                 self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), status == LANDED)
@@ -1238,9 +1279,14 @@ class StreamConsumer:
                     to_ack.extend(chunk_rows)
                     landed_rows_count += len(chunk_rows)
                     quality_rows_count += sum(len(row.qualities) for row in chunk_rows)
-                elif status == BAD_DATA:
+                elif status in (BAD_DATA, FAILED_INCOMPLETE):
+                    # FAILED_INCOMPLETE 与 BAD_DATA 一样走"持久隔离、不计成功"，
+                    # 区别只在记录原因：前者是部分分段已落库、另一部分不可恢复，
+                    # 必须把分段状态一并留证，便于事后判断哪部分需要修复。
+                    # 只有隔离记录**可靠保存**后才 ACK；保存失败则留缓冲与 PEL。
                     for row in chunk_rows:
-                        if await self._run_blocking(self._push_row_to_dlq, row):
+                        if await self._run_blocking(
+                                self._push_incomplete_or_bad_row, row, status):
                             to_ack.append(row)
                         else:
                             failed_rows.append(row)
@@ -1304,12 +1350,10 @@ class StreamConsumer:
                 # 隔离区超限时不再接收新的隔离行，改为留在主缓冲里形成背压。
                 room = self._max_isolated_rows - len(self._isolated)
                 if room > 0:
-                    accepted_isolated = isolated[:room]
-                    self._isolated.extend(accepted_isolated)
-                    self._isolated_keys.update(
-                        (row.stream_key, row.entry_id) for row in accepted_isolated
-                    )
-                    for row in accepted_isolated:
+                    for row in isolated[:room]:
+                        # 状态迁移交给 _isolate_row：身份、字节、指标一次做完，
+                        # 避免只换列表而让容量核算与去重守卫失真。
+                        self._isolate_row(row)
                         logger.warning(
                             "[consumer] row isolated after %d retries (still in PEL, "
                             "no longer blocking other streams): %s %s",
@@ -1360,7 +1404,24 @@ class StreamConsumer:
         )
         self._last_performance_log = now
 
-    def _push_row_to_dlq(self, row: _BufferedRow) -> bool:
+    def _push_incomplete_or_bad_row(self, row: _BufferedRow, status: str) -> bool:
+        """把不可恢复的行转入持久失败隔离。返回 True 表示隔离记录已可靠保存。
+
+        FAILED_INCOMPLETE 与 BAD_DATA 共用这条通路：两者都不得计入成功，
+        也不得继续占用正常生产资源。区别只在留给排查的证据：
+        FAILED_INCOMPLETE 额外记录"部分分段已落库"这一事实，避免事后
+        把不完整帧误当成从未写入。
+        """
+        if status == FAILED_INCOMPLETE:
+            return self._push_row_to_dlq(
+                row, last_error=("failed incomplete: 部分 SQL 分段已成功、"
+                                 "另一分段确认不可恢复；整帧不完整，不计成功"),
+                log_type="incomplete")
+        return self._push_row_to_dlq(row)
+
+    def _push_row_to_dlq(self, row: _BufferedRow, *,
+                         last_error: str = "bad data isolated by binary-search degrade",
+                         log_type: str = "bad-data") -> bool:
         """Push a binary-search-isolated bad row to the DLQ. Returns True if stored.
 
         调用方只在返回 True 时 ACK；False 时该行留 buffer 重试（硬约束②：DLQ
@@ -1373,7 +1434,7 @@ class StreamConsumer:
             stream_key=row.stream_key,
             data=row.entry_data,
             retry_count=row.delivery_count,
-            last_error="bad data isolated by binary-search degrade",
+            last_error=last_error,
         )
         if moved:
             if self._syslog is not None:
@@ -1385,13 +1446,14 @@ class StreamConsumer:
                         log_type="storage",
                         source="writer.dlq",
                         content=(
-                            f"bad-data entry {row.entry_id} moved to DLQ: "
+                            f"{log_type} entry {row.entry_id} moved to DLQ: "
                             f"{row.device_type or 'unknown'}/{row.group_code or 'unknown'}"
                         ),
                     )
         else:
             logger.error(
-                "[consumer] DLQ push failed for bad-data entry %s, keeping buffered", row.entry_id
+                "[consumer] DLQ push failed for %s entry %s, keeping buffered",
+                log_type, row.entry_id,
             )
             if self._syslog is not None:
                 now = time.monotonic()

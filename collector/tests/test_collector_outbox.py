@@ -7,6 +7,7 @@ import msgspec
 import pytest
 from storage.collector_outbox import CollectorRetryOutbox
 from storage.durable_redis_writer import DurableRedisWriter
+from monitor.performance import PerformanceMetrics
 
 
 def sample(ts=1234):
@@ -98,7 +99,7 @@ def test_gap_ledger_is_separate_from_the_full_main_queue(tmp_path):
 
 
 def test_gap_ledger_does_not_grow_without_bound(tmp_path):
-    """缺口台账按 (设备,分组,周期,原因) 聚合，不随运行时长无限增长。"""
+    """缺口台账按 (run, 设备, 分组, 周期, 原因) 聚合，不随运行时长无限增长。"""
     q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
     q.record_failure(**sample(1000))
     for ts in range(2000, 2100):
@@ -111,19 +112,102 @@ def test_gap_ledger_does_not_grow_without_bound(tmp_path):
     q.close()
 
 
-def test_gap_ledger_is_rebuilt_per_run(tmp_path):
-    """上次运行的缺口不能被当成当前缺口：每次启动重建台账。"""
+def test_history_frame_counter_is_idempotent_when_local_cleanup_fails(tmp_path):
+    """Redis 确认成功但本地 DELETE 事务失败时，重放不得把同一批帧算两次。
+
+    Redis 幂等（receipt 去重）不等于进程内计数器幂等：
+    计数必须在"删除已提交"之后累加，否则实际唯一帧 100 而计数变 200。
+    """
+    q = CollectorRetryOutbox(tmp_path / "q.db")
+    metrics = PerformanceMetrics()
+    q._metrics = metrics
+    for ts in (1, 2, 3):
+        q.record_failure(**sample(ts))
+
+    writer = MagicMock()
+
+    class _Writer:
+        pass
+
+    # 第一次：Redis 侧"确认成功"（write_durable_frames 正常返回），
+    # 但本地清理事务失败——用触发器让 DELETE 抛错。
+    q._conn.execute(
+        "CREATE TRIGGER fail_delete BEFORE DELETE ON collector_retry_outbox_v2 "
+        "BEGIN SELECT RAISE(ABORT, 'simulated cleanup failure'); END")
+    real_write = MagicMock()
+    writer.write_durable_frames = real_write
+    with pytest.raises(sqlite3.IntegrityError):
+        q.replay_pending(writer)
+    assert real_write.call_count == 1, "Redis 侧确实已确认过"
+    assert q.count() == 3, "本地清理失败必须保留原帧"
+    assert metrics.snapshot()["counters"].get("history_frames_confirmed", 0) == 0, \
+        "清理未提交就不得计数"
+
+    # 第二次：清掉故障，重放同一批帧，只能计一次 3 帧。
+    q._conn.execute("DROP TRIGGER fail_delete")
+    assert q.replay_pending(writer) == 3
+    assert metrics.snapshot()["counters"]["history_frames_confirmed"] == 3
+    assert q.count() == 0
+    q.close()
+
+
+def test_gap_ledger_survives_restart_and_history_stays_queryable(tmp_path):
+    """缺口是历史事实：重启 Collector 不得清空台账，否则等于删掉审计线索。
+
+    当前与历史靠 run_id 区分，不靠删除。
+    """
     path = tmp_path / "q.db"
     q = CollectorRetryOutbox(path, max_records=1)
     q.record_failure(**sample(1000))
     with pytest.raises(RuntimeError, match="full"):
         q.record_failure(**sample(2000))
-    assert len(q.rejected_gaps()) == 1
+    first_run = q.rejected_gaps()
+    assert len(first_run) == 1
+    run_id = first_run[0]["run_id"]
     q.close()
 
     again = CollectorRetryOutbox(path, max_records=1)
+    # 本次运行还没有缺口，所以默认查询为空……
     assert again.rejected_gaps() == []
+    # ……但历史运行记录必须仍在，且可按 run_id 查回。
+    runs = again.rejected_gap_runs()
+    assert len(runs) == 1 and runs[0]["run_id"] == run_id
+    history = again.rejected_gaps(run_id=run_id)
+    assert len(history) == 1
+    assert history[0]["frames"] == 1
+    assert history[0]["first_ts_ms"] == 2000
     again.close()
+
+
+def test_gap_records_are_separated_per_run(tmp_path):
+    """同一设备在两次运行里各自成行，不会被合并成一个跨重启的大区间。
+
+    注意主队列是持久化的：上一次运行的待发帧仍在库里，因此每次运行
+    只放一帧、再触发一次拒收即可，无需假设库是空的。
+    """
+    path = tmp_path / "q.db"
+
+    q1 = CollectorRetryOutbox(path, max_records=2)
+    q1.record_failure(**sample(1000))
+    assert q1._conn.execute(
+        "SELECT COUNT(*) FROM collector_retry_outbox_v2").fetchone()[0] == 1
+    # 直接把库占满，制造一次拒收
+    q1.record_failure(**sample(1500))
+    with pytest.raises(RuntimeError, match="full"):
+        q1.record_failure(**sample(2000))
+    run1 = q1.rejected_gap_runs()
+    assert len(run1) == 1
+    q1.close()
+
+    q2 = CollectorRetryOutbox(path, max_records=2)
+    # 上次运行的两帧仍在库中 → 本次一开始就已满，直接拒收
+    with pytest.raises(RuntimeError, match="full"):
+        q2.record_failure(**sample(9000))
+    current = q2.rejected_gaps()
+    assert len(current) == 1
+    assert current[0]["first_ts_ms"] == 9000, "本次运行只反映本次缺口"
+    assert len(q2.rejected_gap_runs()) == 2, "两次运行各留一条历史"
+    q2.close()
 
 
 def test_one_replay_owner_prevents_duplicate_concurrent_delivery(tmp_path):
