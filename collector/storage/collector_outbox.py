@@ -439,12 +439,11 @@ class CollectorRetryOutbox:
                 for table in ("collector_retry_outbox", "collector_retry_outbox_v2")
             }
         for table, ceiling in ceilings.items():
-            session_column = "session_id" if table == "collector_retry_outbox_v2" else "NULL AS session_id"
             last_rowid = 0
             while last_rowid < ceiling:
                 with self._lock:
                     rows = self._conn.execute(
-                        f"SELECT rowid, device_code, group_code, latest_fields_json, {session_column} "
+                        "SELECT rowid, device_code, group_code, latest_fields_json "
                         f"FROM {table} WHERE rowid > ? AND rowid <= ? "
                         "ORDER BY rowid LIMIT ?",
                         (last_rowid, ceiling, batch_size),
@@ -452,14 +451,8 @@ class CollectorRetryOutbox:
                 if not rows:
                     break
                 for row in rows:
-                    yield (row["device_code"], row["group_code"], row["session_id"],
-                           row["latest_fields_json"])
+                    yield row["device_code"], row["group_code"], row["latest_fields_json"]
                 last_rowid = rows[-1]["rowid"]
-
-    @property
-    def session_id(self) -> str:
-        """本次进程启动生成的、不可复用的投递会话标识。"""
-        return self._session_id
 
     def assert_legacy_rollback_ready(self) -> None:
         """An older binary cannot replay v2 rows and must wait for them to drain."""

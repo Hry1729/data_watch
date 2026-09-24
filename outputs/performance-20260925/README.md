@@ -13,3 +13,23 @@
   deploy/python314t.Dockerfile，固定 msgspec/redis/pytest 版本）。
 
 所有运行均 data_correctness=pass、duplicate_frames=0（未完成的 1000pt-60s 除外）。
+
+## 整改后重跑（2026-09-25，修正计数口径）
+
+`corrected-100dev-<N>pt-30s.json`：改用独立逻辑帧计数 + 预热后稳态窗口后的重跑结果。
+100 设备、100ms、30 秒、2 CPU Collector 容器。
+
+| 每帧点数 | 稳态确认帧/秒 | 稳态输入帧/秒 | 比值 | 趋势 | 持续回放判定 |
+| ---: | ---: | ---: | ---: | --- | --- |
+| 10 | 1033.75 | 1000.11 | 1.034 | shrinking | pass |
+| 100 | 1024.63 | 1000.45 | 1.025 | flat | pass |
+| 200 | 940.85 | 1001.82 | 0.941 | growing | fail |
+| 500 | 229.31 | 1006.04 | 0.228 | growing | fail |
+| 1000 | — | — | — | — | 未测：撞本地队列 1 GiB 上限（error 字段即该记录） |
+
+`fixed-100dev-10pt-12s-catchup5s.json` / `final-100dev-100pt-20s-catchup4s.json`：
+修正线程池生命周期与阶段口径后，`--catchup-seconds` 可正常运行，
+并给出「净消减速率 / 额定输入速率」的余量估计（两档均为 0.0%，未达 30%）。
+
+注：`after-watermark-*.json` 对应的水位优化**已停用**（存在正确性漏洞），
+这些文件只作历史记录，其收益声明已作废，详见 `docs/performance-review-remediation-20260925.md`。

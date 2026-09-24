@@ -148,7 +148,15 @@ def build_frame(device: str, points: int, tick: int, period_ms: int, base_ts: in
 # ----------------------------------------------------------------------
 
 def replayed_frames(metrics: dict, points_per_frame: int) -> int:
-    return metrics["counters"].get("stream_points_written", 0) // max(1, points_per_frame)
+    """历史回放**逻辑帧**数。
+
+    必须用 durable_redis_writer 在整批 WAITAOF 确认后累加的 history_frames_confirmed，
+    不能再用 stream_points_written 除以"标称每帧点数"：帧里只有 is_storage 且非 STRING
+    且值非 None 的点才进 stream，标称点数与实际进历史的点集不同，换算会系统性少算
+    （本脚本的合成数据固定有 3 个点不进 stream，200 点时就把 100% 显示成 98.5%）。
+    points_per_frame 仅保留作调用兼容。
+    """
+    return metrics["counters"].get("history_frames_confirmed", 0)
 
 
 def committed_frames(metrics: dict) -> int:
@@ -255,19 +263,25 @@ def verify_latest_full(r, device: str, points: int, tick: int, period_ms: int,
 # ----------------------------------------------------------------------
 
 def window_analysis(samples: list[dict], period_ms: int, devices: int,
-                    min_span_s: float = 0.2) -> dict:
+                    min_span_s: float = 0.2, warmup_s: float = 0.0) -> dict:
     """按相邻采样点构造连续窗口，给出速率、积压与趋势。
 
     过短的窗口会把采样抖动放大成天文数字速率，直接丢弃而不参与判定。
+    `warmup_s` 之后才计入稳态速率：异步流水线在启动阶段有正常的填充期，
+    把启动期算进"持续确认速率"会系统性低估处理能力。
+    每个阶段单独计算（阶段内 elapsed_s 从该阶段起点计）。
     """
     windows = []
     for previous, current in zip(samples, samples[1:]):
+        if previous.get("phase") != current.get("phase"):
+            continue
         span = current["elapsed_s"] - previous["elapsed_s"]
         if span < min_span_s:
             continue
         outbox = current["outbox"]
         previous_outbox = previous["outbox"]
         windows.append({
+            "phase": current.get("phase"),
             "from_s": previous["elapsed_s"],
             "to_s": current["elapsed_s"],
             "input_fps": round((current["submitted"] - previous["submitted"]) / span, 2),
@@ -291,47 +305,69 @@ def window_analysis(samples: list[dict], period_ms: int, devices: int,
             trend = "shrinking"
         else:
             trend = "flat"
+    steady_windows = [window for window in windows
+                      if window["to_s"] > warmup_s and window["phase"] == "production"]
     return {
         "windows": windows,
         "trend": trend,
+        "warmup_s": warmup_s,
+        "steady_windows": len(steady_windows),
         "max_outbox_frames": max(window["outbox_frames"] for window in windows),
         "max_outbox_oldest_age_ms": max(window["outbox_oldest_age_ms"] for window in windows),
         "max_input_fps": max(window["input_fps"] for window in windows),
         "min_input_fps": min(window["input_fps"] for window in windows),
         "max_replay_confirmed_fps": max(window["replay_confirmed_fps"] for window in windows),
+        # 稳态确认速率 = 预热后各窗口 Δ已确认逻辑帧 / Δt 的均值。异步流水线在
+        # 停止输入瞬间还有正常在途尾批，用"生产期累计确认 ÷ 生产总时长"会把
+        # 这份正常延迟误判成容量不足。
+        "steady_confirmed_fps": (
+            round(sum(window["replay_confirmed_fps"] for window in steady_windows)
+                  / len(steady_windows), 2) if steady_windows else None),
+        "steady_input_fps": (
+            round(sum(window["input_fps"] for window in steady_windows)
+                  / len(steady_windows), 2) if steady_windows else None),
+        "steady_outbox_max": (
+            max(window["outbox_frames"] for window in steady_windows)
+            if steady_windows else None),
     }
 
 
-def build_verdicts(*, target_frames: int, submitted: int, production_s: float,
+def build_verdicts(*, target_frames: int, production_submitted: int, production_s: float,
                    target_seconds: float, committed: int, replayed_during_production: int,
                    windows: dict, drain_s: float, final_outbox: dict,
                    correctness_problems: list[str], target_input_fps: float,
                    catchup: dict | None) -> dict:
     verdicts: dict[str, dict] = {}
 
-    on_schedule = submitted >= target_frames and production_s <= target_seconds + 0.25
+    # 只比较**生产阶段**的提交量：追平阶段的帧不属于额定输入，不能算进"按时完成"。
+    on_schedule = production_submitted >= target_frames and production_s <= target_seconds + 0.25
     verdicts["input_on_schedule"] = {
         "status": PASS if on_schedule else FAIL,
-        "detail": (f"提交 {submitted}/{target_frames} 帧，用时 {production_s:.3f}s，"
-                   f"目标 {target_seconds}s"),
+        "detail": (f"生产阶段提交 {production_submitted}/{target_frames} 帧，"
+                   f"用时 {production_s:.3f}s，目标 {target_seconds}s"),
     }
 
-    durable_ok = committed >= submitted
+    durable_ok = committed >= production_submitted
     verdicts["durable_received"] = {
         "status": PASS if durable_ok else FAIL,
-        "detail": f"SQLite 持久提交 {committed} 帧，输入 {submitted} 帧",
+        "detail": f"SQLite 持久提交 {committed} 帧，生产阶段输入 {production_submitted} 帧",
     }
 
-    # 持续回放：必须在额定输入仍在进行时就跟得上，才算持续能力。
+    # 持续回放：用**预热后的稳态窗口**Δ已确认逻辑帧/Δt，与额定输入比较。
+    # 不用"生产期累计确认 ÷ 生产总时长"：异步流水线在停止输入时还有正常在途尾批，
+    # 那种算法会把正常的约一个批次延迟误判成容量不足。
+    steady_fps = windows.get("steady_confirmed_fps")
     if target_input_fps <= 0:
         status, detail = NOT_TESTED, "未提供目标输入速率"
+    elif steady_fps is None:
+        status, detail = NOT_TESTED, "稳态窗口不足（样本太少或时长过短），无法给出持续确认速率"
     else:
-        actual_fps = replayed_during_production / max(production_s, 1e-9)
-        ratio = actual_fps / target_input_fps
+        ratio = steady_fps / target_input_fps
         status = PASS if ratio >= 1.0 else FAIL
-        detail = (f"生产期内回放确认 {replayed_during_production} 帧，"
-                  f"约 {actual_fps:.2f} 帧/秒；目标输入 {target_input_fps:.2f} 帧/秒"
-                  f"（比值 {ratio:.3f}）")
+        detail = (f"预热 {windows.get('warmup_s', 0)}s 后稳态确认约 {steady_fps:.2f} 帧/秒"
+                  f"（{windows.get('steady_windows')} 个窗口）；目标输入 "
+                  f"{target_input_fps:.2f} 帧/秒（比值 {ratio:.3f}）。"
+                  f"生产期累计确认 {replayed_during_production} 帧仅供参考，不单独作为容量判据")
     verdicts["sustained_replay"] = {"status": status, "detail": detail}
 
     if not windows.get("windows"):
@@ -356,19 +392,35 @@ def build_verdicts(*, target_frames: int, submitted: int, production_s: float,
     }
 
     if catchup is None:
+        # "未测余量" 不等于 "余量为零"：没运行时只能说尚未验证。
         verdicts["catchup_margin"] = {
             "status": NOT_TESTED,
-            "detail": "本轮未测“保持额定输入时旧积压是否持续减少”（需 --catchup-seconds）",
+            "detail": "尚未验证处理余量：本轮未运行“保持额定输入时旧积压是否持续减少”"
+                      "（需 --catchup-seconds）。未测不等于余量为零。",
         }
     else:
+        net_drain = catchup["net_drain_fps"]
+        input_ok = catchup["input_fps"] >= target_input_fps * 0.98
+        # 处理余量 ≈ 净消减速率 / 额定输入速率（在积压尚未耗尽的区间测量）。
+        margin = (net_drain / target_input_fps) if target_input_fps > 0 else 0.0
         drained = catchup["outbox_end"] < catchup["outbox_start"]
-        status = PASS if (drained and catchup["input_fps"] >= target_input_fps) else FAIL
+        if not input_ok:
+            status = FAIL
+        elif margin >= 0.30:
+            status = PASS
+        elif drained:
+            # 积压确实在减少，但余量不足 30%：如实判失败并给出测得的余量。
+            status = FAIL
+        else:
+            status = FAIL
         verdicts["catchup_margin"] = {
             "status": status,
-            "detail": (f"保持 {catchup['input_fps']:.2f} 帧/秒输入 {catchup['seconds']}s，"
-                       f"积压 {catchup['outbox_start']} → {catchup['outbox_end']} 帧"
-                       f"（最老 {catchup['oldest_age_start_ms']} → "
-                       f"{catchup['oldest_age_end_ms']}ms）"),
+            "detail": (f"保持 {catchup['input_fps']:.2f} 帧/秒输入 {catchup['seconds']}s："
+                       f"确认 {catchup['confirmed_fps']:.2f} 帧/秒，净消减 "
+                       f"{net_drain:.2f} 帧/秒，估算处理余量 {margin * 100:.1f}%"
+                       f"（拟议目标 30%）；积压 {catchup['outbox_start']} → "
+                       f"{catchup['outbox_end']} 帧，最老 "
+                       f"{catchup['oldest_age_start_ms']} → {catchup['oldest_age_end_ms']}ms"),
         }
     return verdicts
 
@@ -445,9 +497,11 @@ def run(args) -> dict:
     stats_before = command_stats(r)
     ticks = 0
     submitted = 0
+    production_submitted = 0
     samples: list[dict] = []
     stop_reason = "duration"
     production_started = time.monotonic()
+    phase_started = production_started
 
     def submit(device: str, tick: int) -> None:
         frame = build_frame(device, args.points, tick, args.period_ms, base_ts)
@@ -461,8 +515,10 @@ def run(args) -> dict:
         metrics = collector._metrics.snapshot()
         return {
             "label": label,
-            "elapsed_s": round(time.monotonic() - production_started, 3),
+            "phase": label.split("_")[0],
+            "elapsed_s": round(time.monotonic() - phase_started, 3),
             "submitted": submitted,
+            "production_submitted": production_submitted,
             "committed_frames": committed_frames(metrics),
             "replayed_frames": replayed_frames(metrics, args.points),
             "outbox": collector.outbox.stats(),
@@ -470,6 +526,9 @@ def run(args) -> dict:
             "redis_used_memory_bytes": int(r.info("memory")["used_memory"]),
         }
 
+    # 生产与追平共用同一个线程池：线程池必须在两个阶段都存活。
+    # 曾把追平循环写在 with 块之外，命中 --catchup-seconds 时会抛
+    # RuntimeError: cannot schedule new futures after shutdown。
     try:
         with ThreadPoolExecutor(max_workers=min(32, args.devices)) as pool:
             while time.monotonic() - production_started < args.seconds:
@@ -486,37 +545,53 @@ def run(args) -> dict:
                         break
                 next_tick = production_started + ticks * args.period_ms / 1000
                 time.sleep(max(0, next_tick - time.monotonic()))
-        production_end = time.monotonic()
-        production_snapshot = snapshot("production_end")
-        production_snapshot["elapsed_s"] = round(production_end - production_started, 3)
-        samples.append(production_snapshot)
+            production_end = time.monotonic()
+            production_submitted = submitted
+            production_snapshot = snapshot("production_end")
+            production_snapshot["elapsed_s"] = round(production_end - production_started, 3)
+            samples.append(production_snapshot)
 
-        catchup = None
-        if args.catchup_seconds > 0:
-            catchup_start = snapshot("catchup_start")
-            catchup_started = time.monotonic()
-            catchup_ticks = 0
-            while time.monotonic() - catchup_started < args.catchup_seconds:
-                current_tick = ticks
-                for future in [pool.submit(submit, device, current_tick) for device in devices]:
-                    future.result()
-                ticks += 1
-                catchup_ticks += 1
-                submitted += args.devices
-                if catchup_ticks % args.sample_every_ticks == 0:
-                    samples.append(snapshot("catchup"))
-                next_tick = catchup_started + catchup_ticks * args.period_ms / 1000
-                time.sleep(max(0, next_tick - time.monotonic()))
-            catchup_end = snapshot("catchup_end")
-            catchup = {
-                "seconds": round(time.monotonic() - catchup_started, 3),
-                "input_fps": round(catchup_ticks * args.devices
-                                   / max(time.monotonic() - catchup_started, 1e-9), 2),
-                "outbox_start": catchup_start["outbox"]["count"],
-                "outbox_end": catchup_end["outbox"]["count"],
-                "oldest_age_start_ms": catchup_start["outbox"]["oldest_age_ms"],
-                "oldest_age_end_ms": catchup_end["outbox"]["oldest_age_ms"],
-            }
+            catchup = None
+            if args.catchup_seconds > 0:
+                phase_started = time.monotonic()
+                catchup_started = phase_started
+                catchup_start = snapshot("catchup_start")
+                catchup_start["elapsed_s"] = 0.0
+                samples.append(catchup_start)
+                catchup_ticks = 0
+                while time.monotonic() - catchup_started < args.catchup_seconds:
+                    current_tick = ticks
+                    for future in [pool.submit(submit, device, current_tick) for device in devices]:
+                        future.result()
+                    ticks += 1
+                    catchup_ticks += 1
+                    submitted += args.devices
+                    if catchup_ticks % args.sample_every_ticks == 0:
+                        samples.append(snapshot("catchup"))
+                    next_tick = catchup_started + catchup_ticks * args.period_ms / 1000
+                    time.sleep(max(0, next_tick - time.monotonic()))
+                catchup_seconds_actual = time.monotonic() - catchup_started
+                catchup_end = snapshot("catchup_end")
+                catchup_end["elapsed_s"] = round(catchup_seconds_actual, 3)
+                samples.append(catchup_end)
+                catchup_confirmed = catchup_end["replayed_frames"] - catchup_start["replayed_frames"]
+                catchup = {
+                    "seconds": round(catchup_seconds_actual, 3),
+                    "input_fps": round(catchup_ticks * args.devices
+                                       / max(catchup_seconds_actual, 1e-9), 2),
+                    "confirmed_frames": catchup_confirmed,
+                    "confirmed_fps": round(catchup_confirmed
+                                           / max(catchup_seconds_actual, 1e-9), 2),
+                    "outbox_start": catchup_start["outbox"]["count"],
+                    "outbox_end": catchup_end["outbox"]["count"],
+                    "outbox_bytes_start": catchup_start["outbox"]["payload_bytes"],
+                    "outbox_bytes_end": catchup_end["outbox"]["payload_bytes"],
+                    "oldest_age_start_ms": catchup_start["outbox"]["oldest_age_ms"],
+                    "oldest_age_end_ms": catchup_end["outbox"]["oldest_age_ms"],
+                    "net_drain_fps": round(
+                        (catchup_start["outbox"]["count"] - catchup_end["outbox"]["count"])
+                        / max(catchup_seconds_actual, 1e-9), 2),
+                }
 
         drain_started = time.monotonic()
         while time.monotonic() - drain_started < args.drain_seconds:
@@ -583,9 +658,11 @@ def run(args) -> dict:
 
         replayed_during_production = production_snapshot["replayed_frames"]
         committed_total = final_snapshot["committed_frames"]
-        windows = window_analysis(samples, args.period_ms, args.devices)
+        # 预热取额定周期数的 10 倍或 2 秒的较大者：异步流水线需要时间填满在途窗口。
+        warmup_s = max(2.0, args.period_ms / 1000.0 * 10)
+        windows = window_analysis(samples, args.period_ms, args.devices, warmup_s=warmup_s)
         verdicts = build_verdicts(
-            target_frames=report["target_frames"], submitted=submitted,
+            target_frames=report["target_frames"], production_submitted=production_submitted,
             production_s=production_end - production_started, target_seconds=args.seconds,
             committed=committed_total, replayed_during_production=replayed_during_production,
             windows=windows, drain_s=drain_s, final_outbox=final_outbox,
@@ -595,18 +672,27 @@ def run(args) -> dict:
         report.update({
             "verdicts": verdicts,
             "overall_passed": all(value["status"] == PASS for value in verdicts.values()),
-            "stop_reason": stop_reason, "ticks": ticks, "submitted_frames": submitted,
+            "stop_reason": stop_reason, "ticks": ticks,
+            "submitted_frames": submitted,
+            "production_submitted_frames": production_submitted,
             "production_seconds": round(production_end - production_started, 3),
-            "receive_frames_per_second": round(submitted / max(production_end - production_started, 1e-9), 2),
+            "catchup_seconds": round(catchup["seconds"], 3) if catchup else 0.0,
+            "drain_seconds": round(drain_s, 3),
+            "total_elapsed_seconds": round(
+                (production_end - production_started)
+                + (catchup["seconds"] if catchup else 0.0) + drain_s, 3),
+            "receive_frames_per_second": round(
+                (args.devices * (args.seconds * 1000 // args.period_ms))
+                / max(production_end - production_started, 1e-9), 2),
             "committed_frames_total": committed_total,
             "replayed_frames_total": final_snapshot["replayed_frames"],
             "replayed_frames_during_production": replayed_during_production,
             "replayed_fps_during_production": round(
                 replayed_during_production / max(production_end - production_started, 1e-9), 2),
+            "steady_confirmed_fps": windows.get("steady_confirmed_fps"),
             "replayed_fps_after_production": round(
                 (final_snapshot["replayed_frames"] - replayed_during_production)
                 / max(drain_s, 1e-9), 2),
-            "drain_seconds": round(drain_s, 3),
             "audited_frames": audited,
             "total_frames_in_stream": len(entries),
             "duplicate_frames": duplicates,

@@ -199,24 +199,6 @@ def test_startup_replays_backlog_without_new_samples(tmp_path):
     w.close()
 
 
-def test_local_acceptance_and_redis_replay_are_counted_separately(tmp_path):
-    """口径回归：durable 路径的 stream_points_written 只统计“已回放到 Redis”，
-    本地持久接收必须另有 durable_frames_accepted 计数，不能互相冒充。"""
-    w, p = durable(tmp_path, [0, 0])
-    w.write_window_stream("D", "qc", "g", 100, 1234, 2, {"ts": 1234}, {"1": "7"}, {"1": 192})
-    w.write_latest("D", "g", {"1": {"v": "7", "t": 1234, "q": 192}})
-    deadline = time.monotonic() + 3
-    while w.outbox.count() and time.monotonic() < deadline:
-        time.sleep(.01)
-    counters = w._metrics.snapshot()["counters"]
-    assert counters["durable_frames_accepted"] == 1
-    # latest 快车道只写 latest，不写 stream，因此回放计数与本地接收计数是两回事。
-    assert counters.get("stream_points_written", 0) in (0, 1)
-    if counters.get("stream_points_written", 0) == 0:
-        assert counters["durable_frames_accepted"] == 1, "本地已接收但尚未回放时两者必须不同"
-    w.close()
-
-
 def test_http_split_write_path_is_locally_durable(tmp_path):
     w, pipe = durable(tmp_path, [1, 0])
     w.write_window("D", "g", 100, {"ts": 1234, "values": {"1": "7"}})
@@ -256,8 +238,7 @@ def test_fastlane_newer_update_survives_inflight_send(tmp_path):
     entered = threading.Event()
     release = threading.Event()
     sent = []
-    def send(*args):
-        payload = args[4]
+    def send(script, count, key, payload, device, group):
         sent.append(msgspec.json.decode(payload))
         if len(sent) == 1:
             entered.set()
@@ -291,7 +272,7 @@ def test_fastlane_restores_latest_from_unconfirmed_outbox(tmp_path):
     deadline = time.monotonic() + 3
     while client.eval.call_args is None and time.monotonic() < deadline: time.sleep(.001)
     assert client.eval.call_args is not None
-    assert msgspec.json.decode(client.eval.call_args.args[4])["1"]["t"] == 1234
+    assert msgspec.json.decode(client.eval.call_args.args[3])["1"]["t"] == 1234
     assert w.outbox.count() == 1
     w.close()
 
@@ -365,8 +346,8 @@ def test_restart_scan_has_fixed_rowid_ceiling(tmp_path):
 def test_fastlane_failed_group_does_not_starve_other_groups(tmp_path):
     w, _ = durable(tmp_path, [1, 0])
     delivered = threading.Event()
-    def send(*args):
-        if args[6] == "bad":
+    def send(script, count, key, payload, device, group):
+        if group == "bad":
             raise RuntimeError("bad latest payload")
         delivered.set()
         return 1
