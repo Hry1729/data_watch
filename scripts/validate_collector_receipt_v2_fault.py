@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -11,7 +12,10 @@ import redis
 from data_watch_shared.stream_envelope import stream_key
 from storage.durable_redis_writer import DurableRedisWriter
 
-STATE = Path("/tmp/dw_receipt_v2_fault_20260924_state.json")
+# 用系统临时目录而不是写死 /tmp：本脚本要能在 Windows 与 Linux 容器里都跑，
+# 否则 Windows 上会落到盘符根目录下的 \tmp。
+_TEMP = Path(tempfile.gettempdir())
+STATE = _TEMP / "dw_receipt_v2_fault_state.json"
 
 
 def sample(device: str):
@@ -32,7 +36,7 @@ def writer(url: str, path: Path):
 
 def first(url: str):
     device = "receipt-fault-" + uuid4().hex
-    db_path = Path("/tmp") / (device + ".db")
+    db_path = _TEMP / (device + ".db")
     w = writer(url, db_path)
     w.outbox.record_failure(**sample(device))
     row = w.outbox._conn.execute(
