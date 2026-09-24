@@ -346,6 +346,8 @@ class CollectorRetryOutbox:
                         try:
                             self._metrics.record_timing("outbox_commit_ms", (time.perf_counter() - started) * 1000)
                             self._metrics.increment("outbox_committed_frames", accepted)
+                            # 本地持久接收的帧数（与已回放到 Redis 的 stream_points_written 分开计数）。
+                            self._metrics.increment("durable_frames_accepted", accepted)
                             self._metrics.increment("outbox_committed_bytes", committed_bytes)
                             self._metrics.set_gauge("outbox_commit_batch_frames", accepted)
                             self._metrics.set_gauge("outbox_commit_batch_bytes", committed_bytes)
@@ -437,11 +439,12 @@ class CollectorRetryOutbox:
                 for table in ("collector_retry_outbox", "collector_retry_outbox_v2")
             }
         for table, ceiling in ceilings.items():
+            session_column = "session_id" if table == "collector_retry_outbox_v2" else "NULL AS session_id"
             last_rowid = 0
             while last_rowid < ceiling:
                 with self._lock:
                     rows = self._conn.execute(
-                        "SELECT rowid, device_code, group_code, latest_fields_json "
+                        f"SELECT rowid, device_code, group_code, latest_fields_json, {session_column} "
                         f"FROM {table} WHERE rowid > ? AND rowid <= ? "
                         "ORDER BY rowid LIMIT ?",
                         (last_rowid, ceiling, batch_size),
@@ -449,8 +452,14 @@ class CollectorRetryOutbox:
                 if not rows:
                     break
                 for row in rows:
-                    yield row["device_code"], row["group_code"], row["latest_fields_json"]
+                    yield (row["device_code"], row["group_code"], row["session_id"],
+                           row["latest_fields_json"])
                 last_rowid = rows[-1]["rowid"]
+
+    @property
+    def session_id(self) -> str:
+        """本次进程启动生成的、不可复用的投递会话标识。"""
+        return self._session_id
 
     def assert_legacy_rollback_ready(self) -> None:
         """An older binary cannot replay v2 rows and must wait for them to drain."""

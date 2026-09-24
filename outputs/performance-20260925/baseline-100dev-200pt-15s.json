@@ -1,0 +1,923 @@
+{
+  "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+  "verdict_model": "input_on_schedule|durable_received|sustained_replay|steady_state|data_correctness|catchup_margin",
+  "token": "2b556ae687",
+  "device_type": "perfcol2b556ae687",
+  "redis_db": 14,
+  "redis_host": "perf-redis",
+  "profile_phases": false,
+  "python_gil_enabled": false,
+  "devices": 100,
+  "points_per_frame": 200,
+  "period_ms": 100,
+  "target_seconds": 15,
+  "target_input_frames_per_second": 1000.0,
+  "target_frames": 15000,
+  "container_cpu_limit": 2,
+  "redis_memory_guard_bytes": 419430400,
+  "outbox_path": "/tmp/collector-cap-2b556ae687.sqlite",
+  "receipt_key": "collector:receipt:v2:d9a385fa-8b50-4e9f-a07c-76f37bec60b7",
+  "audit_stride": 97,
+  "notes": [
+    "输入由本脚本直接构造并调用 DurableRedisWriter，未经 collector.executor 的分组/过滤代码。",
+    "stream_points_written 的口径是已回放到 Redis 的点值数，不含本地接收。",
+    "不包含真实 PLC、TDengine、Writer 或浏览器。"
+  ],
+  "verdicts": {
+    "input_on_schedule": {
+      "status": "pass",
+      "detail": "提交 15000/15000 帧，用时 15.004s，目标 15s"
+    },
+    "durable_received": {
+      "status": "pass",
+      "detail": "SQLite 持久提交 15000 帧，输入 15000 帧"
+    },
+    "sustained_replay": {
+      "status": "fail",
+      "detail": "生产期内回放确认 12375 帧，约 824.75 帧/秒；目标输入 1000.00 帧/秒（比值 0.825）"
+    },
+    "steady_state": {
+      "status": "fail",
+      "detail": "积压趋势=growing，窗口内最大积压 3736 帧 / 最老 3665ms，停采后 outbox=0，排空 2.675s"
+    },
+    "data_correctness": {
+      "status": "pass",
+      "detail": "全部检查通过"
+    },
+    "catchup_margin": {
+      "status": "not_tested",
+      "detail": "本轮未测“保持额定输入时旧积压是否持续减少”（需 --catchup-seconds）"
+    }
+  },
+  "overall_passed": false,
+  "stop_reason": "duration",
+  "ticks": 150,
+  "submitted_frames": 15000,
+  "production_seconds": 15.004,
+  "receive_frames_per_second": 999.7,
+  "committed_frames_total": 15000,
+  "replayed_frames_total": 14775,
+  "replayed_frames_during_production": 12375,
+  "replayed_fps_during_production": 824.75,
+  "replayed_fps_after_production": 897.25,
+  "drain_seconds": 2.675,
+  "audited_frames": 156,
+  "total_frames_in_stream": 15000,
+  "duplicate_frames": 0,
+  "correctness_problems": [],
+  "windows": {
+    "windows": [
+      {
+        "from_s": 0.456,
+        "to_s": 0.956,
+        "input_fps": 1000.0,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 989,
+        "outbox_oldest_age_ms": 947,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 0.956,
+        "to_s": 1.475,
+        "input_fps": 963.39,
+        "replay_confirmed_fps": 360.31,
+        "outbox_frames": 1300,
+        "outbox_oldest_age_ms": 1273,
+        "outbox_delta": 311
+      },
+      {
+        "from_s": 1.475,
+        "to_s": 1.941,
+        "input_fps": 1072.96,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1800,
+        "outbox_oldest_age_ms": 1739,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 1.941,
+        "to_s": 2.452,
+        "input_fps": 978.47,
+        "replay_confirmed_fps": 1927.59,
+        "outbox_frames": 1300,
+        "outbox_oldest_age_ms": 1252,
+        "outbox_delta": -500
+      },
+      {
+        "from_s": 2.452,
+        "to_s": 2.942,
+        "input_fps": 1020.41,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1800,
+        "outbox_oldest_age_ms": 1742,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 2.942,
+        "to_s": 3.456,
+        "input_fps": 972.76,
+        "replay_confirmed_fps": 1976.65,
+        "outbox_frames": 1268,
+        "outbox_oldest_age_ms": 1225,
+        "outbox_delta": -532
+      },
+      {
+        "from_s": 3.456,
+        "to_s": 3.941,
+        "input_fps": 1030.93,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1768,
+        "outbox_oldest_age_ms": 1711,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 3.941,
+        "to_s": 4.444,
+        "input_fps": 994.04,
+        "replay_confirmed_fps": 1958.25,
+        "outbox_frames": 1268,
+        "outbox_oldest_age_ms": 1224,
+        "outbox_delta": -500
+      },
+      {
+        "from_s": 4.444,
+        "to_s": 4.958,
+        "input_fps": 972.76,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1768,
+        "outbox_oldest_age_ms": 1739,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 4.958,
+        "to_s": 5.445,
+        "input_fps": 1026.69,
+        "replay_confirmed_fps": 1755.65,
+        "outbox_frames": 1400,
+        "outbox_oldest_age_ms": 1345,
+        "outbox_delta": -368
+      },
+      {
+        "from_s": 5.445,
+        "to_s": 5.953,
+        "input_fps": 984.25,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1900,
+        "outbox_oldest_age_ms": 1852,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 5.953,
+        "to_s": 6.443,
+        "input_fps": 1020.41,
+        "replay_confirmed_fps": 2010.2,
+        "outbox_frames": 1400,
+        "outbox_oldest_age_ms": 1342,
+        "outbox_delta": -500
+      },
+      {
+        "from_s": 6.443,
+        "to_s": 6.952,
+        "input_fps": 982.32,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1900,
+        "outbox_oldest_age_ms": 1852,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 6.952,
+        "to_s": 7.445,
+        "input_fps": 1014.2,
+        "replay_confirmed_fps": 1997.97,
+        "outbox_frames": 1400,
+        "outbox_oldest_age_ms": 1344,
+        "outbox_delta": -500
+      },
+      {
+        "from_s": 7.445,
+        "to_s": 7.965,
+        "input_fps": 961.54,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 1900,
+        "outbox_oldest_age_ms": 1864,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 7.965,
+        "to_s": 8.445,
+        "input_fps": 1041.67,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 2400,
+        "outbox_oldest_age_ms": 2345,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 8.445,
+        "to_s": 8.957,
+        "input_fps": 976.56,
+        "replay_confirmed_fps": 1923.83,
+        "outbox_frames": 1900,
+        "outbox_oldest_age_ms": 1856,
+        "outbox_delta": -500
+      },
+      {
+        "from_s": 8.957,
+        "to_s": 9.452,
+        "input_fps": 1010.1,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 2400,
+        "outbox_oldest_age_ms": 2351,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 9.452,
+        "to_s": 9.963,
+        "input_fps": 978.47,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 2900,
+        "outbox_oldest_age_ms": 2863,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 9.963,
+        "to_s": 10.44,
+        "input_fps": 1048.22,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 3400,
+        "outbox_oldest_age_ms": 3340,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 10.44,
+        "to_s": 10.986,
+        "input_fps": 915.75,
+        "replay_confirmed_fps": 3001.83,
+        "outbox_frames": 2236,
+        "outbox_oldest_age_ms": 2207,
+        "outbox_delta": -1164
+      },
+      {
+        "from_s": 10.986,
+        "to_s": 11.446,
+        "input_fps": 1086.96,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 2736,
+        "outbox_oldest_age_ms": 2668,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 11.446,
+        "to_s": 11.954,
+        "input_fps": 984.25,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 3236,
+        "outbox_oldest_age_ms": 3176,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 11.954,
+        "to_s": 12.443,
+        "input_fps": 1022.49,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 3736,
+        "outbox_oldest_age_ms": 3665,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 12.443,
+        "to_s": 12.955,
+        "input_fps": 976.56,
+        "replay_confirmed_fps": 3847.66,
+        "outbox_frames": 2236,
+        "outbox_oldest_age_ms": 2118,
+        "outbox_delta": -1500
+      },
+      {
+        "from_s": 12.955,
+        "to_s": 13.443,
+        "input_fps": 1024.59,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 2736,
+        "outbox_oldest_age_ms": 2606,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 13.443,
+        "to_s": 13.951,
+        "input_fps": 984.25,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 3236,
+        "outbox_oldest_age_ms": 3114,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 13.951,
+        "to_s": 14.441,
+        "input_fps": 1020.41,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 3736,
+        "outbox_oldest_age_ms": 3604,
+        "outbox_delta": 500
+      },
+      {
+        "from_s": 14.441,
+        "to_s": 14.944,
+        "input_fps": 994.04,
+        "replay_confirmed_fps": 3524.85,
+        "outbox_frames": 2436,
+        "outbox_oldest_age_ms": 2325,
+        "outbox_delta": -1300
+      }
+    ],
+    "trend": "growing",
+    "max_outbox_frames": 3736,
+    "max_outbox_oldest_age_ms": 3665,
+    "max_input_fps": 1086.96,
+    "min_input_fps": 915.75,
+    "max_replay_confirmed_fps": 3847.66
+  },
+  "catchup": null,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "sqlite_rows_after_close": 0,
+  "final_latest_pending": 0,
+  "max_rss_bytes": 177135616,
+  "max_redis_used_memory_bytes": 59735304,
+  "commandstats_delta": {
+    "eval": {
+      "calls": 7018,
+      "usec": 5070211
+    },
+    "evalsha": {
+      "calls": 15000,
+      "usec": 6921155
+    },
+    "waitaof": {
+      "calls": 14,
+      "usec": 14
+    },
+    "xadd": {
+      "calls": 15000,
+      "usec": 97636
+    },
+    "hset": {
+      "calls": 1504200,
+      "usec": 826823
+    },
+    "hmget": {
+      "calls": 15000,
+      "usec": 1425291
+    },
+    "publish": {
+      "calls": 7371,
+      "usec": 5232
+    }
+  },
+  "timings_ms": {
+    "outbox_accept_ms": {
+      "count": 15000,
+      "average_ms": 10.961,
+      "max_ms": 110.677,
+      "p50_ms": 10.0,
+      "p95_ms": 30.0,
+      "p99_ms": 75.0,
+      "p999_ms": 125.0
+    },
+    "outbox_commit_ms": {
+      "count": 603,
+      "average_ms": 5.385,
+      "max_ms": 28.451,
+      "p50_ms": 5.0,
+      "p95_ms": 20.0,
+      "p99_ms": 20.0,
+      "p999_ms": 30.0
+    },
+    "redis_aof_batch_ms": {
+      "count": 14,
+      "average_ms": 1123.958,
+      "max_ms": 1914.048,
+      "p50_ms": 1000.0,
+      "p95_ms": 2000.0,
+      "p99_ms": 2000.0,
+      "p999_ms": 2000.0
+    },
+    "latest_fastlane_redis_ms": {
+      "count": 7018,
+      "average_ms": 1.862,
+      "max_ms": 30.751,
+      "p50_ms": 2.0,
+      "p95_ms": 5.0,
+      "p99_ms": 10.0,
+      "p999_ms": 30.0
+    }
+  },
+  "profile_windows": [],
+  "samples": [
+    {
+      "label": "production",
+      "elapsed_s": 0.456,
+      "submitted": 500,
+      "committed_frames": 500,
+      "replayed_frames": 10,
+      "outbox": {
+        "count": 489,
+        "payload_bytes": 7008076,
+        "oldest_age_ms": 449,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 104783872,
+      "redis_used_memory_bytes": 4032016
+    },
+    {
+      "label": "production",
+      "elapsed_s": 0.956,
+      "submitted": 1000,
+      "committed_frames": 1000,
+      "replayed_frames": 10,
+      "outbox": {
+        "count": 989,
+        "payload_bytes": 14173037,
+        "oldest_age_ms": 947,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 106086400,
+      "redis_used_memory_bytes": 4107528
+    },
+    {
+      "label": "production",
+      "elapsed_s": 1.475,
+      "submitted": 1500,
+      "committed_frames": 1500,
+      "replayed_frames": 197,
+      "outbox": {
+        "count": 1300,
+        "payload_bytes": 18629352,
+        "oldest_age_ms": 1273,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 135618560,
+      "redis_used_memory_bytes": 7103464
+    },
+    {
+      "label": "production",
+      "elapsed_s": 1.941,
+      "submitted": 2000,
+      "committed_frames": 2000,
+      "replayed_frames": 197,
+      "outbox": {
+        "count": 1800,
+        "payload_bytes": 25796175,
+        "oldest_age_ms": 1739,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 136695808,
+      "redis_used_memory_bytes": 10137168
+    },
+    {
+      "label": "production",
+      "elapsed_s": 2.452,
+      "submitted": 2500,
+      "committed_frames": 2500,
+      "replayed_frames": 1182,
+      "outbox": {
+        "count": 1300,
+        "payload_bytes": 18634161,
+        "oldest_age_ms": 1252,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139116544,
+      "redis_used_memory_bytes": 11275408
+    },
+    {
+      "label": "production",
+      "elapsed_s": 2.942,
+      "submitted": 3000,
+      "committed_frames": 3000,
+      "replayed_frames": 1182,
+      "outbox": {
+        "count": 1800,
+        "payload_bytes": 25802633,
+        "oldest_age_ms": 1742,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139501568,
+      "redis_used_memory_bytes": 14474352
+    },
+    {
+      "label": "production",
+      "elapsed_s": 3.456,
+      "submitted": 3500,
+      "committed_frames": 3500,
+      "replayed_frames": 2198,
+      "outbox": {
+        "count": 1268,
+        "payload_bytes": 18180515,
+        "oldest_age_ms": 1225,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139743232,
+      "redis_used_memory_bytes": 15914688
+    },
+    {
+      "label": "production",
+      "elapsed_s": 3.941,
+      "submitted": 4000,
+      "committed_frames": 4000,
+      "replayed_frames": 2198,
+      "outbox": {
+        "count": 1768,
+        "payload_bytes": 25350415,
+        "oldest_age_ms": 1711,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139280384,
+      "redis_used_memory_bytes": 18586280
+    },
+    {
+      "label": "production",
+      "elapsed_s": 4.444,
+      "submitted": 4500,
+      "committed_frames": 4500,
+      "replayed_frames": 3183,
+      "outbox": {
+        "count": 1268,
+        "payload_bytes": 18183876,
+        "oldest_age_ms": 1224,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139554816,
+      "redis_used_memory_bytes": 20578984
+    },
+    {
+      "label": "production",
+      "elapsed_s": 4.958,
+      "submitted": 5000,
+      "committed_frames": 5000,
+      "replayed_frames": 3183,
+      "outbox": {
+        "count": 1768,
+        "payload_bytes": 25354997,
+        "oldest_age_ms": 1739,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 135139328,
+      "redis_used_memory_bytes": 22234272
+    },
+    {
+      "label": "production",
+      "elapsed_s": 5.445,
+      "submitted": 5500,
+      "committed_frames": 5500,
+      "replayed_frames": 4038,
+      "outbox": {
+        "count": 1400,
+        "payload_bytes": 20079248,
+        "oldest_age_ms": 1345,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 139902976,
+      "redis_used_memory_bytes": 23992648
+    },
+    {
+      "label": "production",
+      "elapsed_s": 5.953,
+      "submitted": 6000,
+      "committed_frames": 6000,
+      "replayed_frames": 4038,
+      "outbox": {
+        "count": 1900,
+        "payload_bytes": 27251370,
+        "oldest_age_ms": 1852,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 140115968,
+      "redis_used_memory_bytes": 26288432
+    },
+    {
+      "label": "production",
+      "elapsed_s": 6.443,
+      "submitted": 6500,
+      "committed_frames": 6500,
+      "replayed_frames": 5023,
+      "outbox": {
+        "count": 1400,
+        "payload_bytes": 20082028,
+        "oldest_age_ms": 1342,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 141176832,
+      "redis_used_memory_bytes": 28220376
+    },
+    {
+      "label": "production",
+      "elapsed_s": 6.952,
+      "submitted": 7000,
+      "committed_frames": 7000,
+      "replayed_frames": 5023,
+      "outbox": {
+        "count": 1900,
+        "payload_bytes": 27254941,
+        "oldest_age_ms": 1852,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 140550144,
+      "redis_used_memory_bytes": 30264368
+    },
+    {
+      "label": "production",
+      "elapsed_s": 7.445,
+      "submitted": 7500,
+      "committed_frames": 7500,
+      "replayed_frames": 6008,
+      "outbox": {
+        "count": 1400,
+        "payload_bytes": 20084208,
+        "oldest_age_ms": 1344,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 140648448,
+      "redis_used_memory_bytes": 32408056
+    },
+    {
+      "label": "production",
+      "elapsed_s": 7.965,
+      "submitted": 8000,
+      "committed_frames": 8000,
+      "replayed_frames": 6008,
+      "outbox": {
+        "count": 1900,
+        "payload_bytes": 27257697,
+        "oldest_age_ms": 1864,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 140759040,
+      "redis_used_memory_bytes": 34606408
+    },
+    {
+      "label": "production",
+      "elapsed_s": 8.445,
+      "submitted": 8500,
+      "committed_frames": 8500,
+      "replayed_frames": 6008,
+      "outbox": {
+        "count": 2400,
+        "payload_bytes": 34431393,
+        "oldest_age_ms": 2345,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 140472320,
+      "redis_used_memory_bytes": 34550696
+    },
+    {
+      "label": "production",
+      "elapsed_s": 8.957,
+      "submitted": 9000,
+      "committed_frames": 9000,
+      "replayed_frames": 6993,
+      "outbox": {
+        "count": 1900,
+        "payload_bytes": 27259636,
+        "oldest_age_ms": 1856,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 164007936,
+      "redis_used_memory_bytes": 35059384
+    },
+    {
+      "label": "production",
+      "elapsed_s": 9.452,
+      "submitted": 9500,
+      "committed_frames": 9500,
+      "replayed_frames": 6993,
+      "outbox": {
+        "count": 2400,
+        "payload_bytes": 34433583,
+        "oldest_age_ms": 2351,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 164823040,
+      "redis_used_memory_bytes": 37365376
+    },
+    {
+      "label": "production",
+      "elapsed_s": 9.963,
+      "submitted": 10000,
+      "committed_frames": 10000,
+      "replayed_frames": 6993,
+      "outbox": {
+        "count": 2900,
+        "payload_bytes": 41607580,
+        "oldest_age_ms": 2863,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 164827136,
+      "redis_used_memory_bytes": 40114424
+    },
+    {
+      "label": "production",
+      "elapsed_s": 10.44,
+      "submitted": 10500,
+      "committed_frames": 10500,
+      "replayed_frames": 6993,
+      "outbox": {
+        "count": 3400,
+        "payload_bytes": 48781580,
+        "oldest_age_ms": 3340,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 164732928,
+      "redis_used_memory_bytes": 41445184
+    },
+    {
+      "label": "production",
+      "elapsed_s": 10.986,
+      "submitted": 11000,
+      "committed_frames": 11000,
+      "replayed_frames": 8632,
+      "outbox": {
+        "count": 2236,
+        "payload_bytes": 32082046,
+        "oldest_age_ms": 2207,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 169693184,
+      "redis_used_memory_bytes": 41256880
+    },
+    {
+      "label": "production",
+      "elapsed_s": 11.446,
+      "submitted": 11500,
+      "committed_frames": 11500,
+      "replayed_frames": 8632,
+      "outbox": {
+        "count": 2736,
+        "payload_bytes": 39256139,
+        "oldest_age_ms": 2668,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 176963584,
+      "redis_used_memory_bytes": 44495984
+    },
+    {
+      "label": "production",
+      "elapsed_s": 11.954,
+      "submitted": 12000,
+      "committed_frames": 12000,
+      "replayed_frames": 8632,
+      "outbox": {
+        "count": 3236,
+        "payload_bytes": 46430364,
+        "oldest_age_ms": 3176,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 177025024,
+      "redis_used_memory_bytes": 47745272
+    },
+    {
+      "label": "production",
+      "elapsed_s": 12.443,
+      "submitted": 12500,
+      "committed_frames": 12500,
+      "replayed_frames": 8632,
+      "outbox": {
+        "count": 3736,
+        "payload_bytes": 53604769,
+        "oldest_age_ms": 3665,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 177135616,
+      "redis_used_memory_bytes": 49793840
+    },
+    {
+      "label": "production",
+      "elapsed_s": 12.955,
+      "submitted": 13000,
+      "committed_frames": 13000,
+      "replayed_frames": 10602,
+      "outbox": {
+        "count": 2236,
+        "payload_bytes": 32083508,
+        "oldest_age_ms": 2118,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 176771072,
+      "redis_used_memory_bytes": 51624112
+    },
+    {
+      "label": "production",
+      "elapsed_s": 13.443,
+      "submitted": 13500,
+      "committed_frames": 13500,
+      "replayed_frames": 10602,
+      "outbox": {
+        "count": 2736,
+        "payload_bytes": 39258438,
+        "oldest_age_ms": 2606,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 176828416,
+      "redis_used_memory_bytes": 54665520
+    },
+    {
+      "label": "production",
+      "elapsed_s": 13.951,
+      "submitted": 14000,
+      "committed_frames": 14000,
+      "replayed_frames": 10602,
+      "outbox": {
+        "count": 3236,
+        "payload_bytes": 46433713,
+        "oldest_age_ms": 3114,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 176754688,
+      "redis_used_memory_bytes": 57266808
+    },
+    {
+      "label": "production",
+      "elapsed_s": 14.441,
+      "submitted": 14500,
+      "committed_frames": 14500,
+      "replayed_frames": 10602,
+      "outbox": {
+        "count": 3736,
+        "payload_bytes": 53609381,
+        "oldest_age_ms": 3604,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 176439296,
+      "redis_used_memory_bytes": 57168248
+    },
+    {
+      "label": "production",
+      "elapsed_s": 14.944,
+      "submitted": 15000,
+      "committed_frames": 15000,
+      "replayed_frames": 12375,
+      "outbox": {
+        "count": 2436,
+        "payload_bytes": 34958358,
+        "oldest_age_ms": 2325,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 175706112,
+      "redis_used_memory_bytes": 59219664
+    },
+    {
+      "label": "production_end",
+      "elapsed_s": 15.004,
+      "submitted": 15000,
+      "committed_frames": 15000,
+      "replayed_frames": 12375,
+      "outbox": {
+        "count": 2436,
+        "payload_bytes": 34958358,
+        "oldest_age_ms": 2387,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 175161344,
+      "redis_used_memory_bytes": 59735304
+    }
+  ],
+  "cleanup": {
+    "redis_own_keys_remaining": 0,
+    "redis_own_keys_deleted": 205,
+    "sqlite_removed": true
+  }
+}

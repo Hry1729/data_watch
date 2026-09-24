@@ -1,0 +1,251 @@
+{
+  "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+  "verdict_model": "input_on_schedule|durable_received|sustained_replay|steady_state|data_correctness|catchup_margin",
+  "token": "763e87d574",
+  "device_type": "perfcol763e87d574",
+  "redis_db": 14,
+  "redis_host": "perf-redis",
+  "profile_phases": false,
+  "python_gil_enabled": false,
+  "devices": 4,
+  "points_per_frame": 8,
+  "period_ms": 500,
+  "target_seconds": 2,
+  "target_input_frames_per_second": 8.0,
+  "target_frames": 16,
+  "container_cpu_limit": 2,
+  "redis_memory_guard_bytes": 419430400,
+  "outbox_path": "/tmp/collector-cap-763e87d574.sqlite",
+  "receipt_key": "collector:receipt:v2:9f5317df-f8c9-40cd-bc76-1a5c2de37d24",
+  "audit_stride": 3,
+  "notes": [
+    "输入由本脚本直接构造并调用 DurableRedisWriter，未经 collector.executor 的分组/过滤代码。",
+    "stream_points_written 的口径是已回放到 Redis 的点值数，不含本地接收。",
+    "不包含真实 PLC、TDengine、Writer 或浏览器。"
+  ],
+  "verdicts": {
+    "input_on_schedule": {
+      "status": "pass",
+      "detail": "提交 16/16 帧，用时 2.001s，目标 2s"
+    },
+    "durable_received": {
+      "status": "pass",
+      "detail": "SQLite 持久提交 16 帧，输入 16 帧"
+    },
+    "sustained_replay": {
+      "status": "fail",
+      "detail": "生产期内回放确认 5 帧，约 2.50 帧/秒；目标输入 8.00 帧/秒（比值 0.625）"
+    },
+    "steady_state": {
+      "status": "pass",
+      "detail": "积压趋势=flat，窗口内最大积压 8 帧 / 最老 1001ms，停采后 outbox=0，排空 1.201s"
+    },
+    "data_correctness": {
+      "status": "pass",
+      "detail": "全部检查通过"
+    },
+    "catchup_margin": {
+      "status": "not_tested",
+      "detail": "本轮未测“保持额定输入时旧积压是否持续减少”（需 --catchup-seconds）"
+    }
+  },
+  "overall_passed": false,
+  "stop_reason": "duration",
+  "ticks": 4,
+  "submitted_frames": 16,
+  "production_seconds": 2.001,
+  "receive_frames_per_second": 8.0,
+  "committed_frames_total": 16,
+  "replayed_frames_total": 10,
+  "replayed_frames_during_production": 5,
+  "replayed_fps_during_production": 2.5,
+  "replayed_fps_after_production": 4.16,
+  "drain_seconds": 1.201,
+  "audited_frames": 6,
+  "total_frames_in_stream": 16,
+  "duplicate_frames": 0,
+  "correctness_problems": [],
+  "windows": {
+    "windows": [
+      {
+        "from_s": 0.015,
+        "to_s": 0.513,
+        "input_fps": 8.03,
+        "replay_confirmed_fps": 4.02,
+        "outbox_frames": 4,
+        "outbox_oldest_age_ms": 13,
+        "outbox_delta": 0
+      },
+      {
+        "from_s": 0.513,
+        "to_s": 1.013,
+        "input_fps": 8.0,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 8,
+        "outbox_oldest_age_ms": 512,
+        "outbox_delta": 4
+      },
+      {
+        "from_s": 1.013,
+        "to_s": 1.515,
+        "input_fps": 7.97,
+        "replay_confirmed_fps": 5.98,
+        "outbox_frames": 8,
+        "outbox_oldest_age_ms": 515,
+        "outbox_delta": 0
+      },
+      {
+        "from_s": 1.515,
+        "to_s": 2.001,
+        "input_fps": 0.0,
+        "replay_confirmed_fps": 0.0,
+        "outbox_frames": 8,
+        "outbox_oldest_age_ms": 1001,
+        "outbox_delta": 0
+      }
+    ],
+    "trend": "flat",
+    "max_outbox_frames": 8,
+    "max_outbox_oldest_age_ms": 1001,
+    "max_input_fps": 8.03,
+    "min_input_fps": 0.0,
+    "max_replay_confirmed_fps": 5.98
+  },
+  "catchup": null,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "sqlite_rows_after_close": 0,
+  "final_latest_pending": 0,
+  "max_rss_bytes": 54456320,
+  "max_redis_used_memory_bytes": 1619280,
+  "timings_ms": {
+    "outbox_accept_ms": {
+      "count": 16,
+      "average_ms": 12.313,
+      "max_ms": 14.111,
+      "p50_ms": 20.0,
+      "p95_ms": 20.0,
+      "p99_ms": 20.0,
+      "p999_ms": 20.0
+    },
+    "outbox_commit_ms": {
+      "count": 4,
+      "average_ms": 6.99,
+      "max_ms": 8.421,
+      "p50_ms": 10.0,
+      "p95_ms": 10.0,
+      "p99_ms": 10.0,
+      "p999_ms": 10.0
+    },
+    "redis_aof_batch_ms": {
+      "count": 4,
+      "average_ms": 657.509,
+      "max_ms": 997.362,
+      "p50_ms": 1000.0,
+      "p95_ms": 1000.0,
+      "p99_ms": 1000.0,
+      "p999_ms": 1000.0
+    },
+    "latest_fastlane_redis_ms": {
+      "count": 16,
+      "average_ms": 0.257,
+      "max_ms": 0.807,
+      "p50_ms": 0.25,
+      "p95_ms": 1.0,
+      "p99_ms": 1.0,
+      "p999_ms": 1.0
+    }
+  },
+  "profile_windows": [],
+  "samples": [
+    {
+      "label": "production",
+      "elapsed_s": 0.015,
+      "submitted": 4,
+      "committed_frames": 4,
+      "replayed_frames": 0,
+      "outbox": {
+        "count": 4,
+        "payload_bytes": 1967,
+        "oldest_age_ms": 15,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 54165504,
+      "redis_used_memory_bytes": 1593360
+    },
+    {
+      "label": "production",
+      "elapsed_s": 0.513,
+      "submitted": 8,
+      "committed_frames": 8,
+      "replayed_frames": 2,
+      "outbox": {
+        "count": 4,
+        "payload_bytes": 1967,
+        "oldest_age_ms": 13,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 54439936,
+      "redis_used_memory_bytes": 1619280
+    },
+    {
+      "label": "production",
+      "elapsed_s": 1.013,
+      "submitted": 12,
+      "committed_frames": 12,
+      "replayed_frames": 2,
+      "outbox": {
+        "count": 8,
+        "payload_bytes": 3937,
+        "oldest_age_ms": 512,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 54370304,
+      "redis_used_memory_bytes": 1574704
+    },
+    {
+      "label": "production",
+      "elapsed_s": 1.515,
+      "submitted": 16,
+      "committed_frames": 16,
+      "replayed_frames": 5,
+      "outbox": {
+        "count": 8,
+        "payload_bytes": 3942,
+        "oldest_age_ms": 515,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 54439936,
+      "redis_used_memory_bytes": 1579232
+    },
+    {
+      "label": "production_end",
+      "elapsed_s": 2.001,
+      "submitted": 16,
+      "committed_frames": 16,
+      "replayed_frames": 5,
+      "outbox": {
+        "count": 8,
+        "payload_bytes": 3942,
+        "oldest_age_ms": 1001,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 54456320,
+      "redis_used_memory_bytes": 1596816
+    }
+  ],
+  "cleanup": {
+    "skipped": true,
+    "reason": "evidence preserved (default)"
+  }
+}

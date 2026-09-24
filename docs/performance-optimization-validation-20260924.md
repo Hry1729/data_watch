@@ -2,6 +2,27 @@
 
 日期：2026-09-24；本文件更新此前两轮交付记录。源码基线仍为 `47c105cec9b4c2ee5d7fb8ff15694868697c70fc`。本报告完成后，按用户要求将全部改动和本轮测试证据提交推送；没有改动或重启已有 MyRedis、MyTdengine、MyMySQL 和应用容器。
 
+> **2026-09-25 更正说明（只更正表述范围，不改动任何历史数字与原始结果）**
+>
+> 下文出现的“全部正确”“核对通过”仅指当时脚本实际检查到的范围，不是“全部历史字段已核对”。
+> 当时两个全链路/采集脚本的实际检查范围是：
+>
+> - 行数：值行数、质量行数等于输入帧数/帧数×点数。
+> - 身份：Stream 帧的 `device_code` + `ts` 唯一、无重复。
+> - 点值：每帧只抽查少数几个点（`validate_docker_pipeline.py` 查 `p1` 与 `pN`；
+>   `validate_collector_free_thread.py` 查点 `1` 与点 `points`），**不是全部点**。
+> - 质量：`validate_docker_pipeline.py` 只断言质量行全部等于 192，
+>   即**没有测试质量码变化**；`validate_collector_free_thread.py` 的 latest 校验覆盖了全部点的质量码，
+>   但测试数据里质量恒为 192。
+> - 未覆盖：NULL 值、布尔值、负值、非存储点（`is_storage=0`）、STRING 类型点、
+>   多点采样周期、点位映射差异；两个脚本都直接构造 writer 入参，
+>   **没有经过 `collector/collector/executor.py` 的分组与过滤代码**。
+>
+> 因此当时不能声称“全部历史字段正确”，只能声称“已检查的那些字段正确”。
+> 该缺口已在本轮（2026-09-25）用
+> `scripts/validate_collector_ingest_capacity.py` 的全字段对账补齐；详见
+> `docs/performance-diagnosis-20260925.md`。原始 JSON 与日志保持原样，未做任何修改。
+
 ## 范围和环境
 
 本轮使用 GPT-6 Sol xhigh 子 agent 分别实施采集持久化、Writer 和实时链路，主 agent 做独立审查、Windows 回归及 Docker 端到端测试。新增测试容器使用隔离内部网络 `dw-perf-20260924`，测试数据库和设备标识均独立生成；Redis 7.4 开启 AOF/everysec/noeviction，TDengine 为 3.4.0.9。只测试合成点值，不访问现场 PLC。测试结束后，本次新增的九个测试容器已按用户要求删除，测试报告与原始结果保留；已有用户服务未停止或删除。
