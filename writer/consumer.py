@@ -10,7 +10,7 @@ Processing pipeline per entry:
     2. Get GroupMapping from MysqlMapper (permanent cache by device/group; reload on unknown var)
     3. Translate var_id→td_column_name and accumulate into buffer
     4. On flush: write_multi_table (chunked) → XACK rows of successful chunks
-    5. Entries exceeding pending_max_retry → DLQ + XACK
+    5. Only confirmed malformed or bad data is moved to DLQ before XACK
 
 Pending (unacked) message recovery:
     On startup and periodically, XAUTOCLAIM (Redis >= 6.2) or
@@ -38,7 +38,7 @@ from dlq import (
 from mysql_mapper import MysqlMapper
 from performance import WriterPerformanceMetrics
 from quality_codes import is_valid_quality
-from tdengine_writer import BAD_DATA, LANDED, TDengineWriter
+from tdengine_writer import BAD_DATA, LANDED, RETRY, TDengineWriter
 
 logger = logging.getLogger("writer.consumer")
 
@@ -62,6 +62,67 @@ class _BufferedRow:
     qualities: dict[str, int] = field(default_factory=dict)
     entry_data: dict = field(default_factory=dict)  # 原始 stream 字段，BAD_DATA 进 DLQ 时需要
     delivery_count: int = 1
+    payload_bytes: int = 0
+
+
+@dataclass
+class _PreparedPayload:
+    payload_bytes: int
+    decoded: bool = True
+    raw_values: object = None
+    values_error: Exception | None = None
+    raw_qualities: object = None
+    qualities_error: Exception | None = None
+    values_parse_ms: float = 0.0
+    qualities_parse_ms: float = 0.0
+
+
+def _prepare_payload_batch(
+    entries: list[dict], byte_budget: int,
+) -> list[_PreparedPayload]:
+    """Decode only payloads that fit the reserved raw-byte budget."""
+    prepared = []
+    remaining = max(0, byte_budget)
+    for entry in entries:
+        if not isinstance(entry, dict):
+            prepared.append(_PreparedPayload(0))
+            continue
+        payload_bytes = sum(
+            len(str(key).encode("utf-8")) + len(str(value).encode("utf-8"))
+            for key, value in entry.items()
+        )
+        if payload_bytes > remaining:
+            prepared.append(_PreparedPayload(payload_bytes, decoded=False))
+            remaining = 0
+            continue
+        remaining -= payload_bytes
+        item = _PreparedPayload(payload_bytes)
+        started = time.perf_counter()
+        try:
+            item.raw_values = json.loads(entry.get("values"))
+        except Exception as exc:
+            item.values_error = exc
+        item.values_parse_ms = (time.perf_counter() - started) * 1000
+        if isinstance(item.raw_values, dict):
+            try:
+                version = int(entry.get("contract_version", 1))
+            except (ValueError, TypeError):
+                version = None
+            if version == 2:
+                started = time.perf_counter()
+                try:
+                    qualities_raw = entry.get("qualities", "{}")
+                    if isinstance(qualities_raw, (bytes, bytearray)):
+                        qualities_raw = qualities_raw.decode("utf-8")
+                    item.raw_qualities = (
+                        json.loads(qualities_raw)
+                        if isinstance(qualities_raw, str) else qualities_raw
+                    )
+                except Exception as exc:
+                    item.qualities_error = exc
+                item.qualities_parse_ms = (time.perf_counter() - started) * 1000
+        prepared.append(item)
+    return prepared
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +154,12 @@ class StreamConsumer:
         self._flush_interval_s: float = w["flush_interval_ms"] / 1000.0
         self._batch_count: int = w["batch_count"]
         self._max_buffer_rows: int = w["max_buffer_rows"]
+        self._max_buffer_bytes: int = max(1, int(w.get("max_buffer_bytes", 32 * 1024 * 1024)))
+        self._buffer_bytes = 0
+        self._inflight_bytes = 0
+        self._inflight_source_ms: int | None = None
+        self._estimated_entry_bytes = 1024
         self._pending_min_idle_ms: int = w["pending_min_idle_ms"]
-        self._pending_max_retry: int = w["pending_max_retry"]
         self._dlq_max_size: int = max(0, int(w.get("dlq_max_size", DEFAULT_DLQ_MAX_SIZE)))
         self._dlq_alert_threshold: float = min(
             1.0,
@@ -114,11 +179,22 @@ class StreamConsumer:
         # 缓冲中 (stream_key, entry_id) 集合：flush 失败行既留缓冲又留 PEL，
         # drain 重新领取同一消息时靠此集合防止重复入缓冲、重复写库（DW-02）。
         self._buffered_keys: set[tuple[str, str]] = set()
+        self._queued_stream_keys: list[str] = []
+        self._overdelivered_ids: dict[str, set[str]] = {}
+        self._overdelivered_cursor = 0
+        self._read_cursor: int = 0
+        self._inflight_rows: int = 0
+        self._flush_lock = asyncio.Lock()
         self._last_flush: float = time.monotonic()
         self._last_pending_drain: float = time.monotonic()
-        self._pending_drain_interval_s: float = 60.0
+        self._pending_drain_interval_s: float = max(1.0, float(w.get("pending_drain_interval_s", 5.0)))
+        self._pending_cycle_budget_s = max(0.001, float(w.get("pending_cycle_budget_ms", 100)) / 1000.0)
+        self._pending_cursors: dict[str, str] = {}
+        self._pending_stream_cursor = 0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
         self._delete_retry: dict[str, set[str]] = {}  # 已终态且已 ACK，待重试 XDEL 的 entry_id
+        self._ack_retry_cursor = 0
+        self._delete_retry_cursor = 0
         self._consecutive_flush_fail: int = 0  # M6：连续 flush 失败次数，用于退避与日志降噪
         # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
         self._last_dlq_moved_log: float | None = None
@@ -142,8 +218,86 @@ class StreamConsumer:
         )
 
     def _remaining_capacity(self) -> int:
-        """缓冲剩余容量（DW-02：新消息读取与积压回收共用此预算）。"""
-        return self._max_buffer_rows - len(self._buffer)
+        """Bound all locally owned identities, including terminal Redis retries."""
+        occupied = len(self._buffer) + self._inflight_rows
+        if self._ack_retry or self._delete_retry:
+            terminal_keys = {
+                (stream_key, entry_id)
+                for retry in (self._ack_retry, self._delete_retry)
+                for stream_key, ids in retry.items()
+                for entry_id in ids
+            }
+            # A row can briefly be both in-flight and awaiting its XACK.
+            terminal_keys.difference_update(self._buffered_keys)
+            occupied += len(terminal_keys)
+        return self._max_buffer_rows - occupied
+
+    def oldest_buffered_source_age_ms(self, now_ms: int) -> int | None:
+        source_times = [row.ts for row in self._buffer]
+        if self._inflight_source_ms is not None:
+            source_times.append(self._inflight_source_ms)
+        return max(0, now_ms - min(source_times)) if source_times else None
+
+    def queue_stream_key(self, stream_key: str) -> None:
+        """由范围发现任务通知；只有 run_loop 可以接管流和缓冲区。"""
+        if stream_key not in self._queued_stream_keys:
+            self._queued_stream_keys.append(stream_key)
+
+    async def _recover_overdelivered(self) -> None:
+        # XREADGROUP should not overdeliver, but keep any returned excess IDs
+        # explicit in PEL and reclaim a bounded amount per loop.
+        keys = list(self._overdelivered_ids)
+        if not keys:
+            return
+        start = self._overdelivered_cursor % len(keys)
+        deadline = time.monotonic() + self._pending_cycle_budget_s
+        remaining = min(self._batch_count, self._remaining_capacity())
+        visited = 0
+        for offset in range(len(keys)):
+            if remaining <= 0 or time.monotonic() >= deadline:
+                break
+            stream_key = keys[(start + offset) % len(keys)]
+            visited += 1
+            ids = self._overdelivered_ids.get(stream_key)
+            if not ids:
+                continue
+            requested = list(ids)[:remaining]
+            try:
+                claimed = await self._run_blocking(
+                    self._r.xclaim,
+                    stream_key,
+                    self._group_name,
+                    self._consumer_name,
+                    min_idle_time=0,
+                    message_ids=requested,
+                )
+            except Exception:
+                logger.warning("[consumer] overflow reclaim failed for %s", stream_key, exc_info=True)
+                continue
+            remaining -= len(requested)
+            returned = {entry_id for entry_id, _ in claimed}
+            for entry_id in requested:
+                if entry_id not in returned:
+                    ids.discard(entry_id)
+            for entry_id, entry_data in claimed:
+                ids.discard(entry_id)
+                await self._handle_entry(stream_key, entry_id, entry_data, 1)
+            if not ids:
+                del self._overdelivered_ids[stream_key]
+        self._overdelivered_cursor = (start + (visited or 1)) % len(keys)
+
+    def _next_read_scope(self, stream_keys: list[str]) -> tuple[dict[str, str], int]:
+        """XREADGROUP 的 COUNT 对每个流生效，故先分配全局容量。"""
+        available = self._remaining_capacity()
+        byte_capacity = (self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes)
+        if available <= 0 or byte_capacity <= 0 or not stream_keys:
+            return {}, 0
+        available = min(available, max(1, byte_capacity // self._estimated_entry_bytes))
+        count = min(len(stream_keys), available)
+        start = self._read_cursor % len(stream_keys)
+        selected = [stream_keys[(start + offset) % len(stream_keys)] for offset in range(count)]
+        self._read_cursor = (start + count) % len(stream_keys)
+        return {key: ">" for key in selected}, min(self._batch_count, available // count)
 
     def _move_entry_to_dlq(
         self,
@@ -186,9 +340,15 @@ class StreamConsumer:
             raise ValueError("stream_keys is empty — check writer config device_types/group_codes")
         await self._run_blocking(self._ensure_consumer_groups, stream_keys)
 
-        # 排空上次运行/崩溃消费者遗留的待处理消息。
+        # Bound startup PEL work; remaining entries continue in periodic cycles.
+        startup_deadline = time.monotonic() + self._pending_cycle_budget_s
         for sk in stream_keys:
-            await self.drain_pending(sk, self._consumer_name)
+            if time.monotonic() >= startup_deadline:
+                break
+            await self.drain_pending(
+                sk, self._consumer_name,
+                max_entries=self._batch_count, deadline=startup_deadline,
+            )
 
         logger.info(
             "[consumer] starting main loop, %d stream key(s), consumer=%s",
@@ -199,22 +359,54 @@ class StreamConsumer:
         block_ms = max(int(self._flush_interval_s * 1000 / 2), 50)
 
         while True:
+            # Join one discovered stream per cycle so a large scope refresh cannot
+            # monopolize this worker before its existing streams are serviced.
+            if self._queued_stream_keys:
+                stream_key = self._queued_stream_keys.pop(0)
+                if stream_key in stream_keys:
+                    continue
+                await self._run_blocking(self._ensure_consumer_groups, [stream_key])
+                await self.drain_pending(
+                    stream_key, self._consumer_name, max_entries=self._batch_count,
+                    deadline=time.monotonic() + self._pending_cycle_budget_s,
+                )
+                stream_keys.append(stream_key)
+
+            await self._recover_overdelivered()
+
             # --- 首先重试之前失败的 XACK（M5）---
             # 必须早于 drain：否则已成功落库但 XACK 失败、又满足 idle 条件的条目
             # 会被 drain reclaim 触发重写，违背 M5 「避免重复写入」的目标。
-            await self._run_blocking(self._retry_pending_acks)
-            await self._run_blocking(self._retry_pending_deletes)
+            retry_deadline = time.monotonic() + self._pending_cycle_budget_s
+            await self._run_blocking(
+                self._retry_pending_acks, self._batch_count, retry_deadline
+            )
+            await self._run_blocking(
+                self._retry_pending_deletes, self._batch_count, retry_deadline
+            )
 
             # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
-                for sk in stream_keys:
-                    await self.drain_pending(sk, self._consumer_name)
+                start = self._pending_stream_cursor % len(stream_keys)
+                deadline = time.monotonic() + self._pending_cycle_budget_s
+                visited = 0
+                for offset in range(len(stream_keys)):
+                    if time.monotonic() >= deadline:
+                        break
+                    sk = stream_keys[(start + offset) % len(stream_keys)]
+                    visited += 1
+                    await self.drain_pending(
+                        sk, self._consumer_name,
+                        max_entries=self._batch_count, deadline=deadline,
+                    )
+                self._pending_stream_cursor = (
+                    start + (visited if visited < len(stream_keys) else 1)
+                ) % len(stream_keys)
                 self._last_pending_drain = time.monotonic()
 
             # --- 读取新消息（缓冲区满时跳过以施加背压；count 按剩余容量截断）---
-            if len(self._buffer) < self._max_buffer_rows:
-                streams_arg = {sk: ">" for sk in stream_keys}
-                read_count = min(self._batch_count, self._remaining_capacity())
+            streams_arg, read_count = self._next_read_scope(stream_keys)
+            if streams_arg:
                 try:
                     response = await asyncio.get_running_loop().run_in_executor(
                         None,
@@ -232,35 +424,53 @@ class StreamConsumer:
                     continue
 
                 if response:
-                    for stream_key, entries in response:
-                        for entry_id, entry_data in entries:
-                            try:
-                                await self._handle_entry(
-                                    stream_key=stream_key,
-                                    entry_id=entry_id,
-                                    entry_data=entry_data,
-                                    delivery_count=1,
-                                )
-                            except Exception as exc:
-                                # 不 XACK：留 PEL，由后续 drain 重试，达上限后进 DLQ
-                                logger.error(
-                                    "[consumer] unexpected error handling entry %s, skipping: %s",
-                                    entry_id,
-                                    exc,
-                                )
+                    batch = [
+                        (stream_key, entry_id, entry_data)
+                        for stream_key, entries in response
+                        for entry_id, entry_data in entries
+                    ]
+                    # The reserved XREADGROUP COUNT bounds preparation; a server
+                    # overdelivery stays explicit in PEL without extra decoding.
+                    prepare_count = min(len(batch), read_count * len(streams_arg))
+                    prepared = await self._run_blocking(
+                        _prepare_payload_batch,
+                        [entry_data for _, _, entry_data in batch[:prepare_count]],
+                        max(0, self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes),
+                    )
+                    for index, (stream_key, entry_id, entry_data) in enumerate(batch):
+                        try:
+                            await self._handle_entry(
+                                stream_key=stream_key,
+                                entry_id=entry_id,
+                                entry_data=entry_data,
+                                delivery_count=1,
+                                prepared=prepared[index] if index < prepare_count else None,
+                            )
+                        except Exception as exc:
+                            # Keep in PEL for a later retry; only confirmed bad data enters DLQ.
+                            logger.error(
+                                "[consumer] unexpected error handling entry %s, skipping: %s",
+                                entry_id,
+                                exc,
+                            )
+                        if index % 8 == 7:
+                            await asyncio.sleep(0)
             else:
                 # L1: buffer 满 → 跳过 xreadgroup，让底部 flush 块立即触发（buffer_size >= max）。
                 # 失败时由 M6 退避兜底，原先的 flush_interval_s sleep 多余且增加最多 500ms 落库延迟。
-                logger.warning(
-                    "[consumer] buffer full (%d/%d rows), flushing immediately without reading new messages",
+                logger.debug(
+                    "[consumer] local identity capacity full (%d rows, %d ACK, %d DELETE retries)",
                     len(self._buffer),
-                    self._max_buffer_rows,
+                    sum(len(ids) for ids in self._ack_retry.values()),
+                    sum(len(ids) for ids in self._delete_retry.values()),
                 )
+                if not self._buffer:
+                    await asyncio.sleep(0.05)
 
             # --- 达到时间或缓冲区阈值时刷新 ---
             now = time.monotonic()
             buffer_size = len(self._buffer)
-            if buffer_size >= self._max_buffer_rows or (
+            if (buffer_size > 0 and not streams_arg) or buffer_size >= self._max_buffer_rows or (
                 buffer_size > 0 and now - self._last_flush >= self._flush_interval_s
             ):
                 await self._flush()
@@ -302,25 +512,38 @@ class StreamConsumer:
     # 待处理消息恢复
     # ------------------------------------------------------------------
 
-    async def drain_pending(self, stream_key: str, consumer_name: str) -> None:
+    async def drain_pending(
+        self, stream_key: str, consumer_name: str, max_entries: int | None = None,
+        deadline: float | None = None,
+    ) -> None:
         """回收空闲的待处理消息并进行处理。首先尝试 XAUTOCLAIM（Redis >= 6.2）；回退到 XPENDING + XCLAIM。"""
         logger.info("[consumer] draining pending for stream %s", stream_key)
         try:
-            await self._drain_with_xautoclaim(stream_key, consumer_name)
+            await self._drain_with_xautoclaim(stream_key, consumer_name, max_entries, deadline)
         except Exception as exc:
             if "unknown command" in str(exc).lower() or "xautoclaim" in str(exc).lower():
                 logger.info(
                     "[consumer] XAUTOCLAIM not supported, falling back to XPENDING+XCLAIM: %s",
                     exc,
                 )
-                await self._drain_with_xpending_xclaim(stream_key, consumer_name)
+                await self._drain_with_xpending_xclaim(stream_key, consumer_name, max_entries, deadline)
             else:
                 logger.warning("[consumer] drain_pending error: %s", exc)
 
-    async def _drain_with_xautoclaim(self, stream_key: str, consumer_name: str) -> None:
+    async def _drain_with_xautoclaim(
+        self, stream_key: str, consumer_name: str, max_entries: int | None = None,
+        deadline: float | None = None,
+    ) -> None:
         loop = asyncio.get_running_loop()
-        start_id = "0-0"
+        start_id = self._pending_cursors.get(stream_key, "0-0") if max_entries else "0-0"
+        processed = 0
+        pages = 0
         while True:
+            if (max_entries is not None and (processed >= max_entries or pages >= 2)) or (
+                deadline is not None and time.monotonic() >= deadline
+            ):
+                self._pending_cursors[stream_key] = start_id
+                break
             # DW-02：回收路径与新消息读取共用容量预算。缓冲满先 flush 腾空间，
             # 仍无空间则停止翻页（未领取条目留 PEL 等下一轮 drain），不超预算领取。
             if self._remaining_capacity() <= 0:
@@ -330,7 +553,10 @@ class StreamConsumer:
                         "[consumer] buffer full, pausing pending reclaim for %s", stream_key
                     )
                     break
-            claim_count = min(self._batch_count, self._remaining_capacity())
+            claim_count = min(
+                self._batch_count, self._remaining_capacity(),
+                max_entries - processed if max_entries is not None else self._batch_count,
+            )
             result = await loop.run_in_executor(
                 None,
                 lambda sid=start_id, cnt=claim_count: self._r.xautoclaim(
@@ -344,6 +570,8 @@ class StreamConsumer:
             )
             # 结果为 (next_start_id, [(entry_id, data), ...], deleted_ids)
             next_id, claimed_entries, _ = result
+            pages += 1
+            processed += len(claimed_entries)
             delivery_counts = await self._run_blocking(
                 self._get_delivery_counts,
                 stream_key,
@@ -354,7 +582,7 @@ class StreamConsumer:
                     delivery_count = delivery_counts.get(entry_id, 1)
                     await self._handle_entry(stream_key, entry_id, entry_data, delivery_count)
                 except Exception as exc:
-                    # 不 XACK：留 PEL，下一轮 drain 重试，达上限进 DLQ
+                    # Keep in PEL for a later retry; only confirmed bad data enters DLQ.
                     logger.error(
                         "[consumer] unexpected error handling pending entry %s, skipping: %s",
                         entry_id, exc,
@@ -364,13 +592,24 @@ class StreamConsumer:
                 await self._flush()
 
             if next_id in ("0-0", "0"):
+                self._pending_cursors[stream_key] = "0-0"
                 break
             start_id = next_id
 
-    async def _drain_with_xpending_xclaim(self, stream_key: str, consumer_name: str) -> None:
+    async def _drain_with_xpending_xclaim(
+        self, stream_key: str, consumer_name: str, max_entries: int | None = None,
+        deadline: float | None = None,
+    ) -> None:
         loop = asyncio.get_running_loop()
-        cursor = "-"
+        cursor = self._pending_cursors.get(stream_key, "-") if max_entries else "-"
+        processed = 0
+        pages = 0
         while True:
+            if (max_entries is not None and (processed >= max_entries or pages >= 2)) or (
+                deadline is not None and time.monotonic() >= deadline
+            ):
+                self._pending_cursors[stream_key] = cursor
+                break
             # DW-02：与 XAUTOCLAIM 路径共用容量预算；无空间先 flush，仍满则停。
             if self._remaining_capacity() <= 0:
                 await self._flush()
@@ -390,7 +629,9 @@ class StreamConsumer:
                 ),
             )
             if not pending_entries:
+                self._pending_cursors[stream_key] = "-"
                 break
+            pages += 1
 
             eligible_ids = [
                 p["message_id"]
@@ -399,7 +640,11 @@ class StreamConsumer:
             ]
             # DW-02：领取数量按剩余容量截断；本页未领取的条目留在 PEL，
             # 等下一轮 drain 回收，不静默丢弃。
-            claim_ids = eligible_ids[: self._remaining_capacity()]
+            claim_ids = eligible_ids[: min(
+                self._remaining_capacity(),
+                max_entries - processed if max_entries is not None else self._batch_count,
+            )]
+            processed += len(claim_ids)
             truncated = len(claim_ids) < len(eligible_ids)
             if claim_ids:
                 claimed = await loop.run_in_executor(
@@ -421,7 +666,7 @@ class StreamConsumer:
                         )
                         await self._handle_entry(stream_key, entry_id, entry_data, dc)
                     except Exception as exc:
-                        # 不 XACK：留 PEL，下一轮 drain 重试，达上限进 DLQ
+                        # Keep in PEL for a later retry; only confirmed bad data enters DLQ.
                         logger.error(
                             "[consumer] unexpected error handling pending entry %s, skipping: %s",
                             entry_id, exc,
@@ -431,12 +676,16 @@ class StreamConsumer:
                     await self._flush()
 
             if truncated:
+                self._pending_cursors[stream_key] = (
+                    f"({claim_ids[-1]}" if claim_ids else cursor
+                )
                 # 本页有未领取条目，停在当前游标，留给下一轮 drain，避免翻页跳过。
                 break
 
             last_id = pending_entries[-1]["message_id"]
             cursor = f"({last_id}"  # exclusive：下一页从此 ID 之后开始
             if len(pending_entries) < self._batch_count:
+                self._pending_cursors[stream_key] = "-"
                 break  # 已是最后一页
 
     def _get_delivery_counts(self, stream_key: str, entry_ids: list[str]) -> dict[str, int]:
@@ -472,17 +721,35 @@ class StreamConsumer:
         entry_id: str,
         entry_data: dict,
         delivery_count: int,
+        prepared: _PreparedPayload | None = None,
     ) -> None:
         key = (stream_key, entry_id)
+        if entry_id in self._ack_retry.get(stream_key, ()):
+            # TDengine already committed this frame; only its XACK is outstanding.
+            return
         if key in self._buffered_keys:
             # flush 失败行既在缓冲又在 PEL，drain 重新领取同一条目时直接跳过，
             # 防止重复入缓冲、重复写库（DW-02）。
             logger.debug("[consumer] entry %s already buffered, skipping duplicate", entry_id)
             return
 
-        if self._remaining_capacity() <= 0:
-            return  # Already delivered by Redis; leave in PEL for a later reclaim.
+        payload_bytes = prepared.payload_bytes if prepared is not None else (
+            sum(
+                len(str(key).encode("utf-8")) + len(str(value).encode("utf-8"))
+                for key, value in entry_data.items()
+            )
+            if isinstance(entry_data, dict) else 0
+        )
+        byte_capacity = self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes
+        if self._remaining_capacity() <= 0 or (
+            payload_bytes > byte_capacity
+            and (self._buffer or self._inflight_rows)
+        ):
+            self._overdelivered_ids.setdefault(stream_key, set()).add(entry_id)
+            return  # Already delivered by Redis; reclaim as soon as capacity returns.
 
+        if prepared is not None and not prepared.decoded:
+            prepared = None
         if not isinstance(entry_data, dict):
             await self._run_blocking(
                 self._move_entry_to_dlq,
@@ -502,51 +769,6 @@ class StreamConsumer:
         ts_raw = entry_data.get("ts", "")
         config_version_raw = entry_data.get("config_version", "0")
         values_raw = entry_data.get("values")
-
-        # --- 首先检查死信队列（DLQ）---
-        if delivery_count > self._pending_max_retry:
-            moved = await self._run_blocking(
-                self._push_dlq,
-                device_type=device_type or "unknown",
-                group_code=group_code or "unknown",
-                entry_id=entry_id,
-                stream_key=stream_key,
-                data=dict(entry_data),
-                retry_count=delivery_count,
-                last_error="exceeded max retry",
-            )
-            if moved:
-                await self._run_blocking(self._ack_single, stream_key, entry_id)
-                if self._syslog is not None:
-                    now = time.monotonic()
-                    if self._last_dlq_moved_log is None or now - self._last_dlq_moved_log >= 60.0:
-                        self._last_dlq_moved_log = now
-                        self._syslog.emit(
-                            level="ERROR",
-                            log_type="storage",
-                            source="writer.dlq",
-                            content=(
-                                f"entry {entry_id} moved to DLQ: "
-                                f"{device_type or 'unknown'}/{group_code or 'unknown'} "
-                                f"after {delivery_count} retries"
-                            ),
-                        )
-            else:
-                logger.error("[consumer] DLQ failed for entry %s, not acking", entry_id)
-                if self._syslog is not None:
-                    now = time.monotonic()
-                    if self._last_dlq_failed_log is None or now - self._last_dlq_failed_log >= 60.0:
-                        self._last_dlq_failed_log = now
-                        self._syslog.emit(
-                            level="ERROR",
-                            log_type="storage",
-                            source="writer.dlq",
-                            content=(
-                                f"DLQ push failed for entry {entry_id}: "
-                                f"{device_type or 'unknown'}/{group_code or 'unknown'}"
-                            ),
-                        )
-            return
 
         # --- 解析必填字段 ---
         if (
@@ -597,8 +819,16 @@ class StreamConsumer:
             )
             return
 
+        parse_started = time.perf_counter()
         try:
-            raw_values: dict[str, str] = json.loads(values_raw)
+            if prepared is not None:
+                if prepared.values_error is not None:
+                    raise prepared.values_error
+                raw_values = prepared.raw_values
+                self._metrics.record_parse(prepared.values_parse_ms)
+            else:
+                raw_values: dict[str, str] = json.loads(values_raw)
+                self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
         except Exception as exc:
             logger.warning("[consumer] invalid values JSON for entry %s: %s", entry_id, exc)
             await self._run_blocking(
@@ -695,6 +925,7 @@ class StreamConsumer:
         # 任一非法值整 entry 隔离：禁止写假 0.0，推 DLQ 后再决定是否 ACK
         columns: dict[str, float] = {}
         bad_var_ids: list[str] = []
+        parse_started = time.perf_counter()
         for var_id, str_val in raw_values.items():
             col_name = mapping.var_map.get(var_id)
             if not col_name:
@@ -708,6 +939,7 @@ class StreamConsumer:
                 bad_var_ids.append(str(var_id))
                 continue
             columns[col_name] = num
+        self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
 
         if bad_var_ids:
             last_error = f"type_conversion failed var_ids={','.join(bad_var_ids)}"
@@ -775,14 +1007,22 @@ class StreamConsumer:
 
         if contract_version == 2:
             qualities_raw = entry_data.get("qualities", "{}")
+            parse_started = time.perf_counter()
             try:
-                if isinstance(qualities_raw, (bytes, bytearray)):
-                    qualities_raw = qualities_raw.decode("utf-8")
-                raw_qualities = (
-                    json.loads(qualities_raw)
-                    if isinstance(qualities_raw, str)
-                    else qualities_raw
-                )
+                if prepared is not None:
+                    if prepared.qualities_error is not None:
+                        raise prepared.qualities_error
+                    raw_qualities = prepared.raw_qualities
+                    self._metrics.record_parse(prepared.qualities_parse_ms)
+                else:
+                    if isinstance(qualities_raw, (bytes, bytearray)):
+                        qualities_raw = qualities_raw.decode("utf-8")
+                    raw_qualities = (
+                        json.loads(qualities_raw)
+                        if isinstance(qualities_raw, str)
+                        else qualities_raw
+                    )
+                    self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
             except Exception as exc:
                 logger.warning(
                     "[consumer] invalid qualities JSON for entry %s: %s", entry_id, exc
@@ -886,8 +1126,13 @@ class StreamConsumer:
                 qualities=qualities,
                 entry_data=dict(entry_data),
                 delivery_count=delivery_count,
+                payload_bytes=payload_bytes,
             )
         )
+        self._buffer_bytes += payload_bytes
+        self._metrics.record_payload_bytes(payload_bytes)
+        self._metrics.set_buffer_bytes(self._buffer_bytes + self._inflight_bytes)
+        self._estimated_entry_bytes = (7 * self._estimated_entry_bytes + payload_bytes) // 8 or 1
         self._buffered_keys.add(key)
         self._metrics.set_buffer_rows(len(self._buffer))
 
@@ -896,85 +1141,134 @@ class StreamConsumer:
     # ------------------------------------------------------------------
 
     async def _flush(self) -> None:
+        async with self._flush_lock:
+            await self._flush_owned()
+
+    async def _flush_owned(self) -> None:
         if not self._buffer:
             self._last_flush = time.monotonic()
             return
 
         flush_started = time.perf_counter()
         buffered = self._buffer
+        self._buffer = []
+        self._inflight_rows = len(buffered)
+        self._inflight_source_ms = min(row.ts for row in buffered)
+        self._inflight_bytes = self._buffer_bytes
+        self._buffer_bytes = 0
+        self._metrics.set_buffer_bytes(self._inflight_bytes)
         flush_rows = len(buffered)
-        rows = [
-            {
-                "child_table": row.child_table,
-                "stable": row.stable,
-                "device_code": row.device_code,
-                "ts": row.ts,
-                "columns": row.columns,
-                "qualities": row.qualities,
-            }
-            for row in buffered
-        ]
-
+        completed = False
         try:
-            # 跨子表分块写：305 子表不再串行落库，而是 ~3MB 分块的多表 INSERT。
+            rows = [
+                {
+                    "child_table": row.child_table,
+                    "stable": row.stable,
+                    "device_code": row.device_code,
+                    "ts": row.ts,
+                    "columns": row.columns,
+                    "qualities": row.qualities,
+                }
+                for row in buffered
+            ]
             chunk_results = await self._writer.write_multi_table(rows)
-        except Exception:
-            # 整体异常（罕见：_execute 已自吞连接错返回 False）。如实计失败、
-            # 整批留 buffer，并向上抛交 run_loop 退避处理。
-            self._metrics.record_write_batch(
-                (time.perf_counter() - flush_started) * 1000, flush_rows, False
+            retry_reasons = getattr(self._writer, "_last_retry_reasons", {})
+            if not isinstance(retry_reasons, dict):
+                retry_reasons = {}
+            local_retry = getattr(self._writer, "_last_local_retry_indices", set())
+            if not isinstance(local_retry, set):
+                local_retry = set()
+            ack_ms = 0.0
+            quality_rows_count = 0
+            covered = [index for indices, _, _ in chunk_results for index in indices]
+            if sorted(covered) != list(range(flush_rows)):
+                raise RuntimeError("TDengine writer returned incomplete or duplicate row outcomes")
+
+            to_ack: list[_BufferedRow] = []
+            failed_rows: list[_BufferedRow] = []
+            landed_rows_count = 0
+            for indices, status, elapsed_ms in chunk_results:
+                if status not in (LANDED, BAD_DATA, RETRY):
+                    raise RuntimeError(f"invalid TDengine row outcome: {status!r}")
+                chunk_rows = [buffered[index] for index in indices]
+                self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), status == LANDED)
+                if status == LANDED:
+                    to_ack.extend(chunk_rows)
+                    landed_rows_count += len(chunk_rows)
+                    quality_rows_count += sum(len(row.qualities) for row in chunk_rows)
+                elif status == BAD_DATA:
+                    for row in chunk_rows:
+                        if await self._run_blocking(self._push_row_to_dlq, row):
+                            to_ack.append(row)
+                        else:
+                            failed_rows.append(row)
+                else:
+                    for index, row in zip(indices, chunk_rows):
+                        self._metrics.record_retry(retry_reasons.get(index, "unknown"))
+                        if index in local_retry:
+                            logger.warning(
+                                "[consumer] schema/size retry deferred in PEL: %s %s",
+                                row.stream_key, row.entry_id,
+                            )
+                        else:
+                            failed_rows.append(row)
+
+            if to_ack:
+                ack_started = time.perf_counter()
+                await self._run_blocking(self._ack_rows, to_ack)
+                ack_ms = (time.perf_counter() - ack_started) * 1000
+            def stat(name: str) -> float:
+                value = getattr(self._writer, name, 0)
+                return float(value) if isinstance(value, (int, float)) else 0.0
+
+            sql_sizes = getattr(self._writer, "_last_sql_statement_bytes", [])
+            if not isinstance(sql_sizes, (list, tuple)):
+                sql_sizes = []
+            self._metrics.record_pipeline(
+                build_ms=stat("_last_build_ms"),
+                build_wait_ms=stat("_last_build_wait_ms"),
+                execute_ms=stat("_last_execute_ms"),
+                ack_ms=ack_ms,
+                sql_bytes=int(stat("_last_sql_bytes")),
+                sql_statement_bytes=sql_sizes,
+                bisect_attempts=int(stat("_last_bisect_attempts")),
+                value_rows=landed_rows_count,
+                quality_rows=quality_rows_count,
+                sql_value_rows_attempted=int(stat("_last_sql_value_rows_attempted")),
+                sql_quality_rows_attempted=int(stat("_last_sql_quality_rows_attempted")),
+                sql_value_rows_succeeded=int(stat("_last_sql_value_rows_succeeded")),
+                sql_quality_rows_succeeded=int(stat("_last_sql_quality_rows_succeeded")),
             )
-            raise
-
-        # 按行级状态分流（§7.6 二分降级）：LANDED 与「成功进 DLQ 的坏行」才 ACK；
-        # RETRY 与「DLQ 推送失败的坏行」留 buffer 重试，绝不丢数据（硬约束②）。
-        to_ack: list[_BufferedRow] = []
-        failed_rows: list[_BufferedRow] = []
-        landed_rows_count = 0
-        for indices, status, elapsed_ms in chunk_results:
-            chunk_rows = [buffered[i] for i in indices]
-            self._metrics.record_write_batch(elapsed_ms, len(chunk_rows), status == LANDED)
-            if status == LANDED:
-                to_ack.extend(chunk_rows)
-                landed_rows_count += len(chunk_rows)
-            elif status == BAD_DATA:
-                for row in chunk_rows:
-                    if await self._run_blocking(self._push_row_to_dlq, row):
-                        to_ack.append(row)
-                    else:
-                        failed_rows.append(row)
-            else:  # RETRY：连接错/未知错/二分超限 —— 不 ACK、不进 DLQ
-                logger.error(
-                    "[consumer] multi-table chunk retryable (%d rows) — not acking, will retry",
-                    len(chunk_rows),
+            if landed_rows_count > 0:
+                try:
+                    await self._run_blocking(
+                        self._r.hincrby, "rt:metrics:writer", "rows_written", landed_rows_count
+                    )
+                except Exception:
+                    logger.warning("[consumer] metrics hincrby failed", exc_info=True)
+            self._buffer = failed_rows + self._buffer
+            completed = True
+        finally:
+            # Cancellation and invariant errors must leave every uncommitted
+            # source entry tracked in memory and in its Redis PEL.
+            if not completed:
+                self._buffer = buffered + self._buffer
+                self._metrics.record_write_batch(
+                    (time.perf_counter() - flush_started) * 1000, flush_rows, False
                 )
-                failed_rows.extend(chunk_rows)
-
-        if to_ack:
-            await self._run_blocking(self._ack_rows, to_ack)
-        # 上报本 flush 的 LANDED rows 到 Redis metrics counter（供 backend rate_sampler 算入库速率）。
-        # 失败必须吞掉：metrics 上报不得影响 XACK/TDengine 主流程。
-        if landed_rows_count > 0:
-            try:
-                await self._run_blocking(
-                    self._r.hincrby,
-                    "rt:metrics:writer",
-                    "rows_written",
-                    landed_rows_count,
-                )
-            except Exception:
-                logger.warning("[consumer] metrics hincrby failed", exc_info=True)
-        self._buffer = failed_rows
-        # DW-02：缓冲键集合与缓冲行同步，保持去重口径一致
-        self._buffered_keys = {
-            (row.stream_key, row.entry_id) for row in failed_rows
-        }
-        self._metrics.set_buffer_rows(len(self._buffer))
-        self._metrics.record_flush(
-            (time.perf_counter() - flush_started) * 1000,
-            flush_rows,
-        )
-        self._last_flush = time.monotonic()
+            self._inflight_rows = 0
+            self._inflight_bytes = 0
+            self._inflight_source_ms = None
+            self._buffer_bytes = sum(row.payload_bytes for row in self._buffer)
+            self._metrics.set_buffer_bytes(self._buffer_bytes)
+            self._buffered_keys = {
+                (row.stream_key, row.entry_id) for row in self._buffer
+            }
+            self._metrics.set_buffer_rows(len(self._buffer))
+            self._metrics.record_flush(
+                (time.perf_counter() - flush_started) * 1000, flush_rows
+            )
+            self._last_flush = time.monotonic()
 
     def _log_performance_if_due(self) -> None:
         now = time.monotonic()
@@ -982,7 +1276,10 @@ class StreamConsumer:
             return
         logger.info(
             "[performance] %s",
-            json.dumps(self._metrics.snapshot(), separators=(",", ":")),
+            json.dumps(
+                {"consumer_name": self._consumer_name, **self._metrics.snapshot()},
+                separators=(",", ":"),
+            ),
         )
         self._last_performance_log = now
 
@@ -1062,33 +1359,38 @@ class StreamConsumer:
             logger.warning("[consumer] xack single failed %s: %s", entry_id, exc)
             self._ack_retry.setdefault(stream_key, set()).add(entry_id)
 
-    def _retry_pending_acks(self) -> None:
-        """Re-attempt XACKs that previously failed (M5).
-
-        行已成功落 TDengine，仅补 XACK 关闭 PEL 占位，避免后续 drain
-        重新 claim 这些条目，触发 _handle_entry 重写。XACK 是 idempotent，
-        即使中间已被 drain 一次也安全。
-        """
-        if not self._ack_retry:
+    def _retry_pending_acks(
+        self, max_ids: int | None = None, deadline: float | None = None,
+    ) -> None:
+        """Retry landed rows' XACKs in bounded, round-robin stream batches."""
+        keys = list(self._ack_retry)
+        if not keys:
             return
-        chunk_size = 500
-        for stream_key in list(self._ack_retry.keys()):
-            pending = self._ack_retry[stream_key]
-            ids = list(pending)
-            for i in range(0, len(ids), chunk_size):
-                chunk = ids[i : i + chunk_size]
-                try:
-                    self._r.xack(stream_key, self._group_name, *chunk)
-                    pending.difference_update(chunk)
-                    self._delete_ids(stream_key, chunk)
-                except Exception as exc:
-                    logger.warning(
-                        "[consumer] xack retry still failing for %s (%d ids pending): %s",
-                        stream_key, len(pending), exc,
-                    )
-                    break  # 本轮放弃后续 chunk，等下一轮再试
+        remaining = max_ids if max_ids is not None else sum(len(ids) for ids in self._ack_retry.values())
+        start = self._ack_retry_cursor % len(keys)
+        visited = 0
+        for offset in range(len(keys)):
+            if remaining <= 0 or (deadline is not None and time.monotonic() >= deadline):
+                break
+            stream_key = keys[(start + offset) % len(keys)]
+            visited += 1
+            pending = self._ack_retry.get(stream_key)
+            if not pending:
+                continue
+            chunk = list(pending)[: min(500, remaining)]
+            try:
+                self._r.xack(stream_key, self._group_name, *chunk)
+                pending.difference_update(chunk)
+                self._delete_ids(stream_key, chunk)
+            except Exception as exc:
+                logger.warning(
+                    "[consumer] xack retry still failing for %s (%d ids pending): %s",
+                    stream_key, len(pending), exc,
+                )
+            remaining -= len(chunk)
             if not pending:
                 del self._ack_retry[stream_key]
+        self._ack_retry_cursor = (start + (visited or 1)) % len(keys)
 
     def _delete_ids(self, stream_key: str, ids: list[str]) -> None:
         """删除已经终态并完成 XACK 的 Stream 条目。"""
@@ -1101,27 +1403,38 @@ class StreamConsumer:
                 logger.warning("[consumer] xdel failed for %s: %s", stream_key, exc)
                 self._delete_retry.setdefault(stream_key, set()).update(chunk)
 
-    def _retry_pending_deletes(self) -> None:
-        """重试已 ACK 条目的 XDEL；失败不会触发 TDengine 重写。"""
-        if not self._delete_retry:
+    def _retry_pending_deletes(
+        self, max_ids: int | None = None, deadline: float | None = None,
+    ) -> None:
+        """Retry terminal XDELs without stalling new consumption."""
+        keys = list(self._delete_retry)
+        if not keys:
             return
-        chunk_size = 500
-        for stream_key in list(self._delete_retry.keys()):
-            pending = self._delete_retry[stream_key]
-            ids = list(pending)
-            for i in range(0, len(ids), chunk_size):
-                chunk = ids[i : i + chunk_size]
-                try:
-                    self._r.xdel(stream_key, *chunk)
-                    pending.difference_update(chunk)
-                except Exception as exc:
-                    logger.warning(
-                        "[consumer] xdel retry still failing for %s (%d ids pending): %s",
-                        stream_key, len(pending), exc,
-                    )
-                    break
+        remaining = max_ids if max_ids is not None else sum(len(ids) for ids in self._delete_retry.values())
+        start = self._delete_retry_cursor % len(keys)
+        visited = 0
+        for offset in range(len(keys)):
+            if remaining <= 0 or (deadline is not None and time.monotonic() >= deadline):
+                break
+            stream_key = keys[(start + offset) % len(keys)]
+            visited += 1
+            pending = self._delete_retry.get(stream_key)
+            if not pending:
+                continue
+            chunk = list(pending)[: min(500, remaining)]
+            try:
+                self._r.xdel(stream_key, *chunk)
+                pending.difference_update(chunk)
+            except Exception as exc:
+                logger.warning(
+                    "[consumer] xdel retry still failing for %s (%d ids pending): %s",
+                    stream_key, len(pending), exc,
+                )
+            remaining -= len(chunk)
             if not pending:
                 del self._delete_retry[stream_key]
+        self._delete_retry_cursor = (start + (visited or 1)) % len(keys)
+
     # ------------------------------------------------------------------
     # 设置辅助函数
     # ------------------------------------------------------------------

@@ -112,6 +112,7 @@ class ModuleMonitorService:
 
         streams: list[dict[str, Any]] = []
         stream_lag_total = 0
+        unknown_lag_streams = 0
         pel_pending_total = 0
 
         async for key in r.scan_iter(match="rt:stream:*", count=100):
@@ -147,6 +148,8 @@ class ModuleMonitorService:
 
             if lag is not None:
                 stream_lag_total += lag
+            else:
+                unknown_lag_streams += 1
             pel_pending_total += pel
             backlog = (lag is not None and lag >= 1000) or pel >= 1000
             streams.append(
@@ -155,7 +158,7 @@ class ModuleMonitorService:
                     "lag": lag,
                     "pel": pel,
                     "length": length,
-                    "status": "backlog" if backlog else "normal",
+                    "status": "backlog" if backlog else ("unknown" if lag is None else "normal"),
                     "otherGroups": other_groups,
                 }
             )
@@ -170,7 +173,9 @@ class ModuleMonitorService:
         streams.sort(key=lambda item: item["streamKey"])
 
         return {
-            "streamLagTotal": stream_lag_total,
+            "streamLagTotal": None if unknown_lag_streams else stream_lag_total,
+            "streamLagKnownTotal": stream_lag_total,
+            "streamLagUnknownCount": unknown_lag_streams,
             "pelPendingTotal": pel_pending_total,
             "dlqTotal": dlq_total,
             "writerGroupName": writer_group,

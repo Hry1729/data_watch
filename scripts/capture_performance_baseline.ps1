@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateRange(1, 86400)]
     [int]$DurationSeconds = 1800,
 
@@ -202,7 +202,7 @@ while ((Get-Date) -lt $Deadline) {
             Add-Content -LiteralPath $RedisInfo -Encoding utf8
     }
 
-    if ($SampleNumber % $RedisDetailEverySamples -eq 1) {
+    if (($SampleNumber - 1) % $RedisDetailEverySamples -eq 0) {
         $StreamKeys = @(
             (Invoke-RedisText -RedisArguments @("--scan", "--pattern", "rt:stream:*")) -split "`r?`n" |
                 Where-Object { $_ -like "rt:stream:*" }
@@ -212,8 +212,24 @@ while ((Get-Date) -lt $Deadline) {
             $PendingLines = @(
                 (Invoke-RedisText -RedisArguments @("XPENDING", $StreamKey, $RedisConsumerGroup)) -split "`r?`n"
             )
-            [int64]$PendingCount = 0
-            [void][int64]::TryParse($PendingLines[0], [ref]$PendingCount)
+            [int64]$ParsedPendingCount = 0
+            $PendingCount = if ([int64]::TryParse($PendingLines[0], [ref]$ParsedPendingCount)) {
+                $ParsedPendingCount
+            } else { $null }
+            $WriterLag = $null
+            $WriterGroupFound = $false
+            $GroupsJson = Invoke-RedisText -RedisArguments @("-3", "--json", "XINFO", "GROUPS", $StreamKey)
+            try {
+                foreach ($GroupInfo in @($GroupsJson | ConvertFrom-Json)) {
+                    if ($GroupInfo.name -eq $RedisConsumerGroup) {
+                        $WriterGroupFound = $true
+                        $WriterLag = $GroupInfo.lag
+                        break
+                    }
+                }
+            } catch {
+                # Query failure/unsupported JSON remains unknown, never healthy zero.
+            }
             $OldestPendingId = if ($PendingLines.Count -ge 2) { $PendingLines[1] } else { "" }
             $OldestPendingAgeMs = $null
             if ($OldestPendingId -match '^(\d+)-') {
@@ -225,6 +241,9 @@ while ((Get-Date) -lt $Deadline) {
                 stream = $StreamKey
                 xlen = $LengthText
                 pending_count = $PendingCount
+                writer_group = $RedisConsumerGroup
+                writer_group_found = $WriterGroupFound
+                writer_lag = $WriterLag
                 oldest_pending_id = $OldestPendingId
                 oldest_pending_age_ms = $OldestPendingAgeMs
             } | Export-Csv -LiteralPath $RedisStreamsCsv -NoTypeInformation -Append -Encoding utf8

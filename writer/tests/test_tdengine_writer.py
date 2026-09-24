@@ -322,3 +322,89 @@ async def test_ensure_quality_stable_rejects_signed_quality_column():
     with pytest.raises(QualitySchemaError):
         await writer._ensure_quality_stable("sqqc")
     assert "sqqc" not in writer._quality_stable_ready
+
+
+@pytest.mark.asyncio
+async def test_large_quality_frame_splits_with_complete_ack_barrier():
+    writer, executed = _make_writer({"sdqc": {"qc1"}})
+    writer._quality_stable_ready.add("sqqc")
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": {"qc1": 1.0},
+        "qualities": {str(i): 0 for i in range(1, 41)},
+    }]
+    with patch.object(tdengine_writer, "MAX_SQL_BYTES", 300):
+        results = await writer.write_multi_table(rows)
+    assert len(executed) > 1
+    assert all(len(sql.encode("utf-8")) <= 300 for sql in executed)
+    assert results[0][0] == [0]
+    assert results[0][1] == LANDED
+
+
+@pytest.mark.asyncio
+async def test_large_quality_frame_failure_never_lands_partial_frame():
+    writer, executed = _make_writer({"sdqc": {"qc1"}})
+    writer._quality_stable_ready.add("sqqc")
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": {"qc1": 1.0},
+        "qualities": {str(i): 0 for i in range(1, 41)},
+    }]
+
+    def execute(sql):
+        executed.append(sql)
+        if "(1000, 25, 0)" in sql:
+            raise RuntimeError("[0x0216] invalid quality")
+        return 1
+
+    writer._conn.execute = MagicMock(side_effect=execute)
+    with patch.object(tdengine_writer, "MAX_SQL_BYTES", 300):
+        results = await writer.write_multi_table(rows)
+    assert all(len(sql.encode("utf-8")) <= 300 for sql in executed)
+    assert results[0][0] == [0]
+    assert results[0][1] == RETRY
+    assert writer._last_sql_value_rows_attempted >= 1
+    assert writer._last_sql_value_rows_succeeded == 1
+    assert writer._last_sql_quality_rows_attempted >= 40
+    assert 0 < writer._last_sql_quality_rows_succeeded < 40
+
+
+@pytest.mark.asyncio
+async def test_oversize_value_row_is_retained_without_sql_execution():
+    writer, executed = _make_writer({"sdqc": {"qc1"}})
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": {"qc1": 1.0},
+    }]
+    with patch.object(tdengine_writer, "MAX_SQL_BYTES", 40):
+        results = await writer.write_multi_table(rows)
+    assert executed == []
+    assert results[0][1] == RETRY
+
+
+
+@pytest.mark.asyncio
+async def test_unready_quality_schema_retries_only_affected_stable():
+    writer, executed = _make_writer({"sdqc": {"qc1"}, "sdasc": {"a1"}})
+
+    async def ensure_quality(stable):
+        if stable == "sqqc":
+            raise QualitySchemaError("old quality schema")
+        writer._quality_stable_ready.add(stable)
+
+    writer._ensure_quality_stable = ensure_quality
+    rows = [
+        {
+            "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+            "ts": 1000, "columns": {"qc1": 1.0}, "qualities": {"1": 0},
+        },
+        {
+            "child_table": "asc7", "stable": "sdasc", "device_code": "asc7",
+            "ts": 1000, "columns": {"a1": 2.0}, "qualities": {"2": 0},
+        },
+    ]
+    results = await writer.write_multi_table(rows)
+    assert _status_by_row(results) == {0: RETRY, 1: LANDED}
+    assert writer._last_local_retry_indices == {0}
+    assert all("qc100" not in sql for sql in executed)
+    assert any("asc7" in sql for sql in executed)

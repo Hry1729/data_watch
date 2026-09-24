@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+  <title id="title">DataWatch industrial data platform</title>
+  <desc id="desc">DataWatch moves industrial device signals from production sites through resilient edge or center pipelines into real-time displays and historical databases.</desc>
+
+  <defs>
+    <pattern id="signal-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#183048" stroke-width="1" opacity="0.42"/>
+    </pattern>
+    <marker id="arrow-cyan" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L8 4L0 8Z" fill="#38BDF8"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L8 4L0 8Z" fill="#F59E0B"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="440" rx="28" fill="#07111F"/>
+  <rect x="1" y="1" width="1198" height="438" rx="27" fill="none" stroke="#27445F" stroke-width="2"/>
+  <rect x="552" y="28" width="612" height="384" rx="22" fill="url(#signal-grid)" stroke="#183048" stroke-width="2"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="64" y="66" fill="#38BDF8" font-size="19" font-weight="700" letter-spacing="2">INDUSTRIAL DATA · EDGE / CENTER</text>
+    <text x="1134" y="66" fill="#7890A8" font-size="16" text-anchor="end">WINDOWS-FIRST</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="60" y="154" fill="#F4F7FA" font-size="76" font-weight="760" letter-spacing="-3">DataWatch</text>
+    <text x="64" y="210" fill="#D6E2EC" font-size="28" font-weight="600">让设备 PLC 等数据从生产现场可靠抵达</text>
+    <text x="64" y="250" fill="#D6E2EC" font-size="28" font-weight="600">实时大屏与历史数据库</text>
+  </g>
+
+  <g transform="translate(64 304)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <rect width="420" height="72" rx="14" fill="#0D1D2D" stroke="#27445F" stroke-width="2"/>
+    <text x="20" y="27" fill="#7890A8" font-size="16" letter-spacing="1.5">QUALITY SIGNAL</text>
+    <circle cx="24" cy="50" r="6" fill="#38BDF8"/>
+    <text x="40" y="56" fill="#D6E2EC" font-size="18">GOOD</text>
+    <circle cx="148" cy="50" r="6" fill="#F59E0B"/>
+    <text x="164" y="56" fill="#D6E2EC" font-size="18">UNCERTAIN</text>
+    <circle cx="310" cy="50" r="6" fill="#F87171"/>
+    <text x="326" y="56" fill="#D6E2EC" font-size="18">BAD</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="580" y="64" fill="#D6E2EC" font-size="20" font-weight="700">两条采集路径，共用一套数据契约</text>
+
+    <g transform="translate(580 164)">
+      <rect width="126" height="70" rx="14" fill="#10263A" stroke="#38BDF8" stroke-width="2"/>
+      <text x="63" y="31" fill="#F4F7FA" font-size="20" font-weight="700" text-anchor="middle">设备 PLC 等</text>
+      <text x="63" y="54" fill="#7890A8" font-size="17" text-anchor="middle">多协议设备</text>
+    </g>
+
+    <g transform="translate(754 164)">
+      <rect width="134" height="70" rx="14" fill="#10263A" stroke="#38BDF8" stroke-width="2"/>
+      <text x="67" y="32" fill="#F4F7FA" font-size="21" font-weight="700" text-anchor="middle">Collector</text>
+      <text x="67" y="54" fill="#7890A8" font-size="17" text-anchor="middle">采集 · 质量码</text>
+    </g>
+
+    <path d="M706 199H748" fill="none" stroke="#38BDF8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+
+    <g transform="translate(932 78)">
+      <rect width="196" height="92" rx="14" fill="#2A2113" stroke="#F59E0B" stroke-width="2"/>
+      <text x="18" y="29" fill="#F59E0B" font-size="16" font-weight="700" letter-spacing="1.5">EDGE PATH</text>
+      <text x="18" y="57" fill="#F4F7FA" font-size="20" font-weight="700">SQLite outbox</text>
+      <text x="18" y="79" fill="#C9A765" font-size="17">Uploader → Ingest</text>
+    </g>
+
+    <g transform="translate(932 218)">
+      <rect width="196" height="70" rx="14" fill="#10263A" stroke="#38BDF8" stroke-width="2"/>
+      <text x="18" y="28" fill="#38BDF8" font-size="16" font-weight="700" letter-spacing="1.5">CENTER PATH</text>
+      <text x="18" y="54" fill="#F4F7FA" font-size="20" font-weight="700">Redis contract</text>
+    </g>
+
+    <path d="M888 187C910 187 910 124 926 124" fill="none" stroke="#F59E0B" stroke-width="3" marker-end="url(#arrow-amber)"/>
+    <path d="M888 211C912 211 908 253 926 253" fill="none" stroke="#38BDF8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+    <path d="M1030 170V212" fill="none" stroke="#F59E0B" stroke-width="3" marker-end="url(#arrow-amber)"/>
+
+    <g transform="translate(656 324)">
+      <rect width="210" height="60" rx="14" fill="#0D1D2D" stroke="#27445F" stroke-width="2"/>
+      <text x="105" y="27" fill="#F4F7FA" font-size="20" font-weight="700" text-anchor="middle">Writer → TDengine</text>
+      <text x="105" y="48" fill="#7890A8" font-size="16" text-anchor="middle">可靠入库 · 历史</text>
+    </g>
+
+    <g transform="translate(902 324)">
+      <rect width="226" height="60" rx="14" fill="#0D1D2D" stroke="#27445F" stroke-width="2"/>
+      <text x="113" y="27" fill="#F4F7FA" font-size="20" font-weight="700" text-anchor="middle">Backend</text>
+      <text x="113" y="48" fill="#7890A8" font-size="16" text-anchor="middle">Web · App · CLI</text>
+    </g>
+
+    <path d="M1010 288C1010 306 820 300 820 318" fill="none" stroke="#38BDF8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+    <path d="M1050 288V318" fill="none" stroke="#38BDF8" stroke-width="3" marker-end="url(#arrow-cyan)"/>
+  </g>
+</svg>

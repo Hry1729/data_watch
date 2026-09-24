@@ -1,0 +1,27 @@
+{
+  "database": "dw_writer_validation",
+  "child": "qc09feee89",
+  "frames": 200,
+  "points": 1000,
+  "quality": true,
+  "injected_second_insert": false,
+  "insert_attempts": null,
+  "covered": true,
+  "outcomes": {
+    "landed": 200
+  },
+  "value_count": 200,
+  "quality_count": 200000,
+  "elapsed_ms": 260.248,
+  "build_ms": 100.391,
+  "execute_ms": 141.781,
+  "sql_bytes": 6178892,
+  "sql_statement_bytes": [
+    3120248,
+    3058644
+  ],
+  "sql_value_rows_attempted": 200,
+  "sql_quality_rows_attempted": 200000,
+  "sql_value_rows_succeeded": 200,
+  "sql_quality_rows_succeeded": 200000
+}

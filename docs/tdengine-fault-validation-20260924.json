@@ -1,0 +1,53 @@
+{
+  "redis_stream": "rt:stream:tf463266a2:g:3",
+  "td_database": "dw_td_fault_463266a2",
+  "device_type": "tf463266a2",
+  "frames": 100,
+  "points_per_frame": 1000,
+  "expected_value_rows": 100,
+  "expected_quality_rows": 100000,
+  "td_host": "perf-td-fault",
+  "redis_host": "perf-redis",
+  "first_entry_id": "1790228358270-0",
+  "last_entry_id": "1790228358317-1",
+  "source_base_ts": 1790228358270,
+  "outage": {
+    "stream_len": 100,
+    "pending": 100,
+    "lag": 0,
+    "dlq": 0
+  },
+  "original_stream_ids_retained": true,
+  "recovered": {
+    "stream_len": 0,
+    "pending": 0,
+    "lag": 0,
+    "dlq": 0
+  },
+  "value_rows": 100,
+  "quality_rows": 100000,
+  "incorrect_quality_rows": 0,
+  "passed": true,
+  "environment": {
+    "td_container": "dw-perf-td-fault-20260924",
+    "td_image": "tdengine/tsdb-amd64:3.4.0.9",
+    "td_memory_limit_bytes": 1610612736,
+    "td_cpu_limit": 2,
+    "td_host_ports_exposed": false,
+    "redis": "perf-redis:6379 isolated unique stream",
+    "mysql_mapping": "in-memory fixed GroupMapping; no MySQL access",
+    "runner": "dw-perf-runner-20260924 Python 3.12"
+  },
+  "fault_boundary": {
+    "injection": "host docker stop --time 0 of dedicated TDengine container after Writer connected and tables prepared",
+    "recovery": "host docker start of the same dedicated TDengine container; StreamConsumer stayed running",
+    "scope": "TDengine process outage and restart with its container filesystem retained; no host power loss or network partition",
+    "shared_services_restarted": false,
+    "collector_outbox_exercised": false
+  },
+  "phase_times_unix": {
+    "ready": 1790228341.1496625,
+    "outage_verified": 1790228380.4938471,
+    "complete": 1790228415.8698635
+  }
+}

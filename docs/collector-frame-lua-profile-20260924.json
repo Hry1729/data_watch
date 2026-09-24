@@ -1,0 +1,83 @@
+{
+  "redis_url_host": "dw-v2-redis-fault-20260924",
+  "redis_version": "7.4.9",
+  "original_appendfsync": "always",
+  "profile_appendfsync": "everysec",
+  "method": "prepopulate all 1000 latest points at newer timestamps; identical Redis XADD/receipt/window work; skip-loop script is measurement only",
+  "runs": [
+    {
+      "variant": "full",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.1965171179999743,
+      "redis_cpu_s": 0.17701799999999945,
+      "eval_ms_p50": 1.9243424999331182,
+      "eval_ms_p95": 2.3777010001140297,
+      "eval_ms_mean": 1.9638836100284607,
+      "stream_len": 100
+    },
+    {
+      "variant": "hmget_256",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.1771362509998653,
+      "redis_cpu_s": 0.15863900000000086,
+      "eval_ms_p50": 1.723889499771758,
+      "eval_ms_p95": 2.345513999898685,
+      "eval_ms_mean": 1.7700923699794657,
+      "stream_len": 100
+    },
+    {
+      "variant": "skip_latest_loop",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.11233994400026859,
+      "redis_cpu_s": 0.09315499999999943,
+      "eval_ms_p50": 1.1128274998100096,
+      "eval_ms_p95": 1.4310159999695315,
+      "eval_ms_mean": 1.1221458900172365,
+      "stream_len": 100
+    },
+    {
+      "variant": "skip_latest_loop",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.12556368899959125,
+      "redis_cpu_s": 0.1037530000000002,
+      "eval_ms_p50": 1.175834999912695,
+      "eval_ms_p95": 1.8773570000121254,
+      "eval_ms_mean": 1.2541688799819894,
+      "stream_len": 100
+    },
+    {
+      "variant": "hmget_256",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.172898855999847,
+      "redis_cpu_s": 0.15742000000000012,
+      "eval_ms_p50": 1.7171570000300562,
+      "eval_ms_p95": 2.0995390000280167,
+      "eval_ms_mean": 1.7278265500181078,
+      "stream_len": 100
+    },
+    {
+      "variant": "full",
+      "frames": 100,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.19340483599989966,
+      "redis_cpu_s": 0.17455200000000026,
+      "eval_ms_p50": 1.913149499841893,
+      "eval_ms_p95": 2.3363140003311855,
+      "eval_ms_mean": 1.9328082699803417,
+      "stream_len": 100
+    }
+  ],
+  "mean_eval_ms_by_variant": {
+    "full": 1.9483459400044012,
+    "hmget_256": 1.7489594599987868,
+    "skip_latest_loop": 1.188157384999613
+  },
+  "measured_full_minus_hmget_ms": 0.19938648000561443,
+  "measured_full_minus_skip_ms": 0.7601885550047882,
+  "restored_appendfsync": "always"
+}

@@ -16,6 +16,8 @@ import { RoutesAlias } from '../routesAlias'
 import { formatMenuTitle } from '@/utils'
 import { buildProjectDocsMenu } from '@/views/project-docs/docs.menu'
 import { buildMonitorScreenMenu } from '@/views/monitor-screen/screen.menu'
+import { buildLightMonitorMenu } from '@/views/monitor-light/screen.menu'
+import { buildLandingMenu } from '@/views/landing/screen.menu'
 
 export class MenuProcessor {
   /**
@@ -31,8 +33,15 @@ export class MenuProcessor {
       menuList = await this.processBackendMenu()
     }
 
-    // 注入前端管理的「监控大屏」「项目文档」菜单（不依赖后端 sys_menu，对所有登录用户可见）
-    menuList = [buildMonitorScreenMenu(), ...menuList, buildProjectDocsMenu()]
+    // 注入前端管理的菜单项（不依赖后端 sys_menu，对所有登录用户可见）。
+    // 顺序：监控大屏 → 浅色监控大屏 → 项目首页 → 后端菜单 → 项目文档。
+    menuList = [
+      buildMonitorScreenMenu(),
+      buildLightMonitorMenu(),
+      buildLandingMenu(),
+      ...menuList,
+      buildProjectDocsMenu()
+    ]
 
     // 在规范化路径之前，验证原始路径配置
     this.validateMenuPaths(menuList)

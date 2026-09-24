@@ -1,0 +1,202 @@
+{
+  "redis_url_host": "dw-v2-redis-fault-20260924",
+  "redis_version": "7.4.9",
+  "original_appendfsync": "always",
+  "profile_appendfsync": "everysec",
+  "method": "1000-point frames, prepopulated newer latest values; 300 frames per variant twice, forward/reverse order. Test-only variants substitute known monotonic frame and prior-window timestamps as ARGV[7]/ARGV[8]; all variants retain identical XADD, receipt, LINDEX, LPUSH and LTRIM. Skip-latest variants are unsafe in production.",
+  "runs": [
+    {
+      "variant": "hmget_baseline",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.9293302289997882,
+      "redis_cpu_s": 0.8034580000000009,
+      "eval_ms_p50": 2.9685129998142656,
+      "eval_ms_p95": 4.366380000647041,
+      "eval_ms_mean": 3.093984746677355,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_frame_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.8506497929993202,
+      "redis_cpu_s": 0.739120999999999,
+      "eval_ms_p50": 2.7070500000263564,
+      "eval_ms_p95": 3.9578280002388055,
+      "eval_ms_mean": 2.8319331566369024,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_recent_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.6273652270001548,
+      "redis_cpu_s": 0.5497370000000004,
+      "eval_ms_p50": 2.0358409997243143,
+      "eval_ms_p95": 2.840200000719051,
+      "eval_ms_mean": 2.08917637665157,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_both_ts_args",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.7868286510001781,
+      "redis_cpu_s": 0.6436890000000002,
+      "eval_ms_p50": 2.321824000318884,
+      "eval_ms_p95": 3.7507360002564383,
+      "eval_ms_mean": 2.6200402633397366,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_baseline",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.38794583099934243,
+      "redis_cpu_s": 0.3130570000000006,
+      "eval_ms_p50": 1.190154499909113,
+      "eval_ms_p95": 1.942576999681478,
+      "eval_ms_mean": 1.2914607166840142,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_frame_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.3178187679995972,
+      "redis_cpu_s": 0.2579899999999995,
+      "eval_ms_p50": 1.0067200005323684,
+      "eval_ms_p95": 1.4623299994127592,
+      "eval_ms_mean": 1.0578386232979635,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_recent_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.35459180299949367,
+      "redis_cpu_s": 0.29008900000000004,
+      "eval_ms_p50": 1.097442499940371,
+      "eval_ms_p95": 1.8202149994976935,
+      "eval_ms_mean": 1.1804023733293434,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_both_ts_args",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.2810172720000992,
+      "redis_cpu_s": 0.22483099999999823,
+      "eval_ms_p50": 0.8912180001061643,
+      "eval_ms_p95": 1.344313000117836,
+      "eval_ms_mean": 0.9350448433087877,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_both_ts_args",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.27767732800020895,
+      "redis_cpu_s": 0.22235300000000002,
+      "eval_ms_p50": 0.8864350002113497,
+      "eval_ms_p95": 1.2147829993409687,
+      "eval_ms_mean": 0.9242773167140209,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_recent_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.43132424199939123,
+      "redis_cpu_s": 0.3198539999999994,
+      "eval_ms_p50": 1.2378575002003345,
+      "eval_ms_p95": 2.0562030003929976,
+      "eval_ms_mean": 1.4358039266729368,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_frame_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.3605079349999869,
+      "redis_cpu_s": 0.28665800000000097,
+      "eval_ms_p50": 1.0930055000244465,
+      "eval_ms_p95": 1.8920029997389065,
+      "eval_ms_mean": 1.1999514366501292,
+      "stream_len": 300
+    },
+    {
+      "variant": "skip_latest_baseline",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.34348747300009563,
+      "redis_cpu_s": 0.2835549999999998,
+      "eval_ms_p50": 1.0955925004054734,
+      "eval_ms_p95": 1.5956109991748235,
+      "eval_ms_mean": 1.1434635166733642,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_both_ts_args",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.5445012809996115,
+      "redis_cpu_s": 0.47261600000000037,
+      "eval_ms_p50": 1.7336384994450782,
+      "eval_ms_p95": 2.457554000102391,
+      "eval_ms_mean": 1.8132444833584789,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_recent_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.5421443100003671,
+      "redis_cpu_s": 0.473668,
+      "eval_ms_p50": 1.7430824996154115,
+      "eval_ms_p95": 2.3629369998161565,
+      "eval_ms_mean": 1.805554440021903,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_frame_ts_arg",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.5647216019997359,
+      "redis_cpu_s": 0.49253000000000213,
+      "eval_ms_p50": 1.8167695002375694,
+      "eval_ms_p95": 2.4230099998021615,
+      "eval_ms_mean": 1.8806471466541552,
+      "stream_len": 300
+    },
+    {
+      "variant": "hmget_baseline",
+      "frames": 300,
+      "points_per_frame": 1000,
+      "elapsed_s": 0.6515026859997306,
+      "redis_cpu_s": 0.5423589999999994,
+      "eval_ms_p50": 1.96508899989567,
+      "eval_ms_p95": 2.7845819995491183,
+      "eval_ms_mean": 2.1695436566672774,
+      "stream_len": 300
+    }
+  ],
+  "mean_eval_ms_by_variant": {
+    "hmget_baseline": 2.631764201672316,
+    "hmget_frame_ts_arg": 2.3562901516455286,
+    "hmget_recent_ts_arg": 1.9473654083367364,
+    "hmget_both_ts_args": 2.216642373349108,
+    "skip_latest_baseline": 1.2174621166786892,
+    "skip_latest_frame_ts_arg": 1.1288950299740463,
+    "skip_latest_recent_ts_arg": 1.30810315000114,
+    "skip_latest_both_ts_args": 0.9296610800114042
+  },
+  "hmget_frame_decode_delta_ms": 0.2754740500267876,
+  "hmget_recent_decode_delta_ms": 0.6843987933355797,
+  "hmget_both_decode_delta_ms": 0.4151218283232083,
+  "skip_latest_frame_decode_delta_ms": 0.08856708670464286,
+  "skip_latest_recent_decode_delta_ms": -0.09064103332245077,
+  "skip_latest_both_decode_delta_ms": 0.28780103666728496,
+  "restored_appendfsync": "always"
+}

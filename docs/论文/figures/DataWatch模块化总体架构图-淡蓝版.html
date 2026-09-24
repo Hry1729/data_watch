@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DataWatch 模块化总体架构图</title>
+  <style>
+    :root {
+      --bg: #f5f9fd;
+      --paper: #ffffff;
+      --panel: #eaf4fd;
+      --panel-strong: #dceefd;
+      --navy: #0f2f55;
+      --blue: #2f73b7;
+      --blue-2: #5d94c8;
+      --blue-3: #9fc4e7;
+      --line: #7aaada;
+      --muted: #557493;
+      --soft: #f8fbff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-width: 1800px;
+      background: var(--bg);
+      color: var(--navy);
+      font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif;
+    }
+
+    .canvas {
+      position: relative;
+      width: 1800px;
+      height: 1280px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 88% 2%, rgba(159, 196, 231, .28), transparent 25%),
+        linear-gradient(180deg, #f9fcff 0%, #f2f8fd 100%);
+    }
+
+    .title {
+      position: absolute;
+      left: 50px;
+      top: 24px;
+      z-index: 4;
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: .5px;
+    }
+
+    .subtitle {
+      position: absolute;
+      left: 52px;
+      top: 75px;
+      z-index: 4;
+      color: var(--muted);
+      font-size: 18px;
+      letter-spacing: .2px;
+    }
+
+    .badge {
+      position: absolute;
+      right: 50px;
+      top: 34px;
+      z-index: 4;
+      padding: 12px 20px;
+      border: 1.5px solid var(--blue-2);
+      border-radius: 14px;
+      background: rgba(255,255,255,.88);
+      color: var(--navy);
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .panel {
+      position: absolute;
+      z-index: 0;
+      border: 1.5px solid var(--blue-3);
+      border-radius: 20px;
+      background: var(--paper);
+    }
+
+    .panel.service,
+    .panel.data { background: var(--paper); }
+
+    .section-label {
+      position: absolute;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--navy);
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .section-index {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 15px;
+    }
+
+    .module {
+      position: absolute;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 1.5px solid var(--blue-2);
+      border-radius: 15px;
+      background: rgba(255,255,255,.96);
+      padding: 13px 14px;
+      box-shadow: 0 7px 18px rgba(15, 47, 85, .06);
+      text-align: center;
+    }
+
+    .module.strong {
+      border: 2px solid var(--blue);
+      background: #f8fcff;
+    }
+
+    .module-title {
+      color: var(--navy);
+      font-size: 20px;
+      font-weight: 800;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .module-path {
+      margin-top: 3px;
+      color: var(--blue);
+      font: 600 12px/1.2 Consolas, "Microsoft YaHei", sans-serif;
+    }
+
+    .module-desc {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .chips {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      width: 100%;
+      margin-top: 9px;
+    }
+
+    .chips.one { grid-template-columns: 1fr; }
+    .chips.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .chip {
+      min-width: 0;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 7px;
+      border: 1px solid var(--blue-3);
+      border-radius: 8px;
+      background: var(--soft);
+      color: #244f77;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .nowrap {
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
+
+    .big-num {
+      position: absolute;
+      right: 13px;
+      top: 10px;
+      color: #d8eafb;
+      font-size: 37px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .flow-note {
+      position: absolute;
+      z-index: 3;
+      padding: 5px 10px;
+      border: 1px solid var(--blue-3);
+      border-radius: 8px;
+      background: #fff;
+      color: #315f89;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .legend {
+      position: absolute;
+      z-index: 3;
+      display: flex;
+      gap: 22px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .legend-line { width: 34px; height: 0; border-top: 3px solid var(--blue); }
+    .legend-line.dash { border-top-style: dashed; }
+    .legend-line.thin { border-top-width: 1.5px; border-top-color: var(--blue-2); }
+
+    .arch-lines {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      width: 1800px;
+      height: 1280px;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .edge {
+      fill: none;
+      stroke: var(--blue);
+      stroke-width: 3;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      marker-end: url(#arrow);
+    }
+
+    .edge.bus { marker-end: none; stroke-width: 2; stroke: var(--blue-2); }
+    .edge.api { stroke: var(--blue-2); stroke-width: 2; marker-end: url(#arrow-soft); }
+    .edge.dashed { stroke-dasharray: 9 7; }
+    .edge.control { stroke-dasharray: 4 6; stroke-width: 2; stroke: var(--blue-2); marker-end: url(#arrow-soft); }
+
+    .footer-note {
+      position: absolute;
+      left: 50px;
+      bottom: 18px;
+      z-index: 3;
+      color: #7894ae;
+      font-size: 11px;
+    }
+
+    .toolbar {
+      width: 1800px;
+      padding: 14px 18px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      background: #edf5fc;
+    }
+
+    .toolbar button {
+      border: 1px solid var(--blue-2);
+      border-radius: 9px;
+      background: #fff;
+      color: var(--navy);
+      padding: 8px 14px;
+      font: 700 13px "Microsoft YaHei", sans-serif;
+      cursor: pointer;
+    }
+
+    body.dark {
+      --bg: #0b2340;
+      --paper: #102f50;
+      --panel: #143b62;
+      --panel-strong: #184a76;
+      --navy: #eaf5ff;
+      --blue: #79b7f0;
+      --blue-2: #70a4d4;
+      --blue-3: #315f89;
+      --line: #5e9bd2;
+      --muted: #a8c8e5;
+      --soft: #123555;
+    }
+
+    body.dark .canvas { background: linear-gradient(180deg, #0c2746 0%, #0a213b 100%); }
+    body.dark .module, body.dark .flow-note, body.dark .badge { background: rgba(16,47,80,.97); }
+    body.dark .module.strong { background: #123b61; }
+    body.dark .chip { color: #dbeeff; }
+    body.dark .big-num { color: #214c73; }
+
+    @media print {
+      .toolbar { display: none; }
+      body { background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <main class="canvas" id="diagram">
+
+
+
+
+    <div class="panel" style="left:50px;top:30px;width:1700px;height:170px;"></div>
+    <div class="panel service" style="left:50px;top:230px;width:1700px;height:220px;"></div>
+    <div class="panel data" style="left:50px;top:480px;width:1700px;height:470px;"></div>
+    <div class="panel" style="left:50px;top:980px;width:520px;height:270px;"></div>
+    <div class="panel" style="left:600px;top:980px;width:1150px;height:270px;"></div>
+
+    <div class="section-label" style="left:72px;top:42px;"><span class="section-index">01</span>多端交互与开放入口</div>
+    <div class="section-label" style="left:72px;top:242px;"><span class="section-index">02</span>平台服务与运行治理</div>
+    <div class="section-label" style="left:72px;top:492px;"><span class="section-index">03</span>实时数据主链路与模块边界</div>
+    <div class="section-label" style="left:72px;top:992px;"><span class="section-index">04</span>中心元数据</div>
+    <div class="section-label" style="left:622px;top:992px;"><span class="section-index">05</span>边缘可靠链路（分布式部署）</div>
+
+    <svg class="arch-lines" viewBox="0 0 1800 1280" aria-hidden="true">
+      <defs>
+        <marker id="arrow" markerWidth="11" markerHeight="11" refX="9.5" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L11,5.5 L0,11 Z" fill="#2f73b7" />
+        </marker>
+        <marker id="arrow-soft" markerWidth="11" markerHeight="11" refX="9.5" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M0,0 L11,5.5 L0,11 Z" fill="#5d94c8" />
+        </marker>
+      </defs>
+
+      <!-- access bus -->
+      <path class="edge bus" d="M360 175 V215 H1440" />
+      <path class="edge bus" d="M900 175 V215" />
+      <path class="edge bus" d="M1440 175 V215" />
+      <path class="edge api" d="M370 215 V275" />
+      <path class="edge api" d="M900 175 V275" />
+
+      <!-- service/query/control relationships -->
+      <path class="edge bus" d="M370 425 V468 H1630" />
+      <path class="edge api" d="M548 468 V970 H310 V1040" />
+      <path class="edge api" d="M690 468 V555" />
+      <path class="edge api" d="M1140 468 V555" />
+      <path class="edge api" d="M1630 468 V555" />
+      <path class="edge dashed" d="M1430 425 V535 H1140 V555" />
+
+      <!-- primary collection and persistence flow -->
+      <path class="edge" d="M245 720 H280" />
+      <path class="edge" d="M530 720 H565" />
+      <path class="edge" d="M815 720 H850" />
+      <path class="edge" d="M1020 720 H1055" />
+      <path class="edge" d="M1225 720 H1260" />
+      <path class="edge" d="M1510 720 H1545" />
+
+      <!-- distributed reliable branch -->
+      <path class="edge dashed" d="M935 885 V1040" />
+      <path class="edge dashed" d="M950 1135 H990" />
+      <path class="edge dashed" d="M1230 1135 H1770 V475 H1430 V425" />
+    </svg>
+
+    <!-- access modules -->
+    <section class="module" style="left:180px;top:85px;width:360px;height:90px;padding:12px 16px;">
+      <div class="module-title">Web 业务控制台</div>
+      <div class="module-desc" style="margin-top:4px;">配置、监控、曲线、告警与组织协作</div>
+    </section>
+    <section class="module" style="left:720px;top:85px;width:360px;height:90px;padding:12px 16px;">
+      <div class="module-title">桌面 App</div>
+      <div class="module-desc nowrap" style="margin-top:4px;">本地部署、进程控制、状态诊断与离线辅助</div>
+    </section>
+    <section class="module strong" style="left:1260px;top:85px;width:360px;height:90px;padding:12px 16px;">
+      <div class="module-title">CLI / AI 智能体</div>
+      <div class="module-desc" style="margin-top:4px;">通过平台 API 调用设备数据与业务能力</div>
+    </section>
+
+    <!-- platform service modules -->
+    <section class="module strong" style="left:160px;top:275px;width:420px;height:150px;">
+
+      <div class="module-title">Backend 统一业务服务</div>
+      <div class="module-path">backend/app</div>
+      <div class="chips three">
+        <div class="chip">Auth / RBAC</div><div class="chip">设备与点位配置</div><div class="chip">实时 / 历史查询</div>
+        <div class="chip">WebSocket</div><div class="chip">告警与日志</div><div class="chip">开放 REST API</div>
+      </div>
+    </section>
+    <section class="module" style="left:690px;top:275px;width:420px;height:150px;">
+      <div class="module-title">Agent 本地运行治理</div>
+      <div class="module-path">agent/app</div>
+      <div class="chips three">
+        <div class="chip nowrap">Process Manager</div><div class="chip">Health Check</div><div class="chip">配置同步</div>
+        <div class="chip">驱动安装</div><div class="chip">日志诊断</div><div class="chip">边缘节点管理</div>
+      </div>
+    </section>
+    <section class="module" style="left:1220px;top:275px;width:420px;height:150px;">
+      <div class="module-title">Central Ingest 中心接入</div>
+      <div class="module-path">ingest/app</div>
+      <div class="chips three">
+        <div class="chip">签名鉴权</div><div class="chip">顺序校验</div><div class="chip">幂等接纳</div>
+        <div class="chip">批次校验</div><div class="chip">Redis 投递</div><div class="chip">错误响应</div>
+      </div>
+    </section>
+
+    <!-- main data plane modules -->
+    <section class="module" style="left:75px;top:555px;width:170px;height:330px;">
+      <div class="module-title">现场设备</div>
+      <div class="module-desc">多机种 PLC 与工业控制系统</div>
+      <div class="chips one">
+        <div class="chip">西门子 S7</div><div class="chip">GE SRTP</div><div class="chip">OPC UA / DA</div>
+      </div>
+    </section>
+
+    <section class="module strong" style="left:280px;top:555px;width:250px;height:330px;">
+
+      <div class="module-title">驱动插件子系统</div>
+      <div class="module-path">collector/drivers</div>
+      <div class="module-desc">协议差异被封装在插件内部，对采集核心暴露统一 ABI。</div>
+      <div class="chips">
+        <div class="chip">BaseDriver</div><div class="chip">Registry</div>
+        <div class="chip">Manifest</div><div class="chip">连接 / 重连</div>
+        <div class="chip">读取规划钩子</div><div class="chip">解码钩子</div>
+      </div>
+    </section>
+
+    <section class="module strong" style="left:565px;top:555px;width:250px;height:330px;">
+
+      <div class="module-title">Collector 采集核心</div>
+      <div class="module-path">collector/collector · collector/device</div>
+      <div class="module-desc">按设备与采集周期调度任务，并以有界并发执行规划后的读取块。</div>
+      <div class="chips">
+        <div class="chip">DeviceManager</div><div class="chip">Scheduler</div>
+        <div class="chip">多周期任务</div><div class="chip">ReadBlock Planner</div>
+        <div class="chip">BoundedExecutor</div><div class="chip">Executor</div>
+        <div class="chip">质量 / 时间戳</div><div class="chip">Sink Adapter</div>
+      </div>
+    </section>
+
+    <section class="module" style="left:850px;top:555px;width:170px;height:330px;">
+      <div class="module-title">统一数据契约</div>
+      <div class="module-desc">不同协议最终归一为同一字段语义与质量模型。</div>
+      <div class="chips one">
+        <div class="chip">DriverSample</div>
+        <div class="chip">DataPoint</div>
+        <div class="chip">StreamEnvelope</div>
+      </div>
+    </section>
+
+    <section class="module strong" style="left:1055px;top:555px;width:170px;height:330px;">
+
+      <div class="module-title">Redis 数据中枢</div>
+      <div class="module-desc">采集、查询与历史写入在此解耦。</div>
+      <div class="chips one">
+        <div class="chip">latest / window</div>
+        <div class="chip">Redis Stream</div>
+        <div class="chip">PEL / Recovery</div>
+        <div class="chip">DLQ</div>
+      </div>
+    </section>
+
+    <section class="module strong" style="left:1260px;top:555px;width:250px;height:330px;">
+
+      <div class="module-title">Writer 历史入库</div>
+      <div class="module-path">writer/app</div>
+      <div class="module-desc">消费 Stream，执行永久点位映射、批量缓冲和错误隔离；成功后 ACK。</div>
+      <div class="chips">
+        <div class="chip">Consumer Group</div><div class="chip">PEL 恢复</div>
+        <div class="chip">Mapping Decoder</div><div class="chip">Batch Buffer</div>
+        <div class="chip">错误隔离 / DLQ</div><div class="chip">ACK</div>
+      </div>
+    </section>
+
+    <section class="module" style="left:1545px;top:555px;width:170px;height:330px;">
+      <div class="module-title">TDengine</div>
+      <div class="module-desc">高频时序历史数据的批量存储与查询。</div>
+      <div class="chips one">
+        <div class="chip">超级表 / 子表</div>
+        <div class="chip">批量写入</div>
+        <div class="chip">历史查询</div>
+      </div>
+    </section>
+
+    <!-- metadata and edge branch -->
+    <section class="module" style="left:85px;top:1040px;width:450px;height:190px;">
+      <div class="module-title">MySQL 配置与治理数据</div>
+      <div class="module-path">Backend 为唯一业务访问入口</div>
+      <div class="chips three">
+        <div class="chip">设备目录</div><div class="chip">变量 / 点位</div><div class="chip">驱动配置</div>
+        <div class="chip">用户 / 角色</div><div class="chip">映射关系</div><div class="chip">审计日志</div>
+      </div>
+      <div class="module-desc">配置元数据与高频时序数据分离存储。</div>
+    </section>
+
+    <section class="module strong" style="left:650px;top:1040px;width:300px;height:190px;">
+      <div class="module-title">Edge Storage 边缘存储</div>
+      <div class="module-path">edge/app · SQLite 单写者</div>
+      <div class="chips three">
+        <div class="chip">local_latest</div><div class="chip">SQLite WAL</div><div class="chip">outbox</div>
+        <div class="chip">断点续传</div><div class="chip">批次状态</div><div class="chip">本地恢复</div>
+      </div>
+    </section>
+
+    <section class="module" style="left:990px;top:1040px;width:240px;height:190px;">
+      <div class="module-title">Uploader 上传器</div>
+      <div class="module-path">edge/app/uploader</div>
+      <div class="chips">
+        <div class="chip">批次读取</div><div class="chip">签名上传</div>
+        <div class="chip">重试退避</div><div class="chip">确认回写</div>
+      </div>
+    </section>
+
+    <section class="module" style="left:1270px;top:1040px;width:430px;height:190px;">
+      <div class="module-title">分布式部署语义</div>
+      <div class="module-desc">各公司或现场节点先在本地持久化，再可靠上传到集团中心；网络中断时不阻塞设备采集。</div>
+      <div class="chips">
+        <div class="chip">本地先落盘</div><div class="chip">至少一次投递</div>
+        <div class="chip">中心幂等接纳</div><div class="chip">统一进入 Redis</div>
+      </div>
+    </section>
+
+    <div class="flow-note" style="left:900px;top:522px;">中心化直写 Redis</div>
+    <div class="flow-note" style="left:824px;top:952px;">分布式可靠路径</div>
+    <div class="flow-note" style="left:1040px;top:452px;">实时 / 历史查询</div>
+    <div class="flow-note" style="left:667px;top:452px;">生命周期与配置</div>
+    <div class="flow-note" style="left:805px;top:202px;">HTTPS / WebSocket</div>
+
+    <div class="legend" style="left:1120px;top:915px;">
+      <span class="legend-item"><i class="legend-line"></i>实时数据主链路</span>
+      <span class="legend-item"><i class="legend-line dash"></i>边缘可靠传输</span>
+      <span class="legend-item"><i class="legend-line thin"></i>API / 控制关系</span>
+    </div>
+
+
+  </main>
+
+  <div class="toolbar">
+    <button type="button" onclick="document.body.classList.toggle('dark')">切换浅蓝 / 深蓝</button>
+    <button type="button" onclick="window.print()">打印或另存为 PDF</button>
+  </div>
+</body>
+</html>

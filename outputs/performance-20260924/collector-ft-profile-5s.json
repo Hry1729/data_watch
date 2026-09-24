@@ -1,0 +1,463 @@
+{
+  "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+  "token": "119aadd4a1",
+  "device_type": "perfcol119aadd4a1",
+  "redis_db": 14,
+  "redis_host": "perf-redis-profile",
+  "profile_phases": true,
+  "commandstats_before": {
+    "eval": {
+      "calls": 20,
+      "usec": 1241,
+      "usec_per_call": 62.05
+    },
+    "evalsha": {
+      "calls": 20,
+      "usec": 1084,
+      "usec_per_call": 54.2
+    },
+    "waitaof": {
+      "calls": 3,
+      "usec": 5,
+      "usec_per_call": 1.67
+    }
+  },
+  "python_gil_enabled": false,
+  "devices": 100,
+  "points_per_frame": 1000,
+  "period_ms": 100,
+  "target_seconds": 5,
+  "target_frames": 5000,
+  "container_cpu_limit": 2,
+  "redis_memory_guard_bytes": 419430400,
+  "outbox_path": "/tmp/collector-ft-119aadd4a1.sqlite",
+  "receipt_key": "collector:receipt:v2:5c85e371-c21e-482e-bc32-d0c9ab451146",
+  "stop_reason": "duration",
+  "ticks": 50,
+  "submitted_frames": 5000,
+  "production_seconds": 5.086,
+  "receive_frames_per_second": 983.01,
+  "production_confirmed_frames": 443,
+  "production_outbox": {
+    "count": 4557,
+    "payload_bytes": 353037297,
+    "oldest_age_ms": 4675,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "drain_seconds": 19.339,
+  "replay_frames_per_second_total": 204.7,
+  "replay_frames_per_second_post_production": 235.63,
+  "confirmed_frames": 5000,
+  "max_rss_bytes": 232456192,
+  "max_redis_used_memory_bytes": 147072608,
+  "commandstats_after": {
+    "eval": {
+      "calls": 794,
+      "usec": 2448719,
+      "usec_per_call": 3084.03
+    },
+    "evalsha": {
+      "calls": 5020,
+      "usec": 9563077,
+      "usec_per_call": 1905.0
+    },
+    "waitaof": {
+      "calls": 16,
+      "usec": 26,
+      "usec_per_call": 1.62
+    }
+  },
+  "commandstats_delta": {
+    "eval": {
+      "calls": 774,
+      "usec": 2447478
+    },
+    "evalsha": {
+      "calls": 5000,
+      "usec": 9561993
+    },
+    "waitaof": {
+      "calls": 13,
+      "usec": 21
+    }
+  },
+  "profile_windows": [
+    {
+      "frames": 9,
+      "bytes": 759573,
+      "pack_ms": 0.144,
+      "send_ms": 0.275,
+      "eval_response_ms": 37.217,
+      "pre_waitaof_ms": 37.636,
+      "waitaof_response_ms": 965.236,
+      "total_ms": 1002.873,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 434,
+      "bytes": 36636024,
+      "pack_ms": 4.659,
+      "send_ms": 2091.543,
+      "eval_response_ms": 205.882,
+      "pre_waitaof_ms": 2302.084,
+      "waitaof_response_ms": 771.629,
+      "total_ms": 3073.713,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36568491,
+      "pack_ms": 4.352,
+      "send_ms": 1408.073,
+      "eval_response_ms": 75.957,
+      "pre_waitaof_ms": 1488.382,
+      "waitaof_response_ms": 291.196,
+      "total_ms": 1779.578,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36583750,
+      "pack_ms": 12.26,
+      "send_ms": 828.88,
+      "eval_response_ms": 75.665,
+      "pre_waitaof_ms": 916.806,
+      "waitaof_response_ms": 395.638,
+      "total_ms": 1312.444,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36595273,
+      "pack_ms": 3.428,
+      "send_ms": 760.577,
+      "eval_response_ms": 69.817,
+      "pre_waitaof_ms": 833.822,
+      "waitaof_response_ms": 946.874,
+      "total_ms": 1780.695,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36606457,
+      "pack_ms": 2.654,
+      "send_ms": 741.597,
+      "eval_response_ms": 68.674,
+      "pre_waitaof_ms": 812.925,
+      "waitaof_response_ms": 1013.793,
+      "total_ms": 1826.717,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36617689,
+      "pack_ms": 2.949,
+      "send_ms": 795.023,
+      "eval_response_ms": 70.092,
+      "pre_waitaof_ms": 868.065,
+      "waitaof_response_ms": 593.131,
+      "total_ms": 1461.196,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 433,
+      "bytes": 36629023,
+      "pack_ms": 3.047,
+      "send_ms": 806.442,
+      "eval_response_ms": 77.753,
+      "pre_waitaof_ms": 887.242,
+      "waitaof_response_ms": 910.673,
+      "total_ms": 1797.915,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 432,
+      "bytes": 36555576,
+      "pack_ms": 2.648,
+      "send_ms": 756.458,
+      "eval_response_ms": 95.388,
+      "pre_waitaof_ms": 854.494,
+      "waitaof_response_ms": 959.84,
+      "total_ms": 1814.334,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 432,
+      "bytes": 36566742,
+      "pack_ms": 3.309,
+      "send_ms": 872.037,
+      "eval_response_ms": 67.488,
+      "pre_waitaof_ms": 942.834,
+      "waitaof_response_ms": 518.19,
+      "total_ms": 1461.024,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 432,
+      "bytes": 36578040,
+      "pack_ms": 3.342,
+      "send_ms": 771.079,
+      "eval_response_ms": 73.119,
+      "pre_waitaof_ms": 847.541,
+      "waitaof_response_ms": 979.623,
+      "total_ms": 1827.164,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 432,
+      "bytes": 36589176,
+      "pack_ms": 2.969,
+      "send_ms": 723.39,
+      "eval_response_ms": 65.981,
+      "pre_waitaof_ms": 792.34,
+      "waitaof_response_ms": 1028.75,
+      "total_ms": 1821.09,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 231,
+      "bytes": 19569579,
+      "pack_ms": 1.425,
+      "send_ms": 361.214,
+      "eval_response_ms": 69.835,
+      "pre_waitaof_ms": 432.474,
+      "waitaof_response_ms": 436.851,
+      "total_ms": 869.324,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    }
+  ],
+  "timings_ms": {
+    "outbox_accept_ms": {
+      "count": 5000,
+      "average_ms": 19.376,
+      "max_ms": 136.9,
+      "p50_ms": 20.0,
+      "p95_ms": 40.0,
+      "p99_ms": 50.0,
+      "p999_ms": 150.0
+    },
+    "outbox_commit_ms": {
+      "count": 400,
+      "average_ms": 8.697,
+      "max_ms": 36.798,
+      "p50_ms": 10.0,
+      "p95_ms": 30.0,
+      "p99_ms": 30.0,
+      "p999_ms": 40.0
+    },
+    "redis_aof_batch_ms": {
+      "count": 13,
+      "average_ms": 1679.082,
+      "max_ms": 3073.713,
+      "p50_ms": 2000.0,
+      "p95_ms": 3073.713,
+      "p99_ms": 3073.713,
+      "p999_ms": 3073.713
+    },
+    "latest_fastlane_redis_ms": {
+      "count": 774,
+      "average_ms": 5.186,
+      "max_ms": 35.515,
+      "p50_ms": 5.0,
+      "p95_ms": 10.0,
+      "p99_ms": 20.0,
+      "p999_ms": 40.0
+    }
+  },
+  "history": {
+    "actual_frames": 5000,
+    "expected_frames": 5000,
+    "unique_frames": 5000,
+    "duplicate_frames": 0,
+    "malformed_frames": 0,
+    "exactly_once": true
+  },
+  "latest_correct": true,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "sqlite_rows_after_close": 0,
+  "final_latest_pending": 0,
+  "correctness_passed": true,
+  "target_met": true,
+  "samples": [
+    {
+      "elapsed_s": 0.484,
+      "submitted": 500,
+      "outbox": {
+        "count": 500,
+        "payload_bytes": 38651500,
+        "oldest_age_ms": 483,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 166297600,
+      "redis_used_memory_bytes": 6744296
+    },
+    {
+      "elapsed_s": 0.994,
+      "submitted": 1000,
+      "outbox": {
+        "count": 1000,
+        "payload_bytes": 77325500,
+        "oldest_age_ms": 993,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 179220480,
+      "redis_used_memory_bytes": 8127336
+    },
+    {
+      "elapsed_s": 1.497,
+      "submitted": 1500,
+      "outbox": {
+        "count": 1491,
+        "payload_bytes": 115321935,
+        "oldest_age_ms": 1492,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 230105088,
+      "redis_used_memory_bytes": 12530544
+    },
+    {
+      "elapsed_s": 1.997,
+      "submitted": 2000,
+      "outbox": {
+        "count": 1991,
+        "payload_bytes": 154028935,
+        "oldest_age_ms": 1992,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 229736448,
+      "redis_used_memory_bytes": 17006192
+    },
+    {
+      "elapsed_s": 2.494,
+      "submitted": 2500,
+      "outbox": {
+        "count": 2491,
+        "payload_bytes": 192750935,
+        "oldest_age_ms": 2489,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231067648,
+      "redis_used_memory_bytes": 20628624
+    },
+    {
+      "elapsed_s": 3.003,
+      "submitted": 3000,
+      "outbox": {
+        "count": 2991,
+        "payload_bytes": 231487935,
+        "oldest_age_ms": 2998,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 230514688,
+      "redis_used_memory_bytes": 24112296
+    },
+    {
+      "elapsed_s": 3.5,
+      "submitted": 3500,
+      "outbox": {
+        "count": 3491,
+        "payload_bytes": 270239935,
+        "oldest_age_ms": 3495,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231280640,
+      "redis_used_memory_bytes": 27424800
+    },
+    {
+      "elapsed_s": 3.983,
+      "submitted": 4000,
+      "outbox": {
+        "count": 3991,
+        "payload_bytes": 309006935,
+        "oldest_age_ms": 3978,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 230985728,
+      "redis_used_memory_bytes": 27488840
+    },
+    {
+      "elapsed_s": 4.581,
+      "submitted": 4500,
+      "outbox": {
+        "count": 4057,
+        "payload_bytes": 314240297,
+        "oldest_age_ms": 4169,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231481344,
+      "redis_used_memory_bytes": 27310896
+    },
+    {
+      "elapsed_s": 5.079,
+      "submitted": 5000,
+      "outbox": {
+        "count": 4557,
+        "payload_bytes": 353037297,
+        "oldest_age_ms": 4667,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232456192,
+      "redis_used_memory_bytes": 31907032
+    }
+  ],
+  "cleanup": {
+    "redis_own_keys_remaining": 0,
+    "sqlite_removed": true
+  }
+}

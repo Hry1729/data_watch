@@ -57,6 +57,28 @@ class TestWriteLatest:
         parsed = json.loads(mapping["42"])
         assert parsed == {"v": "1.5", "t": 12345, "q": 1}
 
+    def test_notifies_after_latest_write(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        writer.write_latest("qc100", "g001", {"1": {"v": "3.14", "t": 1000, "q": 1}})
+        mock_redis.publish.assert_called_once()
+        channel, payload = mock_redis.publish.call_args.args
+        assert channel == "rt:change"
+        assert json.loads(payload) == {"device_code": "qc100", "group_code": "g001"}
+        assert mock_redis.method_calls.index(call.hset("rt:latest:qc100:g001", mapping=mock_redis.hset.call_args.kwargs["mapping"])) < mock_redis.method_calls.index(call.publish(channel, payload))
+
+    def test_failed_latest_write_does_not_notify(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        mock_redis.hset.side_effect = RuntimeError("redis down")
+        with pytest.raises(RuntimeError, match="redis down"):
+            writer.write_latest("qc100", "g001", {"1": {"v": "3.14", "t": 1000, "q": 1}})
+        mock_redis.publish.assert_not_called()
+
+    def test_notification_failure_does_not_turn_successful_write_into_failure(self, mock_redis):
+        writer = RedisWriter(mock_redis, _make_config())
+        mock_redis.publish.side_effect = RuntimeError("subscriber unavailable")
+        writer.write_latest("qc100", "g001", {"1": {"v": "3.14", "t": 1000, "q": 1}})
+        mock_redis.hset.assert_called_once()
+
     def test_no_ttl_set(self, mock_redis):
         writer = RedisWriter(mock_redis, _make_config())
         writer.write_latest("qc100", "g001", {})

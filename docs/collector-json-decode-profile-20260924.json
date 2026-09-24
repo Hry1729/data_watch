@@ -1,0 +1,60 @@
+{
+  "redis_url_host": "dw-v2-redis-fault-20260924",
+  "redis_version": "7.4.9",
+  "frame_json_bytes": 11805,
+  "points_per_frame": 1000,
+  "repeats": 20,
+  "decodes_per_repeat": 100,
+  "microseconds_per_decode_samples": {
+    "control": [
+      1.88995,
+      2.3335,
+      3.08535,
+      2.74145,
+      1.3415799999999998,
+      2.1482900000000003,
+      1.84584,
+      3.29999,
+      2.5509,
+      1.7092699999999998,
+      1.9813900000000002,
+      2.25413,
+      1.7268700000000001,
+      3.15274,
+      2.63373,
+      3.16825,
+      1.79358,
+      2.2142,
+      2.04395,
+      2.5597499999999997
+    ],
+    "decode_frame": [
+      74.90464,
+      73.22652,
+      69.37996,
+      72.27044,
+      78.66461,
+      66.54829,
+      73.74113,
+      71.39502999999999,
+      78.10016,
+      65.15871,
+      73.19795,
+      78.05706,
+      76.56915,
+      78.31338,
+      73.21355,
+      68.44836000000001,
+      86.37819999999999,
+      75.21307,
+      81.71421000000001,
+      67.97767
+    ]
+  },
+  "median_microseconds_per_decode": {
+    "control": 2.234165,
+    "decode_frame": 73.483825
+  },
+  "net_decode_microseconds_median": 71.24965999999999,
+  "method": "Read-only Lua EVALSHA client timings (100 decodes per call); one full 1000-point frame JSON decode per loop; alternating control/decode order. This measures parse cost only, not XADD or latest updates."
+}

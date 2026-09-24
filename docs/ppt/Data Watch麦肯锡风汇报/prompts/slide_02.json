@@ -1,0 +1,43 @@
+{
+  "slide": 2,
+  "title": "吞吐量增长正在抬高设备稳定性要求",
+  "prompt": "# Codex PPT Slide Image Prompt\n\n## Canvas\n{\n  \"type\": \"16:9 full-slide PowerPoint image\",\n  \"language\": \"Chinese\",\n  \"slide_number\": 2,\n  \"render_slide_number\": false\n}\n\n## Deck Goal\n面向公司领导与同事，用12页高管汇报解释Data Watch的建设背景、平台架构、四项创新、落地成效和下一步路线。\n\n## Required Background\n{\n  \"deck_context\": {\n    \"source_summary\": \"Data Watch是面向自动化码头的工业设备数据采集与监控平台。它把S7、GE SRTP、OPC UA、OPC DA等现场数据转换为统一数据流，支持中心式和分布式边缘部署，通过Redis承载实时态、TDengine保存时序历史、MySQL保存配置与权限，并通过Web、桌面App和CLI向业务用户、运维人员、脚本及AI Agent提供受控访问。\",\n    \"core_claim\": \"先让分散的设备数据完整、持续、可信地流动，才可能实现真正的人机协同与智能运维。\",\n    \"canonical_terms\": [\n      \"Data Watch\",\n      \"Collector\",\n      \"Edge Storage\",\n      \"SQLite outbox\",\n      \"Uploader\",\n      \"Ingest\",\n      \"Redis\",\n      \"Writer\",\n      \"TDengine\",\n      \"MySQL\",\n      \"Backend\",\n      \"Web\",\n      \"App\",\n      \"CLI\",\n      \"AI Agent\",\n      \"Good / Uncertain / Bad\"\n    ],\n    \"content_principle\": \"视觉优先，不把讲稿搬上页面。每页以一个图表、路径、架构、矩阵或核心隐喻承载逻辑，文字只做短标签和结论。不得虚构数据。\"\n  },\n  \"slide_local_context\": {\n    \"required_background\": \"已批准样张，必须直接复用现有origin_image/slide_02.png，不再生成。趋势图为定性表达，不代表具体年份或数值。\"\n  }\n}\n\n## Global Style\n{\n  \"name\": \"麦肯锡风格（样张适配版）\",\n  \"visual_direction\": \"Premium strategy-consulting editorial slide design inspired by McKinsey/BCG/Bain rational clarity but not an official template. White or very pale cool-gray canvas, sharp Swiss grid, large whitespace, one dominant analytical mechanism, precise hairlines and restrained report metadata.\",\n  \"color_palette\": \"White, off-white and very pale cool gray; ink blue-gray #243447 for text and structure; restrained steel-blue accent for one destination, key number or causal arrow; near-black for primary titles. No orange, neon, rainbow or large dark blocks.\",\n  \"typography\": \"Modern highly legible Chinese sans-serif; bold but controlled main title aligned to a slim blue vertical rule; concise labels; compact English metadata; accurate Chinese characters; no long paragraphs.\",\n  \"texture_and_finish\": \"Clean executive report with faint grid and subtle paper texture, vector-like diagrams, precise spacing and quiet shadows.\",\n  \"deck_consistency\": \"Match the approved Slide 2 palette, typography mood, density, line weight, target markers and whitespace. Keep one coherent visual identity but vary layout and metaphor by page role.\",\n  \"content_density\": \"Cover, key-message and conclusion slides are low density. Architecture, comparison and evidence slides are medium density. Never use generic rounded-card grids or text-heavy bullet pages.\",\n  \"universal_avoid\": \"No real McKinsey logo, client logo, watermark, stock photography, clip art, people icons, robot avatars, decorative gradients, page numbers, invented statistics or unrelated labels.\"\n}\n\n## Input Images\n\n- Image 1: D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png — approved sample slide style reference; Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content.\n\n\n## Slide\n{\n  \"number\": 2,\n  \"title\": \"吞吐量增长正在抬高设备稳定性要求\",\n  \"role\": \"context\",\n  \"intent\": \"用趋势图与升级阶梯展示业务增长推动运维升级的因果关系。\"\n}\n\n## Text\n{\n  \"title\": \"吞吐量增长正在抬高设备稳定性要求\",\n  \"key_points\": [\n    \"集装箱吞吐量持续增长\",\n    \"设备稳定性要求同步提升\",\n    \"传统运维 → 主动运维 → 智能运维\",\n    \"完整、连续、可靠的数据，是智能运维的基础\"\n  ],\n  \"speaker_focus\": null\n}\n\n## Layout\n{\n  \"composition\": \"左侧集装箱堆叠与加速曲线，中部因果箭头，右侧三段运维升级阶梯\",\n  \"content_zones\": \"title, qualitative trend chart, causal connector, upgrade staircase, takeaway\",\n  \"relationship_to_previous_slide\": \"new analytical layout\"\n}\n\n## Visual Elements\n{\n  \"main_visual\": \"集装箱堆叠增长曲线连接运维升级阶梯\",\n  \"supporting_elements\": \"目标标记、细轴线、底部结论\"\n}\n\n## Constraints\n[\n  \"不得虚构年份、吞吐量数值或百分比\",\n  \"保持当前已批准样张不变\"\n]\n\n## Style Reference Rule\nUse Image 1 as the approved sample-slide style reference. Match its palette, typography mood, density, texture, and overall visual identity. Do not copy its exact layout unless this slide's layout explicitly asks for it.\n\n## Input Image Handling Rules\nFor any input image marked as a strict input asset, include it visibly and preserve its content. Do not redraw, replace, relabel, or invent a similar figure. Scale and crop only as needed for composition while keeping the important labels, arrows, data, and relationships recognizable.\n\n## Universal Constraints\n- The final image itself must contain the title and key points.\n- Render Chinese text exactly and legibly; avoid garbled characters.\n- Keep the confirmed deck style consistent while varying layout by slide role.\n- No watermark, unrelated logo, or extra slide number.\n",
+  "out": "slide_02.png",
+  "input_images": [
+    {
+      "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+      "role": "approved sample slide style reference",
+      "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+    }
+  ],
+  "requires_context_images": true,
+  "expected_backend": "built-in image tool",
+  "sample_generation_method": {
+    "backend_used": "built-in image tool",
+    "tool_name": "image_gen",
+    "mode": "generate",
+    "prompt_source": "outline Slide 2 plus user-directed visual refinements; approved sample finalized through built-in image edit",
+    "size": "16:9 landscape; approved output 1672x941",
+    "quality": "built-in default",
+    "model_config": "built-in default",
+    "approved_sample_path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+    "input_context_preparation": "Approved sample is available at the absolute workspace path and visible in the inherited conversation image context; use it as style reference only.",
+    "handoff_rule": "Use built-in image_gen in generate mode for one slide. Match the approved sample's palette, typography, line language, whitespace and density; vary composition by slide role. Return a blocker if image_gen is unavailable."
+  },
+  "generation_contract": {
+    "must_use_selected_image_backend": true,
+    "must_match_sample_generation_method": true,
+    "forbidden_final_image_methods": [
+      "local drawing/rendering scripts",
+      "Pillow-generated slides",
+      "SVG/HTML/CSS/canvas screenshots",
+      "python-pptx/PptxGenJS/native PPT layout screenshots",
+      "manually composited text/image overlays"
+    ],
+    "must_return": [
+      "backend_used",
+      "selected_source",
+      "qa_note"
+    ]
+  }
+}

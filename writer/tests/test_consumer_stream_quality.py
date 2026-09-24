@@ -242,3 +242,67 @@ async def test_flush_passes_qualities_to_writer():
     consumer._writer.write_multi_table = _write
     await consumer._flush()
     assert consumer._buffer == []
+
+
+@pytest.mark.asyncio
+async def test_prepared_batch_matches_v2_and_invalid_value_semantics():
+    good = _entry(
+        {"101": "1.0", "102": "2.0"}, contract_version=2,
+        qualities={"101": 0, "102": 2},
+    )
+    bad = _entry(
+        {"101": "not-a-number"}, contract_version=2, qualities={"101": 0}
+    )
+    prepared = consumer_mod._prepare_payload_batch([good, bad], 1024 * 1024)
+    assert len(prepared) == 2
+    assert prepared[0].raw_values == {"101": "1.0", "102": "2.0"}
+    assert prepared[1].raw_values == {"101": "not-a-number"}
+    consumer, redis_client = _consumer()
+    with patch.object(consumer_mod, "push_dlq", return_value=True) as dlq:
+        await consumer._handle_entry("s", "1-0", good, 1, prepared=prepared[0])
+        await consumer._handle_entry("s", "2-0", bad, 1, prepared=prepared[1])
+    assert len(consumer._buffer) == 1
+    assert consumer._buffer[0].columns == {"qc1": 1.0, "qc2": 2.0}
+    assert consumer._buffer[0].qualities == {"101": 0, "102": 2}
+    assert dlq.call_count == 1
+    assert "type_conversion" in dlq.call_args.kwargs["last_error"]
+    redis_client.xack.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_loop_prepares_one_bounded_batch_and_preserves_order():
+    import asyncio
+    import time
+    from unittest.mock import AsyncMock
+
+    consumer, redis_client = _consumer()
+    consumer.drain_pending = AsyncMock()
+    consumer._last_flush = time.monotonic()
+    consumer._flush_interval_s = 1000
+    redis_client.xreadgroup.side_effect = [
+        [("s", [
+            ("1-0", _entry({"101": "1"})),
+            ("2-0", _entry({"102": "2"}, contract_version=2, qualities={"102": 0})),
+        ])],
+        asyncio.CancelledError(),
+    ]
+    consumer._batch_count = 2
+    with patch.object(
+        consumer_mod, "_prepare_payload_batch", wraps=consumer_mod._prepare_payload_batch
+    ) as prepare:
+        with pytest.raises(asyncio.CancelledError):
+            await consumer.run_loop(["s"])
+    assert prepare.call_count == 1
+    assert [row.entry_id for row in consumer._buffer] == ["1-0", "2-0"]
+    assert consumer._buffer[1].qualities == {"102": 0}
+
+
+def test_batch_decoder_never_parses_raw_payload_beyond_32mib_budget():
+    large_value = "x" * (1024 * 1024)
+    entries = [{"values": large_value} for _ in range(33)]
+    with patch.object(consumer_mod.json, "loads", return_value={"101": "1"}) as loads:
+        prepared = consumer_mod._prepare_payload_batch(entries, 32 * 1024 * 1024)
+    decoded_count = sum(item.decoded for item in prepared)
+    assert 0 < decoded_count < len(entries)
+    assert loads.call_count == decoded_count
+    assert all(not item.decoded for item in prepared[decoded_count:])

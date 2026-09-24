@@ -83,7 +83,12 @@
 
         <!-- 设置按钮 -->
         <div v-if="shouldShowSettings">
-          <ElPopover :visible="showSettingGuide" placement="bottom-start" :width="190" :offset="0">
+          <ElPopover
+            :visible="showSettingGuide && router.currentRoute.value.path !== '/landing'"
+            placement="bottom-start"
+            :width="190"
+            :offset="0"
+          >
             <template #reference>
               <div class="flex-cc">
                 <ArtIconButton icon="ri:settings-line" class="setting-btn" @click="openSetting" />

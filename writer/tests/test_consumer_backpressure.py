@@ -304,3 +304,296 @@ async def test_multistream_read_admission_leaves_overflow_in_pel():
     redis_client.xack.assert_not_called()
     await c._flush()
     assert len(c._buffer)==2
+
+
+
+def test_multistream_count_respects_global_capacity_and_round_robin():
+    consumer = _consumer(MagicMock(), MagicMock(), max_buffer_rows=100)
+    consumer._batch_count = 100
+    keys = [f"stream-{i}" for i in range(4)]
+    streams, count = consumer._next_read_scope(keys)
+    assert list(streams) == keys
+    assert count == 25
+    assert count * len(streams) == 100
+
+    consumer._max_buffer_rows = 2
+    streams, count = consumer._next_read_scope(keys)
+    assert list(streams) == keys[:2]
+    assert count == 1
+    streams, count = consumer._next_read_scope(keys)
+    assert list(streams) == keys[2:]
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_append_survives_flush_and_is_not_acked_early():
+    import asyncio
+    writer = MagicMock()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def write(rows):
+        entered.set()
+        await release.wait()
+        return [(list(range(len(rows))), LANDED, 1.0)]
+
+    writer.write_multi_table = write
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    stream = "rt:stream:qc:g001:0"
+    await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
+    flushing = asyncio.create_task(consumer._flush())
+    await entered.wait()
+    await consumer._handle_entry(stream, "2-0", _entry_data("2-0"), 1)
+    assert len(consumer._buffer) == 1
+    assert consumer._inflight_rows == 1
+    release.set()
+    await flushing
+    assert [row.entry_id for row in consumer._buffer] == ["2-0"]
+    assert consumer._buffered_keys == {(stream, "2-0")}
+    acked = {eid for call in redis_client.xack.call_args_list for eid in call.args[2:]}
+    assert acked == {"1-0"}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_flush_restores_inflight_batch():
+    import asyncio
+    writer = MagicMock()
+    entered = asyncio.Event()
+
+    async def write(rows):
+        entered.set()
+        await asyncio.Event().wait()
+
+    writer.write_multi_table = write
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    stream = "rt:stream:qc:g001:0"
+    await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
+    flushing = asyncio.create_task(consumer._flush())
+    await entered.wait()
+    flushing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await flushing
+    assert [row.entry_id for row in consumer._buffer] == ["1-0"]
+    assert consumer._inflight_rows == 0
+    assert consumer._buffered_keys == {(stream, "1-0")}
+    redis_client.xack.assert_not_called()
+
+
+
+@pytest.mark.asyncio
+async def test_overdelivered_entry_is_tracked_and_reclaimed_after_flush():
+    writer = MagicMock()
+    _landed_flush(writer)
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client, max_buffer_rows=2)
+    consumer._max_buffer_bytes = 1
+    stream = "rt:stream:qc:g001:0"
+    await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
+    assert consumer._buffer_bytes > consumer._max_buffer_bytes
+    await consumer._handle_entry(stream, "2-0", _entry_data("2-0"), 1)
+    assert consumer._overdelivered_ids == {stream: {"2-0"}}
+    await consumer._flush()
+    redis_client.xclaim.return_value = [("2-0", _entry_data("2-0"))]
+    await consumer._recover_overdelivered()
+    assert [row.entry_id for row in consumer._buffer] == ["2-0"]
+    assert consumer._overdelivered_ids == {}
+
+
+def test_read_scope_stops_when_inflight_bytes_fill_budget():
+    consumer = _consumer(MagicMock(), MagicMock(), max_buffer_rows=100)
+    consumer._max_buffer_bytes = 1000
+    consumer._inflight_bytes = 1000
+    assert consumer._next_read_scope(["s1", "s2"]) == ({}, 0)
+
+
+
+@pytest.mark.asyncio
+async def test_schema_retry_releases_buffer_while_healthy_frame_acks():
+    writer = MagicMock()
+    writer._last_local_retry_indices = {0}
+    writer.write_multi_table = AsyncMock(
+        return_value=[([0], RETRY, 1.0), ([1], LANDED, 1.0)]
+    )
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    stream = "rt:stream:qc:g001:0"
+    await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
+    await consumer._handle_entry(stream, "2-0", _entry_data("2-0"), 1)
+    await consumer._flush()
+    assert consumer._buffer == []
+    acked = {eid for call in redis_client.xack.call_args_list for eid in call.args[2:]}
+    assert acked == {"2-0"}
+
+
+@pytest.mark.asyncio
+async def test_missing_writer_outcome_restores_batch_without_ack():
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[])
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    stream = "rt:stream:qc:g001:0"
+    await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
+    with pytest.raises(RuntimeError, match="incomplete"):
+        await consumer._flush()
+    assert [row.entry_id for row in consumer._buffer] == ["1-0"]
+    assert consumer._inflight_rows == 0
+    redis_client.xack.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bounded_pending_reclaim_resumes_cursor_next_call():
+    writer = MagicMock()
+    _landed_flush(writer)
+    redis_client = MagicMock()
+    redis_client.xpending_range.return_value = []
+    redis_client.xautoclaim.side_effect = [
+        ("2-0", [("1-0", _entry_data("1-0"))], []),
+        ("0-0", [("2-0", _entry_data("2-0"))], []),
+    ]
+    consumer = _consumer(writer, redis_client)
+    consumer._batch_count = 1
+    stream = "rt:stream:qc:g001:0"
+    await consumer.drain_pending(stream, "writer-1", max_entries=1)
+    assert redis_client.xautoclaim.call_count == 1
+    assert consumer._pending_cursors[stream] == "2-0"
+    await consumer.drain_pending(stream, "writer-1", max_entries=1)
+    assert redis_client.xautoclaim.call_args_list[1].kwargs["start_id"] == "2-0"
+    assert consumer._pending_cursors[stream] == "0-0"
+
+
+
+@pytest.mark.asyncio
+async def test_bounded_xpending_fallback_continues_after_claimed_id():
+    writer = MagicMock()
+    _landed_flush(writer)
+    redis_client = MagicMock()
+    redis_client.xautoclaim.side_effect = Exception("unknown command 'XAUTOCLAIM'")
+    first = [
+        {"message_id": f"{i}-0", "time_since_delivered": 999999, "times_delivered": 1}
+        for i in (1, 2, 3)
+    ]
+    redis_client.xpending_range.side_effect = [first, first[1:]]
+
+    def claim(stream, group, name, min_idle_time, message_ids):
+        return [(entry_id, _entry_data(entry_id)) for entry_id in message_ids]
+
+    redis_client.xclaim.side_effect = claim
+    consumer = _consumer(writer, redis_client)
+    consumer._batch_count = 3
+    stream = "rt:stream:qc:g001:0"
+    await consumer.drain_pending(stream, "writer-1", max_entries=1)
+    assert consumer._pending_cursors[stream] == "(1-0"
+    await consumer.drain_pending(stream, "writer-1", max_entries=1)
+    assert redis_client.xclaim.call_args_list[1].kwargs["message_ids"] == ["2-0"]
+
+
+def test_retry_ack_and_delete_rotate_across_streams_with_id_budget():
+    redis_client = MagicMock()
+    consumer = _consumer(MagicMock(), redis_client)
+    consumer._ack_retry = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
+    consumer._delete_retry = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
+    consumer._retry_pending_acks(max_ids=1)
+    assert redis_client.xack.call_count == 1
+    assert redis_client.xack.call_args.args[0] == "s1"
+    consumer._retry_pending_acks(max_ids=1)
+    assert redis_client.xack.call_args.args[0] == "s2"
+    consumer._retry_pending_deletes(max_ids=1)
+    assert redis_client.xdel.call_args.args[0] == "s1"
+    consumer._retry_pending_deletes(max_ids=1)
+    assert redis_client.xdel.call_args.args[0] == "s2"
+
+
+@pytest.mark.asyncio
+async def test_overdelivered_reclaim_is_bounded_and_rotates_streams():
+    redis_client = MagicMock()
+    consumer = _consumer(MagicMock(), redis_client, max_buffer_rows=10)
+    consumer._batch_count = 1
+    consumer._overdelivered_ids = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
+    redis_client.xclaim.side_effect = lambda stream, *_args, **kwargs: [
+        (entry_id, _entry_data(entry_id)) for entry_id in kwargs["message_ids"]
+    ]
+    await consumer._recover_overdelivered()
+    assert redis_client.xclaim.call_count == 1
+    assert redis_client.xclaim.call_args.args[0] == "s1"
+    await consumer._recover_overdelivered()
+    assert redis_client.xclaim.call_args.args[0] == "s2"
+    assert len(consumer._buffer) == 2
+
+
+@pytest.mark.asyncio
+async def test_scope_join_processes_one_new_stream_before_regular_read():
+    import asyncio
+
+    redis_client = MagicMock()
+    redis_client.xreadgroup.side_effect = asyncio.CancelledError()
+    consumer = _consumer(MagicMock(), redis_client)
+    consumer.drain_pending = AsyncMock()
+    consumer.queue_stream_key("s2")
+    consumer.queue_stream_key("s3")
+    streams = ["s1"]
+    with pytest.raises(asyncio.CancelledError):
+        await consumer.run_loop(streams)
+    assert streams == ["s1", "s2"]
+    assert consumer._queued_stream_keys == ["s3"]
+
+
+@pytest.mark.asyncio
+async def test_ack_outage_bounds_new_reads_and_reclaim_never_rewrites_landed_frame():
+    import asyncio
+
+    writer = MagicMock()
+    _landed_flush(writer)
+    redis_client = MagicMock()
+    redis_client.xack.side_effect = RuntimeError("Redis ACK unavailable")
+    stream = "s1"
+    entries = [
+        ("1-0", _entry_data("1-0")),
+        ("2-0", _entry_data("2-0")),
+    ]
+    redis_client.xreadgroup.return_value = [(stream, entries)]
+    consumer = _consumer(writer, redis_client, max_buffer_rows=2)
+    consumer.drain_pending = AsyncMock()
+    task = asyncio.create_task(consumer.run_loop([stream]))
+    try:
+        for _ in range(100):
+            if sum(len(ids) for ids in consumer._ack_retry.values()) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert consumer._ack_retry == {stream: {"1-0", "2-0"}}
+        await asyncio.sleep(0.15)
+        assert redis_client.xreadgroup.call_count == 1
+        assert writer.write_multi_table.call_count == 1
+        assert consumer._remaining_capacity() == 0
+        await consumer._handle_entry(stream, "1-0", entries[0][1], 2)
+        assert writer.write_multi_table.call_count == 1
+        assert consumer._buffer == []
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    redis_client.xack.side_effect = None
+    consumer._retry_pending_acks(max_ids=2)
+    assert consumer._ack_retry == {}
+    assert consumer._next_read_scope([stream])[0] == {stream: ">"}
+
+
+@pytest.mark.asyncio
+async def test_delete_outage_uses_same_identity_capacity_until_recovered():
+    writer = MagicMock()
+    _landed_flush(writer)
+    redis_client = MagicMock()
+    redis_client.xdel.side_effect = RuntimeError("Redis DELETE unavailable")
+    consumer = _consumer(writer, redis_client, max_buffer_rows=2)
+    for entry_id in ("1-0", "2-0"):
+        await consumer._handle_entry("s1", entry_id, _entry_data(entry_id), 1)
+    await consumer._flush()
+    assert consumer._delete_retry == {"s1": {"1-0", "2-0"}}
+    assert consumer._next_read_scope(["s1"]) == ({}, 0)
+    consumer._retry_pending_deletes(max_ids=2)
+    assert consumer._delete_retry == {"s1": {"1-0", "2-0"}}
+    redis_client.xdel.side_effect = None
+    consumer._retry_pending_deletes(max_ids=2)
+    assert consumer._delete_retry == {}
+    assert consumer._next_read_scope(["s1"])[0] == {"s1": ">"}

@@ -74,12 +74,10 @@
             </div>
 
             <div class="flex-cb mt-2 text-sm">
-              <ElCheckbox v-model="formData.rememberPassword">{{
-                $t('login.rememberPwd')
-              }}</ElCheckbox>
-              <RouterLink class="text-theme" :to="{ name: 'ForgetPassword' }">{{
-                $t('login.forgetPwd')
-              }}</RouterLink>
+              <ElCheckbox v-model="formData.rememberPassword">
+                <span class="ml-1">{{ $t('login.rememberPwd') }}</span>
+                <span class="ml-2 text-xs text-g-500">勾选后下次自动预填账号</span>
+              </ElCheckbox>
             </div>
 
             <div style="margin-top: 30px">
@@ -139,10 +137,15 @@
     rememberPassword: true
   })
 
+  // allow-create 模式下打字未点选时，用户名只是筛选关键词、不会写入 v-model；
+  // 用它记录当前输入，登录前兜底回填，避免"手输账号无效"。
+  const usernameQuery = ref('')
+
   // 历史登录账号（仅存用户名，绝不存密码；作为前端"禁持久化敏感数据"规则的白名单例外）
   const GUEST_USERNAME = 'guest'
   const GUEST_PASSWORD = '123456'
   const ACCOUNT_HISTORY_KEY = 'data-watch-login-accounts'
+  const REMEMBER_PWD_KEY = 'data-watch-remember-pwd'
   const ACCOUNT_HISTORY_MAX = 5
   const accountHistory = ref<string[]>([])
 
@@ -170,6 +173,18 @@
     }
   }
 
+  // 读取上次保存的"记住密码"勾选状态；缺省按 true 处理（首次用户默认开启）
+  const loadRememberPreference = () => {
+    try {
+      const raw = localStorage.getItem(REMEMBER_PWD_KEY)
+      if (raw === 'false') {
+        formData.rememberPassword = false
+      }
+    } catch {
+      // 读不到就保留默认 true
+    }
+  }
+
   const saveAccountHistory = (name: string) => {
     const normalized = normalizeAccount(name)
     if (!normalized || normalized === GUEST_USERNAME) return
@@ -181,7 +196,37 @@
     }
   }
 
-  onMounted(loadAccountHistory)
+  const clearAccountHistory = () => {
+    accountHistory.value = []
+    try {
+      localStorage.removeItem(ACCOUNT_HISTORY_KEY)
+    } catch {
+      // 忽略
+    }
+  }
+
+  onMounted(() => {
+    loadRememberPreference()
+    loadAccountHistory()
+    // 勾选"记住密码"且有历史账号时，自动预填最近一个；不预填密码（永不入库敏感凭据）
+    if (formData.rememberPassword && accountHistory.value.length > 0) {
+      const last = accountHistory.value[0]
+      formData.username = last
+      usernameQuery.value = last
+    }
+  })
+
+  // 勾选状态变化时落盘，让"记住密码"在刷新后仍生效
+  watch(
+    () => formData.rememberPassword,
+    (on) => {
+      try {
+        localStorage.setItem(REMEMBER_PWD_KEY, on ? 'true' : 'false')
+      } catch {
+        // 忽略
+      }
+    }
+  )
 
   const rules = computed<FormRules>(() => ({
     username: [{ required: true, message: t('login.placeholder.username'), trigger: 'blur' }],
@@ -192,7 +237,6 @@
 
   // allow-create 模式下打字未点选时，用户名只是筛选关键词、不会写入 v-model；
   // 用它记录当前输入，登录前兜底回填，避免"手输账号无效"。
-  const usernameQuery = ref('')
   const onUsernameFilter = (query: string) => {
     usernameQuery.value = query
   }
@@ -267,8 +311,12 @@
       userStore.setLoginStatus(true)
       userStore.checkAndClearWorktabs()
 
-      // 记录历史账号（仅用户名）
-      saveAccountHistory(username)
+      // 记录历史账号（仅用户名）。未勾选"记住密码"则清空所有历史，下次登录不再预填
+      if (formData.rememberPassword) {
+        saveAccountHistory(username)
+      } else {
+        clearAccountHistory()
+      }
 
       // 获取 redirect 参数，如果存在则跳转到指定页面，否则跳转到首页
       const redirect = route.query.redirect as string

@@ -1,0 +1,346 @@
+{
+  "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+  "token": "dc39cc63e9",
+  "device_type": "perfcoldc39cc63e9",
+  "redis_db": 14,
+  "python_gil_enabled": false,
+  "devices": 100,
+  "points_per_frame": 1000,
+  "period_ms": 100,
+  "target_seconds": 10,
+  "target_frames": 10000,
+  "container_cpu_limit": 2,
+  "redis_memory_guard_bytes": 419430400,
+  "outbox_path": "/tmp/collector-ft-dc39cc63e9.sqlite",
+  "receipt_key": "collector:receipt:v2:9886c8a6-ab6c-4fe9-90b8-ef4978ebb1f4",
+  "stop_reason": "duration",
+  "ticks": 99,
+  "submitted_frames": 9900,
+  "production_seconds": 10.061,
+  "receive_frames_per_second": 983.96,
+  "production_confirmed_frames": 880,
+  "production_outbox": {
+    "count": 9020,
+    "payload_bytes": 700244140,
+    "oldest_age_ms": 9179,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "drain_seconds": 39.895,
+  "replay_frames_per_second_total": 198.17,
+  "replay_frames_per_second_post_production": 226.1,
+  "confirmed_frames": 9900,
+  "max_rss_bytes": 232722432,
+  "max_redis_used_memory_bytes": 318902864,
+  "timings_ms": {
+    "outbox_accept_ms": {
+      "count": 9900,
+      "average_ms": 20.219,
+      "max_ms": 160.954,
+      "p50_ms": 30.0,
+      "p95_ms": 40.0,
+      "p99_ms": 75.0,
+      "p999_ms": 150.0
+    },
+    "outbox_commit_ms": {
+      "count": 793,
+      "average_ms": 9.379,
+      "max_ms": 50.557,
+      "p50_ms": 10.0,
+      "p95_ms": 30.0,
+      "p99_ms": 30.0,
+      "p999_ms": 75.0
+    },
+    "redis_aof_batch_ms": {
+      "count": 24,
+      "average_ms": 1850.698,
+      "max_ms": 3668.477,
+      "p50_ms": 2000.0,
+      "p95_ms": 3668.477,
+      "p99_ms": 3668.477,
+      "p999_ms": 3668.477
+    },
+    "latest_fastlane_redis_ms": {
+      "count": 1162,
+      "average_ms": 6.075,
+      "max_ms": 45.546,
+      "p50_ms": 10.0,
+      "p95_ms": 20.0,
+      "p99_ms": 20.0,
+      "p999_ms": 40.0
+    }
+  },
+  "history": {
+    "actual_frames": 9900,
+    "expected_frames": 9900,
+    "unique_frames": 9900,
+    "duplicate_frames": 0,
+    "malformed_frames": 0,
+    "exactly_once": true
+  },
+  "latest_correct": true,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "sqlite_rows_after_close": 0,
+  "final_latest_pending": 0,
+  "correctness_passed": true,
+  "target_met": false,
+  "samples": [
+    {
+      "elapsed_s": 0.487,
+      "submitted": 500,
+      "outbox": {
+        "count": 500,
+        "payload_bytes": 38651500,
+        "oldest_age_ms": 486,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 166125568,
+      "redis_used_memory_bytes": 59218768
+    },
+    {
+      "elapsed_s": 1.015,
+      "submitted": 1000,
+      "outbox": {
+        "count": 987,
+        "payload_bytes": 76320795,
+        "oldest_age_ms": 1000,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 228007936,
+      "redis_used_memory_bytes": 63665608
+    },
+    {
+      "elapsed_s": 1.505,
+      "submitted": 1500,
+      "outbox": {
+        "count": 1487,
+        "payload_bytes": 115012795,
+        "oldest_age_ms": 1490,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 228003840,
+      "redis_used_memory_bytes": 68027800
+    },
+    {
+      "elapsed_s": 1.995,
+      "submitted": 2000,
+      "outbox": {
+        "count": 1987,
+        "payload_bytes": 153719795,
+        "oldest_age_ms": 1980,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 229216256,
+      "redis_used_memory_bytes": 71242928
+    },
+    {
+      "elapsed_s": 2.501,
+      "submitted": 2500,
+      "outbox": {
+        "count": 2487,
+        "payload_bytes": 192441795,
+        "oldest_age_ms": 2486,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 229699584,
+      "redis_used_memory_bytes": 74342800
+    },
+    {
+      "elapsed_s": 2.982,
+      "submitted": 3000,
+      "outbox": {
+        "count": 2987,
+        "payload_bytes": 231178795,
+        "oldest_age_ms": 2967,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 230232064,
+      "redis_used_memory_bytes": 77212832
+    },
+    {
+      "elapsed_s": 3.503,
+      "submitted": 3500,
+      "outbox": {
+        "count": 3487,
+        "payload_bytes": 269930795,
+        "oldest_age_ms": 3488,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 229838848,
+      "redis_used_memory_bytes": 80188744
+    },
+    {
+      "elapsed_s": 3.995,
+      "submitted": 4000,
+      "outbox": {
+        "count": 3987,
+        "payload_bytes": 308697795,
+        "oldest_age_ms": 3980,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 230502400,
+      "redis_used_memory_bytes": 80016504
+    },
+    {
+      "elapsed_s": 4.604,
+      "submitted": 4500,
+      "outbox": {
+        "count": 4053,
+        "payload_bytes": 313931013,
+        "oldest_age_ms": 4199,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231223296,
+      "redis_used_memory_bytes": 79569000
+    },
+    {
+      "elapsed_s": 5.068,
+      "submitted": 5000,
+      "outbox": {
+        "count": 4553,
+        "payload_bytes": 352728013,
+        "oldest_age_ms": 4654,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231940096,
+      "redis_used_memory_bytes": 83631944
+    },
+    {
+      "elapsed_s": 5.546,
+      "submitted": 5500,
+      "outbox": {
+        "count": 5053,
+        "payload_bytes": 391540013,
+        "oldest_age_ms": 5132,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231878656,
+      "redis_used_memory_bytes": 85763264
+    },
+    {
+      "elapsed_s": 6.019,
+      "submitted": 6000,
+      "outbox": {
+        "count": 5553,
+        "payload_bytes": 430367013,
+        "oldest_age_ms": 5606,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232058880,
+      "redis_used_memory_bytes": 89179072
+    },
+    {
+      "elapsed_s": 6.529,
+      "submitted": 6500,
+      "outbox": {
+        "count": 6053,
+        "payload_bytes": 469209013,
+        "oldest_age_ms": 6115,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231919616,
+      "redis_used_memory_bytes": 91593920
+    },
+    {
+      "elapsed_s": 6.997,
+      "submitted": 7000,
+      "outbox": {
+        "count": 6553,
+        "payload_bytes": 508066013,
+        "oldest_age_ms": 6581,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232370176,
+      "redis_used_memory_bytes": 94997776
+    },
+    {
+      "elapsed_s": 7.489,
+      "submitted": 7500,
+      "outbox": {
+        "count": 7053,
+        "payload_bytes": 546938013,
+        "oldest_age_ms": 7074,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232529920,
+      "redis_used_memory_bytes": 96053016
+    },
+    {
+      "elapsed_s": 8.039,
+      "submitted": 8000,
+      "outbox": {
+        "count": 7553,
+        "payload_bytes": 585825013,
+        "oldest_age_ms": 7623,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 231890944,
+      "redis_used_memory_bytes": 95362984
+    },
+    {
+      "elapsed_s": 8.677,
+      "submitted": 8500,
+      "outbox": {
+        "count": 7620,
+        "payload_bytes": 591238740,
+        "oldest_age_ms": 7793,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232382464,
+      "redis_used_memory_bytes": 98396104
+    },
+    {
+      "elapsed_s": 9.128,
+      "submitted": 9000,
+      "outbox": {
+        "count": 8120,
+        "payload_bytes": 630155740,
+        "oldest_age_ms": 8244,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232722432,
+      "redis_used_memory_bytes": 101202488
+    },
+    {
+      "elapsed_s": 9.698,
+      "submitted": 9500,
+      "outbox": {
+        "count": 8620,
+        "payload_bytes": 669087740,
+        "oldest_age_ms": 8814,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 232648704,
+      "redis_used_memory_bytes": 102803024
+    }
+  ],
+  "cleanup": {
+    "redis_own_keys_remaining": 0,
+    "sqlite_removed": true
+  }
+}

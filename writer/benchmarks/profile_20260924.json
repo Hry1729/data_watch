@@ -1,0 +1,16 @@
+{
+  "runtime": "3.12.14 (main, Sep 19 2026, 01:04:57) [GCC 14.2.0]",
+  "gil_enabled": true,
+  "synchronous": {
+    "mode": "synchronous",
+    "frames": 100,
+    "elapsed_ms": 78.226,
+    "max_event_loop_lag_ms": 78.535
+  },
+  "batched_json": {
+    "mode": "batched_json",
+    "frames": 100,
+    "elapsed_ms": 80.289,
+    "max_event_loop_lag_ms": 10.656
+  }
+}

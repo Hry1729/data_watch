@@ -65,7 +65,10 @@ async def test_writer_metrics_counts_only_writer_group(monkeypatch):
     metrics = await svc.get_writer_metrics()
 
     assert metrics["writerGroupName"] == writer_name
-    assert metrics["streamLagTotal"] == 0  # lag=None 不计入合计
+    assert metrics["streamLagTotal"] is None
+    assert metrics["streamLagKnownTotal"] == 0
+    assert metrics["streamLagUnknownCount"] == 1
+    assert metrics["streams"][0]["status"] == "unknown"
     assert metrics["pelPendingTotal"] == 2
     assert len(metrics["streams"]) == 1
     stream = metrics["streams"][0]
@@ -107,3 +110,60 @@ async def test_writer_metrics_missing_writer_group(monkeypatch):
     assert stream["lag"] is None
     assert stream["pel"] == 0
     assert stream["otherGroups"][0]["name"] == "someone_else"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_kind", ["null", "missing", "error"])
+async def test_writer_metrics_partial_lag_is_not_healthy_zero(monkeypatch, unknown_kind):
+    writer_name = get_writer_group_name()
+
+    class FakeRedis:
+        async def scan_iter(self, match="", count=100):
+            if match.startswith("rt:stream:"):
+                yield "rt:stream:known"
+                yield "rt:stream:unknown"
+
+        async def xinfo_groups(self, key):
+            if key == "rt:stream:known":
+                return [{"name": writer_name, "lag": 12, "pending": 0}]
+            if unknown_kind == "error":
+                raise ConnectionError("unavailable")
+            if unknown_kind == "missing":
+                return []
+            return [{"name": writer_name, "lag": None, "pending": 0}]
+
+        async def xlen(self, key):
+            return 20
+
+    async def get_redis():
+        return FakeRedis()
+
+    monkeypatch.setattr("app.services.module_monitor.get_redis_client", get_redis)
+    result = await ModuleMonitorService(session=MagicMock()).get_writer_metrics()
+    assert result["streamLagTotal"] is None
+    assert result["streamLagKnownTotal"] == 12
+    assert result["streamLagUnknownCount"] == 1
+    assert [stream["status"] for stream in result["streams"]] == ["normal", "unknown"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lag,pending,status", [(0, 0, "normal"), (1000, 0, "backlog"), (None, 1000, "backlog")])
+async def test_writer_metrics_known_lag_and_backlog(monkeypatch, lag, pending, status):
+    class FakeRedis:
+        async def scan_iter(self, match="", count=100):
+            if match.startswith("rt:stream:"):
+                yield "rt:stream:0"
+
+        async def xinfo_groups(self, key):
+            return [{"name": get_writer_group_name(), "lag": lag, "pending": pending}]
+
+        async def xlen(self, key):
+            return 1000
+
+    async def get_redis():
+        return FakeRedis()
+
+    monkeypatch.setattr("app.services.module_monitor.get_redis_client", get_redis)
+    result = await ModuleMonitorService(session=MagicMock()).get_writer_metrics()
+    assert result["streamLagTotal"] == lag
+    assert result["streams"][0]["status"] == status

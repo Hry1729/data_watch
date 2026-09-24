@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DataWatch 工业物联网平台总体架构图（淡蓝版）</title>
+<style>
+:root{
+  --navy:#0f2f55;
+  --navy2:#1c4f7f;
+  --blue:#2f73b7;
+  --blue2:#6da7d8;
+  --line:#8eb3d4;
+  --pale:#eaf3fb;
+  --pale2:#dcecff;
+  --paper:#ffffff;
+  --bg:#f3f7fc;
+  --muted:#58728b;
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;
+  width:100%;
+  min-height:100%;
+  background:var(--bg);
+  color:var(--navy);
+  font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif;
+}
+.canvas{
+  position:relative;
+  width:1600px;
+  height:1184px;
+  margin:0 auto;
+  overflow:hidden;
+  background:linear-gradient(180deg,#f9fbfe 0%,#eef4fa 100%);
+}
+.title{
+  position:absolute;
+  left:64px;
+  top:34px;
+  font-size:40px;
+  line-height:1.06;
+  font-weight:850;
+  letter-spacing:.2px;
+  color:var(--navy);
+}
+.subtitle{
+  position:absolute;
+  left:66px;
+  top:91px;
+  font-size:18px;
+  color:var(--muted);
+  letter-spacing:.2px;
+}
+.badge{
+  position:absolute;
+  right:64px;
+  top:43px;
+  padding:10px 18px;
+  border:1.5px solid var(--navy);
+  border-radius:8px;
+  background:var(--paper);
+  color:var(--navy);
+  font-size:15px;
+  font-weight:800;
+}
+.card{
+  position:absolute;
+  z-index:2;
+  border:1.5px solid var(--navy);
+  border-radius:10px;
+  background:var(--paper);
+}
+.channels{
+  left:64px;
+  top:136px;
+  width:1472px;
+  height:74px;
+  display:grid;
+  grid-template-columns:230px repeat(4,1fr);
+  gap:13px;
+  padding:12px 16px;
+  align-items:center;
+}
+.channels .label{
+  font-size:20px;
+  font-weight:850;
+}
+.pill{
+  height:46px;
+  border:1.2px solid var(--navy);
+  border-radius:7px;
+  background:var(--paper);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:0 8px;
+  font-size:15px;
+  font-weight:760;
+}
+.core{
+  left:64px;
+  top:240px;
+  width:1472px;
+  height:170px;
+  padding:18px 24px;
+  background:var(--pale);
+}
+.core-title{
+  display:flex;
+  align-items:center;
+  gap:13px;
+  font-size:25px;
+  font-weight:850;
+}
+.core-mark{
+  padding:4px 11px;
+  border:1.2px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  font-size:14px;
+  letter-spacing:1px;
+}
+.core-desc{
+  margin-top:7px;
+  color:var(--navy2);
+  font-size:16px;
+  line-height:1.45;
+}
+.core-row{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:9px;
+  margin-top:14px;
+}
+.core-chip{
+  min-height:38px;
+  border:1.2px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:4px;
+  font-size:13px;
+  font-weight:760;
+}
+.route{
+  top:442px;
+  width:710px;
+  height:348px;
+  padding:16px 20px;
+  background:var(--pale);
+}
+.route-a{left:64px}
+.route-b{left:826px}
+.route-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+}
+.route-kicker{
+  font-size:14px;
+  font-weight:850;
+  color:var(--blue);
+  letter-spacing:.7px;
+}
+.route-title{
+  margin-top:3px;
+  font-size:22px;
+  line-height:1.15;
+  font-weight:850;
+}
+.route-tag{
+  margin-top:2px;
+  padding:6px 10px;
+  border:1.2px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  font-size:12px;
+  font-weight:800;
+  white-space:nowrap;
+}
+.callout{
+  margin-top:9px;
+  border-left:3px solid var(--navy);
+  border-radius:3px;
+  background:var(--paper);
+  padding:7px 10px;
+  color:var(--navy2);
+  font-size:12.5px;
+  line-height:1.45;
+}
+.section-label{
+  margin-top:9px;
+  font-size:12px;
+  font-weight:850;
+  color:var(--muted);
+}
+.flow-line{
+  display:flex;
+  align-items:stretch;
+  gap:5px;
+  margin-top:7px;
+}
+.flow-node{
+  flex:1 1 0;
+  min-width:0;
+  min-height:66px;
+  border:1.15px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:5px 3px;
+  line-height:1.18;
+}
+.flow-node strong{
+  font-size:12px;
+  font-weight:850;
+}
+.flow-node span{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:10.5px;
+  font-weight:650;
+}
+.flow-arrow{
+  flex:0 0 15px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:var(--navy);
+  font-size:18px;
+  font-weight:900;
+}
+.role-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:7px;
+  margin-top:7px;
+}
+.role{
+  min-height:47px;
+  border:1.1px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:4px 5px;
+  font-size:11.5px;
+  line-height:1.28;
+  font-weight:720;
+}
+.split-row{
+  display:grid;
+  grid-template-columns:1fr 24px 1fr 24px 1fr 24px 1fr;
+  align-items:stretch;
+  gap:3px;
+  margin-top:6px;
+}
+.split-row .flow-node{min-height:54px}
+.split-row .flow-arrow{font-size:16px}
+.route-foot{
+  margin-top:8px;
+  min-height:34px;
+  border:1.2px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:5px 8px;
+  font-size:11.5px;
+  line-height:1.25;
+  font-weight:760;
+}
+.contract{
+  left:64px;
+  top:824px;
+  width:1472px;
+  height:142px;
+  padding:14px 18px;
+  background:var(--pale);
+}
+.contract-title{
+  display:flex;
+  align-items:baseline;
+  gap:14px;
+  font-size:20px;
+  font-weight:850;
+}
+.contract-title span{
+  color:var(--muted);
+  font-size:13px;
+  font-weight:650;
+}
+.contract-stages{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:8px;
+  margin-top:11px;
+}
+.contract-stage{
+  height:57px;
+  border:1.15px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:4px;
+  font-size:12px;
+  line-height:1.22;
+  font-weight:800;
+}
+.contract-stage small{
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:650;
+}
+.bottom{
+  top:998px;
+  height:136px;
+  padding:13px 17px;
+}
+.field{left:64px;width:710px}
+.foundation{left:826px;width:710px}
+.bottom-title{
+  font-size:17px;
+  font-weight:850;
+}
+.bottom-desc{
+  margin-top:3px;
+  color:var(--muted);
+  font-size:11.5px;
+}
+.tag-grid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:7px;
+  margin-top:10px;
+}
+.tag{
+  min-height:38px;
+  border:1.1px solid var(--navy);
+  border-radius:6px;
+  background:var(--paper);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:4px;
+  font-size:11.5px;
+  line-height:1.2;
+  font-weight:760;
+}
+.connectors{
+  position:absolute;
+  inset:0;
+  z-index:0;
+  pointer-events:none;
+}
+.flow-main{
+  fill:none;
+  stroke:var(--navy);
+  stroke-width:3.2;
+  stroke-linejoin:round;
+  stroke-linecap:round;
+}
+.flow-data{
+  fill:none;
+  stroke:var(--blue);
+  stroke-width:3;
+  stroke-dasharray:8 6;
+  stroke-linejoin:round;
+  stroke-linecap:round;
+}
+@media print{
+  html,body{background:#fff}
+  .canvas{margin:0}
+}
+</style>
+</head>
+<body>
+<main class="canvas">
+  <div class="title">DataWatch 工业物联网平台总体架构</div>
+  <div class="subtitle">以洋山四期自动化码头为例：异构设备统一采集、单机与分布式部署、Web / App / AI 协同</div>
+  <div class="badge">蓝色单一主色 · 数据链路清晰 · 人机共用平台</div>
+
+  <svg class="connectors" viewBox="0 0 1600 1184" role="img" aria-labelledby="datawatch-title datawatch-desc">
+    <title id="datawatch-title">DataWatch 工业物联网平台总体架构图</title>
+    <desc id="datawatch-desc">图中从人员与机器入口开始，经统一业务和权限中枢进入单机部署或边缘中心分布式部署；两条数据路径均遵循统一契约，并在 Redis Stream 汇合后由 Writer 写入 TDengine。</desc>
+    <defs>
+      <marker id="arrow-main" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#0f2f55"/>
+      </marker>
+      <marker id="arrow-data" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+        <path d="M0,0 L10,5 L0,10 Z" fill="#2f73b7"/>
+      </marker>
+    </defs>
+    <path class="flow-main" d="M800 210 L800 240" marker-end="url(#arrow-main)"/>
+    <path class="flow-main" d="M800 410 L800 426 L419 426 L419 442" marker-end="url(#arrow-main)"/>
+    <path class="flow-main" d="M800 426 L1181 426 L1181 442" marker-end="url(#arrow-main)"/>
+    <path class="flow-data" d="M800 824 L800 806 L419 806 L419 790" marker-end="url(#arrow-data)"/>
+    <path class="flow-data" d="M800 806 L1181 806 L1181 790" marker-end="url(#arrow-data)"/>
+    <path class="flow-data" d="M419 998 L419 982 L560 982 L560 966" marker-end="url(#arrow-data)"/>
+  </svg>
+
+  <section class="card channels">
+    <div class="label">人员与机器入口</div>
+    <div class="pill">工程人员 · 运维人员 · 管理人员</div>
+    <div class="pill">Web 业务控制台｜跨地点配置与监控</div>
+    <div class="pill">桌面 App｜本机控制与边缘运维</div>
+    <div class="pill">CLI / AI 智能体｜受治理机器调用</div>
+  </section>
+
+  <section class="card core">
+    <div class="core-title"><span class="core-mark">CORE</span>DataWatch 统一业务、权限与操作中枢</div>
+    <div class="core-desc">Backend 统一承接配置、权限、实时与历史查询和审计；桌面 App 的本机动作由 Agent 执行。人员、脚本和 AI 复用同一治理边界，不直连数据库、Collector 或 Writer。</div>
+    <div class="core-row">
+      <div class="core-chip">Backend API<br/>统一业务入口</div>
+      <div class="core-chip">JWT / RBAC<br/>身份与权限</div>
+      <div class="core-chip">REST / WebSocket<br/>查询与实时推送</div>
+      <div class="core-chip">设备 / 点位 / 驱动<br/>配置管理</div>
+      <div class="core-chip">实时 / 历史 / 日志<br/>统一查询</div>
+      <div class="core-chip">CLI / JSONL<br/>机器可解析接口</div>
+      <div class="core-chip">Agent<br/>本机进程与健康</div>
+    </div>
+  </section>
+
+  <section class="card route route-a">
+    <div class="route-head">
+      <div>
+        <div class="route-kicker">部署路径一</div>
+        <div class="route-title">单机 / 站点集中部署</div>
+      </div>
+      <div class="route-tag">同机或同网部署</div>
+    </div>
+    <div class="callout">适用于洋山四期等受控站点：Collector 采集并归一化设备数据后直接写入 Redis；Writer 消费同一数据流并批量写入 TDengine。</div>
+    <div class="section-label">从设备到历史数据的完整链路</div>
+    <div class="flow-line">
+      <div class="flow-node"><strong>现场设备</strong><span>PLC / OPC / HTTP</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>协议驱动</strong><span>S7 / GE / OPC</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>采集服务</strong><span>Collector</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>实时与流</strong><span>Redis</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>历史入库</strong><span>Writer</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>时序历史</strong><span>TDengine</span></div>
+    </div>
+    <div class="section-label">读者需要知道的组件职责</div>
+    <div class="role-grid">
+      <div class="role"><b>Collector</b><br/>多周期调度<br/>多点位合并块</div>
+      <div class="role"><b>Redis</b><br/>latest / window<br/>Stream / PEL / DLQ</div>
+      <div class="role"><b>Writer</b><br/>批量消费<br/>重试隔离与确认</div>
+      <div class="role"><b>MySQL</b><br/>设备 / 点位<br/>用户 / 权限元数据</div>
+    </div>
+  </section>
+
+  <section class="card route route-b">
+    <div class="route-head">
+      <div>
+        <div class="route-kicker">部署路径二</div>
+        <div class="route-title">边缘—中心分布式部署</div>
+      </div>
+      <div class="route-tag">集团 / 多公司</div>
+    </div>
+    <div class="callout">边缘节点断网时先把统一数据写入 SQLite Outbox；网络恢复后由 Uploader 签名上传至 Central Ingest，再与单机路径在 Redis Stream 汇合。</div>
+    <div class="section-label">边缘侧｜靠近设备，负责采集与断网保序</div>
+    <div class="split-row">
+      <div class="flow-node"><strong>设备与驱动</strong><span>异构协议统一接入</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>Collector</strong><span>采集与归一化</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>SQLite Outbox</strong><span>先落盘后发送</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>Uploader</strong><span>批次与断点续传</span></div>
+    </div>
+    <div class="section-label">中心侧｜统一接收、消费与历史存储</div>
+    <div class="split-row">
+      <div class="flow-node"><strong>Central Ingest</strong><span>签名 / 顺序 / 幂等</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>Redis Stream</strong><span>两条路径汇合</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>Writer</strong><span>批量入库与确认</span></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><strong>TDengine</strong><span>历史值与质量</span></div>
+    </div>
+    <div class="route-foot">分布式只改变数据到达 Redis 之前的路径；中心 Writer、历史存储、Web/App/AI 访问方式保持不变</div>
+  </section>
+
+  <section class="card contract">
+    <div class="contract-title">CONTRACT 统一数据契约与可靠性规则 <span>协议、部署形态和调用主体变化时，中心语义不变</span></div>
+    <div class="contract-stages">
+      <div class="contract-stage">协议原始值<small>供应商类型 / 地址</small></div>
+      <div class="contract-stage">DriverSample<small>值 / 源时间 / 原生质量</small></div>
+      <div class="contract-stage">DataPoint<small>设备 / 点位 / 时间 / 质量</small></div>
+      <div class="contract-stage">StreamEnvelope<small>版本化统一流信封</small></div>
+      <div class="contract-stage">Redis Stream<small>顺序 / PEL / DLQ</small></div>
+      <div class="contract-stage">Writer 确认<small>落库或死信后确认</small></div>
+      <div class="contract-stage">历史数据<small>值与质量共同保存</small></div>
+    </div>
+  </section>
+
+  <section class="card bottom field">
+    <div class="bottom-title">洋山四期现场设备与协议</div>
+    <div class="bottom-desc">不同机种、不同 PLC 和不同通信方式，通过受控驱动插件进入同一采集链路。</div>
+    <div class="tag-grid">
+      <div class="tag">西门子 PLC<br/>S7</div>
+      <div class="tag">艾默生 GE PLC<br/>SRTP</div>
+      <div class="tag">OPC 设备与系统<br/>UA / DA</div>
+      <div class="tag">其他机种与接口<br/>HTTP / 新协议</div>
+    </div>
+  </section>
+
+  <section class="card bottom foundation">
+    <div class="bottom-title">中心运行底座与产品能力</div>
+    <div class="bottom-desc">平台不是单一采集模块，而是覆盖配置、数据、监控、运维和机器调用的完整系统。</div>
+    <div class="tag-grid">
+      <div class="tag">MySQL<br/>配置与权限</div>
+      <div class="tag">Redis + TDengine<br/>实时与历史</div>
+      <div class="tag">Web + 桌面 App<br/>业务与本机运维</div>
+      <div class="tag">CLI + AI 智能体<br/>受治理调用</div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

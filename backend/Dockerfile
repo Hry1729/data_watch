@@ -18,6 +18,9 @@ RUN python3.14t -m pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
+# Abort the build if a dependency silently switches Python 3.14t back to the GIL.
+RUN python3.14t -c "import sys; import main; assert not sys._is_gil_enabled(), 'Backend import enabled the GIL'"
+
 EXPOSE 8000
 
 CMD ["python3.14t", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

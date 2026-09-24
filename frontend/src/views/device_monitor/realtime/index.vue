@@ -33,7 +33,9 @@
             <span class="ws-dot"></span>
             <span>{{ wsConnected ? 'WebSocket已连接' : 'WebSocket未连接' }}</span>
           </div>
+          <span class="device-label">图表刷新</span>
           <ElSelect v-model="refreshRate" class="refresh-select">
+            <ElOption label="0.25秒" :value="250" />
             <ElOption label="0.1秒" :value="100" />
             <ElOption label="0.5秒" :value="500" />
             <ElOption label="1秒" :value="1000" />
@@ -74,7 +76,7 @@
       <!-- 中央趋势图区域 -->
       <ElCard class="chart-card">
         <div class="chart-header">
-          <span class="chart-title">点位实时趋势</span>
+          <span class="chart-title" title="按最新值变化绘制，不代表完整采样序列">实时值变化趋势</span>
           <div class="chart-actions">
             <ElButton
               size="small"
@@ -180,7 +182,7 @@
         </div>
         <div class="status-item">
           <span class="status-icon time">⏱</span>
-          <span>最后同步时间：{{ lastSyncTime || '--' }}</span>
+          <span>最新采样时间：{{ lastSyncTime || '--' }}</span>
         </div>
       </div>
     </ElCard>
@@ -369,7 +371,7 @@ const realtimeRecords = ref<RealtimeDataRecord[]>([])
 const isMonitoring = ref(false)
 const wsConnected = ref(false)
 const deviceOffline = ref(false)
-const refreshRate = ref(1000)
+const refreshRate = ref(250)
 const chartType = ref<'line' | 'area' | 'status'>('line')
 const chartSettingsVisible = ref(false)
 const separateBoolChart = ref(true) // 默认分离 Bool 图表
@@ -381,12 +383,17 @@ const perspectiveTheme = computed(() => (isDark.value ? 'Pro Dark' : 'Pro Light'
 // 点位质量（q=0 表示数据无效，显示为红色）
 const realtimeQuality = ref<Map<number, number>>(new Map())
 
-// pending 缓冲：diff/update 消息先攒到这里，由 setInterval 按 refreshRate 批量写 UI
+// 数值与质量每100ms应用，图表按独立的用户设置刷新。
 const pendingValues = new Map<number, number | string>()
 const pendingQuality = new Map<number, number>()
 const pendingChartRecords: RealtimeDataRecord[] = []
 let pendingLastSyncTime = ''
+let lastSampleTimestamp = 0
+let valueFlushTimer: ReturnType<typeof setInterval> | null = null
 let chartFlushTimer: ReturnType<typeof setInterval> | null = null
+let activeSubscription: { deviceCode: string; groupCode: string; pointIds: string } | null = null
+const queuedChartRecords: RealtimeDataRecord[] = []
+let chartUpdateTask: Promise<void> | null = null
 
 // 点位分组
 const pointGroups = ref<Api.DeviceMonitor.PointGroup[]>([])
@@ -409,7 +416,7 @@ const saveStateToStorage = () => {
       ioAddress: p.ioAddress,
       dataType: p.dataType
     })),
-    refreshRate: refreshRate.value,
+    chartRefreshRate: refreshRate.value,
     chartType: chartType.value,
     separateBoolChart: separateBoolChart.value,
     wasMonitoring: isMonitoring.value // 记录是否正在监控
@@ -474,7 +481,8 @@ const loadStateFromStorage = (): boolean => {
         ioAddress: p.ioAddress,
         dataType: p.dataType
       }))
-      refreshRate.value = state.refreshRate || 1000
+      // Older saved refreshRate values were user-selected; keep them as chart cadence.
+      refreshRate.value = state.chartRefreshRate ?? state.refreshRate ?? 250
       chartType.value = state.chartType || 'line'
       separateBoolChart.value = state.separateBoolChart ?? true
       return state.wasMonitoring === true
@@ -627,15 +635,18 @@ const rebuildPerspectiveFromRecords = async () => {
   rebuildingChart.value = true
 
   try {
+    if (chartUpdateTask) await chartUpdateTask
     await nextTick()
     await clearPerspectiveTable()
     await initPerspectiveViewer()
-
-    if (realtimeRecords.value.length > 0) {
-      await updatePerspectiveTable(realtimeRecords.value)
+    queuedChartRecords.length = 0
+    const records = [...realtimeRecords.value]
+    if (records.length > 0) {
+      await updatePerspectiveTable(records)
     }
   } finally {
     rebuildingChart.value = false
+    queuePerspectiveUpdate([])
   }
 }
 
@@ -715,8 +726,7 @@ const formatPointValue = (point: PointInfo) => {
   return `${value}${unit ? ' ' + unit : ''}`
 }
 
-const formatTimestamp = () => {
-  const now = new Date()
+const formatTimestamp = (now: Date) => {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${String(now.getMilliseconds()).padStart(3, '0')}`
 }
@@ -785,7 +795,6 @@ const loadPointGroups = async (deviceCode?: string) => {
 // 切换点位分组
 const switchPointGroup = async (groupCode: string) => {
   if (activeGroupCode.value === groupCode) return
-  const previousGroupCode = activeGroupCode.value
   activeGroupCode.value = groupCode
   selectedPoints.value = []
   tempSelectedVarSeqs.value = []
@@ -793,22 +802,13 @@ const switchPointGroup = async (groupCode: string) => {
   realtimeQuality.value.clear()
   realtimeRecords.value = []
   clearPending()
+  lastSyncTime.value = ''
+  lastSampleTimestamp = 0
+  syncSubscription()
   await clearPerspectiveTable()
 
   if (currentDevice.value) {
     await loadPointList(currentDevice.value.deviceId)
-    if (websocket.value?.readyState === WebSocket.OPEN) {
-      sendWsMessage({
-        action: 'unsubscribe',
-        device_code: currentDevice.value.deviceCode,
-        group_code: previousGroupCode
-      })
-      sendWsMessage({
-        action: 'subscribe',
-        device_code: currentDevice.value.deviceCode,
-        group_code: activeGroupCode.value
-      })
-    }
   }
 }
 
@@ -834,7 +834,10 @@ const selectDevice = async (device: DeviceInfo) => {
   clearPending()
   activeGroupCode.value = 'g001'
   deviceOffline.value = false
-  clearPerspectiveTable()
+  lastSyncTime.value = ''
+  lastSampleTimestamp = 0
+  syncSubscription()
+  await clearPerspectiveTable()
   deviceSelectorVisible.value = false
   await loadPointList(device.deviceId)
   void loadPointGroups(device.deviceCode)
@@ -842,6 +845,10 @@ const selectDevice = async (device: DeviceInfo) => {
 
 // 清理 Perspective Table（先删除 viewer，再删除 table）
 const clearPerspectiveTable = async () => {
+  const wasRebuilding = rebuildingChart.value
+  rebuildingChart.value = true
+  if (chartUpdateTask) await chartUpdateTask
+  queuedChartRecords.length = 0
   // 清理单图表模式：先 viewer 后 table
   if (perspectiveViewer.value) {
     try {
@@ -893,6 +900,7 @@ const clearPerspectiveTable = async () => {
     }
     perspectiveBoolTable.value = null
   }
+  if (!wasRebuilding) rebuildingChart.value = false
 }
 
 // 点位选择
@@ -928,7 +936,7 @@ const clearAllPoints = () => {
   tempSelectedVarSeqs.value = []
 }
 
-const confirmPointSelection = () => {
+const confirmPointSelection = async () => {
   if (tempDeviceId.value) {
     const device = deviceList.value.find((d) => d.deviceId === tempDeviceId.value)
     if (device) {
@@ -938,8 +946,15 @@ const confirmPointSelection = () => {
   selectedPoints.value = pointList.value.filter((p) => tempSelectedVarSeqs.value.includes(p.varSeq))
   realtimeRecords.value = []
   clearPending()
-  clearPerspectiveTable()
   pointSelectorVisible.value = false
+  lastSyncTime.value = ''
+  lastSampleTimestamp = 0
+  syncSubscription()
+  await clearPerspectiveTable()
+  if (isMonitoring.value && selectedPoints.value.length > 0) {
+    await initPerspectiveViewer()
+    if (realtimeRecords.value.length > 0) queuePerspectiveUpdate([...realtimeRecords.value])
+  }
 }
 
 const clearSelection = async () => {
@@ -948,6 +963,9 @@ const clearSelection = async () => {
   realtimeRecords.value = []
   clearPending()
   await clearPerspectiveTable()
+  lastSyncTime.value = ''
+  lastSampleTimestamp = 0
+  syncSubscription()
   // 清除快照
   localStorage.removeItem(CHART_STATE_KEY)
 }
@@ -976,41 +994,48 @@ const clearPending = () => {
   pendingValues.clear()
   pendingQuality.clear()
   pendingChartRecords.length = 0
+  queuedChartRecords.length = 0
   pendingLastSyncTime = ''
 }
 
-const flushPendingRealtimeUpdates = () => {
-  if (pendingValues.size === 0 && pendingChartRecords.length === 0) return
-
+const flushPendingValues = () => {
+  if (pendingValues.size === 0 && pendingQuality.size === 0 && !pendingLastSyncTime) return
   pendingValues.forEach((v, k) => realtimeValues.value.set(k, v))
   pendingValues.clear()
-
   pendingQuality.forEach((v, k) => realtimeQuality.value.set(k, v))
   pendingQuality.clear()
-
   if (pendingLastSyncTime) {
     lastSyncTime.value = pendingLastSyncTime
     pendingLastSyncTime = ''
   }
+}
 
-  if (pendingChartRecords.length > 0) {
-    const records = pendingChartRecords.splice(0)
-    realtimeRecords.value.push(...records)
-    if (realtimeRecords.value.length > MAX_RECORDS) {
-      realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
-    }
-    if (!rebuildingChart.value) {
-      void updatePerspectiveTable(records)
-    }
+const flushPendingChart = () => {
+  if (pendingChartRecords.length === 0) return
+  const records = pendingChartRecords.splice(0)
+  realtimeRecords.value.push(...records)
+  if (realtimeRecords.value.length > MAX_RECORDS) {
+    realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
   }
+  queuePerspectiveUpdate(records)
+}
+
+const flushPendingRealtimeUpdates = () => {
+  flushPendingValues()
+  flushPendingChart()
 }
 
 const startFlushTimer = () => {
+  if (valueFlushTimer === null) valueFlushTimer = setInterval(flushPendingValues, 100)
   if (chartFlushTimer !== null) clearInterval(chartFlushTimer)
-  chartFlushTimer = setInterval(flushPendingRealtimeUpdates, refreshRate.value)
+  chartFlushTimer = setInterval(flushPendingChart, refreshRate.value)
 }
 
 const stopFlushTimer = () => {
+  if (valueFlushTimer !== null) {
+    clearInterval(valueFlushTimer)
+    valueFlushTimer = null
+  }
   if (chartFlushTimer !== null) {
     clearInterval(chartFlushTimer)
     chartFlushTimer = null
@@ -1018,11 +1043,8 @@ const stopFlushTimer = () => {
   flushPendingRealtimeUpdates()
 }
 
-// 监听刷新率变化
-watch(refreshRate, (val) => {
-  if (wsConnected.value) {
-    sendWsMessage({ action: 'config', refreshRate: val })
-  }
+// 用户选择的刷新率只控制图表；数值/质量始终每100ms更新。
+watch(refreshRate, () => {
   if (isMonitoring.value) startFlushTimer()
 })
 
@@ -1031,7 +1053,6 @@ const stopMonitor = () => {
   isMonitoring.value = false
   deviceOffline.value = false
   stopFlushTimer()
-  clearPending()
   closeWebSocket()
 }
 
@@ -1047,7 +1068,6 @@ const disconnectForUnmount = () => {
   // 页面卸载时的轻量清理：只断开连接，不清空数据
   isMonitoring.value = false
   stopFlushTimer()
-  clearPending()
   closeWebSocket()
 }
 
@@ -1067,14 +1087,7 @@ const connectWebSocket = () => {
       websocket.value?.send(JSON.stringify({ type: 'auth', token: getAccessToken() }))
       startHeartbeat()
 
-      // 订阅当前设备
-      if (currentDevice.value) {
-        sendWsMessage({
-          action: 'subscribe',
-          device_code: currentDevice.value.deviceCode,
-          group_code: activeGroupCode.value
-        })
-      }
+      syncSubscription()
     }
 
     websocket.value.onmessage = (event) => {
@@ -1116,11 +1129,55 @@ const closeWebSocket = () => {
   }
 
   wsConnected.value = false
+  activeSubscription = null
 }
 
 const sendWsMessage = (message: Record<string, unknown>) => {
   if (websocket.value?.readyState === WebSocket.OPEN) {
     websocket.value.send(JSON.stringify(message))
+  }
+}
+
+const syncSubscription = () => {
+  if (websocket.value?.readyState !== WebSocket.OPEN) return
+
+  const pointIds = selectedPoints.value
+    .map((point) => point.pointId)
+    .filter((id): id is number => Number.isInteger(id))
+    .sort((a, b) => a - b)
+  const desired = isMonitoring.value && currentDevice.value && pointIds.length > 0
+    ? {
+        deviceCode: currentDevice.value.deviceCode,
+        groupCode: activeGroupCode.value,
+        pointIds: pointIds.join(',')
+      }
+    : null
+
+  if (
+    activeSubscription &&
+    (!desired ||
+      activeSubscription.deviceCode !== desired.deviceCode ||
+      activeSubscription.groupCode !== desired.groupCode)
+  ) {
+    sendWsMessage({
+      action: 'unsubscribe',
+      device_code: activeSubscription.deviceCode,
+      group_code: activeSubscription.groupCode
+    })
+    activeSubscription = null
+  }
+  if (
+    desired &&
+    (!activeSubscription || activeSubscription.pointIds !== desired.pointIds)
+  ) {
+    sendWsMessage({
+      action: 'subscribe',
+      device_code: desired.deviceCode,
+      group_code: desired.groupCode,
+      point_ids: pointIds,
+      supports_freshness: true
+    })
+    activeSubscription = desired
   }
 }
 
@@ -1218,6 +1275,25 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
   }
 }
 
+const queuePerspectiveUpdate = (records: RealtimeDataRecord[]) => {
+  queuedChartRecords.push(...records)
+  if (queuedChartRecords.length > MAX_RECORDS) {
+    queuedChartRecords.splice(0, queuedChartRecords.length - MAX_RECORDS)
+  }
+  if (chartUpdateTask || rebuildingChart.value || isPerspectiveCleaning.value) return
+
+  chartUpdateTask = (async () => {
+    while (queuedChartRecords.length > 0 && !rebuildingChart.value && !isPerspectiveCleaning.value) {
+      await updatePerspectiveTable(queuedChartRecords.splice(0))
+    }
+  })().finally(() => {
+    chartUpdateTask = null
+    if (queuedChartRecords.length > 0 && !rebuildingChart.value && !isPerspectiveCleaning.value) {
+      queuePerspectiveUpdate([])
+    }
+  })
+}
+
 const normalizeWsPointValue = (dataType: string | undefined, value: unknown) => {
   const type = (dataType || '').toUpperCase()
   if (type === 'BOOL') {
@@ -1240,6 +1316,7 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
 
   if (payload.type === 'offline') {
     if (payload.device_code && currentDevice.value?.deviceCode !== payload.device_code) return
+    if (payload.group_code && activeGroupCode.value !== payload.group_code) return
     deviceOffline.value = true
     realtimeValues.value.clear()
     realtimeQuality.value.clear()
@@ -1257,10 +1334,16 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     if (payload.type === 'snapshot' && 'tdengineConnected' in payload) {
       tdengineConnected.value = payload.tdengineConnected as boolean | null
     }
-    deviceOffline.value = false
+    if (payload.type === 'snapshot') {
+      clearPending()
+      realtimeValues.value.clear()
+      realtimeQuality.value.clear()
+    }
+    deviceOffline.value = payload.deviceOffline === true
+    if (deviceOffline.value) return
 
     const pointById = new Map(
-      pointList.value
+      selectedPoints.value
         .filter((point) => point.pointId !== undefined)
         .map((point) => [String(point.pointId), point])
     )
@@ -1277,7 +1360,8 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
         ioAddress: point.ioAddress,
         dataType: point.dataType,
         value: normalizeWsPointValue(point.dataType, entry?.v),
-        quality: entry?.q
+        quality: entry?.q,
+        sampledAt: entry?.t
       })
     }
     pointsList = convertedPoints
@@ -1297,11 +1381,26 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     }
   }
 
+  const selectedPointIds = new Set(selectedPoints.value.map((point) => String(point.pointId)))
+  const sourceTimes = [
+    ...Object.entries((payload.freshness || {}) as Record<string, unknown>)
+      .filter(([pointId]) => selectedPointIds.has(pointId))
+      .map(([, timestamp]) => timestamp),
+    ...(pointsList || []).map((point) => point.sampledAt)
+  ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  if (sourceTimes.length > 0) {
+    const newest = Math.max(...sourceTimes)
+    if (newest > lastSampleTimestamp) {
+      lastSampleTimestamp = newest
+      const sampleTime = formatTimestamp(new Date(newest))
+      if (payload.type === 'snapshot') lastSyncTime.value = sampleTime
+      else pendingLastSyncTime = sampleTime
+    }
+  }
   if (!Array.isArray(pointsList) || pointsList.length === 0) return
 
-  // snapshot 绕过节流直接写 UI；diff/update 进 pending 由 setInterval 批量刷新
+  // 快照立即显示；增量值和质量按100ms批量显示。
   const writeImmediate = payload.type === 'snapshot'
-  if (writeImmediate) clearPending()
   const now = new Date()
   const newRecords: RealtimeDataRecord[] = []
 
@@ -1312,6 +1411,9 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     const quality = item.quality as number | undefined
 
     if (varSeq !== undefined) {
+      const previousValue = pendingValues.has(varSeq)
+        ? pendingValues.get(varSeq)
+        : realtimeValues.value.get(varSeq)
       if (writeImmediate) {
         realtimeValues.value.set(varSeq, value as number | string)
         if (typeof quality === 'number') realtimeQuality.value.set(varSeq, quality)
@@ -1320,10 +1422,12 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
         if (typeof quality === 'number') pendingQuality.set(varSeq, quality)
       }
 
-      // 添加到趋势记录
-      if (selectedPoints.value.some((p) => p.varSeq === varSeq)) {
+      // latest只给出可见的变化，不代表完整采样序列。
+      if (selectedPoints.value.some((p) => p.varSeq === varSeq) &&
+          (writeImmediate || previousValue !== value)) {
+        const sampledAt = item.sampledAt
         const record = {
-          timestamp: now,
+          timestamp: typeof sampledAt === 'number' ? new Date(sampledAt) : now,
           varSeq,
           pointName,
           value: typeof value === 'number' ? value : Number(value) || 0
@@ -1339,14 +1443,13 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     if (realtimeRecords.value.length > MAX_RECORDS) {
       realtimeRecords.value = realtimeRecords.value.slice(-MAX_RECORDS)
     }
-    lastSyncTime.value = formatTimestamp()
-    if (newRecords.length > 0 && !rebuildingChart.value) {
-      void updatePerspectiveTable(newRecords)
-    }
+    queuePerspectiveUpdate(newRecords)
   } else {
     // diff/update：攒入 pending，等 flush timer 触发
     pendingChartRecords.push(...newRecords)
-    pendingLastSyncTime = formatTimestamp()
+    if (pendingChartRecords.length > MAX_RECORDS) {
+      pendingChartRecords.splice(0, pendingChartRecords.length - MAX_RECORDS)
+    }
   }
 }
 
@@ -1677,7 +1780,7 @@ onUnmounted(() => {
       ioAddress: p.ioAddress,
       dataType: p.dataType
     })),
-    refreshRate: refreshRate.value,
+    chartRefreshRate: refreshRate.value,
     chartType: chartType.value,
     separateBoolChart: separateBoolChart.value,
     wasMonitoring: isMonitoring.value
@@ -1706,6 +1809,7 @@ onUnmounted(() => {
 
   isPerspectiveCleaning.value = true
   void (async () => {
+    if (chartUpdateTask) await chartUpdateTask
     // 清理 Perspective 资源
     if (perspectiveViewer.value) {
       try {

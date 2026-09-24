@@ -1,0 +1,51 @@
+{
+  "passed": true,
+  "correctness_passed": true,
+  "steady_state_passed": true,
+  "devices": 100,
+  "points": 10,
+  "period_ms": 100,
+  "production_seconds": 1800.003731534,
+  "generated_frames": 1800000,
+  "frames_per_second": 999.9979269298532,
+  "value_rows": 1800000,
+  "quality_rows": 18000000,
+  "source_to_td_confirm_ms": {
+    "count": 1800000,
+    "average_ms": 647.772,
+    "max_ms": 1560.749,
+    "p50_ms": 1000,
+    "p95_ms": 1500,
+    "p99_ms": 1500,
+    "p999_ms": 1500
+  },
+  "max_rss_bytes": 190468096,
+  "event_loop_lag_ms_p99": 15.505080999628259,
+  "pacing_delay_ms_max": 511.3775889999233,
+  "max_outbox_frames": 2087,
+  "max_outbox_age_ms": 2516,
+  "final_queues": {
+    "outbox": {
+      "count": 0,
+      "payload_bytes": 0,
+      "oldest_age_ms": 0,
+      "waiting_writes": 0,
+      "waiting_bytes": 0
+    },
+    "pending": 0,
+    "lag": 0
+  },
+  "version_boundary": {
+    "started_local": "2026-09-24T13:18:20+08:00",
+    "collector_outbox_sha256": "C41F8E7A47E5AAE2C58443C6D9ECADB16FF0B6BE89DF094E3EEA6B8C17993569",
+    "durable_redis_writer_sha256": "D4035E664EC1E9C2AEE4CD868DBA259E8DE4BFAD3D3080C5835200552C4DDC56",
+    "consumer_sha256": "83E03D5442C1666C0FCD2DCC0ACC997DF42553ECDE8604353EE5D4F33AF6A06F",
+    "tdengine_writer_sha256": "B400A9F3234AC45B3B23A26C341C6B963337647C18DF427ED6297C2552B92FAA",
+    "notes": "Process loaded earlier EVALSHA/single-WAITAOF window version: 256KiB SQLite commit, 4096 frames/8MiB raw/16MiB wire. Later changes including NOSCRIPT typing, owner lock, larger windows, HMGET and Writer CPU/retry metrics are covered by later focused tests, not this entire 30-minute run."
+  },
+  "limitations": [
+    "Synthetic inputs; no PLC or browser drawing.",
+    "Some short wide-frame and WS/fault validations shared the test infrastructure during this run.",
+    "RSS includes retained benchmark latency samples and per-second snapshots, so it is not a production leak measurement."
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "passed": true,
+  "checks": [
+    "equal-card-dimensions",
+    "transparent-top-icons",
+    "alarm-distribution",
+    "six-statistical-charts",
+    "no-alarm-table",
+    "module-dialog",
+    "escape-dismiss",
+    "nonoverlapping-refresh",
+    "failure-clears-stale-values",
+    "failure-clears-module-states",
+    "zero-and-empty",
+    "reduced-motion",
+    "1280-no-overflow",
+    "390-no-horizontal-overflow",
+    "KPI-navigation"
+  ],
+  "small": {
+    "w": 1280,
+    "sw": 1280,
+    "h": 720,
+    "sh": 720
+  },
+  "mobile": {
+    "w": 390,
+    "sw": 390
+  },
+  "errors": []
+}

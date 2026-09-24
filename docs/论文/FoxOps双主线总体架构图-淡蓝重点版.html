@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FoxOps 双主线总体架构图（淡蓝重点版）</title>
+<style>
+:root{--navy:#0f2f55;--navy2:#1c4f7f;--teal:#2f73b7;--teal2:#5aa5df;--cyan:#edf5ff;--cyan2:#dcecff;--blue:#eaf3fb;--orange:#d89b19;--orange2:#fff4d8;--ink:#173756;--muted:#62778b;--line:#a8bfd6;--white:#fff;--bg:#f3f7fc;--shadow:0 10px 28px rgba(15,47,85,.11)}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;background:#edf3f9;font-family:"Microsoft YaHei","PingFang SC",Arial,sans-serif;color:var(--ink)}
+.canvas{position:relative;width:1600px;height:1184px;margin:0 auto;overflow:hidden;background:linear-gradient(180deg,#f9fbfe 0%,#eef4fa 100%)}
+.top-accent{position:absolute;left:0;top:0;width:1600px;height:12px;background:linear-gradient(90deg,var(--teal),var(--teal2),#2d7fa3)}
+.title{position:absolute;left:64px;top:36px;font-size:42px;line-height:1;font-weight:800;letter-spacing:.2px;color:var(--navy)}
+.subtitle{position:absolute;left:66px;top:91px;font-size:19px;color:var(--muted);letter-spacing:.3px}
+.badge{position:absolute;right:64px;top:44px;padding:10px 18px;border-radius:20px;background:var(--navy);color:#fff;font-size:16px;font-weight:700}
+.card{position:absolute;border:1.5px solid #a9c8c5;border-radius:18px;background:rgba(255,255,255,.96);box-shadow:var(--shadow)}
+.channels{left:64px;top:136px;width:1472px;height:72px;display:grid;grid-template-columns:235px 1fr 1fr 1fr;gap:14px;padding:12px 16px;align-items:center}
+.channels .label{font-size:20px;font-weight:800;color:var(--navy)}
+.pill{height:44px;border:1px solid #b9d3d0;border-radius:12px;background:var(--cyan);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700}
+.agent{left:64px;top:240px;width:1472px;height:152px;border:2px solid var(--teal);background:linear-gradient(135deg,#dff8f2 0%,#f4fcfa 58%,#e7f3f8 100%);padding:18px 24px}
+.agent-title{font-size:26px;font-weight:850;color:var(--navy);display:flex;align-items:center;gap:13px}
+.agent-title .core{padding:5px 12px;border-radius:13px;background:var(--teal);color:#fff;font-size:15px;letter-spacing:1px}
+.agent-desc{margin-top:7px;color:#355567;font-size:17px}
+.agent-row{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:15px}
+.agent-chip{height:34px;border-radius:9px;border:1px solid #99c8c1;background:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#20495a}
+.route{top:424px;width:710px;height:376px;padding:16px 20px}
+.route-a{left:64px;border-top:7px solid var(--teal)}
+.route-b{left:826px;border-top:7px solid #2d7fa3}
+.route-head{display:flex;align-items:center;justify-content:space-between}
+.route-kicker{font-size:15px;font-weight:800;color:var(--teal);letter-spacing:.7px}
+.route-b .route-kicker{color:#2d7fa3}
+.route-title{margin-top:3px;font-size:23px;font-weight:850;color:var(--navy)}
+.route-tag{border-radius:14px;padding:7px 11px;background:var(--orange2);border:1px solid #ecc875;font-size:13px;font-weight:800;color:#805700}
+.callout{margin-top:9px;border-left:5px solid var(--orange);background:#fffaf0;border-radius:8px;padding:6px 11px;font-size:13px;line-height:1.4;color:#5f4b24}
+.section-label{margin-top:8px;font-size:13px;font-weight:800;color:#537082}
+.mini-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:7px}
+.mini-grid.three{grid-template-columns:repeat(3,1fr)}
+.mini{min-height:38px;border-radius:9px;background:var(--blue);border:1px solid #bdd3df;display:flex;align-items:center;justify-content:center;text-align:center;padding:4px;font-size:13px;font-weight:700;line-height:1.2}
+.kb-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:7px}
+.kb{min-height:31px;border-radius:9px;background:var(--cyan);border:1px solid #b2d8d2;display:flex;align-items:center;justify-content:center;text-align:center;padding:3px;font-size:12px;font-weight:700;line-height:1.15}
+.route-foot{height:34px;margin-top:9px;border-radius:10px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;font-weight:700;letter-spacing:.1px;padding:0 7px}
+.train-flow{display:grid;grid-template-columns:1.18fr .9fr 1fr 1fr;gap:8px;height:69px;margin-top:7px;align-items:center}
+.train-step{position:relative;min-height:52px;border-radius:10px;border:1px solid #bad0dc;background:var(--blue);padding:7px 5px;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;font-weight:750;line-height:1.25}
+.train-step.hot{background:var(--orange2);border-color:#e6c36b}
+.train-data{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:7px}
+.dataflow{left:64px;top:832px;width:1472px;height:128px;border:2px solid #d7a329;background:linear-gradient(90deg,#fff9e9,#fffdf6);padding:14px 18px}
+.data-title{display:flex;align-items:baseline;gap:14px;font-size:21px;font-weight:850;color:var(--navy)}
+.data-title span{font-size:14px;font-weight:600;color:#7b6a42}
+.data-stages{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-top:12px}
+.data-stage{height:49px;border-radius:9px;border:1px solid #e3c77c;background:#fff;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;font-weight:750;line-height:1.25;padding:4px}
+.bottom{top:992px;height:136px;padding:13px 17px}
+.raw{left:64px;width:710px}
+.platform{left:826px;width:710px}
+.bottom-title{font-size:17px;font-weight:850;color:var(--navy)}
+.bottom-content{margin-top:8px;display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.tag{padding:6px 7px;border-radius:8px;background:var(--blue);border:1px solid #bfd3dd;font-size:12px;font-weight:700;text-align:center;line-height:1.2}
+.platform .tag{background:var(--cyan);border-color:#afd6ce}
+.legend{position:absolute;right:64px;top:1156px;color:#6b7e89;font-size:12px}
+.connectors{position:absolute;inset:0;z-index:0;pointer-events:none}
+.card,.title,.subtitle,.badge,.legend{z-index:2}
+.flow-runtime{fill:none;stroke:#2f73b7;stroke-width:4;stroke-linejoin:round;stroke-linecap:round}
+.flow-data{fill:none;stroke:#d79a12;stroke-width:4;stroke-linejoin:round;stroke-linecap:round}
+/* Minimal monochrome treatment: retain the existing background and layout. */
+.top-accent{display:none}
+.card,.agent,.dataflow{background:#fff;border:1px solid #111827;box-shadow:none}
+.card{border-radius:10px}
+.route-a,.route-b{border-top:1px solid #111827}
+.pill,.agent-chip,.mini,.kb,.train-step,.data-stage,.tag,.platform .tag,.route-foot,.route-tag,.agent-title .core{background:#fff;border:1px solid #111827;color:var(--ink);box-shadow:none}
+.pill,.agent-chip,.mini,.kb,.train-step,.data-stage,.tag,.route-foot{border-radius:6px}
+.agent-title .core,.route-tag,.badge{border-radius:6px}
+.agent-title .core{padding:4px 11px}
+.route-kicker,.route-b .route-kicker,.data-title span{color:var(--ink)}
+.callout{background:#fff;border-left:2px solid #111827;color:var(--ink);border-radius:4px}
+.train-step.hot{background:#fff;border-color:#111827}
+.badge{background:#fff;border:1px solid #111827;color:var(--ink)}
+.flow-runtime,.flow-data{stroke:#111827;stroke-width:3}
+.connectors marker path{fill:#111827}
+
+/* Pale-blue emphasis variant: only primary architecture regions are highlighted. */
+.agent,.route-a,.route-b,.dataflow{background:#EAF3FB}
+</style>
+</head>
+<body>
+<main class="canvas">
+<div class="top-accent"></div>
+<div class="title">FoxOps 双主线总体架构</div>
+<div class="subtitle">智能体系统是能力中枢，知识助手是其领域化扩展；同一套治理数据同时服务 RAG 与模型训练</div>
+<div class="badge">港口内网 · 数据不出域 · 人机协同</div>
+<svg class="connectors" viewBox="0 0 1600 1184" role="img" aria-labelledby="foxops-dual-title foxops-dual-desc">
+<title id="foxops-dual-title">FoxOps 双主线总体架构图（淡蓝重点版）</title><desc id="foxops-dual-desc">智能体系统作为统一能力中枢，向下连接智能体与多知识库主线以及千问小模型训练、微调和安全对齐主线；DataFlow 数据治理同时为两条线路提供加工后的知识与训练数据。</desc><defs><marker id="arrowRuntime" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#2f73b7" /></marker><marker id="arrowData" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#d79a12" /></marker></defs>
+<path class="flow-runtime" d="M800 208 L800 240" marker-end="url(#arrowRuntime)" />
+<path class="flow-runtime" d="M800 392 L800 408 L419 408 L419 424" marker-end="url(#arrowRuntime)" />
+<path class="flow-runtime" d="M800 408 L1181 408 L1181 424" marker-end="url(#arrowRuntime)" />
+<path class="flow-data" d="M800 832 L800 816 L419 816 L419 800" marker-end="url(#arrowData)" />
+<path class="flow-data" d="M800 816 L1181 816 L1181 800" marker-end="url(#arrowData)" />
+<path class="flow-data" d="M419 992 L419 976 L560 976 L560 960" marker-end="url(#arrowData)" />
+<path class="flow-data" d="M1181 960 L1181 976 L1181 992" marker-end="url(#arrowData)" />
+</svg>
+<section class="card channels"><div class="label">用户与交互入口</div><div class="pill">现场维修人员 · 班组长 · 专家</div><div class="pill">Web 端｜组织协作与治理</div><div class="pill">桌面端｜本地工作与离线辅助</div></section>
+<section class="card agent"><div class="agent-title"><span class="core">CORE</span>FoxOps 智能体系统（统一能力中枢）</div><div class="agent-desc">先理解任务、规划步骤、选择知识与工具，再组织答案或发起人工确认；知识检索是智能体可调用的一类能力，而非系统的全部。</div><div class="agent-row"><div class="agent-chip">意图识别 / 路由</div><div class="agent-chip">LangGraph 工作流</div><div class="agent-chip">Tools 工具调用</div><div class="agent-chip">MCP 能力接入</div><div class="agent-chip">Skills 复用能力</div><div class="agent-chip">HITL 人工审批</div><div class="agent-chip">SSE 流式事件</div></div></section>
+<section class="card route route-a"><div class="route-head"><div><div class="route-kicker">建设主线一</div><div class="route-title">智能体系统 + 多知识库 / RAG 扩展</div></div><div class="route-tag">Agent-first</div></div><div class="callout">面向故障诊断、故障码查询、关联排查、知识治理等场景配置不同智能体；知识助手是智能体挂载多类知识库后形成的领域应用。</div><div class="section-label">场景智能体</div><div class="mini-grid"><div class="mini">综合故障诊断</div><div class="mini">故障码查询</div><div class="mini">关联排查</div><div class="mini">知识治理</div><div class="mini">安全复核</div></div><div class="section-label">组织级知识库族（按数据类型分库治理）</div><div class="kb-grid"><div class="kb">故障码 / 告警</div><div class="kb">设备技术资料</div><div class="kb">历史故障案例</div><div class="kb">SOP / 安全规程</div><div class="kb">设备部件关系</div><div class="kb">点检 / 维保</div><div class="kb">专家经验</div><div class="kb">备件 / 兼容性</div><div class="kb">变更 / 技术通告</div><div class="kb">个人 / 离线知识</div></div><div class="route-foot">结构化查询 · 全文检索 · Milvus 向量 / 混合检索 · Neo4j 关系路径 → 重排、证据融合、引用回溯</div></section>
+<section class="card route route-b"><div class="route-head"><div><div class="route-kicker">建设主线二</div><div class="route-title">千问小模型训练、微调与安全对齐</div></div><div class="route-tag">Qwen 3B / 7B</div></div><div class="callout">模型主要学习港机任务理解、结构化表达、风险边界和沟通风格；易变设备事实继续由 RAG 提供，避免频繁重训与知识过期。</div><div class="section-label">治理后训练数据产品</div><div class="train-data"><div class="mini">SFT 指令 / 问答</div><div class="mini">多轮追问样本</div><div class="mini">偏好对 / 反例</div><div class="mini">安全 / 拒答 / 评测集</div></div><div class="section-label">训练与发布链路</div><div class="train-flow"><div class="train-step">千问基座模型<br/>LoRA / QLoRA</div><div class="train-step">SFT<br/>领域任务微调</div><div class="train-step hot">DPO / ORPO<br/>偏好与规范对齐</div><div class="train-step hot">安全对齐<br/>红队与专家复核</div></div><div class="route-foot">离线评测（事实 · 格式 · 引用 · 安全） → Adapter 版本化 / 灰度发布 → 反馈回流与持续改进</div></section>
+<section class="card dataflow"><div class="data-title">DataFlow 数据治理与样本工程层 <span>不是数据库替代品，而是原始资料进入知识库或训练流程前的质量控制与加工管线</span></div><div class="data-stages"><div class="data-stage">采集登记<br/>来源与权限</div><div class="data-stage">解析 / OCR<br/>结构恢复</div><div class="data-stage">脱敏<br/>去重与去噪</div><div class="data-stage">字段映射<br/>术语规范化</div><div class="data-stage">质量评分<br/>规则 / 模型检测</div><div class="data-stage">语义分块<br/>元数据补全</div><div class="data-stage">样本构造<br/>QA / 偏好 / 安全</div><div class="data-stage">人工抽检<br/>审计与版本</div></div></section>
+<section class="card bottom raw"><div class="bottom-title">原始业务资料</div><div class="bottom-content"><span class="tag">设备手册 / 图纸</span><span class="tag">故障码表 / 告警表</span><span class="tag">历史工单 / 复盘</span><span class="tag">SOP / 安全规程</span><span class="tag">专家经验 / 笔记</span><span class="tag">点检记录 / 技术通告</span></div></section>
+<section class="card bottom platform"><div class="bottom-title">内网数据与运行底座</div><div class="bottom-content"><span class="tag">PostgreSQL｜业务 / 元数据 / 权限</span><span class="tag">MinIO｜原文 / 附件</span><span class="tag">Milvus｜向量索引</span><span class="tag">Neo4j｜设备知识图谱</span><span class="tag">Redis｜队列 / 事件 / 恢复</span></div></section>
+</main>
+</body>
+</html>
+
+

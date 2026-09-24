@@ -1,0 +1,69 @@
+{
+  "value_only": {
+    "database": "dw_writer_v869dc903",
+    "child": "qc869dc903",
+    "frames": 200,
+    "points": 1000,
+    "quality": false,
+    "injected_second_insert": false,
+    "insert_attempts": null,
+    "covered": true,
+    "outcomes": {
+      "landed": 200
+    },
+    "value_count": 200,
+    "quality_count": 0,
+    "elapsed_ms": 103.922,
+    "build_ms": 43.748,
+    "execute_ms": 30.15,
+    "sql_bytes": 1390915,
+    "sql_statement_bytes": [
+      1390915
+    ],
+    "sql_value_rows_attempted": 200,
+    "sql_quality_rows_attempted": 0,
+    "sql_value_rows_succeeded": 200,
+    "sql_quality_rows_succeeded": 0,
+    "disk_kib": {
+      "wal": 1601,
+      "data": 43,
+      "cache_rdb": 12,
+      "table_meta": 176,
+      "raw_data_estimate": 1564
+    }
+  },
+  "value_and_quality": {
+    "database": "dw_writer_q869dc903",
+    "child": "qc869dc903",
+    "frames": 200,
+    "points": 1000,
+    "quality": true,
+    "injected_second_insert": false,
+    "insert_attempts": null,
+    "covered": true,
+    "outcomes": {
+      "landed": 200
+    },
+    "value_count": 200,
+    "quality_count": 200000,
+    "elapsed_ms": 299.89,
+    "build_ms": 95.97,
+    "execute_ms": 152.347,
+    "sql_bytes": 6178884,
+    "sql_statement_bytes": [
+      3120244,
+      3058640
+    ],
+    "sql_value_rows_attempted": 200,
+    "sql_quality_rows_attempted": 200000,
+    "sql_value_rows_succeeded": 200,
+    "sql_quality_rows_succeeded": 200000,
+    "disk_kib": {
+      "wal": 6875,
+      "data": 59,
+      "cache_rdb": 12,
+      "table_meta": 176,
+      "raw_data_estimate": 4884
+    }
+  }
+}

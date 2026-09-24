@@ -1,0 +1,1150 @@
+.............F............EEEE.Es..EEEEEEEEEEEE.......................   [100%]
+=================================== ERRORS ====================================
+___ ERROR at setup of test_real_redis_v2_gap_watermark_and_duplicate_replay ___
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+______ ERROR at setup of test_real_redis_v2_gap_limit_blocks_before_xadd ______
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_v2_same_connection_waitaof_and_lost_reply _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+___ ERROR at setup of test_real_redis_legacy_uuid_protocol_remains_separate ___
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_v2_high_water_is_exact_near_lua_integer_limit _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[0-legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[0-v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[1-legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[1-v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[256-legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[256-v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[257-legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[257-v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[513-legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[513-v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_error_after_xadd_replays_without_duplicate[legacy] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+_ ERROR at setup of test_real_redis_history_hmget_error_after_xadd_replays_without_duplicate[v2] _
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1033: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1581: in _connect
+    raise err
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1565: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [WinError 10061] ����Ŀ�����������ܾ����޷����ӡ�
+
+During handling of the above exception, another exception occurred:
+collector\tests\test_collector_receipt_v2.py:114: in real_redis
+    client.ping()
+outputs\performance-20260924\python314t-test-deps\redis\commands\core.py:2031: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:787: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\client.py:793: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\utils.py:258: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:3139: in get_connection
+    connection.connect()
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1006: in connect
+    self.retry.call_with_retry(
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:132: in call_with_retry
+    raise error
+outputs\performance-20260924\python314t-test-deps\redis\retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1007: in <lambda>
+    lambda: self.connect_check_health(
+outputs\performance-20260924\python314t-test-deps\redis\connection.py:1055: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 10061 connecting to 127.0.0.1:16379. ����Ŀ�����������ܾ����޷����ӡ�.
+----------------------------- Captured log setup ------------------------------
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+WARNING  collector.durable:durable_redis_writer.py:430 durable delivery deferred; local backlog retained
+Traceback (most recent call last):
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 428, in _replay_loop
+    count = self.outbox.replay_pending(self)
+  File "D:\python\device_alarm\data_watch\collector\storage\collector_outbox.py", line 398, in replay_pending
+    redis_writer.write_durable_frames(rows)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 374, in write_durable_frames
+    self._deliver_window(batch, batch_bytes)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "D:\python\device_alarm\data_watch\collector\storage\durable_redis_writer.py", line 393, in _deliver_window
+    raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
+RuntimeError: Redis AOF persistence not confirmed; backlog retained
+================================== FAILURES ===================================
+____________ test_fastlane_restores_latest_from_unconfirmed_outbox ____________
+collector\tests\test_collector_outbox.py:275: in test_fastlane_restores_latest_from_unconfirmed_outbox
+    assert msgspec.json.decode(client.eval.call_args.args[3])["1"]["t"] == 1234
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'NoneType' object has no attribute 'args'
+=========================== short test summary info ===========================
+FAILED collector/tests/test_collector_outbox.py::test_fastlane_restores_latest_from_unconfirmed_outbox
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_v2_gap_watermark_and_duplicate_replay
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_v2_gap_limit_blocks_before_xadd
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_v2_same_connection_waitaof_and_lost_reply
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_legacy_uuid_protocol_remains_separate
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_v2_high_water_is_exact_near_lua_integer_limit
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[0-legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[0-v2]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[1-legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[1-v2]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[256-legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[256-v2]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[257-legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[257-v2]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[513-legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_preserves_latest_and_duplicate_receipt[513-v2]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_error_after_xadd_replays_without_duplicate[legacy]
+ERROR collector/tests/test_collector_receipt_v2.py::test_real_redis_history_hmget_error_after_xadd_replays_without_duplicate[v2]
+1 failed, 51 passed, 1 skipped, 17 errors in 47.30s

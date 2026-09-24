@@ -1,3 +1,0 @@
-taos-ws-py
-SQLAlchemy>=2.0
-aiomysql>=0.2

@@ -1,0 +1,544 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "DataWatch 契约保持型工业数据架构",
+    "subtitle": "异构协议统一采集、中心化/分布式复用同一数据链路，并由 Web、桌面 App 与 CLI 服务人员和 AI",
+    "output": "datawatch_system_architecture.html",
+    "animation": "none"
+  },
+  "components": [
+    {
+      "id": "devices",
+      "type": "external",
+      "label": "异构工业设备",
+      "sublabel": "S7 / GE SRTP / OPC UA / OPC DA / HTTP",
+      "pos": [
+        40,
+        360
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "drivers",
+      "type": "backend",
+      "label": "协议驱动层",
+      "sublabel": "BaseDriver ABI + 外置驱动包",
+      "tag": "可插拔 / 只读",
+      "pos": [
+        270,
+        360
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "collector",
+      "type": "backend",
+      "label": "Collector",
+      "sublabel": "有界并发 + 单设备单在途",
+      "tag": "统一 DataPoint",
+      "pos": [
+        500,
+        360
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "security",
+      "label": "Agent",
+      "sublabel": "角色编排 / 配置同步 / 进程托管",
+      "tag": "centralized / edge / center",
+      "pos": [
+        500,
+        100
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "edge_storage",
+      "type": "database",
+      "label": "Edge Storage",
+      "sublabel": "SQLite WAL + 单写者 outbox",
+      "tag": "先落盘后上传",
+      "pos": [
+        500,
+        520
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "uploader",
+      "type": "backend",
+      "label": "Uploader",
+      "sublabel": "严格顺序 + 单批在途 + 重试",
+      "tag": "Ed25519",
+      "pos": [
+        710,
+        520
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "mysql",
+      "type": "database",
+      "label": "MySQL",
+      "sublabel": "设备 / 点位 / 分配 / 权限元数据",
+      "pos": [
+        920,
+        100
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "ingest",
+      "type": "backend",
+      "label": "Central Ingest",
+      "sublabel": "验签 + 映射校验 + Lua 原子提交",
+      "tag": "高水位幂等",
+      "pos": [
+        920,
+        520
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis 数据契约层",
+      "sublabel": "latest / window / stream / PEL / DLQ",
+      "tag": "StreamEnvelope",
+      "pos": [
+        920,
+        360
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "writer",
+      "type": "backend",
+      "label": "Writer",
+      "sublabel": "消费组 + 错误分类 + 二分隔离",
+      "tag": "LANDED / DLQ 后 ACK",
+      "pos": [
+        1150,
+        360
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "tdengine",
+      "type": "database",
+      "label": "TDengine",
+      "sublabel": "永久点位映射 + 多表批量写入",
+      "tag": "历史数据",
+      "pos": [
+        1380,
+        360
+      ],
+      "size": [
+        180,
+        68
+      ]
+    },
+    {
+      "id": "backend",
+      "type": "backend",
+      "label": "Backend API",
+      "sublabel": "REST / WebSocket + JWT / RBAC",
+      "tag": "最终鉴权方",
+      "pos": [
+        1150,
+        100
+      ],
+      "size": [
+        190,
+        68
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web 前端",
+      "sublabel": "配置 / 实时 / 历史 / 大屏 / 日志",
+      "pos": [
+        1380,
+        60
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "app",
+      "type": "frontend",
+      "label": "桌面 App",
+      "sublabel": "Tauri / Agent + Backend 双数据源",
+      "tag": "角色化运维",
+      "pos": [
+        1380,
+        160
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "DataWatch CLI",
+      "sublabel": "JSON / JSONL / schema / exit code",
+      "tag": "AI 工具接口",
+      "pos": [
+        1380,
+        260
+      ],
+      "size": [
+        170,
+        68
+      ]
+    },
+    {
+      "id": "human",
+      "type": "external",
+      "label": "运维人员",
+      "sublabel": "浏览器 / 桌面客户端",
+      "pos": [
+        1600,
+        110
+      ],
+      "size": [
+        140,
+        68
+      ]
+    },
+    {
+      "id": "ai",
+      "type": "external",
+      "label": "大模型 / 智能体",
+      "sublabel": "subprocess 调用与结构化解析",
+      "pos": [
+        1590,
+        260
+      ],
+      "size": [
+        160,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "采集节点 / 分公司边缘（中心化部署时可与中心同机）",
+      "wraps": [
+        "devices",
+        "drivers",
+        "collector",
+        "agent",
+        "edge_storage",
+        "uploader"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "集团或公司中心平台",
+      "wraps": [
+        "mysql",
+        "ingest",
+        "redis",
+        "writer",
+        "tdengine",
+        "backend",
+        "web",
+        "app",
+        "cli"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "统一身份、权限与审计边界",
+      "wraps": [
+        "backend",
+        "web",
+        "app",
+        "cli"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "from": "devices",
+      "to": "drivers",
+      "label": "协议原始值",
+      "variant": "emphasis",
+      "labelAt": [
+        245,
+        338
+      ]
+    },
+    {
+      "from": "drivers",
+      "to": "collector",
+      "label": "DriverSample",
+      "variant": "emphasis",
+      "labelAt": [
+        475,
+        338
+      ]
+    },
+    {
+      "from": "agent",
+      "to": "collector",
+      "label": "配置与生命周期",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        715,
+        256
+      ]
+    },
+    {
+      "from": "collector",
+      "to": "redis",
+      "label": "中心化：直接写入",
+      "variant": "emphasis",
+      "route": "orthogonal-h",
+      "labelAt": [
+        800,
+        338
+      ]
+    },
+    {
+      "from": "collector",
+      "to": "edge_storage",
+      "label": "分布式：持久化批次",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        700,
+        465
+      ]
+    },
+    {
+      "from": "edge_storage",
+      "to": "uploader",
+      "label": "pending → sending",
+      "variant": "dashed",
+      "labelAt": [
+        695,
+        498
+      ]
+    },
+    {
+      "from": "uploader",
+      "to": "ingest",
+      "label": "HTTPS 签名批次",
+      "variant": "dashed",
+      "labelAt": [
+        900,
+        498
+      ]
+    },
+    {
+      "from": "ingest",
+      "to": "redis",
+      "label": "原子 XADD + latest 防回退",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelAt": [
+        1160,
+        465
+      ]
+    },
+    {
+      "from": "redis",
+      "to": "writer",
+      "label": "统一消费流",
+      "variant": "emphasis",
+      "labelAt": [
+        1130,
+        338
+      ]
+    },
+    {
+      "from": "writer",
+      "to": "tdengine",
+      "label": "历史批量入库",
+      "variant": "emphasis",
+      "labelAt": [
+        1360,
+        338
+      ]
+    },
+    {
+      "from": "backend",
+      "to": "mysql",
+      "label": "配置与权限",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        1125,
+        78
+      ]
+    },
+    {
+      "from": "backend",
+      "to": "redis",
+      "label": "实时与窗口查询",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        1130,
+        258
+      ]
+    },
+    {
+      "from": "web",
+      "to": "backend",
+      "label": "REST / WebSocket",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        1360,
+        36
+      ]
+    },
+    {
+      "from": "app",
+      "to": "backend",
+      "label": "业务数据 / RBAC",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right",
+      "route": "orthogonal-h",
+      "labelAt": [
+        1260,
+        198
+      ]
+    },
+    {
+      "from": "agent",
+      "to": "app",
+      "label": "本机进程 / 配置 / 健康",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "route": "orthogonal-h",
+      "via": [
+        [
+          595,
+          28
+        ],
+        [
+          1465,
+          28
+        ]
+      ],
+      "labelAt": [
+        1030,
+        18
+      ]
+    },
+    {
+      "from": "cli",
+      "to": "backend",
+      "label": "受控业务命令",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        1325,
+        250
+      ]
+    },
+    {
+      "from": "human",
+      "to": "web",
+      "variant": "default",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "from": "human",
+      "to": "app",
+      "variant": "default",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "from": "ai",
+      "to": "cli",
+      "label": "命令发现 + 结构化结果",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "right",
+      "labelAt": [
+        1570,
+        350
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "契约保持",
+      "items": [
+        "协议差异止于驱动层，Collector 之后只流转统一点位与质量码",
+        "中心化与分布式入口汇合到同一 Redis Stream / Writer 契约",
+        "Web、App 与 CLI 复用 Backend 业务契约，App 另经 Agent 完成本机控制"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "可靠性不变量",
+      "items": [
+        "边缘先落盘、严格顺序、单批在途；中心以高水位和 Lua 保证幂等",
+        "Writer 仅在 LANDED 或进入 DLQ 后 ACK，latest 始终最后更新"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "可治理 AI 调用",
+      "items": [
+        "AI 与人员复用 Backend 的账号、JWT、RBAC 和审计边界",
+        "高风险写操作必须 dry-run 并显式确认；MCP 为后续扩展而非当前前提"
+      ]
+    }
+  ]
+}

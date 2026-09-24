@@ -1,0 +1,35 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>浅色大屏视觉验收</title><style>html,body,#app{margin:0;min-height:100%;font-family:"Microsoft YaHei UI",sans-serif}*{box-sizing:border-box}button{font-family:inherit}</style></head><body><div id="app"></div><script type="module">
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import { createRouter, createMemoryHistory } from 'vue-router'
+import axios from 'axios'
+window.qaMode = 'normal'; window.qaCalls = []; window.qaErrors = []
+const axes = ['08:00','09:00','10:00','11:00','12:00','13:00','14:00']
+const fixtures = {
+ 'dashboard/overview':{deviceTotal:120,onlineDeviceTotal:114,offlineDeviceTotal:4,riskDeviceTotal:2,pointTotal:8640,systemAlertTotal:6},
+ 'dashboard/device-type-distribution':{total:120,groups:[{typeCode:'QC',typeName:'桥吊',deviceCount:24},{typeCode:'RTG',typeName:'轨道吊',deviceCount:36},{typeCode:'AGV',typeName:'AGV',deviceCount:60}]},
+ 'log/stats':{todayTotal:2486,todayWarnTotal:18,todayErrorTotal:6,todayCriticalTotal:2,maxTotalMb:1000,totalSizeMb:280,typeRatio:[{type:'system',count:994},{type:'collect',count:746},{type:'storage',count:498},{type:'alarm',count:248}],levelTrend:axes.map((t,i)=>({time:'2026-09-10 '+t+':00',info:[400,600,450,800,650,900,850][i],warn:5,error:2,critical:1,debug:0}))},
+ 'driver/list':{total:5,availableCount:5,list:[]},
+ 'dashboard/trend':{timeAxis:axes,series:[{metricKey:'collectCount',unit:'次',data:[1200,1500,1400,2100,1800,2200,2400]},{metricKey:'alarmCount',unit:'次',data:[3,5,4,9,6,8,6]}]},
+ 'dashboard/alarm-distribution':{totalAlarmCount:18,groups:[{groupKey:'WARN',groupName:'一般',count:12,ratio:66.67},{groupKey:'ERROR',groupName:'严重',count:4,ratio:22.22},{groupKey:'CRITICAL',groupName:'紧急',count:2,ratio:11.11}]},
+
+ 'dashboard/edge-pipeline-health':{collector:{status:'healthy'}},
+ 'module-monitor/writer':{streams:[{status:'backlog'}],dlqTotal:0},
+ 'system/ping':{service:'device-monitor'}
+}
+axios.defaults.adapter = async config => {
+ const key=config.url.replace('/api/device-monitor/',''); window.qaCalls.push(key)
+ if(window.qaMode === 'failure') throw new Error('QA network unavailable')
+ if(!(key in fixtures)) {window.qaErrors.push(key);throw new Error('Unexpected request '+key)}
+ let data=fixtures[key]
+ if(window.qaMode === 'empty') {
+   data = key==='dashboard/trend'?{timeAxis:[],series:[]}:key==='dashboard/alarm-distribution'?{totalAlarmCount:0,groups:[]}:key==='dashboard/device-type-distribution'?{groups:[]}:key==='driver/list'?{total:0,availableCount:0,list:[]}:key==='log/stats'?{todayTotal:0,todayWarnTotal:0,maxTotalMb:0,totalSizeMb:0,typeRatio:[],levelTrend:[]}:key==='dashboard/overview'?{deviceTotal:0,onlineDeviceTotal:0,offlineDeviceTotal:0,riskDeviceTotal:0,pointTotal:0,systemAlertTotal:0}:data
+ }
+ return {data:{code:200,msg:'ok',data},status:200,statusText:'OK',headers:{},config}
+}
+const {default:Page}=await import('/src/views/monitor-light/index.vue')
+const router=createRouter({history:createMemoryHistory(),routes:[{path:'/monitor-light',component:Page},{path:'/:pathMatch(.*)*',component:{template:'<div>Destination</div>'}}]})
+await router.push('/monitor-light');await router.isReady()
+createApp(Page).use(createPinia()).use(router).mount('#app')
+window.qaRouter=router
+</script></body></html>

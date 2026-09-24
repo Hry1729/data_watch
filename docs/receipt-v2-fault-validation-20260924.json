@@ -1,0 +1,32 @@
+{
+  "date": "2026-09-24",
+  "redis": {
+    "instance": "dw-v2-redis-fault-20260924",
+    "version": "7.4.9",
+    "dedicated": true,
+    "aof": "appendonly yes, appendfsync always"
+  },
+  "scenario": "WAITAOF-confirmed write, client response loss, Redis process kill and AOF restart, SQLite replay",
+  "result": {
+    "before_kill_stream_len": 1,
+    "before_kill_outbox": 1,
+    "after_restart_stream_len": 1,
+    "after_replay_stream_len": 1,
+    "after_replay_outbox": 0,
+    "receipt_high": 1,
+    "receipt_ttl": -1,
+    "duplicate_history": false
+  },
+  "noscript_partial_pipeline": {
+    "first_legacy_evalsha": "succeeded",
+    "second_v2_evalsha": "NoScriptError",
+    "retry_with_original_identities": "passed",
+    "final_stream_len": 2,
+    "test": "test_dedicated_redis_noscript_after_partial_pipeline_retries"
+  },
+  "reproduce": [
+    "Run scripts/validate_collector_receipt_v2_fault.py first against a dedicated Redis 7.4 instance",
+    "docker kill and docker start that dedicated instance",
+    "Run scripts/validate_collector_receipt_v2_fault.py second against the same instance"
+  ]
+}

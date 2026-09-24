@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "DataWatch 多点位合并块采集流程",
+    "subtitle": "从点位配置到协议感知块规划、一次读取和统一点位恢复",
+    "output": "datawatch_block_coalescing.html",
+    "animation": "none"
+  },
+  "lanes": [
+    {
+      "id": "planning",
+      "label": "配置与块规划"
+    },
+    {
+      "id": "execution",
+      "label": "调度与设备读取"
+    },
+    {
+      "id": "normalization",
+      "label": "解码与统一契约"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "variables",
+      "lane": "planning",
+      "col": 0,
+      "type": "external",
+      "label": "点位配置",
+      "sublabel": "地址 / 类型 / 周期",
+      "width": 92
+    },
+    {
+      "id": "rate_group",
+      "lane": "planning",
+      "col": 2,
+      "type": "backend",
+      "label": "扫描周期分组",
+      "sublabel": "同设备多周期",
+      "width": 120
+    },
+    {
+      "id": "block_plan",
+      "lane": "planning",
+      "col": 4,
+      "type": "backend",
+      "label": "协议感知块规划",
+      "sublabel": "排序 / 兼容 / 间隔 / 上限",
+      "tag": "S7 / GE / 插件钩子",
+      "width": 132
+    },
+    {
+      "id": "phase",
+      "lane": "execution",
+      "col": 0,
+      "type": "messagebus",
+      "label": "确定性错峰",
+      "sublabel": "CRC32 相位",
+      "width": 92
+    },
+    {
+      "id": "inflight",
+      "lane": "execution",
+      "col": 2,
+      "type": "security",
+      "label": "单设备单在途",
+      "sublabel": "到期任务串行",
+      "width": 120
+    },
+    {
+      "id": "read_once",
+      "lane": "execution",
+      "col": 4,
+      "type": "backend",
+      "label": "去重后批量读取",
+      "sublabel": "同地址取最大长度",
+      "tag": "V 个点位 → B 个块",
+      "width": 132
+    },
+    {
+      "id": "result_map",
+      "lane": "normalization",
+      "col": 0,
+      "type": "database",
+      "label": "块内映射",
+      "sublabel": "地址 / 偏移 / 位 / 类型",
+      "width": 92
+    },
+    {
+      "id": "unpack",
+      "lane": "normalization",
+      "col": 2,
+      "type": "backend",
+      "label": "缓存并解包",
+      "sublabel": "每块构造一次缓冲区",
+      "width": 120
+    },
+    {
+      "id": "contract",
+      "lane": "normalization",
+      "col": 4,
+      "type": "messagebus",
+      "label": "统一数据契约",
+      "sublabel": "DataPoint → StreamEnvelope",
+      "tag": "值 / 时间 / 质量",
+      "width": 132
+    }
+  ],
+  "edges": [
+    {
+      "from": "variables",
+      "to": "rate_group"
+    },
+    {
+      "from": "rate_group",
+      "to": "block_plan",
+      "label": "区间排序"
+    },
+    {
+      "from": "block_plan",
+      "to": "phase",
+      "label": "生成读取块",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "return-left"
+    },
+    {
+      "from": "phase",
+      "to": "inflight"
+    },
+    {
+      "from": "inflight",
+      "to": "read_once",
+      "label": "到期块去重"
+    },
+    {
+      "from": "read_once",
+      "to": "result_map",
+      "label": "原始块结果",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "return-left"
+    },
+    {
+      "from": "result_map",
+      "to": "unpack"
+    },
+    {
+      "from": "unpack",
+      "to": "contract",
+      "label": "偏移恢复"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "协议约束",
+      "items": [
+        "仅合并协议、区域、DB 与数据类型兼容的地址区间",
+        "S7 DB 间隙不超过 64 B，合并跨度不超过 8192 B",
+        "GE 遵守载荷上限以及字寄存器、离散位的对齐规则"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "请求收敛",
+      "items": [
+        "V 个点位规划为 B 个读取块，满足 B ≤ V",
+        "同一轮到期任务的重复块按地址去重，并取较大读取长度",
+        "指标记录节省块数与合并效果，本文不虚构未归档的收益比例"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "语义恢复",
+      "items": [
+        "result_map 保存点位到块地址、字节或位偏移及类型的映射",
+        "块缓冲区只构造一次，再逐点解包，避免重复复制",
+        "解码结果统一为带时间与质量的 DataPoint 和版本化信封"
+      ]
+    }
+  ]
+}

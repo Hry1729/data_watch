@@ -1,0 +1,429 @@
+{
+  "deck_name": "Data Watch麦肯锡风汇报",
+  "language": "Chinese",
+  "goal": "面向公司领导与同事，用12页高管汇报解释Data Watch的建设背景、平台架构、四项创新、落地成效和下一步路线。",
+  "deck_context": {
+    "source_summary": "Data Watch是面向自动化码头的工业设备数据采集与监控平台。它把S7、GE SRTP、OPC UA、OPC DA等现场数据转换为统一数据流，支持中心式和分布式边缘部署，通过Redis承载实时态、TDengine保存时序历史、MySQL保存配置与权限，并通过Web、桌面App和CLI向业务用户、运维人员、脚本及AI Agent提供受控访问。",
+    "core_claim": "先让分散的设备数据完整、持续、可信地流动，才可能实现真正的人机协同与智能运维。",
+    "canonical_terms": [
+      "Data Watch",
+      "Collector",
+      "Edge Storage",
+      "SQLite outbox",
+      "Uploader",
+      "Ingest",
+      "Redis",
+      "Writer",
+      "TDengine",
+      "MySQL",
+      "Backend",
+      "Web",
+      "App",
+      "CLI",
+      "AI Agent",
+      "Good / Uncertain / Bad"
+    ],
+    "content_principle": "视觉优先，不把讲稿搬上页面。每页以一个图表、路径、架构、矩阵或核心隐喻承载逻辑，文字只做短标签和结论。不得虚构数据。"
+  },
+  "selected_image_backend": "built-in image tool",
+  "max_concurrent_slides": 3,
+  "sample_generation_method": {
+    "backend_used": "built-in image tool",
+    "tool_name": "image_gen",
+    "mode": "generate",
+    "prompt_source": "outline Slide 2 plus user-directed visual refinements; approved sample finalized through built-in image edit",
+    "size": "16:9 landscape; approved output 1672x941",
+    "quality": "built-in default",
+    "model_config": "built-in default",
+    "approved_sample_path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+    "input_context_preparation": "Approved sample is available at the absolute workspace path and visible in the inherited conversation image context; use it as style reference only.",
+    "handoff_rule": "Use built-in image_gen in generate mode for one slide. Match the approved sample's palette, typography, line language, whitespace and density; vary composition by slide role. Return a blocker if image_gen is unavailable."
+  },
+  "style": {
+    "name": "麦肯锡风格（样张适配版）",
+    "visual_direction": "Premium strategy-consulting editorial slide design inspired by McKinsey/BCG/Bain rational clarity but not an official template. White or very pale cool-gray canvas, sharp Swiss grid, large whitespace, one dominant analytical mechanism, precise hairlines and restrained report metadata.",
+    "color_palette": "White, off-white and very pale cool gray; ink blue-gray #243447 for text and structure; restrained steel-blue accent for one destination, key number or causal arrow; near-black for primary titles. No orange, neon, rainbow or large dark blocks.",
+    "typography": "Modern highly legible Chinese sans-serif; bold but controlled main title aligned to a slim blue vertical rule; concise labels; compact English metadata; accurate Chinese characters; no long paragraphs.",
+    "texture_and_finish": "Clean executive report with faint grid and subtle paper texture, vector-like diagrams, precise spacing and quiet shadows.",
+    "deck_consistency": "Match the approved Slide 2 palette, typography mood, density, line weight, target markers and whitespace. Keep one coherent visual identity but vary layout and metaphor by page role.",
+    "content_density": "Cover, key-message and conclusion slides are low density. Architecture, comparison and evidence slides are medium density. Never use generic rounded-card grids or text-heavy bullet pages.",
+    "universal_avoid": "No real McKinsey logo, client logo, watermark, stock photography, clip art, people icons, robot avatars, decorative gradients, page numbers, invented statistics or unrelated labels."
+  },
+  "approved_style_reference": {
+    "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+    "role": "approved sample slide style reference",
+    "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+  },
+  "slides": [
+    {
+      "number": 1,
+      "title": "Data Watch：设备数据采集与监控平台",
+      "role": "cover",
+      "intent": "以低密度、强主张的封面建立项目定位和可信数据主题。",
+      "key_points": [
+        "让分散的设备数据完整、持续、可信地流动",
+        "胡若愚｜尚东分公司工程技术部"
+      ],
+      "speaker_focus": "先说明项目不是单一监控界面，而是一条可信的设备数据基础设施。",
+      "local_context": {
+        "required_background": "封面只呈现项目名称、核心主张和汇报人，不介绍功能细节。"
+      },
+      "layout": {
+        "composition": "顶部左侧小型完整标题系统；中央以巨大的半镂空 DATA FLOW / 数据流结构为视觉核心；离散节点从四周汇入一条向右延伸的数据主轴；底部或侧边放汇报人。",
+        "content_zones": "title 20%, hero visual 65%, presenter 15%",
+        "relationship_to_previous_slide": "opening",
+        "spacing": "强留白、非居中模板式构图、精准对齐"
+      },
+      "visual_elements": {
+        "main_visual": "离散设备节点汇聚为稳定数据流的单一隐喻，融合到 DATA FLOW 字体骨架中",
+        "supporting_elements": "细线、节点、坐标刻度、小型标签 TRUST / CONTINUITY / FLOW"
+      },
+      "constraints": [
+        "只保留项目名、核心主张和汇报人三层信息",
+        "不使用真实公司Logo或麦肯锡Logo",
+        "不出现功能清单或卡片"
+      ]
+    },
+    {
+      "number": 2,
+      "title": "吞吐量增长正在抬高设备稳定性要求",
+      "role": "context",
+      "intent": "用趋势图与升级阶梯展示业务增长推动运维升级的因果关系。",
+      "key_points": [
+        "集装箱吞吐量持续增长",
+        "设备稳定性要求同步提升",
+        "传统运维 → 主动运维 → 智能运维",
+        "完整、连续、可靠的数据，是智能运维的基础"
+      ],
+      "local_context": {
+        "required_background": "已批准样张，必须直接复用现有origin_image/slide_02.png，不再生成。趋势图为定性表达，不代表具体年份或数值。"
+      },
+      "layout": {
+        "composition": "左侧集装箱堆叠与加速曲线，中部因果箭头，右侧三段运维升级阶梯",
+        "content_zones": "title, qualitative trend chart, causal connector, upgrade staircase, takeaway",
+        "relationship_to_previous_slide": "new analytical layout"
+      },
+      "visual_elements": {
+        "main_visual": "集装箱堆叠增长曲线连接运维升级阶梯",
+        "supporting_elements": "目标标记、细轴线、底部结论"
+      },
+      "constraints": [
+        "不得虚构年份、吞吐量数值或百分比",
+        "保持当前已批准样张不变"
+      ],
+      "sample_approved": true
+    },
+    {
+      "number": 3,
+      "title": "多协议、多系统、多口径，让一次故障分析变得低效",
+      "role": "problem framing",
+      "intent": "用断裂链路展示协议异构、数据孤岛与人工切换造成的排障低效。",
+      "key_points": [
+        "设备种类多",
+        "通信协议杂",
+        "数据分散",
+        "多个系统反复切换"
+      ],
+      "speaker_focus": "问题不是没有数据，而是数据无法在同一条链路中被理解和使用。",
+      "local_context": {
+        "required_background": "协议示例仅使用S7、GE SRTP、OPC UA、OPC DA；不要添加项目没有的协议。"
+      },
+      "layout": {
+        "composition": "左侧四个异构协议入口形成断裂、错位的数据碎片；中部是一条被多次打断的排障路径；右侧技术人员只用抽象定位光标或分析节点表示，不画人物图标；底部一句结论。",
+        "content_zones": "title 18%, fragmentation visual 62%, conclusion 20%",
+        "relationship_to_previous_slide": "new problem layout",
+        "spacing": "非卡片式，使用断裂轴线和大留白"
+      },
+      "visual_elements": {
+        "main_visual": "断裂的数据链路 / fault line",
+        "supporting_elements": "S7、GE SRTP、OPC UA、OPC DA短标签，多个系统窗口的线框轮廓，反复折返箭头"
+      },
+      "constraints": [
+        "页面以断裂路径为主视觉，不做四张说明卡",
+        "底部结论使用“问题不在没有数据，而在数据无法统一流动”",
+        "不使用人物、握手或警告图标"
+      ]
+    },
+    {
+      "number": 4,
+      "title": "Data Watch 建立统一的数据流动与存储入口",
+      "role": "solution",
+      "intent": "用一条可视化数据通道解释平台如何把分散输入变成统一可用的数据流。",
+      "key_points": [
+        "采集",
+        "传输",
+        "监控",
+        "存储",
+        "统一数据流"
+      ],
+      "speaker_focus": "Data Watch把多个系统间的人工拼接，变成平台化、连续的数据通道。",
+      "local_context": {
+        "required_background": "本页只解释平台价值，不展开第5页的完整技术架构。"
+      },
+      "layout": {
+        "composition": "左侧不同设备与协议的细线输入，经中央DATA WATCH统一通道收束，右侧分为实时监控、历史存储和上层应用三种输出；四个能力词沿主通道顺序标注。",
+        "content_zones": "title 18%, input 22%, unified channel 38%, output 22%",
+        "relationship_to_previous_slide": "mirror from fragmentation to convergence",
+        "spacing": "清晰从左到右阅读，避免卡片网格"
+      },
+      "visual_elements": {
+        "main_visual": "多源输入汇入单一数据通道",
+        "supporting_elements": "细箭头、统一格式数据块、实时 / 历史 / 应用标签"
+      },
+      "constraints": [
+        "突出解决方案而不是技术细节",
+        "Data Watch文字必须准确",
+        "不添加未在大纲出现的功能"
+      ]
+    },
+    {
+      "number": 5,
+      "title": "两条部署路径，共用一套数据契约",
+      "role": "architecture",
+      "intent": "展示中心式与分布式两条数据路径，以及Redis、TDengine、MySQL和应用端的职责。",
+      "key_points": [
+        "中心式：PLC / OPC → Collector → Redis → Writer → TDengine",
+        "分布式：PLC / OPC → Collector → Edge Storage → SQLite outbox → Uploader → Ingest → Redis",
+        "Backend → Web / App / CLI",
+        "MySQL：配置、权限、拓扑"
+      ],
+      "speaker_focus": "两条路径的差别在部署与交接位置，不在数据格式和质量语义。",
+      "local_context": {
+        "required_background": "Redis承担实时latest/window/stream/DLQ；Writer消费Stream并写TDengine；MySQL保存配置、权限、拓扑；CLI只经Backend访问。"
+      },
+      "layout": {
+        "composition": "上半区为较短的中心式路径，下半区为带Edge Storage和SQLite outbox的分布式路径；两条路径在Redis处汇聚；右侧垂直分出Writer→TDengine和Backend→Web/App/CLI；MySQL作为控制面从下方连接Collector与Backend；一条细线“统一数据契约”贯穿两条路径。",
+        "content_zones": "title 15%, dual paths 55%, storage/application split 25%, implication 5%",
+        "relationship_to_previous_slide": "deeper architecture view",
+        "spacing": "中密度，模块不超过6个主视觉组，保证中文和英文模块名可读"
+      },
+      "visual_elements": {
+        "main_visual": "上下双路径在Redis汇聚的系统架构",
+        "supporting_elements": "中心式 / 分布式标签，统一数据契约主轴，数据库圆柱线框，Web / App / CLI终端标签"
+      },
+      "constraints": [
+        "模块名与箭头方向必须准确",
+        "不使用Docker或云平台图标",
+        "不把MySQL画成时序数据存储"
+      ]
+    },
+    {
+      "number": 6,
+      "title": "统一数据契约，屏蔽底层设备与协议差异",
+      "role": "concept",
+      "intent": "把统一数据契约表现为一道转换边界：多种协议进入后变为同构数据单元。",
+      "key_points": [
+        "S7 / GE SRTP / OPC",
+        "设备编号 / 点位标识 / 数值 / 时间 / 数据质量",
+        "Good / Uncertain / Bad",
+        "上层应用无需适配底层协议"
+      ],
+      "speaker_focus": "统一契约不仅统一字段，也让数据质量从采集一直传递到展示和查询。",
+      "local_context": {
+        "required_background": "统一记录包含设备编号、点位标识、数值、时间、数据质量；质量码为Good、Uncertain、Bad。"
+      },
+      "layout": {
+        "composition": "左侧三类异构协议波形或数据块，穿过中央巨大的半透明CONTRACT边界后，右侧变为整齐同构的数据单元；质量码以三层细线标签贯穿输出；右下角一句业务含义。",
+        "content_zones": "title 17%, heterogeneous inputs 22%, contract boundary 25%, unified outputs 28%, takeaway 8%",
+        "relationship_to_previous_slide": "zoom into the shared contract",
+        "spacing": "中密度、一个核心转换机制、无卡片堆叠"
+      },
+      "visual_elements": {
+        "main_visual": "协议复杂性穿越CONTRACT边界后被标准化",
+        "supporting_elements": "字段标签、质量码轨迹、上层应用单一接口"
+      },
+      "constraints": [
+        "字段与质量码必须准确",
+        "不使用红黄绿交通灯颜色，保持冷灰蓝体系",
+        "不发明额外字段"
+      ]
+    },
+    {
+      "number": 7,
+      "title": "模块化与可插拔驱动，把故障控制在局部",
+      "role": "framework",
+      "intent": "用隔离舱与驱动总线解释低耦合、故障隔离和协议扩展。",
+      "key_points": [
+        "模块职责独立",
+        "单点异常不扩散",
+        "驱动可插拔",
+        "接口与运行过程统一管理"
+      ],
+      "speaker_focus": "模块化不是为了代码好看，而是为了让现场故障可隔离、升级可控制。",
+      "local_context": {
+        "required_background": "关键模块包括Collector、Storage、Uploader、Ingest、Writer、Backend；OPC DA通过独立sidecar / proxy隔离COM与DCOM依赖。"
+      },
+      "layout": {
+        "composition": "中央为一条驱动总线，S7 / GE SRTP / OPC UA / OPC DA驱动以可拔插接口连接；上方或右侧为Collector、Storage、Uploader、Ingest、Writer、Backend组成的隔离舱链路；其中一个舱出现细微故障裂纹但被边界阻断。",
+        "content_zones": "title 17%, driver bus 30%, modular isolation chain 45%, conclusion 8%",
+        "relationship_to_previous_slide": "new modular architecture layout",
+        "spacing": "工程感细线结构，避免通用流程图模板"
+      },
+      "visual_elements": {
+        "main_visual": "可插拔驱动总线 + 故障隔离舱",
+        "supporting_elements": "接口节点、隔离边界、统一管理细标签"
+      },
+      "constraints": [
+        "模块与协议名称必须准确",
+        "明确显示故障被限制在单一模块",
+        "不使用拼图、积木或卡通插画"
+      ]
+    },
+    {
+      "number": 8,
+      "title": "集中式与分布式部署，适配不同现场条件",
+      "role": "comparison",
+      "intent": "用选择矩阵与两条简化路径说明两种部署形态的适用条件。",
+      "key_points": [
+        "中心式：设备较少 / 网络稳定",
+        "分布式：设备多 / 跨区域 / 网络波动",
+        "SQLite outbox：边缘持久化",
+        "部署方式可变，数据契约不变"
+      ],
+      "speaker_focus": "选择依据是设备规模和网络条件；无论选择哪条路径，数据格式、质量标识和处理规则保持一致。",
+      "local_context": {
+        "required_background": "中心式直接进入Redis；分布式先由Edge Storage写SQLite outbox，再由Uploader经Ingest汇入中心Redis。"
+      },
+      "layout": {
+        "composition": "左侧为以设备规模和网络条件构成的2x2选择矩阵，标出中心式与分布式适用区域；右侧为两条极简路径对照；底部用一条贯穿横轴表示统一数据契约。",
+        "content_zones": "title 16%, matrix 42%, path comparison 34%, conclusion 8%",
+        "relationship_to_previous_slide": "new comparison layout",
+        "spacing": "矩阵为主，路径为辅，不做左右卡片"
+      },
+      "visual_elements": {
+        "main_visual": "部署选择矩阵",
+        "supporting_elements": "中心式和分布式简化路径、SQLite outbox持久化节点、统一契约横轴"
+      },
+      "constraints": [
+        "分布式路径必须包含Edge Storage、SQLite outbox、Uploader、Ingest",
+        "不把边缘节点画成云服务",
+        "结论必须为“部署方式可变，数据契约不变”"
+      ]
+    },
+    {
+      "number": 9,
+      "title": "同一受控接口，让人和 AI 在权限边界内协同",
+      "role": "governance",
+      "intent": "用权限防线和单一网关表现Web、App、CLI及AI Agent的受控访问。",
+      "key_points": [
+        "Web：业务用户",
+        "App：现场运维",
+        "CLI：人工 / 脚本 / AI Agent",
+        "Backend：统一认证与权限",
+        "不直连 PLC / 数据库"
+      ],
+      "speaker_focus": "AI能力建立在统一身份、权限和接口之上，而不是绕过平台直接访问现场设备。",
+      "local_context": {
+        "required_background": "Web、App、CLI均经Backend；CLI只访问Backend API，不直连PLC、Redis、TDengine或MySQL；所有入口经过统一认证与权限控制。"
+      },
+      "layout": {
+        "composition": "左侧三条访问路径Web / App / CLI汇向中央单一Backend网关；网关嵌入AUTH / RBAC权限防线；右侧是统一数据域；AI Agent作为CLI路径中的一个受控调用者；底部以细叉线明确标注不可直连PLC / 数据库。",
+        "content_zones": "title 16%, access channels 28%, governance gateway 30%, data domain 18%, boundary note 8%",
+        "relationship_to_previous_slide": "new governance layout",
+        "spacing": "强中心轴与防线隐喻，不使用人物或机器人图标"
+      },
+      "visual_elements": {
+        "main_visual": "统一权限防线 / controlled gateway",
+        "supporting_elements": "Web、App、CLI短标签，AUTH / RBAC，AI Agent受控节点，禁止直连细线标记"
+      },
+      "constraints": [
+        "CLI路径必须经过Backend",
+        "AI Agent不能画成机器人角色",
+        "不暗示AI可直接控制PLC"
+      ]
+    },
+    {
+      "number": 10,
+      "title": "单机承载 126 台设备与 4 万+点位持续采集",
+      "role": "data evidence",
+      "intent": "用三组核心数字证明平台已达到真实生产规模，并用小型能力轨迹展示可用场景。",
+      "key_points": [
+        "126 台设备",
+        "40,000+ 核心 PLC 点位",
+        "50–400 ms 采集链路延迟",
+        "实时监控 / 历史查询 / 趋势绘制 / 数据导出"
+      ],
+      "speaker_focus": "这不是实验室概念：平台已经在一台国产信创电脑上持续承载真实设备规模。",
+      "local_context": {
+        "required_background": "作者提供的现状数据为：一台国产信创电脑、126台设备、4万多个核心PLC点位、采集链路延迟50至400毫秒。不要推导额外指标。"
+      },
+      "layout": {
+        "composition": "三组巨型KPI形成从左到右的证据主轴：126、40,000+、50–400 ms；每个数字只配一个短标签；下方用一条细线时间轨迹串联实时监控、历史查询、趋势绘制、数据导出；右上角小标签PRODUCTION SCALE。",
+        "content_zones": "title 16%, KPI hero 58%, capability rail 20%, source note 6%",
+        "relationship_to_previous_slide": "new evidence layout",
+        "spacing": "大数字、强留白、绝不做仪表盘卡片墙"
+      },
+      "visual_elements": {
+        "main_visual": "三组巨型KPI证据轴",
+        "supporting_elements": "设备节点密度线、延迟范围细线、四项能力轨迹"
+      },
+      "constraints": [
+        "数字必须精确为126、40,000+、50–400 ms",
+        "不要添加增长率、可用性、节省成本等未提供指标",
+        "不使用饼图或仪表盘"
+      ]
+    },
+    {
+      "number": 11,
+      "title": "从连接更多数据，走向释放更多应用价值",
+      "role": "roadmap",
+      "intent": "用三阶段路线图展示协议覆盖、数据关联和智能应用的递进关系。",
+      "key_points": [
+        "01 更多工业协议",
+        "02 关联 TOS / ECS / RCMS",
+        "03 异常报警与分析应用",
+        "协议覆盖 → 数据关联 → 场景应用"
+      ],
+      "speaker_focus": "异常报警仍是下一步规划，不得表现为已经上线的现有能力。",
+      "local_context": {
+        "required_background": "路线图三阶段：扩展工业通信协议；增加受控数据库连接并关联TOS、ECS、RCMS；基于可信点位数据实现异常报警与分析应用。"
+      },
+      "layout": {
+        "composition": "一条从左下到右上的三阶段路线，01协议覆盖是基础层，02数据关联是连接层，03场景应用是价值层；每阶段用不同几何结构而非卡片；终点用受控窗口或目标标记表示智能应用。",
+        "content_zones": "title 17%, three-stage roadmap 65%, implication 18%",
+        "relationship_to_previous_slide": "forward-looking roadmap",
+        "spacing": "清晰递进、单一路径、未来态用虚线边界"
+      },
+      "visual_elements": {
+        "main_visual": "三阶段价值升级路径",
+        "supporting_elements": "协议节点、TOS / ECS / RCMS连接线、异常报警波形与分析目标"
+      },
+      "constraints": [
+        "明确标注“下一步”或“ROADMAP”",
+        "异常报警必须显示为未来阶段",
+        "不发明实施年份或承诺数字"
+      ]
+    },
+    {
+      "number": 12,
+      "title": "让数据先流动起来，智能运维才会真正发生",
+      "role": "summary",
+      "intent": "以低密度收束全篇：可信数据流是人和AI协同的前提。",
+      "key_points": [
+        "完整",
+        "持续",
+        "可信",
+        "DATA FIRST · TRUST BY DESIGN · HUMAN + AI"
+      ],
+      "speaker_focus": "回到项目初衷，以一句强主张结束，而不是重复功能列表。",
+      "local_context": {
+        "required_background": "结语强调分散数据汇聚、持续可信流动，以及在此基础上实现人和AI协同。"
+      },
+      "layout": {
+        "composition": "大量留白；左侧离散节点逐渐汇入中央稳定的数据流，数据流向右延伸并在终点分成HUMAN与AI两个并行受控节点；完整、持续、可信三个词沿流线作为锚点；标题占据上方。",
+        "content_zones": "title 24%, hero data-flow visual 58%, closing line 18%",
+        "relationship_to_previous_slide": "closing synthesis",
+        "spacing": "低密度、强主视觉、无功能清单"
+      },
+      "visual_elements": {
+        "main_visual": "离散数据汇聚为可信流，再连接HUMAN + AI",
+        "supporting_elements": "完整 / 持续 / 可信三个锚点，细节点与目标标记"
+      },
+      "constraints": [
+        "不出现Q&A或谢谢观看",
+        "不重复项目架构和功能",
+        "结尾必须克制、清晰、可演讲"
+      ]
+    }
+  ]
+}

@@ -109,6 +109,8 @@ class Settings:
     export_max_records: int = 200000
     realtime_ws_max_subscriptions_per_connection: int = 20
     realtime_ws_send_timeout_seconds: float = 2.0
+    realtime_ws_min_push_interval_ms: int = 100
+    realtime_ws_full_sync_interval_seconds: float = 5.0
     realtime_ws_reauth_interval_seconds: int = 30
     realtime_ws_reauth_fail_closed: int = 3
     password_worker_max_workers: int = 2
@@ -224,6 +226,12 @@ def get_settings() -> Settings:
         ),
         realtime_ws_send_timeout_seconds=float(
             read_setting("REALTIME_WS_SEND_TIMEOUT_SECONDS", 2)
+        ),
+        realtime_ws_min_push_interval_ms=int(
+            read_setting("REALTIME_WS_MIN_PUSH_INTERVAL_MS", 100)
+        ),
+        realtime_ws_full_sync_interval_seconds=float(
+            read_setting("REALTIME_WS_FULL_SYNC_INTERVAL_SECONDS", 5)
         ),
         realtime_ws_reauth_interval_seconds=int(
             read_setting("REALTIME_WS_REAUTH_INTERVAL_SECONDS", 30)

@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -56,7 +57,7 @@ _REQUIRED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "tdengine": ("host", "port", "user", "password", "database"),
     "writer": (
         "flush_interval_ms", "batch_count", "max_buffer_rows",
-        "pending_min_idle_ms", "pending_max_retry",
+        "pending_min_idle_ms",
     ),
 }
 
@@ -186,16 +187,15 @@ async def _refresh_stream_scopes_once(
     stream_scopes = await loop.run_in_executor(None, discover)
     discovered_keys = set(_stream_keys_for_scopes(stream_scopes, shard_count))
     new_keys = sorted(discovered_keys - known_stream_keys)
+    queued_counts = [0] * len(partitions)
     for stream_key in new_keys:
-        worker_index = min(range(len(partitions)), key=lambda index: len(partitions[index]))
-        consumer = consumers[worker_index]
-        # 先建组并排空已有 PEL，再把 key 放入共享 partition；run_loop 下一轮
-        # 构造 xreadgroup 参数时即可消费该新流。
-        await loop.run_in_executor(
-            None, consumer._ensure_consumer_groups, [stream_key]
+        worker_index = min(
+            range(len(partitions)),
+            key=lambda index: len(partitions[index]) + queued_counts[index],
         )
-        await consumer.drain_pending(stream_key, consumer._consumer_name)
-        partitions[worker_index].append(stream_key)
+        queued_counts[worker_index] += 1
+        consumer = consumers[worker_index]
+        consumer.queue_stream_key(stream_key)
         known_stream_keys.add(stream_key)
     return set(new_keys)
 
@@ -277,6 +277,179 @@ async def _watch_shutdown_flag(consumer_task: asyncio.Future, flag_path: Path, i
         except OSError:
             pass
         await asyncio.sleep(interval)
+
+
+async def _cancel_consumer_tasks(tasks: list[asyncio.Task]) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _read_worker_backlogs(
+    r: redis.Redis, group_name: str, partitions: list[list[str]], now_ms: int,
+) -> list[dict[str, int | None]]:
+    """Read Redis lag and PEL summaries off the event loop; unknown stays null."""
+    statuses: list[dict[str, int | None]] = []
+    for stream_keys in partitions:
+        lag_known = 0
+        lag_unknown = 0
+        pending_known = 0
+        backlog_unknown = 0
+        source_age_unknown = 0
+        oldest_stream_age: int | None = None
+        oldest_source_age: int | None = None
+        for stream_key in list(stream_keys):
+            try:
+                groups = r.xinfo_groups(stream_key)
+                group = next((item for item in groups if item.get("name") == group_name), None)
+                if group is None:
+                    lag_unknown += 1
+                    backlog_unknown += 1
+                    continue
+                pending = r.xpending(stream_key, group_name)
+            except redis.RedisError:
+                lag_unknown += 1
+                backlog_unknown += 1
+                logger.warning("Cannot read writer Redis backlog for %s", stream_key, exc_info=True)
+                continue
+            lag = group.get("lag")
+            if isinstance(lag, int):
+                lag_known += lag
+            else:
+                lag_unknown += 1
+            pending_count = int(pending.get("pending", 0))
+            pending_known += pending_count
+            oldest_id = pending.get("min")
+            if not pending_count or not oldest_id:
+                continue
+            try:
+                stream_age = max(0, now_ms - int(str(oldest_id).split("-", 1)[0]))
+                oldest_stream_age = max(oldest_stream_age or 0, stream_age)
+            except ValueError:
+                pass
+            try:
+                entries = r.xrange(stream_key, min=oldest_id, max=oldest_id, count=1)
+                source_ms = int(entries[0][1]["ts"])
+                oldest_source_age = max(oldest_source_age or 0, max(0, now_ms - source_ms))
+            except (IndexError, KeyError, TypeError, ValueError, redis.RedisError):
+                source_age_unknown += 1
+        statuses.append({
+            "lag_entries": lag_known if lag_unknown == 0 else None,
+            "lag_known_entries": lag_known,
+            "lag_unknown_streams": lag_unknown,
+            "pending_entries": pending_known if backlog_unknown == 0 else None,
+            "pending_known_entries": pending_known,
+            "backlog_unknown_streams": backlog_unknown,
+            "oldest_pending_stream_age_ms": oldest_stream_age,
+            "oldest_pending_source_age_ms": oldest_source_age,
+            "pending_source_age_unknown_streams": source_age_unknown,
+        })
+    return statuses
+
+
+async def _report_performance(
+    r: redis.Redis, group_name: str, consumers: list[StreamConsumer],
+    partitions: list[list[str]], metrics: list[WriterPerformanceMetrics],
+    previous: dict | None = None, elapsed_s: float | None = None,
+) -> dict:
+    now_ms = int(time.time() * 1000)
+    statuses = await asyncio.to_thread(
+        _read_worker_backlogs, r, group_name, partitions, now_ms
+    )
+    workers = []
+    previous_workers = {
+        worker["consumer_name"]: worker
+        for worker in previous["workers"]
+    } if previous is not None else {}
+    def rates(counters: dict[str, int], earlier: dict[str, int] | None) -> dict | None:
+        if earlier is None or elapsed_s is None or elapsed_s <= 0:
+            return None
+        return {
+            "admitted_payload_bytes_per_s": round(
+                (counters["payload_bytes_admitted"] - earlier["payload_bytes_admitted"]) / elapsed_s, 2
+            ),
+            "sql_bytes_per_s": round((counters["sql_bytes"] - earlier["sql_bytes"]) / elapsed_s, 2),
+            "committed_frames_per_s": round(
+                (counters["committed_value_rows"] - earlier["committed_value_rows"]) / elapsed_s, 2
+            ),
+            "sql_value_rows_succeeded_per_s": round(
+                (counters["sql_value_rows_succeeded"] - earlier["sql_value_rows_succeeded"]) / elapsed_s, 2
+            ),
+            "sql_quality_rows_succeeded_per_s": round(
+                (counters["sql_quality_rows_succeeded"] - earlier["sql_quality_rows_succeeded"]) / elapsed_s, 2
+            ),
+        }
+    for consumer, worker_metrics, status in zip(consumers, metrics, statuses):
+        worker_metrics.set_backlog(
+            **status,
+            oldest_buffered_source_age_ms=consumer.oldest_buffered_source_age_ms(now_ms),
+        )
+        worker = {"consumer_name": consumer._consumer_name, **worker_metrics.snapshot()}
+        earlier = previous_workers.get(consumer._consumer_name)
+        worker["rates"] = rates(worker["counters"], earlier["counters"] if earlier else None)
+        workers.append(worker)
+    counters = {
+        name: sum(worker["counters"][name] for worker in workers)
+        for name in workers[0]["counters"]
+    }
+    gauges = {
+        "buffer_rows": sum(worker["gauges"]["buffer_rows"] for worker in workers),
+        "buffer_bytes": sum(worker["gauges"]["buffer_bytes"] for worker in workers),
+    }
+    for field in (
+        "redis_lag_known_entries", "redis_lag_unknown_streams",
+        "redis_pending_known_entries", "redis_backlog_unknown_streams",
+        "pending_source_age_unknown_streams",
+    ):
+        gauges[field] = sum(worker["gauges"][field] for worker in workers)
+    for total_field in ("redis_lag_entries", "redis_pending_entries"):
+        values = [worker["gauges"][total_field] for worker in workers]
+        gauges[total_field] = sum(values) if all(value is not None for value in values) else None
+    for name in (
+        "oldest_pending_stream_age_ms", "oldest_pending_source_age_ms",
+        "oldest_buffered_source_age_ms",
+    ):
+        ages = [worker["gauges"][name] for worker in workers]
+        gauges[name] = max((age for age in ages if age is not None), default=None)
+    report = {
+        "workers": workers,
+        "aggregate": {
+            "counters": counters,
+            "gauges": gauges,
+            # Every worker shares one Python event loop, so do not sum its samples.
+            "event_loop_lag_ms": workers[0]["timings"]["event_loop_lag_ms"],
+            "rates": rates(counters, previous["aggregate"]["counters"] if previous else None),
+        },
+    }
+    logger.info("[performance-aggregate] %s", json.dumps(report, separators=(",", ":")))
+    return report
+
+
+async def _watch_performance(
+    r: redis.Redis, group_name: str, consumers: list[StreamConsumer],
+    partitions: list[list[str]], metrics: list[WriterPerformanceMetrics],
+    interval_s: float = 30.0,
+) -> None:
+    report_interval = max(1.0, float(interval_s))
+    last_report = time.monotonic()
+    previous_report: dict | None = None
+    while True:
+        due = time.monotonic() + 0.25
+        await asyncio.sleep(0.25)
+        now = time.monotonic()
+        for worker_metrics in metrics:
+            worker_metrics.record_event_loop_lag(max(0.0, (now - due) * 1000))
+        if now - last_report >= report_interval:
+            try:
+                previous_report = await _report_performance(
+                    r, group_name, consumers, partitions, metrics,
+                    previous_report, now - last_report,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Writer performance report failed", exc_info=True)
+            last_report = time.monotonic()
 
 
 async def main() -> None:
@@ -402,7 +575,7 @@ async def main() -> None:
         sys.exit(1)
 
     mappers = [MysqlMapper(connection) for connection in mapper_connections]
-    performance_metrics = WriterPerformanceMetrics()
+    performance_metrics: list[WriterPerformanceMetrics] = []
     base_consumer_name = str(rc["consumer_name"])
     consumers: list[StreamConsumer] = []
     consumer_tasks = []
@@ -412,13 +585,15 @@ async def main() -> None:
         worker_config = {**config, "redis": {**rc}}
         if len(partitions) > 1:
             worker_config["redis"]["consumer_name"] = f"{base_consumer_name}-{index}"
+        worker_metrics = WriterPerformanceMetrics()
+        performance_metrics.append(worker_metrics)
         consumer = StreamConsumer(
             worker_config,
             mapper,
             writer,
             r,
             syslog=syslog,
-            metrics=performance_metrics,
+            metrics=worker_metrics,
         )
         consumers.append(consumer)
         consumer_tasks.append(
@@ -450,15 +625,32 @@ async def main() -> None:
         ),
         name="writer-stream-scope-refresh",
     )
+    performance_task = asyncio.create_task(
+        _watch_performance(
+            r, rc["group_name"], consumers, partitions, performance_metrics,
+            wc.get("performance_report_interval_s", 30.0),
+        ),
+        name="writer-performance-monitor",
+    )
     try:
         await consumer_task
     except asyncio.CancelledError:
         logger.info("Consumer loop cancelled, shutting down")
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received, shutting down")
+    except Exception:
+        logger.exception("Writer consumer failed; exiting for service supervision")
+        syslog.emit(
+            level="ERROR",
+            log_type="storage",
+            source="writer.main",
+            content="writer consumer stopped after unexpected exception",
+            exception_stack=traceback.format_exc(),
+        )
+        raise
     finally:
         consumer_task.cancel()
-        await asyncio.gather(*consumer_tasks, return_exceptions=True)
+        await _cancel_consumer_tasks(consumer_tasks)
         watchdog_task.cancel()
         try:
             await watchdog_task
@@ -467,6 +659,11 @@ async def main() -> None:
         scope_refresh_task.cancel()
         try:
             await scope_refresh_task
+        except asyncio.CancelledError:
+            pass
+        performance_task.cancel()
+        try:
+            await performance_task
         except asyncio.CancelledError:
             pass
         syslog.emit(
@@ -478,7 +675,19 @@ async def main() -> None:
         syslog.stop()
         logger.info(
             "[performance] %s",
-            json.dumps(performance_metrics.snapshot(), separators=(",", ":")),
+            json.dumps(
+                {
+                    "workers": [
+                        {"consumer_name": consumer._consumer_name, **metric.snapshot()}
+                        for consumer, metric in zip(consumers, performance_metrics)
+                    ],
+                    "total_buffer_rows": sum(
+                        metric.snapshot()["gauges"]["buffer_rows"]
+                        for metric in performance_metrics
+                    ),
+                },
+                separators=(",", ":"),
+            ),
         )
         await asyncio.gather(*(writer.close() for writer in writers), return_exceptions=True)
         for connection in mapper_connections:

@@ -1,0 +1,483 @@
+{
+  "run_status": "slides_recorded",
+  "deck_name": "Data Watch麦肯锡风汇报",
+  "selected_backend": "built-in image tool",
+  "sample_generation_method": {
+    "backend_used": "built-in image tool",
+    "tool_name": "image_gen",
+    "mode": "generate",
+    "prompt_source": "outline Slide 2 plus user-directed visual refinements; approved sample finalized through built-in image edit",
+    "size": "16:9 landscape; approved output 1672x941",
+    "quality": "built-in default",
+    "model_config": "built-in default",
+    "approved_sample_path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+    "input_context_preparation": "Approved sample is available at the absolute workspace path and visible in the inherited conversation image context; use it as style reference only.",
+    "handoff_rule": "Use built-in image_gen in generate mode for one slide. Match the approved sample's palette, typography, line language, whitespace and density; vary composition by slide role. Return a blocker if image_gen is unavailable."
+  },
+  "max_concurrent_slides": 3,
+  "slides": [
+    {
+      "slide_id": "slide_01",
+      "number": 1,
+      "title": "Data Watch：设备数据采集与监控平台",
+      "job": "prompts/slide_01.json",
+      "out": "origin_image/slide_01.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_01",
+        "agent_nickname": "slide_01",
+        "prompt": "prompts/slide_01.json",
+        "prompt_sha256": "6418ab2f1d8621d0cc028a19659f8bee99fee89c7dab639ae59d737a1c88f753",
+        "dispatched_at": "2026-08-30T08:51:41Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_01",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051dd-cfcd-70c2-beb8-88ffdb0a38fd\\exec-e817135c-4425-4898-8684-097d7ffe9859.png",
+        "selected_source_sha256": "6e42ca0a95cb7d5ffbeaf0be70e21b6ae9bd84778f24b62c5ece3299528a203a",
+        "final_image": "origin_image/slide_01.png",
+        "final_image_sha256": "6e42ca0a95cb7d5ffbeaf0be70e21b6ae9bd84778f24b62c5ece3299528a203a",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "已核验为1672×941的16:9完整画面；生成端确认中文标题、核心主张与汇报人信息清晰完整，构图、数据流隐喻与蓝灰视觉规范一致，无截断、重叠、页码、Logo或水印。",
+        "recorded_at": "2026-08-30T08:56:00Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_02",
+      "number": 2,
+      "title": "吞吐量增长正在抬高设备稳定性要求",
+      "job": "prompts/slide_02.json",
+      "out": "origin_image/slide_02.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "accepted",
+      "dispatch": null,
+      "result": {
+        "final_image": "origin_image/slide_02.png",
+        "accepted_sample": true
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_03",
+      "number": 3,
+      "title": "多协议、多系统、多口径，让一次故障分析变得低效",
+      "job": "prompts/slide_03.json",
+      "out": "origin_image/slide_03.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_03",
+        "agent_nickname": "slide_03",
+        "prompt": "prompts/slide_03.json",
+        "prompt_sha256": "a4de573a5d6d8a4af851ee5797f31d6cb13a7a21cf9271a73179b1196b6ab1e1",
+        "dispatched_at": "2026-08-30T08:52:03Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_03",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051de-3975-74e2-93ce-a10e01edfd68\\exec-ac1cb62a-61a2-4390-9e59-1b10b0a13931.png",
+        "selected_source_sha256": "76ae9d0b98716d918eddcddd606146807d837a58a4be02edbe822c154f3e7289",
+        "final_image": "origin_image/slide_03.png",
+        "final_image_sha256": "76ae9d0b98716d918eddcddd606146807d837a58a4be02edbe822c154f3e7289",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "已核验为16:9完整画面；生成端确认标题、四项要点、协议标签和底部结论准确清晰，断裂链路逻辑明确，无截断、重叠、水印或页码。",
+        "recorded_at": "2026-08-30T08:56:17Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_04",
+      "number": 4,
+      "title": "Data Watch 建立统一的数据流动与存储入口",
+      "job": "prompts/slide_04.json",
+      "out": "origin_image/slide_04.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_04",
+        "agent_nickname": "slide_04",
+        "prompt": "prompts/slide_04.json",
+        "prompt_sha256": "aa84c8149b47a0240bed01e3e9323b58e2309366c8464771674d5da0b29dead5",
+        "dispatched_at": "2026-08-30T08:53:50Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_04",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051de-9730-7601-bf0d-4625a5528c69\\exec-f72bf103-6c1d-4296-af23-9999baeb15b3.png",
+        "selected_source_sha256": "f482cdac0af26836cd6bed44b7afa050b3c140941fa1550cf328b001b31bb774",
+        "final_image": "origin_image/slide_04.png",
+        "final_image_sha256": "f482cdac0af26836cd6bed44b7afa050b3c140941fa1550cf328b001b31bb774",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "已核验为16:9完整画面；生成端确认中文准确清晰，数据汇聚与三类输出逻辑完整，无截断、重叠、水印或额外功能。",
+        "recorded_at": "2026-08-30T08:56:17Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_05",
+      "number": 5,
+      "title": "两条部署路径，共用一套数据契约",
+      "job": "prompts/slide_05.json",
+      "out": "origin_image/slide_05.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_05",
+        "agent_nickname": "slide_05",
+        "prompt": "prompts/slide_05.json",
+        "prompt_sha256": "394622f0eaba8acabd55053460543c13dfb945c4918724f7c27282d2229aaea5",
+        "dispatched_at": "2026-08-30T08:56:52Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_05",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e2-9905-7612-8d15-5717351722b0\\exec-fa79562c-ce6d-4c7f-83ca-9c3e333e856c.png",
+        "selected_source_sha256": "c04c8a68c41c4eef4fa7d5113b5166932a6ed181205b771024f34307e4f6538d",
+        "final_image": "origin_image/slide_05.png",
+        "final_image_sha256": "c04c8a68c41c4eef4fa7d5113b5166932a6ed181205b771024f34307e4f6538d",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；两路在单一Redis准确汇聚，MySQL仅作为控制面连接Collector与Backend，文字清晰且无截断、重叠或水印。",
+        "recorded_at": "2026-08-30T09:01:34Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_06",
+      "number": 6,
+      "title": "统一数据契约，屏蔽底层设备与协议差异",
+      "job": "prompts/slide_06.json",
+      "out": "origin_image/slide_06.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_06",
+        "agent_nickname": "slide_06",
+        "prompt": "prompts/slide_06.json",
+        "prompt_sha256": "c4e334addcdba495ef043459ec190f3889ebc81705f5f896e40e5e1465db2bdf",
+        "dispatched_at": "2026-08-30T08:57:10Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_06",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e2-e7f4-76f1-99ca-ceb735053c93\\exec-5d93c768-d880-4227-a4d3-80cc1c802773.png",
+        "selected_source_sha256": "b2e904632f5c2c74ebb2503cb2c57fa8ef9790fc53c65b447b9db95591a6f54f",
+        "final_image": "origin_image/slide_06.png",
+        "final_image_sha256": "b2e904632f5c2c74ebb2503cb2c57fa8ef9790fc53c65b447b9db95591a6f54f",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；中英文文字准确清晰，无截断、重叠、水印或多余字段，配色与批准样张规范一致。",
+        "recorded_at": "2026-08-30T08:59:14Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_07",
+      "number": 7,
+      "title": "模块化与可插拔驱动，把故障控制在局部",
+      "job": "prompts/slide_07.json",
+      "out": "origin_image/slide_07.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_07",
+        "agent_nickname": "slide_07",
+        "prompt": "prompts/slide_07.json",
+        "prompt_sha256": "cb69fbd0a90d43141bbe11e7eb89ff00f41df406204499bf365fe7ca1e2ff960",
+        "dispatched_at": "2026-08-30T08:57:30Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_07",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e2-9905-7612-8d15-5717351722b0\\exec-549210a1-349c-432d-88ca-8a88eae2dcba.png",
+        "selected_source_sha256": "ed162d32dd11ba233e2a13f61e3c9477e36142cfd49242acf17a6042dd392ac0",
+        "final_image": "origin_image/slide_07.png",
+        "final_image_sha256": "ed162d32dd11ba233e2a13f61e3c9477e36142cfd49242acf17a6042dd392ac0",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；标题与模块标签清晰，无截断、重叠或水印，故障被明确限制在Uploader隔离舱内。",
+        "recorded_at": "2026-08-30T08:59:53Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_08",
+      "number": 8,
+      "title": "集中式与分布式部署，适配不同现场条件",
+      "job": "prompts/slide_08.json",
+      "out": "origin_image/slide_08.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_08",
+        "agent_nickname": "slide_08",
+        "prompt": "prompts/slide_08.json",
+        "prompt_sha256": "b445988adc7f189dd5473ccf94b36833d7f454e8b4dc41b1dea4987ec61418d5",
+        "dispatched_at": "2026-08-30T09:02:00Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_08",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e7-4ef0-7d10-8ab5-f576e8a89fcc\\exec-36525c55-27e5-4fc4-9bfb-995a0171d497.png",
+        "selected_source_sha256": "7ba53368b4f5f17e157b2619315471f7c71f1100b38177a430114a9a44d70bed",
+        "final_image": "origin_image/slide_08.png",
+        "final_image_sha256": "7ba53368b4f5f17e157b2619315471f7c71f1100b38177a430114a9a44d70bed",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；矩阵逻辑与两条路径准确，SQLite outbox和边缘持久化突出，中文无乱码、截断、重叠、Logo、页码或水印。",
+        "recorded_at": "2026-08-30T09:03:48Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_09",
+      "number": 9,
+      "title": "同一受控接口，让人和 AI 在权限边界内协同",
+      "job": "prompts/slide_09.json",
+      "out": "origin_image/slide_09.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_09",
+        "agent_nickname": "slide_09",
+        "prompt": "prompts/slide_09.json",
+        "prompt_sha256": "26c1b474946bde36c1de821129ea55f6fb65990058b430c93f68137696ac3646",
+        "dispatched_at": "2026-08-30T09:02:20Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_09",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e7-9d75-72f3-88e3-dfa1fd90bb22\\exec-bbed41a8-b0f0-4e4d-a434-63dc9639a790.png",
+        "selected_source_sha256": "80596b698f686ddd656236ae206ab542d3f5ad8874082d47efda07e30d61a0a7",
+        "final_image": "origin_image/slide_09.png",
+        "final_image_sha256": "80596b698f686ddd656236ae206ab542d3f5ad8874082d47efda07e30d61a0a7",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；三类访问路径均经过Backend，AI Agent仅位于CLI受控路径，底部明确禁止直连PLC/数据库，中文准确，无截断、重叠、Logo、水印或页码。",
+        "recorded_at": "2026-08-30T09:04:29Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_10",
+      "number": 10,
+      "title": "单机承载 126 台设备与 4 万+点位持续采集",
+      "job": "prompts/slide_10.json",
+      "out": "origin_image/slide_10.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_10",
+        "agent_nickname": "slide_10",
+        "prompt": "prompts/slide_10.json",
+        "prompt_sha256": "9dd8f472a8fa1cd87514d7c4b021f4d2b9f7f7592871ab1f99acffdce34f57ea",
+        "dispatched_at": "2026-08-30T09:02:38Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_10",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051e7-e8ff-79f0-807a-71ac6bb27ae1\\exec-79b35032-bf43-4d65-be57-51b87abec96a.png",
+        "selected_source_sha256": "64496e0886cfe139312e2466025e99cbf224c35d46a9c6047066abd5c4e855d5",
+        "final_image": "origin_image/slide_10.png",
+        "final_image_sha256": "64496e0886cfe139312e2466025e99cbf224c35d46a9c6047066abd5c4e855d5",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；数字和中文准确清晰，三组KPI主轴与底部能力轨迹完整，无截断、重叠、Logo、水印或额外指标。",
+        "recorded_at": "2026-08-30T09:04:45Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_11",
+      "number": 11,
+      "title": "从连接更多数据，走向释放更多应用价值",
+      "job": "prompts/slide_11.json",
+      "out": "origin_image/slide_11.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_11",
+        "agent_nickname": "slide_11",
+        "prompt": "prompts/slide_11.json",
+        "prompt_sha256": "f6b985a68dd31815dcbb1065435f6ef54185eccca06a7c402a4d94e15caf921e",
+        "dispatched_at": "2026-08-30T09:05:04Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_11",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051ea-24b0-7f62-b0f1-effcfc4b13a3\\exec-9d050637-6c15-4b51-a6c3-c7bd2e02a6fb.png",
+        "selected_source_sha256": "4165600485f112bc2d97da190226f1d6da3961cf120fc07e48f24bd81d306690",
+        "final_image": "origin_image/slide_11.png",
+        "final_image_sha256": "4165600485f112bc2d97da190226f1d6da3961cf120fc07e48f24bd81d306690",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；中文清晰无截断重叠，三阶段路径层级明确，第03阶段以虚线边界和未来态标识为规划能力。",
+        "recorded_at": "2026-08-30T09:07:12Z"
+      },
+      "blocker": null
+    },
+    {
+      "slide_id": "slide_12",
+      "number": 12,
+      "title": "让数据先流动起来，智能运维才会真正发生",
+      "job": "prompts/slide_12.json",
+      "out": "origin_image/slide_12.png",
+      "input_images": [
+        {
+          "path": "D:/python/device_alarm/data_watch/docs/ppt/Data Watch麦肯锡风汇报/origin_image/slide_02.png",
+          "role": "approved sample slide style reference",
+          "fidelity": "Match palette, typography mood, density, line language, whitespace and executive-report polish only; do not copy its exact layout or content."
+        }
+      ],
+      "requires_context_images": true,
+      "status": "recorded",
+      "dispatch": {
+        "agent_id": "/root/slide_12",
+        "agent_nickname": "slide_12",
+        "prompt": "prompts/slide_12.json",
+        "prompt_sha256": "b1e1dc2b5e6ad43623983539dba9fa6f513230b3dcb99c9df490e061fe6cb098",
+        "dispatched_at": "2026-08-30T09:05:28Z"
+      },
+      "result": {
+        "agent_id": "/root/slide_12",
+        "backend_used": "built-in image tool",
+        "selected_source": "C:\\Users\\myrh\\.codex\\generated_images\\01a051ea-6da0-7872-b8b9-18f4b2032364\\exec-6bc2b7eb-679d-4d01-b547-245622827e9d.png",
+        "selected_source_sha256": "e202c13b8fa5c76f07d5d7c87c37d427854d90ab4ab5a51a8988108f6fd75178",
+        "final_image": "origin_image/slide_12.png",
+        "final_image_sha256": "e202c13b8fa5c76f07d5d7c87c37d427854d90ab4ab5a51a8988108f6fd75178",
+        "expected_backend": "built-in image tool",
+        "expected_backend_labels": [
+          "built-in image tool",
+          "image_gen"
+        ],
+        "sample_generation_method_matched": true,
+        "qa_note": "1672×941，16:9；中文与英文准确清晰，留白充足，节点汇聚与HUMAN/AI分流逻辑明确，无截断、重叠、页码、Logo或水印。",
+        "recorded_at": "2026-08-30T09:07:44Z"
+      },
+      "blocker": null
+    }
+  ],
+  "updated_at": "2026-08-30T09:07:44Z"
+}

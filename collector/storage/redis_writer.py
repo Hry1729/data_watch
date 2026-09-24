@@ -68,6 +68,13 @@ class RedisWriter:
             self.r.hset(key, mapping=mapping)
         finally:
             self._metrics.record_timing("redis_io_ms", (self._clock() - started) * 1000)
+        if fields:
+            try:
+                self.r.publish("rt:change", msgspec.json.encode({
+                    "device_code": device_code, "group_code": group_code,
+                }))
+            except Exception:
+                logger.warning("[redis] latest change notification failed for %s", key, exc_info=True)
         # 不设 TTL，由设备管理操作显式清理
 
     def write_window(

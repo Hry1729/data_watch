@@ -35,8 +35,11 @@ database = "device_watch"
 flush_interval_ms = 500
 batch_count = 200
 max_buffer_rows = 2000
+max_buffer_bytes = 33554432
 pending_min_idle_ms = 30000
-pending_max_retry = 5
+pending_drain_interval_s = 5
+pending_cycle_budget_ms = 100
+performance_report_interval_s = 30  # per-worker and aggregate backlog/lag/PEL metrics
 scope_refresh_interval_s = 60  # 运行期发现新增 device_type/group_code；<=0 按 1 秒限幅
 # 每个 rt:dlq:{device_type}:{group_code} 的保留上限；0 表示不裁剪（默认，无损）。
 # 配置正数会在超限时淘汰最旧死信，必须由部署方显式接受该数据损失策略。

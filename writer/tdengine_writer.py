@@ -21,6 +21,7 @@ Row dict schema:
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import math
 import time
@@ -38,6 +39,7 @@ from quality_schema import (
 )
 
 logger = logging.getLogger("writer.tdengine")
+_BUILD_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="writer-sql")
 
 
 def _quote(name: str) -> str:
@@ -62,6 +64,9 @@ MAX_SQL_BYTES = 3 * 1024 * 1024
 LANDED = "landed"
 BAD_DATA = "bad_data"
 RETRY = "retry"
+
+class SchemaNotReadyError(RuntimeError):
+    pass
 
 # 明确的"坏数据 / SQL"错误才二分，且只认 TDengine 的具体错误码：解析期坏值整条
 # 拒绝(0x0216)、运行期逐行错如越界 ts(0x060b)、SQL 过长(0x0219)。**故意不匹配
@@ -118,6 +123,18 @@ class TDengineWriter:
         # 节流：重连成功/失败在持续抖动下都可能每批触发，各自 ≥60s 限流
         self._last_reconnect_ok_log: float | None = None
         self._last_reconnect_fail_log: float | None = None
+        self._last_build_ms = 0.0
+        self._last_build_wait_ms = 0.0
+        self._last_execute_ms = 0.0
+        self._last_sql_bytes = 0
+        self._last_sql_statement_bytes: list[int] = []
+        self._last_sql_value_rows_attempted = 0
+        self._last_sql_quality_rows_attempted = 0
+        self._last_sql_value_rows_succeeded = 0
+        self._last_sql_quality_rows_succeeded = 0
+        self._last_bisect_attempts = 0
+        self._last_local_retry_indices: set[int] = set()
+        self._last_retry_reasons: dict[int, str] = {}
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -354,8 +371,7 @@ class TDengineWriter:
 
         cached = self._col_cache.get(stable)
         if cached is None:
-            logger.error("[tdengine] stable is not ready for column checks: %s.%s", self._database, stable)
-            return
+            raise SchemaNotReadyError(f"stable is not ready: {self._database}.{stable}")
 
         missing = [col for col in columns if col.lower() not in cached]
         if not missing:
@@ -374,11 +390,7 @@ class TDengineWriter:
             if col.lower() in cached:
                 logger.info("[tdengine] column already exists after refresh: %s.%s", stable, col)
             else:
-                logger.error(
-                    "[tdengine] column still missing after ALTER failure: %s.%s",
-                    stable,
-                    col,
-                )
+                raise SchemaNotReadyError(f"column still missing: {stable}.{col}")
 
     async def _add_column(self, stable: str, col: str) -> bool:
         sql = (
@@ -525,15 +537,88 @@ class TDengineWriter:
                         cols.append(col)
                 if row.get("qualities"):
                     quality_stables.add(_quality_stable_from_value_stable(stable))
+            self._last_local_retry_indices = set()
+            self._last_retry_reasons = {}
+            unready_stables: set[str] = set()
+            unready_quality_stables: set[str] = set()
             for stable, cols in cols_by_stable.items():
-                await self._ensure_columns(stable, cols)
+                try:
+                    await self._ensure_columns(stable, cols)
+                except SchemaNotReadyError as exc:
+                    logger.error("[tdengine] value schema not ready: %s", exc)
+                    unready_stables.add(stable)
             for q_stable in quality_stables:
-                await self._ensure_quality_stable(q_stable)
+                try:
+                    await self._ensure_quality_stable(q_stable)
+                except QualitySchemaError as exc:
+                    logger.error("[tdengine] quality schema not ready: %s", exc)
+                    unready_quality_stables.add(q_stable)
+            self._last_local_retry_indices = {
+                index for index, row in enumerate(rows)
+                if row["stable"] in unready_stables
+                or (
+                    row.get("qualities")
+                    and _quality_stable_from_value_stable(row["stable"])
+                    in unready_quality_stables
+                )
+            }
 
-            results: list[tuple[list[int], str, float]] = []
-            for indices, sql in self._iter_chunks(rows):
-                results.extend(await self._write_chunk(rows, indices, sql))
-            return results
+            self._last_retry_reasons.update(
+                {index: "schema" for index in self._last_local_retry_indices}
+            )
+            self._last_build_ms = 0.0
+            self._last_build_wait_ms = 0.0
+            self._last_execute_ms = 0.0
+            self._last_sql_bytes = 0
+            self._last_sql_statement_bytes = []
+            self._last_sql_value_rows_attempted = 0
+            self._last_sql_quality_rows_attempted = 0
+            self._last_sql_value_rows_succeeded = 0
+            self._last_sql_quality_rows_succeeded = 0
+            self._last_bisect_attempts = 0
+            results: list[tuple[list[int], str, float]] = [
+                ([index], RETRY, 0.0) for index in sorted(self._last_local_retry_indices)
+            ]
+            chunks = self._iter_chunks(rows, self._last_local_retry_indices)
+            exhausted = object()
+            loop = asyncio.get_running_loop()
+            while True:
+                waiting = time.perf_counter()
+
+                def next_chunk():
+                    started = time.perf_counter()
+                    chunk = next(chunks, exhausted)
+                    return chunk, (time.perf_counter() - started) * 1000
+
+                chunk, build_ms = await loop.run_in_executor(_BUILD_EXECUTOR, next_chunk)
+                self._last_build_ms += build_ms
+                self._last_build_wait_ms += max(
+                    0.0, (time.perf_counter() - waiting) * 1000 - build_ms
+                )
+                if chunk is exhausted:
+                    break
+                indices, sql, fragments = chunk
+                if sql is None:
+                    logger.error("[tdengine] one value row exceeds SQL byte budget; retaining frame")
+                    self._last_local_retry_indices.update(indices)
+                    self._last_retry_reasons.update({i: "size" for i in indices})
+                    results.append((indices, RETRY, 0.0))
+                else:
+                    results.extend(await self._write_chunk(rows, indices, sql, fragments=fragments))
+            # A wide logical frame may require several SQL statements. Its source
+            # entry can be ACKed only after every value and quality part landed.
+            occurrences: dict[int, list[tuple[str, float]]] = {}
+            for indices, status, elapsed_ms in results:
+                for index in indices:
+                    occurrences.setdefault(index, []).append((status, elapsed_ms))
+            if all(len(parts) == 1 for parts in occurrences.values()):
+                return results
+            return [
+                ([index], LANDED if all(status == LANDED for status, _ in parts)
+                 else RETRY if len(parts) > 1 else parts[0][0],
+                 sum(elapsed for _, elapsed in parts))
+                for index, parts in sorted(occurrences.items())
+            ]
 
     async def _write_chunk(
         self,
@@ -541,6 +626,7 @@ class TDengineWriter:
         indices: list[int],
         sql: str | None = None,
         depth: int = 0,
+        fragments: list[tuple[list[int], str, int, int]] | None = None,
     ) -> list[tuple[list[int], str, float]]:
         """执行一个块；在数据错误时使用二分搜索隔离坏行。Execute one chunk; on a data error, binary-search to isolate bad rows.
 
@@ -551,29 +637,72 @@ class TDengineWriter:
         if not indices:
             return []
         if sql is None:
-            sql = self._build_chunk_sql(rows, indices)
+            loop = asyncio.get_running_loop()
+            sql = await loop.run_in_executor(
+                _BUILD_EXECUTOR, self._build_chunk_sql, rows, indices
+            )
 
+        value_rows = (
+            sum(part[2] for part in fragments)
+            if fragments is not None else len(indices)
+        )
+        quality_rows = (
+            sum(part[3] for part in fragments)
+            if fragments is not None
+            else sum(len(rows[index].get("qualities") or {}) for index in indices)
+        )
         started = time.perf_counter()
         ok, exc = await self._execute_ex(sql)
         elapsed = (time.perf_counter() - started) * 1000
+        self._last_execute_ms += elapsed
+        sql_bytes = len(sql.encode("utf-8"))
+        self._last_sql_bytes += sql_bytes
+        self._last_sql_statement_bytes.append(sql_bytes)
+        self._last_sql_value_rows_attempted += value_rows
+        self._last_sql_quality_rows_attempted += quality_rows
+        if ok:
+            self._last_sql_value_rows_succeeded += value_rows
+            self._last_sql_quality_rows_succeeded += quality_rows
+        if depth:
+            self._last_bisect_attempts += 1
 
         if ok:
             return [(indices, LANDED, elapsed)]
 
         # 连接错(含未连接 exc=None) / 未知错误 → 整块重试，绝不二分进 DLQ。
         if exc is None or _is_connection_error(exc) or not _is_data_error(exc):
+            reason = "connection" if exc is None or _is_connection_error(exc) else "unknown"
+            self._last_retry_reasons.update({i: reason for i in indices})
             return [(indices, RETRY, elapsed)]
 
         # 明确的数据 / SQL 错误：单行仍失败才判坏；否则二分隔离。
         if len(indices) == 1:
+            if exc and "0x0219" in str(exc).lower():
+                self._last_local_retry_indices.update(indices)
+                self._last_retry_reasons.update({i: "size" for i in indices})
+                return [(indices, RETRY, elapsed)]
             return [(indices, BAD_DATA, elapsed)]
         if depth >= _MAX_BISECT_DEPTH:
             logger.error(
                 "[tdengine] bisect depth limit reached (%d rows), retrying instead of DLQ",
                 len(indices),
             )
+            self._last_retry_reasons.update({i: "bisect_depth" for i in indices})
             return [(indices, RETRY, elapsed)]
 
+        if fragments and len(fragments) > 1:
+            mid = len(fragments) // 2
+            parts = (fragments[:mid], fragments[mid:])
+            outcomes = []
+            for half in parts:
+                half_indices = [i for item_indices, _, _, _ in half for i in item_indices]
+                half_sql = "INSERT INTO " + " ".join(fragment for _, fragment, _, _ in half)
+                outcomes.extend(
+                    await self._write_chunk(
+                        rows, half_indices, half_sql, depth + 1, fragments=half
+                    )
+                )
+            return outcomes
         mid = len(indices) // 2
         left = await self._write_chunk(rows, indices[:mid], None, depth + 1)
         right = await self._write_chunk(rows, indices[mid:], None, depth + 1)
@@ -640,63 +769,121 @@ class TDengineWriter:
         header = self._subtable_header(rows[idxs[0]], all_cols)
         return header + " ".join(self._value_clause(rows[i], all_cols) for i in idxs)
 
-    def _split_subtable(self, rows: list[dict], idxs: list[int], all_cols: list[str]):
-        """拆分一个子表的行，使每个片段保持在 MAX_SQL_BYTES 以下。Split one child table's rows so each fragment stays under MAX_SQL_BYTES.
+    def _iter_table_fragments(self, rows: list[dict], indices: list[int], budget: int):
+        all_cols = self._union_cols(rows, indices)
+        value_header = self._subtable_header(rows[indices[0]], all_cols)
+        value_header_bytes = len(value_header.encode("utf-8"))
+        group_indices: list[int] = []
+        values: list[str] = []
+        qualities: list[str] = []
+        quality_header = ""
+        value_bytes = value_header_bytes
+        quality_bytes = 0
 
-        Measures header + per-row clause bytes incrementally to avoid O(n^2).
-        A single row clause that alone exceeds the cap is still emitted on its own
-        (cannot be split further); TDengine would reject it, surfacing as failure.
-        """
-        header_bytes = len(self._subtable_header(rows[idxs[0]], all_cols).encode("utf-8"))
-        cur: list[int] = []
-        cur_bytes = header_bytes
-        for i in idxs:
-            clause_bytes = len(self._value_clause(rows[i], all_cols).encode("utf-8"))
-            add = clause_bytes + (1 if cur else 0)  # space separator between value clauses
-            if cur and cur_bytes + add > MAX_SQL_BYTES:
-                yield cur
-                cur = [i]
-                cur_bytes = header_bytes + clause_bytes
-            else:
-                cur.append(i)
-                cur_bytes += add
-        if cur:
-            yield cur
+        for index in indices:
+            row = rows[index]
+            value = self._value_clause(row, all_cols)
+            q_fragment = self._quality_fragment_for_rows(rows, [index])
+            q_header, q_values = "", ""
+            if q_fragment:
+                q_head, q_values = q_fragment.split(" VALUES ", 1)
+                q_header = q_head + " VALUES "
+            while True:
+                new_value_bytes = value_bytes + len(value.encode("utf-8")) + (1 if values else 0)
+                new_quality_header = quality_header or q_header
+                new_quality_bytes = quality_bytes + len(q_values.encode("utf-8")) + (
+                    1 if qualities and q_values else 0
+                )
+                total = new_value_bytes + (
+                    1 + len(new_quality_header.encode("utf-8")) + new_quality_bytes
+                    if new_quality_header else 0
+                )
+                if group_indices and total > budget:
+                    fragment = value_header + " ".join(values)
+                    if qualities:
+                        fragment += " " + quality_header + " ".join(qualities)
+                    yield group_indices, fragment, len(group_indices), sum(
+                        len(rows[i].get("qualities") or {}) for i in group_indices
+                    )
+                    group_indices, values, qualities = [], [], []
+                    quality_header = ""
+                    value_bytes, quality_bytes = value_header_bytes, 0
+                    continue
+                break
 
-    def _iter_chunks(self, rows: list[dict]):
-        """生成 (row_indices, sql) 块，每个块是一个不超过 MAX_SQL_BYTES 的多表 INSERT。"""
+            if total > budget:
+                if new_value_bytes > budget:
+                    yield [index], None, 0, 0
+                    continue
+                yield [index], value_header + value, 1, 0
+                if q_values:
+                    q_items: list[str] = []
+                    q_bytes = len(q_header.encode("utf-8"))
+                    for var_id, code in row["qualities"].items():
+                        item = f"({int(row['ts'])}, {int(var_id)}, {int(code)})"
+                        item_bytes = len(item.encode("utf-8"))
+                        if len(q_header.encode("utf-8")) + item_bytes > budget:
+                            yield [index], None, 0, 0
+                            break
+                        if q_items and q_bytes + 1 + item_bytes > budget:
+                            yield [index], q_header + " ".join(q_items), 0, len(q_items)
+                            q_items = []
+                            q_bytes = len(q_header.encode("utf-8"))
+                        q_items.append(item)
+                        q_bytes += item_bytes + (1 if len(q_items) > 1 else 0)
+                    else:
+                        if q_items:
+                            yield [index], q_header + " ".join(q_items), 0, len(q_items)
+                continue
+
+            group_indices.append(index)
+            values.append(value)
+            value_bytes = new_value_bytes
+            if q_values:
+                quality_header = new_quality_header
+                qualities.append(q_values)
+                quality_bytes = new_quality_bytes
+
+        if group_indices:
+            fragment = value_header + " ".join(values)
+            if qualities:
+                fragment += " " + quality_header + " ".join(qualities)
+            yield group_indices, fragment, len(group_indices), sum(
+                len(rows[i].get("qualities") or {}) for i in group_indices
+            )
+
+    def _iter_chunks(self, rows: list[dict], excluded: set[int] | None = None):
+        # Every emitted SQL is budgeted in UTF-8, including INSERT and separators.
         prefix = "INSERT INTO "
         prefix_bytes = len(prefix.encode("utf-8"))
-
-        # 按子表分组行索引，保留首次出现的顺序。
+        budget = MAX_SQL_BYTES - prefix_bytes
         by_table: dict[str, list[int]] = {}
-        for i, row in enumerate(rows):
-            by_table.setdefault(row["child_table"], []).append(i)
+        for index, row in enumerate(rows):
+            if excluded and index in excluded:
+                continue
+            by_table.setdefault(row["child_table"], []).append(index)
 
-        # 构建每个子表的片段（按行拆分过大的子表）；同块附带质量窄表片段。
-        fragments: list[tuple[str, list[int], int]] = []
-        for idxs in by_table.values():
-            all_cols = self._union_cols(rows, idxs)
-            for frag_idxs in self._split_subtable(rows, idxs, all_cols):
-                frag = self._subtable_fragment(rows, frag_idxs, all_cols)
-                q_frag = self._quality_fragment_for_rows(rows, frag_idxs)
-                if q_frag:
-                    frag = f"{frag} {q_frag}"
-                fragments.append((frag, frag_idxs, len(frag.encode("utf-8"))))
-
-        # 使用 Next-fit 算法将片段打包成块。
-        cur_frags: list[str] = []
-        cur_idxs: list[int] = []
-        cur_bytes = prefix_bytes
-        for frag, frag_idxs, frag_bytes in fragments:
-            sep = 1 if cur_frags else 0
-            if cur_frags and cur_bytes + sep + frag_bytes > MAX_SQL_BYTES:
-                yield cur_idxs, prefix + " ".join(cur_frags)
-                cur_frags = []
-                cur_idxs = []
-                cur_bytes = prefix_bytes
-            cur_frags.append(frag)
-            cur_idxs.extend(frag_idxs)
-            cur_bytes += (1 if len(cur_frags) > 1 else 0) + frag_bytes
-        if cur_frags:
-            yield cur_idxs, prefix + " ".join(cur_frags)
+        current: list[str] = []
+        current_indices: list[int] = []
+        current_parts: list[tuple[list[int], str, int, int]] = []
+        current_bytes = prefix_bytes
+        for indices in by_table.values():
+            for part_indices, fragment, value_rows, quality_rows in self._iter_table_fragments(
+                rows, indices, budget
+            ):
+                size = len(fragment.encode("utf-8")) if fragment is not None else 0
+                if current and (
+                    fragment is None or current_bytes + 1 + size > MAX_SQL_BYTES
+                ):
+                    yield current_indices, prefix + " ".join(current), current_parts
+                    current, current_indices, current_parts = [], [], []
+                    current_bytes = prefix_bytes
+                if fragment is None:
+                    yield part_indices, None, None
+                else:
+                    current.append(fragment)
+                    current_indices.extend(part_indices)
+                    current_parts.append((part_indices, fragment, value_rows, quality_rows))
+                    current_bytes += size + (1 if len(current) > 1 else 0)
+        if current:
+            yield current_indices, prefix + " ".join(current), current_parts

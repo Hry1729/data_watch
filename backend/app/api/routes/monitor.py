@@ -14,7 +14,7 @@ from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
 from app.services.monitor import MonitorService
 from app.services.point_resolver import PointResolverService
-from app.services.ws_push import get_ws_manager
+from app.services.ws_push import get_ws_manager, parse_subscription_point_ids
 
 
 router = APIRouter(tags=["monitor"])
@@ -267,6 +267,13 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                 if action == "subscribe" and device_code:
                     key = (device_code, group_code)
                     try:
+                        point_ids = parse_subscription_point_ids(msg.get("point_ids"))
+                    except ValueError:
+                        await websocket.send_json(
+                            {"type": "error", "message": "订阅点位格式无效", "code": 400}
+                        )
+                        continue
+                    try:
                         refreshed, can_sub = await asyncio.wait_for(evaluate_realtime_ws_access(authorization), timeout=5.0)
                         state["can_subscribe"] = can_sub
                         state["token_exp"] = int(refreshed.get("token_exp") or 0)
@@ -323,7 +330,10 @@ def register_ws_push_websocket(app: TurboAPI) -> None:
                         continue
                     if state["closed"] or not state["can_subscribe"]:
                         return
-                    await manager.subscribe(websocket, device_code, group_code)
+                    await manager.subscribe(
+                        websocket, device_code, group_code, point_ids,
+                        supports_freshness=msg.get("supports_freshness") is True,
+                    )
                     subscriptions.add(key)
                 elif action == "unsubscribe" and device_code:
                     key = (device_code, group_code)

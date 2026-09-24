@@ -1,0 +1,219 @@
+{
+  "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+  "token": "931a0a3640",
+  "device_type": "perfcol931a0a3640",
+  "redis_db": 14,
+  "redis_host": "perf-redis-profile",
+  "profile_phases": true,
+  "commandstats_before": {
+    "eval": {
+      "calls": 0,
+      "usec": 0,
+      "usec_per_call": 0
+    },
+    "evalsha": {
+      "calls": 0,
+      "usec": 0,
+      "usec_per_call": 0
+    },
+    "waitaof": {
+      "calls": 0,
+      "usec": 0,
+      "usec_per_call": 0
+    }
+  },
+  "python_gil_enabled": false,
+  "devices": 2,
+  "points_per_frame": 10,
+  "period_ms": 100,
+  "target_seconds": 1,
+  "target_frames": 20,
+  "container_cpu_limit": 2,
+  "redis_memory_guard_bytes": 419430400,
+  "outbox_path": "/tmp/collector-ft-931a0a3640.sqlite",
+  "receipt_key": "collector:receipt:v2:65cb0e51-f4fb-44cc-84dc-e2f7d7621abe",
+  "stop_reason": "duration",
+  "ticks": 10,
+  "submitted_frames": 20,
+  "production_seconds": 1.001,
+  "receive_frames_per_second": 19.99,
+  "production_confirmed_frames": 2,
+  "production_outbox": {
+    "count": 18,
+    "payload_bytes": 12528,
+    "oldest_age_ms": 901,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "drain_seconds": 1.401,
+  "replay_frames_per_second_total": 8.33,
+  "replay_frames_per_second_post_production": 12.85,
+  "confirmed_frames": 20,
+  "max_rss_bytes": 53284864,
+  "max_redis_used_memory_bytes": 1620072,
+  "commandstats_after": {
+    "eval": {
+      "calls": 20,
+      "usec": 1241,
+      "usec_per_call": 62.05
+    },
+    "evalsha": {
+      "calls": 20,
+      "usec": 1084,
+      "usec_per_call": 54.2
+    },
+    "waitaof": {
+      "calls": 3,
+      "usec": 5,
+      "usec_per_call": 1.67
+    }
+  },
+  "commandstats_delta": {
+    "eval": {
+      "calls": 20,
+      "usec": 1241
+    },
+    "evalsha": {
+      "calls": 20,
+      "usec": 1084
+    },
+    "waitaof": {
+      "calls": 3,
+      "usec": 5
+    }
+  },
+  "profile_windows": [
+    {
+      "frames": 2,
+      "bytes": 3706,
+      "pack_ms": 0.057,
+      "send_ms": 0.038,
+      "eval_response_ms": 0.482,
+      "pre_waitaof_ms": 0.578,
+      "waitaof_response_ms": 93.093,
+      "total_ms": 93.67,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 2,
+      "bytes": 3712,
+      "pack_ms": 0.042,
+      "send_ms": 0.072,
+      "eval_response_ms": 0.386,
+      "pre_waitaof_ms": 0.5,
+      "waitaof_response_ms": 1093.947,
+      "total_ms": 1094.447,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    },
+    {
+      "frames": 16,
+      "bytes": 29923,
+      "pack_ms": 0.154,
+      "send_ms": 0.072,
+      "eval_response_ms": 1.207,
+      "pre_waitaof_ms": 1.433,
+      "waitaof_response_ms": 996.566,
+      "total_ms": 997.999,
+      "waitaof_reply": [
+        1,
+        0
+      ]
+    }
+  ],
+  "timings_ms": {
+    "outbox_accept_ms": {
+      "count": 20,
+      "average_ms": 11.548,
+      "max_ms": 12.913,
+      "p50_ms": 20.0,
+      "p95_ms": 20.0,
+      "p99_ms": 20.0,
+      "p999_ms": 20.0
+    },
+    "outbox_commit_ms": {
+      "count": 10,
+      "average_ms": 6.123,
+      "max_ms": 7.492,
+      "p50_ms": 10.0,
+      "p95_ms": 10.0,
+      "p99_ms": 10.0,
+      "p999_ms": 10.0
+    },
+    "redis_aof_batch_ms": {
+      "count": 3,
+      "average_ms": 728.705,
+      "max_ms": 1094.447,
+      "p50_ms": 1000.0,
+      "p95_ms": 2000.0,
+      "p99_ms": 2000.0,
+      "p999_ms": 2000.0
+    },
+    "latest_fastlane_redis_ms": {
+      "count": 20,
+      "average_ms": 0.342,
+      "max_ms": 0.603,
+      "p50_ms": 0.5,
+      "p95_ms": 1.0,
+      "p99_ms": 1.0,
+      "p999_ms": 1.0
+    }
+  },
+  "history": {
+    "actual_frames": 20,
+    "expected_frames": 20,
+    "unique_frames": 20,
+    "duplicate_frames": 0,
+    "malformed_frames": 0,
+    "exactly_once": true
+  },
+  "latest_correct": true,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "sqlite_rows_after_close": 0,
+  "final_latest_pending": 0,
+  "correctness_passed": true,
+  "target_met": true,
+  "samples": [
+    {
+      "elapsed_s": 0.416,
+      "submitted": 10,
+      "outbox": {
+        "count": 8,
+        "payload_bytes": 5508,
+        "oldest_age_ms": 316,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 53223424,
+      "redis_used_memory_bytes": 1604472
+    },
+    {
+      "elapsed_s": 0.912,
+      "submitted": 20,
+      "outbox": {
+        "count": 18,
+        "payload_bytes": 12528,
+        "oldest_age_ms": 812,
+        "waiting_writes": 0,
+        "waiting_bytes": 0
+      },
+      "rss_bytes": 53272576,
+      "redis_used_memory_bytes": 1588176
+    }
+  ],
+  "cleanup": {
+    "redis_own_keys_remaining": 0,
+    "sqlite_removed": true
+  }
+}
