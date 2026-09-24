@@ -28,6 +28,7 @@ latest 段"的条件，本文件的断言会失败。
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import msgspec
@@ -109,6 +110,11 @@ class FakeRedis:
 
 
 def delivery_args(device, group, ts, latest_fields, values, session_id="S", seq=1):
+    """按生产 FRAME_LUA_V2 的真实调用形状构造参数：4 个 KEYS、6 个 ARGV。
+
+    历史上这里曾按 5 键布局构造（水位与 receipt 分列两个键），与生产投递不一致，
+    会让"用真实脚本执行"的验证失效。现与 durable_redis_writer.write_durable_frames 对齐。
+    """
     flat: list[str] = []
     for key, value in (("device_code", device), ("group_code", group),
                        ("scan_rate", "100"), ("ts", str(ts)),
@@ -117,8 +123,8 @@ def delivery_args(device, group, ts, latest_fields, values, session_id="S", seq=
                        ("values", json.dumps(values))):
         flat.extend((key, value))
     frame = {"ts": ts, "values": values}
-    return (5,
-            f"receipt:{session_id}", f"receipt:{session_id}", "stream", "latest", "window",
+    return (4,
+            f"collector:receipt:v2:{session_id}", "stream", "latest", "window",
             json.dumps(flat), json.dumps(latest_fields), json.dumps(frame),
             device, group, seq)
 
@@ -142,7 +148,7 @@ def simulate_history(redis: FakeRedis, args) -> bool:
     gap_field = f"g:{seq}"
     duplicate = seq <= high or state.get(gap_field) is not None
     if not duplicate:
-        redis.xadd(keys[2], fields)
+        redis.xadd(keys[1], fields)
         if seq == high + 1:
             high = seq
             state["high"] = str(high)
@@ -151,17 +157,17 @@ def simulate_history(redis: FakeRedis, args) -> bool:
             state[gap_field] = "1"
             state["gaps"] = str(gaps + 1)
 
-    recent = redis.lindex(keys[4], 0)
+    recent = redis.lindex(keys[3], 0)
     if not recent or json.loads(recent).get("ts", 0) < frame.get("ts", 0):
-        redis.lpush(keys[4], argv[2])
-        redis.ltrim(keys[4], 0, 9)
+        redis.lpush(keys[3], argv[2])
+        redis.ltrim(keys[3], 0, 9)
 
     # 生产 FRAME_LUA_V2 的 latest 段：只有逐点时间戳守卫，没有任何组级水位跳过。
     changed = False
     ids = list(incoming)
     for start in range(0, len(ids), 256):
         batch = ids[start:start + 256]
-        old_values = redis.hmget(keys[3], *batch)
+        old_values = redis.hmget(keys[2], *batch)
         for index, point_id in enumerate(batch):
             old = old_values[index]
             value = incoming[point_id]
@@ -278,6 +284,228 @@ def test_production_history_scripts_read_no_group_watermark():
         lowered = script.lower()
         for token in ("watermark", "superseded"):
             assert token not in lowered, f"{name} 不应再包含 {token!r} 跳过逻辑"
+
+
+# ----------------------------------------------------------------------
+# 真实 Lua 缺陷注入：证明这些断言确实能抓到错误的补偿逻辑
+#
+# 上面的用例用 Python 复刻脚本语义，换变量名或改从别处引入同样的错误条件时
+# 未必会红。这里把生产脚本与一份"故意写错"的变体都交给真实 Redis 执行，
+# 用同一组生产参数验证：错误变体必须丢点、生产脚本必须补齐。
+# 需要 DATAWATCH_TEST_REDIS_URL 指向一次性实例；未设置时跳过。
+# ----------------------------------------------------------------------
+
+REDIS_URL = os.environ.get("DATAWATCH_TEST_REDIS_URL")
+real_redis = pytest.mark.skipif(not REDIS_URL, reason="DATAWATCH_TEST_REDIS_URL is not set")
+
+
+@pytest.fixture
+def live_redis_client():
+    """一次性 Redis 连接；键名一律带 dw: 前缀并在用例内清理。"""
+    import redis as redis_lib
+    client = redis_lib.Redis.from_url(REDIS_URL, decode_responses=True, socket_timeout=10)
+    client.ping()
+    yield client
+    client.close()
+
+# 故意复现曾经那版优化的错误跳过条件：存在组级水位且 frame.ts <= 水位就跳过 latest。
+_DEFECTIVE_SKIP_SCRIPT = r"""
+local seq = tonumber(ARGV[6])
+local state_type = redis.call('TYPE', KEYS[1]).ok
+local high = tonumber(redis.call('HGET', KEYS[1], 'high') or '0')
+local gaps = tonumber(redis.call('HGET', KEYS[1], 'gaps') or '0')
+local gap_field = 'g:' .. ARGV[6]
+local duplicate = seq <= high or redis.call('HEXISTS', KEYS[1], gap_field) == 1
+local fields = cjson.decode(ARGV[1])
+local incoming = cjson.decode(ARGV[2])
+local frame = cjson.decode(ARGV[3])
+if not duplicate then
+    if #fields > 0 then redis.call('XADD', KEYS[2], '*', unpack(fields)) end
+    redis.call('HSET', KEYS[1], 'high', string.format('%.0f', seq))
+end
+-- 缺陷：把组级最大时间戳当成"整组已覆盖"的证明
+local superseded = false
+local watermark = tonumber(redis.call('HGET', KEYS[1], 'l:' .. ARGV[4] .. ':' .. ARGV[5]) or '0') or 0
+if watermark > 0 and tonumber(frame.ts or 0) <= watermark then superseded = true end
+if not superseded then
+    local changed = false
+    local ids = {}
+    local values = {}
+    local function flush_latest()
+        if #ids == 0 then return end
+        local old_values = redis.call('HMGET', KEYS[3], unpack(ids))
+        for i = 1, #ids do
+            local old = old_values[i]
+            local value = values[i]
+            if not old or tonumber(cjson.decode(old).t or 0) < tonumber(value.t) then
+                redis.call('HSET', KEYS[3], ids[i], cjson.encode(value))
+                changed = true
+            end
+        end
+        ids = {}
+        values = {}
+    end
+    for id, value in pairs(incoming) do
+        ids[#ids + 1] = id
+        values[#values + 1] = value
+        if #ids == 256 then flush_latest() end
+    end
+    flush_latest()
+end
+local recent = redis.call('LINDEX', KEYS[4], 0)
+if not recent or tonumber(cjson.decode(recent).ts or 0) < tonumber(frame.ts or 0) then
+    redis.call('LPUSH', KEYS[4], ARGV[3])
+    redis.call('LTRIM', KEYS[4], 0, 9)
+end
+redis.call('HINCRBY', KEYS[1], 'fence', 1)
+return duplicate and 0 or 1
+"""
+
+
+def _run_lua(live_client, script, args, keys_prefix):
+    """用真实 Redis 执行脚本；返回执行后 (latest 内容, stream 长度)。"""
+    receipt, stream, latest, window = (
+        f"{keys_prefix}:receipt", f"{keys_prefix}:stream",
+        f"{keys_prefix}:latest", f"{keys_prefix}:window")
+    live_client.delete(receipt, stream, latest, window)
+    numkeys = args[0]
+    payload = list(args[1:])
+    # 把参数里的逻辑键名替换成本次专属的真实键名
+    payload[0] = receipt
+    payload[1] = stream
+    payload[2] = latest
+    payload[3] = window
+    live_client.evalsha(live_client.script_load(script), numkeys, *payload)
+    raw = live_client.hgetall(latest)
+    values = {k: json.loads(v) for k, v in raw.items()}
+    length = live_client.xlen(stream)
+    live_client.delete(receipt, stream, latest, window)
+    return values, length
+
+
+@real_redis
+def test_defect_injection_group_watermark_actually_loses_points(live_redis_client):
+    """缺陷注入：错误跳过条件在真实 Redis 上确实会丢掉被延后的点。"""
+    ts = 1_700_000_000_000
+    latest_fields = {"A": {"v": "a", "t": ts, "q": 0}, "B": {"v": "b", "t": ts, "q": 0}}
+    # 预置组级水位 1100（同组另一批点成功推高过），A 帧 ts=1000
+    args = delivery_args("DEV", "g", ts - 100, latest_fields, {"A": "a", "B": "b"})
+    receipt = args[1]
+    live_redis_client.delete(receipt)
+    live_redis_client.hset(receipt, "l:DEV:g", str(ts))
+    numkeys = args[0]
+    payload = list(args[1:])
+    prefix = "dw:defect"
+    payload[0], payload[1], payload[2], payload[3] = (
+        receipt, f"{prefix}:stream", f"{prefix}:latest", f"{prefix}:window")
+    live_redis_client.evalsha(
+        live_redis_client.script_load(_DEFECTIVE_SKIP_SCRIPT), numkeys, *payload)
+    latest = live_redis_client.hgetall(f"{prefix}:latest")
+    stream_len = live_redis_client.xlen(f"{prefix}:stream")
+    live_redis_client.delete(receipt, f"{prefix}:stream", f"{prefix}:latest", f"{prefix}:window")
+
+    assert stream_len == 1, "缺陷脚本仍应追加历史帧（证明漏洞只在 latest 补偿）"
+    assert latest == {}, (
+        "缺陷注入必须复现'latest 被整组跳过'：若这里不再为空，"
+        "说明注入的脚本没有复现原漏洞条件，本测试就失去意义")
+
+
+@real_redis
+def test_production_lua_restores_points_under_the_same_state(live_redis_client):
+    """同一状态下用**生产脚本**执行：被延后的点必须补齐。"""
+    ts = 1_700_000_000_000
+    latest_fields = {"A": {"v": "a", "t": ts - 100, "q": 0},
+                     "B": {"v": "b", "t": ts - 100, "q": 0}}
+    args = delivery_args("DEV", "g", ts - 100, latest_fields, {"A": "a", "B": "b"})
+    receipt = args[1]
+    live_redis_client.delete(receipt)
+    # 即使有人往 receipt 里写了组级水位，生产脚本也不得据此跳过
+    live_redis_client.hset(receipt, "l:DEV:g", str(ts))
+
+    numkeys = args[0]
+    payload = list(args[1:])
+    prefix = "dw:prod"
+    payload[0], payload[1], payload[2], payload[3] = (
+        receipt, f"{prefix}:stream", f"{prefix}:latest", f"{prefix}:window")
+    live_redis_client.evalsha(
+        live_redis_client.script_load(FRAME_LUA_V2), numkeys, *payload)
+    latest = live_redis_client.hgetall(f"{prefix}:latest")
+    stream_len = live_redis_client.xlen(f"{prefix}:stream")
+    live_redis_client.delete(receipt, f"{prefix}:stream", f"{prefix}:latest", f"{prefix}:window")
+
+    assert stream_len == 1
+    assert set(latest) == {"A", "B"}, "生产脚本必须补齐全部点，不受组级水位影响"
+
+
+def test_production_receipt_has_no_legacy_watermark_fields(tmp_path):
+    """停用旧字段后，receipt 里不应再出现 l:<device>:<group> 形式的水位字段。
+
+    审查指出不能用 TTL/high 反推"旧字段已移除"：TTL=-1 只说明键无过期时间，
+    high 只是某个字段的值，同一个哈希完全可以仍带着旧的 l:* 字段。
+    因此这里直接检查**字段集合**，而不是任何间接指标。
+    """
+    from storage.durable_redis_writer import DurableRedisWriter
+
+    class _FakeConn:
+        def __init__(self):
+            self.store = {}
+            self.latest = {}
+
+        def hget(self, key, field):
+            return self.store.get((key, field))
+
+        def hgetall(self, key):
+            return {f: v for (k, f), v in self.store.items() if k == key}
+
+        def hset(self, key, field=None, value=None, mapping=None):
+            if mapping:
+                for f, v in mapping.items():
+                    self.store[(key, f)] = v
+            else:
+                self.store[(key, field)] = value
+            return 1
+
+        def eval(self, script, numkeys, *args, **kwargs):
+            # 快车道：latest 写进 KEYS[1]，字段名即点位 ID；watermark 曾写 KEYS[2]
+            keys = list(args[:numkeys])
+            argv = list(args[numkeys:])
+            payload = json.loads(argv[0])
+            for pid, value in payload.items():
+                self.latest.setdefault(keys[0], {})[pid] = json.dumps(value)
+            return 1
+
+        def pipeline(self, *a, **k):
+            raise AssertionError("history replay not expected")
+
+        def script_load(self, source):
+            return "sha"
+
+        def close(self):
+            return None
+
+        connection_pool = None
+
+    conn = _FakeConn()
+    writer = DurableRedisWriter(
+        conn, SimpleNamespace(redis=SimpleNamespace(stream_shard_count=4, stream_maxlen=0)),
+        outbox_path=tmp_path / "q.db")
+    try:
+        writer.write_window_stream("DEV", "dt", "g", 100, 1000, 1, {"ts": 1000},
+                                   {"1": "7"}, {"1": 0})
+        writer.write_latest("DEV", "g", {"1": {"v": "7", "t": 1000, "q": 0}})
+    finally:
+        writer.close()
+
+    # 任何 bucket 里都不得出现 l:<device>:<group> 形式的水位字段。
+    # 注意：不能用 TTL 或 high 反推"旧字段已移除"——TTL=-1 只说明键无过期时间，
+    # high 只是某个字段的值，同一个哈希完全可以仍带着旧的 l:* 字段。
+    # 所以这里直接检查字段集合本身。
+    watermark_fields = {f for (_, f) in conn.store if f.startswith("l:")}
+    assert watermark_fields == set(), f"receipt 里不应再有旧水位字段：{watermark_fields}"
+    # 快车道脚本本身也不得再引用第二个键（水位曾写在 KEYS[2]）
+    from storage.durable_redis_writer import LATEST_LUA
+    assert "KEYS[2]" not in LATEST_LUA, "快车道脚本不应再写入水位键"
+    assert "watermark" not in LATEST_LUA.lower()
 
 
 def test_latest_compensation_happens_even_when_stream_write_fails():
