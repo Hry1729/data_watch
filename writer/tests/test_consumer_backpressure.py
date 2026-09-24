@@ -138,16 +138,23 @@ async def test_drain_resumes_after_recovery_and_processes_remaining():
     redis_client.xpending_range.return_value = []
     consumer = _consumer(writer, redis_client)
 
-    # 第一轮：失败，回收在上限处停止
+    # 第一轮：失败，回收在上限处停止。
     await consumer.drain_pending("rt:stream:qc:g001:0", "writer-1")
-    assert len(consumer._buffer) == consumer._max_buffer_rows
+    # 持续 RETRY 的行会被隔离出主缓冲（见 test_consumer_degrade.py 的隔离用例），
+    # 因此这里不再断言"主缓冲被重试行占满"，而是断言这些行既没丢、也没被 ACK。
+    assert len(consumer._buffer) + len(consumer._isolated) == consumer._max_buffer_rows
+    assert redis_client.xack.call_count == 0
+    assert len(consumer._isolated) > 0, "持续 RETRY 的行应进入隔离区而不是占着主缓冲"
 
     # 恢复：flush 成功（LANDED→ACK），继续回收剩余 PEL
     _landed_flush(writer)
     redis_client.xautoclaim.side_effect = [
         (next_id, entries, []) for (next_id, entries, _) in pages[2:]
     ]
-    await consumer.drain_pending("rt:stream:qc:g001:0", "writer-1")
+    # 生产主循环每轮都会 flush；隔离行被放回后需要一次 flush 才真正落库。
+    for _ in range(2):
+        await consumer.drain_pending("rt:stream:qc:g001:0", "writer-1")
+        await consumer._flush()
 
     assert consumer._buffer == []
     # LANDED 行全部被 ACK + XDEL（成功入库后才确认的语义保持）

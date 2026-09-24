@@ -63,6 +63,9 @@ class _BufferedRow:
     entry_data: dict = field(default_factory=dict)  # 原始 stream 字段，BAD_DATA 进 DLQ 时需要
     delivery_count: int = 1
     payload_bytes: int = 0
+    # 连续 RETRY 次数。达到上限后该行移入隔离区，不再占用主缓冲容量、
+    # 也不再拖住同 worker 其它 stream（仍在 PEL 中，可被按时回收）。
+    retry_attempts: int = 0
 
 
 @dataclass
@@ -196,6 +199,15 @@ class StreamConsumer:
         self._ack_retry_cursor = 0
         self._delete_retry_cursor = 0
         self._consecutive_flush_fail: int = 0  # M6：连续 flush 失败次数，用于退避与日志降噪
+        # 持续 RETRY（有恢复希望但一直没有恢复）的行的隔离区。
+        # 作用范围严格限定：这些行仍保留在 Redis PEL 中、仍可被按时回收，
+        # 只是从主缓冲里挪出来，避免一条长期不恢复的行一直占着容量、
+        # 进而抑制同 worker 其它 stream 的读取。超出上限时恢复背压（停止读取），
+        # 因此隔离区不会无界增长。
+        self._isolated: list[_BufferedRow] = []
+        self._isolated_keys: set[tuple[str, str]] = set()
+        self._max_isolated_rows: int = max(64, self._max_buffer_rows // 4)
+        self._max_row_retry: int = max(1, int(w.get("max_row_retry", 3)))
         # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
         self._last_dlq_moved_log: float | None = None
         self._last_dlq_failed_log: float | None = None
@@ -219,7 +231,7 @@ class StreamConsumer:
 
     def _remaining_capacity(self) -> int:
         """Bound all locally owned identities, including terminal Redis retries."""
-        occupied = len(self._buffer) + self._inflight_rows
+        occupied = len(self._buffer) + self._inflight_rows + len(self._isolated)
         if self._ack_retry or self._delete_retry:
             terminal_keys = {
                 (stream_key, entry_id)
@@ -231,6 +243,26 @@ class StreamConsumer:
             terminal_keys.difference_update(self._buffered_keys)
             occupied += len(terminal_keys)
         return self._max_buffer_rows - occupied
+
+    def _readmit_isolated(self) -> None:
+        """把隔离区最老的行放回主缓冲，按回收周期重试。
+
+        隔离区只是"不再占用主缓冲容量、不再抑制其它 stream 读取"，
+        不是放弃这些数据：它们始终留在 Redis PEL 中，并按 `pending_drain_interval_s`
+        的节奏被放回来重试一次。若仍失败，`_flush` 会再次把它们隔离。
+        """
+        if not self._isolated:
+            return
+        budget = max(1, min(len(self._isolated), self._batch_count))
+        readmitted = self._isolated[:budget]
+        del self._isolated[:budget]
+        for row in readmitted:
+            self._isolated_keys.discard((row.stream_key, row.entry_id))
+        self._buffer = readmitted + self._buffer
+        logger.info(
+            "[consumer] re-admitting %d isolated row(s) for retry (remaining isolated=%d)",
+            len(readmitted), len(self._isolated),
+        )
 
     def oldest_buffered_source_age_ms(self, now_ms: int) -> int | None:
         source_times = [row.ts for row in self._buffer]
@@ -467,6 +499,11 @@ class StreamConsumer:
                 if not self._buffer:
                     await asyncio.sleep(0.05)
 
+            # 隔离区里的行在主缓冲一空时尽快重试，避免恢复被拖到下一个回收周期。
+            # 仍在失败的会再次被隔离，且有重试次数上限兜底，不会形成热循环。
+            if not self._buffer and not self._inflight_rows and self._isolated:
+                self._readmit_isolated()
+
             # --- 达到时间或缓冲区阈值时刷新 ---
             now = time.monotonic()
             buffer_size = len(self._buffer)
@@ -518,6 +555,10 @@ class StreamConsumer:
     ) -> None:
         """回收空闲的待处理消息并进行处理。首先尝试 XAUTOCLAIM（Redis >= 6.2）；回退到 XPENDING + XCLAIM。"""
         logger.info("[consumer] draining pending for stream %s", stream_key)
+        # 隔离区里的行也属于待处理集合。必须在计算领取额度之前放回主缓冲：
+        # 领取条数按剩余容量算，隔离行占着额度会把读取压成 0，自己永远轮不到重试。
+        if not self._buffer and not self._inflight_rows and self._isolated:
+            self._readmit_isolated()
         try:
             await self._drain_with_xautoclaim(stream_key, consumer_name, max_entries, deadline)
         except Exception as exc:
@@ -727,7 +768,7 @@ class StreamConsumer:
         if entry_id in self._ack_retry.get(stream_key, ()):
             # TDengine already committed this frame; only its XACK is outstanding.
             return
-        if key in self._buffered_keys:
+        if key in self._buffered_keys or key in self._isolated_keys:
             # flush 失败行既在缓冲又在 PEL，drain 重新领取同一条目时直接跳过，
             # 防止重复入缓冲、重复写库（DW-02）。
             logger.debug("[consumer] entry %s already buffered, skipping duplicate", entry_id)
@@ -1186,6 +1227,7 @@ class StreamConsumer:
 
             to_ack: list[_BufferedRow] = []
             failed_rows: list[_BufferedRow] = []
+            isolated: list[_BufferedRow] = []
             landed_rows_count = 0
             for indices, status, elapsed_ms in chunk_results:
                 if status not in (LANDED, BAD_DATA, RETRY):
@@ -1204,13 +1246,24 @@ class StreamConsumer:
                             failed_rows.append(row)
                 else:
                     for index, row in zip(indices, chunk_rows):
-                        self._metrics.record_retry(retry_reasons.get(index, "unknown"))
-                        if index in local_retry:
+                        reason = retry_reasons.get(index, "unknown")
+                        self._metrics.record_retry(reason)
+                        row.retry_attempts += 1
+                        # schema/size 类重试（0x0219 过长、二分深度用尽）从来不是
+                        # "再试一次就好"：它们会一直失败，留在主缓冲只会占容量并拖住
+                        # 同 worker 其它 stream。按既有契约从第一次起就只留在 PEL，
+                        # 走隔离区、按回收周期重试，不占主缓冲。
+                        # `_last_local_retry_indices` 是 writer 标记"本次未执行的本地
+                        # 重试行"的既有接口，单独看 retry_reasons 会漏掉它。
+                        if (reason == "size" or index in local_retry
+                                or row.retry_attempts >= self._max_row_retry):
+                            isolated.append(row)
+                        else:
                             logger.warning(
-                                "[consumer] schema/size retry deferred in PEL: %s %s",
+                                "[consumer] transient retry %d/%d deferred in PEL: %s %s",
+                                row.retry_attempts, self._max_row_retry,
                                 row.stream_key, row.entry_id,
                             )
-                        else:
                             failed_rows.append(row)
 
             if to_ack:
@@ -1247,6 +1300,30 @@ class StreamConsumer:
                 except Exception:
                     logger.warning("[consumer] metrics hincrby failed", exc_info=True)
             self._buffer = failed_rows + self._buffer
+            if isolated:
+                # 隔离区超限时不再接收新的隔离行，改为留在主缓冲里形成背压。
+                room = self._max_isolated_rows - len(self._isolated)
+                if room > 0:
+                    accepted_isolated = isolated[:room]
+                    self._isolated.extend(accepted_isolated)
+                    self._isolated_keys.update(
+                        (row.stream_key, row.entry_id) for row in accepted_isolated
+                    )
+                    for row in accepted_isolated:
+                        logger.warning(
+                            "[consumer] row isolated after %d retries (still in PEL, "
+                            "no longer blocking other streams): %s %s",
+                            row.retry_attempts, row.stream_key, row.entry_id,
+                        )
+                    isolated = isolated[room:]
+                if isolated:
+                    self._buffer = isolated + self._buffer
+                elif len(self._isolated) >= self._max_isolated_rows:
+                    logger.error(
+                        "[consumer] isolated retry set at capacity (%d rows); "
+                        "restoring backpressure instead of growing unbounded",
+                        len(self._isolated),
+                    )
             completed = True
         finally:
             # Cancellation and invariant errors must leave every uncommitted
@@ -1264,7 +1341,7 @@ class StreamConsumer:
             self._buffered_keys = {
                 (row.stream_key, row.entry_id) for row in self._buffer
             }
-            self._metrics.set_buffer_rows(len(self._buffer))
+            self._metrics.set_buffer_rows(len(self._buffer), len(self._isolated))
             self._metrics.record_flush(
                 (time.perf_counter() - flush_started) * 1000, flush_rows
             )

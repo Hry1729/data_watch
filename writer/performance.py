@@ -110,6 +110,8 @@ class WriterPerformanceMetrics:
         self._gauges: dict[str, int | None] = {
             "buffer_rows": 0,
             "peak_buffer_rows": 0,
+            "isolated_rows": 0,
+            "peak_isolated_rows": 0,
             "buffer_bytes": 0,
             "peak_buffer_bytes": 0,
             "oldest_buffered_source_age_ms": None,
@@ -189,12 +191,18 @@ class WriterPerformanceMetrics:
                 self._gauges["peak_buffer_bytes"], size
             )
 
-    def set_buffer_rows(self, rows: int) -> None:
+    def set_buffer_rows(self, rows: int, isolated_rows: int = 0) -> None:
         with self._lock:
             self._gauges["buffer_rows"] = rows
             self._gauges["peak_buffer_rows"] = max(
                 self._gauges["peak_buffer_rows"],
                 rows,
+            )
+            # 持续 RETRY 被隔离出主缓冲的行数。它们仍在 Redis PEL 中，
+            # 按回收周期重试，不计入 buffer_rows，但必须可见。
+            self._gauges["isolated_rows"] = isolated_rows
+            self._gauges["peak_isolated_rows"] = max(
+                self._gauges["peak_isolated_rows"], isolated_rows
             )
 
     def set_backlog(

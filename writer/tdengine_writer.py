@@ -109,6 +109,24 @@ def _quality_stable_from_value_stable(stable: str) -> str:
     return quality_stable_name(s)
 
 
+def _merge_part_status(parts: list[tuple[str, float]]) -> str:
+    """把一条逻辑帧的多个 SQL 分段结果归并成一个状态。
+
+    保持既有契约：**不允许一条逻辑帧只落一部分**。
+    一条宽帧会被拆成数值段与质量段；若某一段已 LANDED、另一段没有，
+    直接判 BAD_DATA 进 DLQ 会留下"值已入库、质量缺失"的半截帧。
+    因此只要不是全部分段 LANDED，就判 RETRY，整帧重试。
+
+    注意这**不是**"坏帧永远进不了 DLQ"的成因。真正的成因是重试没有任何上界，
+    会一直占着缓冲并拖住同 worker 其它 stream——那由 consumer 的隔离机制解决
+    （连续 RETRY 达上限后移出主缓冲，仍在 PEL 中按回收周期重试）。
+
+    若后续要把"明确不可恢复的分段"改判为可进 DLQ，属于改变"允许部分落库"的
+    数据语义，需要产品确认，不能只改这一处归并。
+    """
+    return LANDED if all(status == LANDED for status, _ in parts) else RETRY
+
+
 class TDengineWriter:
     def __init__(self, syslog=None) -> None:
         self._conn: Any = None
@@ -614,9 +632,7 @@ class TDengineWriter:
             if all(len(parts) == 1 for parts in occurrences.values()):
                 return results
             return [
-                ([index], LANDED if all(status == LANDED for status, _ in parts)
-                 else RETRY if len(parts) > 1 else parts[0][0],
-                 sum(elapsed for _, elapsed in parts))
+                ([index], _merge_part_status(parts), sum(elapsed for _, elapsed in parts))
                 for index, parts in sorted(occurrences.items())
             ]
 
