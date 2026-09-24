@@ -258,15 +258,56 @@ Redis 脚本串行执行确实是架构约束，但不能把"当前每帧处理�
 | --- | --- | --- |
 | P0 | 组级水位跳过：已停用；后续任何"覆盖证明"必须含**采样点集、配置版本、连续覆盖关系**，并先有反例测试 | 同组不同点集、多采样周期、部分快车道失败后，历史仍能补齐 latest |
 | P0 | 测试可信度：已完成逻辑帧计数、稳态窗口、线程池、阶段口径 | 成功 60000 帧就显示 60000 帧；正常在途尾批不误判；未测余量不写零 |
-| P1 | Writer：持续 RETRY 隔离、回收路径批量解析统一、多段坏帧归并 | 故障流不拖住正常流；未知错误不当坏数据；坏帧不无限循环 |
-| P1 | 拒收缺口记录与告警；接收/回放/生产 Writer 分开测，再做联合负载 | 不靠拒收、少计帧或前移积压制造达标；后台满负载下验证真实浏览器延迟 |
-| P1 | 故障恢复重跑（含新增水位相关场景，即使水位已停用也要覆盖 receipt 状态变化） | 恢复后重复/遗漏/点值/质量逐项核对 |
+| P1 | Writer：持续 RETRY 隔离**已完成**；回收路径批量解析统一**待做**；多段坏帧归并**经复核决定不改**（数据语义） | 故障流不拖住正常流；未知错误不当坏数据 |
+| P1 | 拒收缺口记录**已完成**；告警阈值与剩余缓冲时间预测**待做** | 不靠拒收、少计帧或前移积压制造达标 |
+| P1 | 故障恢复重跑（容器/网络级）**待做**；单元层补偿用例**已完成** | 恢复后重复/遗漏/点值/质量逐项核对 |
 
 ## 附：本轮实际改动文件
 
 - `collector/storage/durable_redis_writer.py` — **回退到 `a03c951`**，仅保留 `history_frames_confirmed` 计数
-- `collector/storage/collector_outbox.py` — 保留 `durable_frames_accepted` 计数
-- `collector/tests/test_collector_latest_compensation.py` — 新增（7 项防复发回归）
+- `collector/storage/collector_outbox.py` — `durable_frames_accepted` 计数；拒收缺口台账
+- `collector/tests/test_collector_latest_compensation.py` — 新增（9 项防复发回归）
 - `collector/tests/test_collector_latest_watermark.py` — **删除**（被测实现已停用）
-- `collector/tests/test_collector_outbox.py` — 回退到 `a03c951`
+- `collector/tests/test_collector_outbox.py` — 回退旧断言 + 新增 5 项缺口台账用例
+- `writer/consumer.py` — 持续 RETRY 隔离区（详见下节）
+- `writer/performance.py` — `isolated_rows` 指标；修 `_gauges` 初始化缺失（基线 21 项失败成因）
+- `writer/tdengine_writer.py` — 抽出 `_merge_part_status` 并**保持原契约**，补注释说明为何不改判
+- `writer/tests/test_consumer_degrade.py` — 新增 4 项隔离行为用例
+- `writer/tests/test_consumer_backpressure.py` — 1 项断言按隔离设计更新
 - `scripts/validate_collector_ingest_capacity.py` — 帧计数、稳态窗口、线程池、阶段口径修正
+
+## 八、Writer 三处的处理结果（第五节后续）
+
+| 项 | 处理 | 证据 |
+| --- | --- | --- |
+| 持续 RETRY 无上界、拖住整 worker | **已修**：新增隔离区，连续 RETRY 达 `max_row_retry`（默认 3）后移出主缓冲；schema/size 类重试从第一次起就隔离；隔离区有上限，超限恢复背压；主缓冲一空即放回重试；`drain_pending` 在计算领取额度**之前**放回（否则隔离行占着额度会把读取压成 0，自己永远轮不到） | `test_consumer_degrade.py` 新增 4 项；writer 套件 21 failed/144 passed → **165 passed / 0 failed** |
+| 多段坏帧归并 | **不改，保持原契约**。该行为是"不允许逻辑帧只落一部分"的**有意设计**（`test_large_quality_frame_failure_never_lands_partial_frame` 命名即此意）。改判 BAD_DATA 会让"值已入库、质量缺失"的半截帧落库并进 DLQ，属改变数据语义，需产品确认。已抽出 `_merge_part_status` 并把理由写进注释；重试无上界的问题由隔离区解决 | `writer/tdengine_writer.py` 注释 + 原用例保持通过 |
+| 回收路径解析 | **部分**。隔离区让回收/重试被限制在有界批量内，但 JSON/float 解析仍走共享事件循环，未与正常读取统一 | 未完成，见待办 |
+
+另修一个既有缺陷：`WriterPerformanceMetrics._gauges` 缺少初始化字典项，
+`set_buffer_rows` 会抛 `KeyError`——这也是基线 21 项失败的成因。
+
+## 九、拒收缺口台账（第六节后续）
+
+**已修**：`_reject` 现在同时写缺口台账，按 (设备, 分组, 采样周期, 原因) 聚合，
+记录首次/最后采样时间、帧数、首次/最后拒收时间；提供 `rejected_gaps()` 查询。
+
+关键设计：台账写在**独立文件** `<outbox>.rejects.sqlite`。
+主队列触顶的原因正是它自己写不下，把缺口记在同一个库里必然跟着写失败，等于没有记录。
+每次启动 DROP 重建，因此不依赖主库容量、不随运行时长无限增长、陈旧行不会被误读成当前缺口。
+
+未做："约两分钟后触顶"的**预测**。应按实际净积压字节率动态计算剩余缓冲时间，
+本次只提供台账与告警可见性，未做预测。
+
+## 十、仍未完成，需要下一轮
+
+1. **故障恢复重跑**：本轮改动过 receipt 状态与历史补偿条件，
+   必须补测断网 / Redis 重启 / 容器强杀 / 快车道失败 / 同组多周期 / 旧队列恢复。
+   本轮已在**单元层**补上"快车道失败后历史仍补齐整组点""同组多周期混合时间戳"
+   两项用例（`test_collector_latest_compensation.py`，9 项全通过），
+   但**容器/网络级故障恢复仍未重跑**。
+2. **回收路径解析统一**：把正常读取、PEL 回收、溢出回收三条入口
+   统一到同一套有界批量准备逻辑。
+3. **浏览器绘制延迟**：前端补埋点，分别测 WebSocket 收包、页面应用、图表绘制。
+4. **受控积压下的余量测量**：本次追平测到的是额定输入下净消减 0.0%
+   （即刚好无余量），需要制造受控积压再测。

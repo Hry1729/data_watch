@@ -35,7 +35,6 @@ import pytest
 
 from storage.durable_redis_writer import FRAME_LUA, FRAME_LUA_V2
 
-
 class FakeRedis:
     """按 FRAME_LUA / FRAME_LUA_V2 用到的命令语义实现的假 Redis。
 
@@ -208,7 +207,7 @@ def test_history_latest_compensation_survives_group_watermark_like_state():
 
 
 def test_history_latest_compensation_when_point_set_changes_between_ticks():
-    """同组不同 tick 点集不同（多采样周期）时，历史必须补齐各自缺失的点。"""
+    """同组相邻 tick 点集不同（多采样周期）时，历史必须补齐各自缺失的点。"""
     redis = FakeRedis()
     # 第 2 帧（点集 {C}，t=1200）已由快车道成功写入并可能推高过组级水位
     redis.latest["C"] = json.dumps({"v": "c", "t": 1200, "q": 0})
@@ -226,6 +225,29 @@ def test_history_latest_compensation_when_point_set_changes_between_ticks():
     assert json.loads(redis.latest["A"])["t"] == 1000
     assert json.loads(redis.latest["C"])["t"] == 1400
     assert len(redis.streams) == 2
+
+
+def test_history_latest_compensation_with_multi_sampling_periods_in_one_frame():
+    """同一分组内不同采样周期的点可以在同一帧里带不同时间戳。
+
+    此时组级最大时间戳与"每个点都被覆盖"的差距最明显：帧内最旧的点
+    可能远早于同帧其它点，也可能早于同组其它帧成功推进过的水位。
+    """
+    redis = FakeRedis()
+    # 同组另一次快车道成功把水位推到 9000（模拟曾经那版优化的组级水位残留）
+    redis.receipt.setdefault("receipt:S", {})["l:DEV:g"] = "9000"
+    redis.latest["FAST"] = json.dumps({"v": "f", "t": 9000, "q": 0})
+
+    simulate_history(redis, delivery_args(
+        "DEV", "g", ts=9000,
+        latest_fields={"FAST": {"v": "f", "t": 9000, "q": 0},   # 快周期
+                       "SLOW": {"v": "s", "t": 1000, "q": 0}},  # 慢周期，时间戳早很多
+        values={"FAST": "f", "SLOW": "s"}, seq=1))
+
+    assert "SLOW" in redis.latest, \
+        "同帧内时间戳更旧的慢周期点也必须写入（快车道从未写过它）"
+    assert json.loads(redis.latest["SLOW"])["t"] == 1000
+    assert json.loads(redis.latest["FAST"])["t"] == 9000, "更新的同帧点不得被回退"
 
 
 def test_history_replay_is_idempotent_for_already_applied_points():
@@ -282,3 +304,65 @@ def test_latest_carrying_own_timestamps_is_preserved_per_point():
         "时间戳更旧的点不得覆盖已更新的值"
     assert json.loads(redis.latest["NEW"])["v"] == "fresh", \
         "时间戳更新的点必须写入，即使同帧另一点更旧"
+
+
+# ----------------------------------------------------------------------
+# 快车道失败 / 延后之后，历史回放必须能补齐 —— 接真实 DurableRedisWriter 走一遍
+# ----------------------------------------------------------------------
+
+def test_fast_lane_deferral_then_history_replay_restores_every_point(tmp_path):
+    """快车道对某组延后（或发送失败）时，历史回放仍必须把该组的点补进 latest。
+
+    这条路径把真实 DurableRedisWriter 接上假 Redis：
+      1. 快车道 EVAL 抛错 → 该组 latest 不会被写；
+      2. 帧此时必须已经在本地 SQLite 里（record_failure 先于快车道入队）；
+      3. 历史回放（FRAME_LUA_V2 语义）必须把这些点补上。
+    """
+    from storage.durable_redis_writer import DurableRedisWriter
+
+    redis = FakeRedis()
+
+    class FailingFastLaneClient:
+        """按原样保留真实 writer 的 hget/eval 契约，只让快车道 EVAL 失败。"""
+
+        connection_pool = None
+
+        def hget(self, key, field):
+            return None
+
+        def eval(self, *args, **kwargs):
+            raise RuntimeError("fast lane redis unavailable")
+
+        def pipeline(self, *a, **k):
+            raise AssertionError("history replay not expected in this test")
+
+        def script_load(self, source):
+            return "sha"
+
+        def close(self):
+            return None
+
+    writer = DurableRedisWriter(
+        FailingFastLaneClient(),
+        SimpleNamespace(redis=SimpleNamespace(stream_shard_count=4, stream_maxlen=0)),
+        outbox_path=tmp_path / "q.db",
+    )
+    try:
+        points = {str(p): {"v": str(p), "t": 1000, "q": 0} for p in range(1, 4)}
+        writer.write_window_stream("DEV", "dt", "g", 100, 1000, 1,
+                                   {"ts": 1000}, {p: v["v"] for p, v in points.items()},
+                                   {p: 0 for p in points})
+        writer.write_latest("DEV", "g", points)
+
+        # 帧必须先进本地持久队列（可靠性边界），而不是先依赖快车道。
+        assert writer.outbox.count() == 1, "快车道写入之前，帧必须已经本地持久化"
+
+        # 快车道失败后，latest 里当然还没有这些点；历史回放必须补齐。
+        assert redis.latest == {}
+        simulate_history(redis, delivery_args(
+            "DEV", "g", ts=1000, latest_fields=points,
+            values={p: v["v"] for p, v in points.items()}, seq=1))
+        assert set(redis.latest) == set(points), "历史回放必须补齐快车道漏掉的整组点"
+        assert all(json.loads(redis.latest[p])["t"] == 1000 for p in points)
+    finally:
+        writer.close()
