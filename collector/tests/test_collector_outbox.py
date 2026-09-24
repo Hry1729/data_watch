@@ -45,6 +45,87 @@ def test_full_queue_refuses_new_data_without_eviction(tmp_path):
     q.close()
 
 
+# ----------------------------------------------------------------------
+# 拒收缺口台账：不能只保住旧积压，必须留下可追溯的采样缺口
+# ----------------------------------------------------------------------
+
+def test_rejected_frame_is_recorded_as_a_traceable_gap(tmp_path):
+    """队列触顶拒收时，必须留下设备/分组/周期/时间范围/数量/原因。"""
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    q.record_failure(**sample(1000))
+    with pytest.raises(RuntimeError, match="full"):
+        q.record_failure(**sample(2000))
+
+    gaps = q.rejected_gaps()
+    assert len(gaps) == 1
+    gap = gaps[0]
+    assert gap["device_code"] == "D"
+    assert gap["group_code"] == "g"
+    assert gap["device_type"] == "qc"
+    assert gap["scan_rate_ms"] == 100
+    assert gap["first_ts_ms"] == 2000 and gap["last_ts_ms"] == 2000
+    assert gap["frames"] == 1
+    assert "full" in gap["reason"]
+    q.close()
+
+
+def test_repeated_rejections_aggregate_into_one_row_with_a_range(tmp_path):
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    q.record_failure(**sample(1000))
+    for ts in (2000, 3000, 4000):
+        with pytest.raises(RuntimeError, match="full"):
+            q.record_failure(**sample(ts))
+
+    gaps = q.rejected_gaps()
+    assert len(gaps) == 1, "同一 (设备,分组,周期,原因) 的连续缺口应聚合成一行"
+    assert gaps[0]["frames"] == 3
+    assert gaps[0]["first_ts_ms"] == 2000
+    assert gaps[0]["last_ts_ms"] == 4000
+    q.close()
+
+
+def test_gap_ledger_is_separate_from_the_full_main_queue(tmp_path):
+    """缺口台账必须写在独立文件里：主队列满的正是它自己，记在同一个库里等于没记。"""
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    assert q._reject_path != q.path
+    q.record_failure(**sample(1000))
+    with pytest.raises(RuntimeError, match="full"):
+        q.record_failure(**sample(2000))
+    assert q._reject_path.exists(), "独立缺口台账文件必须真的被创建"
+    # 主队列仍然只有 1 行（没有因为写缺口而动过它）
+    assert q.count() == 1
+    q.close()
+
+
+def test_gap_ledger_does_not_grow_without_bound(tmp_path):
+    """缺口台账按 (设备,分组,周期,原因) 聚合，不随运行时长无限增长。"""
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    q.record_failure(**sample(1000))
+    for ts in range(2000, 2100):
+        with pytest.raises(RuntimeError, match="full"):
+            q.record_failure(**sample(ts))
+    rows = q._reject_conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0]
+    assert rows == 1
+    assert q.rejected_gaps()[0]["frames"] == 100
+    q.close()
+
+
+def test_gap_ledger_is_rebuilt_per_run(tmp_path):
+    """上次运行的缺口不能被当成当前缺口：每次启动重建台账。"""
+    path = tmp_path / "q.db"
+    q = CollectorRetryOutbox(path, max_records=1)
+    q.record_failure(**sample(1000))
+    with pytest.raises(RuntimeError, match="full"):
+        q.record_failure(**sample(2000))
+    assert len(q.rejected_gaps()) == 1
+    q.close()
+
+    again = CollectorRetryOutbox(path, max_records=1)
+    assert again.rejected_gaps() == []
+    again.close()
+
+
 def test_one_replay_owner_prevents_duplicate_concurrent_delivery(tmp_path):
     q=CollectorRetryOutbox(tmp_path/"q.db");q.record_failure(**sample())
     entered=threading.Event();release=threading.Event()

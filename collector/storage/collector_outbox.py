@@ -68,6 +68,31 @@ BEGIN
 END;
 """
 
+# 拒收缺口台账，**独立数据库**。
+# 有限缓冲触顶时拒绝新帧是设计好的保护策略，但绝不能只保住旧积压就当作没事：
+# 被拒收的采样必须能追溯到设备、分组、采样周期、时间范围、数量和原因。
+# 之所以用独立文件：主 outbox 触顶的原因正是它自己写不下，
+# 把缺口记在同一个库里必然跟着写失败，等于没有记录。
+# 每次启动会 DROP 再重建（见 _init_reject_log），因此它
+#   * 不依赖主库容量，主库满了仍能写；
+#   * 不随运行时长无限增长，最坏就是每个 (设备,分组,周期,原因) 一行；
+#   * 生命周期限定在"本次运行"，避免陈旧行被误读成当前缺口。
+REJECT_LOG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS collector_rejected_gaps (
+    device_code TEXT NOT NULL,
+    group_code TEXT NOT NULL,
+    device_type TEXT NOT NULL,
+    scan_rate_ms INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    first_ts_ms INTEGER NOT NULL,
+    last_ts_ms INTEGER NOT NULL,
+    frames INTEGER NOT NULL,
+    first_rejected_at INTEGER NOT NULL,
+    last_rejected_at INTEGER NOT NULL,
+    PRIMARY KEY (device_code, group_code, scan_rate_ms, reason)
+);
+"""
+
 _PAYLOAD_SIZE_SQL = (
     "length(frame_json) + length(stream_values_json) + "
     "COALESCE(length(stream_qualities_json), 0) + length(latest_fields_json)"
@@ -129,6 +154,7 @@ class CollectorRetryOutbox:
             )
             self._conn.row_factory = sqlite3.Row
             self._init_db()
+            self._init_reject_log()
             self._count, self._payload_bytes, self._oldest_ms = self._conn.execute(
                 "SELECT SUM(n), SUM(bytes), MIN(oldest) FROM ("
                 f"SELECT COUNT(*) AS n, COALESCE(SUM({_PAYLOAD_SIZE_SQL}), 0) AS bytes, "
@@ -141,6 +167,8 @@ class CollectorRetryOutbox:
         except BaseException:
             if hasattr(self, "_conn"):
                 self._conn.close()
+            if getattr(self, "_reject_conn", None) is not None:
+                self._reject_conn.close()
             self._owner_file.close()
             raise
 
@@ -183,6 +211,11 @@ class CollectorRetryOutbox:
             try:
                 self._conn.close()
             finally:
+                if getattr(self, "_reject_conn", None) is not None:
+                    try:
+                        self._reject_conn.close()
+                    finally:
+                        self._reject_conn = None
                 self._owner_file.close()
 
     def record_failure(
@@ -290,8 +323,9 @@ class CollectorRetryOutbox:
                         item.done.set()
                     batch = batch[accepted:]
                     for item in batch:
-                        self._reject(item, "Collector durable queue full; existing backlog preserved")
-                        item.error = RuntimeError("Collector durable queue full; existing backlog preserved")
+                        reason = "Collector durable queue full; existing backlog preserved"
+                        self._reject(item, reason)
+                        item.error = RuntimeError(reason)
                         item.done.set()
                 batch = []
         except BaseException as exc:
@@ -363,6 +397,72 @@ class CollectorRetryOutbox:
                 logger.exception("outbox rejection metric failed")
         logger.error("%s: device=%s group=%s ts_ms=%s", reason,
                      request.params[1], request.params[2], request.params[4])
+        self._record_rejected_gap(request, reason)
+
+    def _init_reject_log(self) -> None:
+        """独立缺口台账；每次启动重建，避免陈旧行被误读为当前缺口。"""
+        self._reject_conn = None
+        self._reject_path = self.path.with_name(self.path.name + ".rejects.sqlite")
+        # 拒收既可能发生在调用方线程（等待队列超时），也可能发生在写线程
+        # （批次超出剩余容量），因此连接允许跨线程，并用独立锁串行化写入。
+        self._reject_lock = threading.Lock()
+        try:
+            conn = sqlite3.connect(self._reject_path, timeout=5,
+                                   isolation_level=None, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            # 不设 synchronous=FULL：这条路径只在主队列已经拒收时才写，
+            # 不能因为缺口台账自己的 fsync 再拖慢采集；丢失缺口记录虽不理想，
+            # 但比不上丢采样严重，且主日志仍会逐条记录原因。
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("DROP TABLE IF EXISTS collector_rejected_gaps")
+            conn.executescript(REJECT_LOG_SCHEMA)
+            self._reject_conn = conn
+        except Exception:
+            logger.exception("collector rejection gap log unavailable; sampling gaps will "
+                             "only be visible in the log and metrics")
+
+    def _record_rejected_gap(self, request: _InsertRequest, reason: str) -> None:
+        """按 (设备, 分组, 周期, 原因) 聚合成一行缺口，可在采集未停时随时查询。"""
+        conn = getattr(self, "_reject_conn", None)
+        if conn is None:
+            return
+        now_ms = int(time.time() * 1000)
+        try:
+            with self._reject_lock:
+                conn.execute(
+                    """INSERT INTO collector_rejected_gaps (
+                        device_code, group_code, device_type, scan_rate_ms, reason,
+                        first_ts_ms, last_ts_ms, frames, first_rejected_at, last_rejected_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    ON CONFLICT(device_code, group_code, scan_rate_ms, reason) DO UPDATE SET
+                        last_ts_ms = MAX(last_ts_ms, excluded.last_ts_ms),
+                        first_ts_ms = MIN(first_ts_ms, excluded.first_ts_ms),
+                        frames = frames + 1,
+                        last_rejected_at = excluded.last_rejected_at""",
+                    (request.params[1], request.params[2], request.params[6],
+                     request.params[3], reason, request.params[4], request.params[4],
+                     now_ms, now_ms),
+                )
+        except Exception:
+            logger.exception("collector rejection gap record failed")
+
+    def rejected_gaps(self) -> list[dict[str, Any]]:
+        """当前缺口台账内容；供运维与测试查询，不依赖主队列是否还能写。"""
+        conn = getattr(self, "_reject_conn", None)
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                """SELECT device_code, group_code, device_type, scan_rate_ms, reason,
+                          first_ts_ms, last_ts_ms, frames,
+                          first_rejected_at, last_rejected_at
+                   FROM collector_rejected_gaps ORDER BY last_rejected_at DESC"""
+            ).fetchall()
+        except Exception:
+            logger.exception("collector rejection gap read failed")
+            return []
+        return [dict(row) for row in rows]
 
     def replay_pending(self, redis_writer, *, max_batch: int = 4096,
                        max_batch_bytes: int = 32 * 1024 * 1024) -> int:
