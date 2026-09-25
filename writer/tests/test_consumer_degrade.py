@@ -109,10 +109,13 @@ async def test_failed_incomplete_is_isolated_not_counted_as_success():
     assert evidence["overall_status"] == FAILED_INCOMPLETE
     assert evidence["logical_frame"]["entry_id"] == "1-0"
     assert "value_segment" in evidence and "quality_segment" in evidence
-    # 未知必须记为 unknown，不能因为整条 SQL 报错就反推每段都没写入
-    assert evidence["value_segment"]["status"] in {
-        "confirmed_written", "unknown", "partial_confirmed"}
-    assert "unknown 表示结果不明，不代表未写入" in evidence["note"]
+    # 关键：没有逐帧归属时，单帧状态必须是 unknown，
+    # 绝不能拿批次级计数冒充"本帧已写入"（A 帧的成功会被算到 B 帧头上）。
+    assert evidence["value_segment"]["status"] == "unknown"
+    assert evidence["quality_segment"]["status"] == "unknown"
+    # 批次统计只能放在明确标注作用域的字段里
+    assert evidence["batch_execution_summary"]["scope"].startswith("entire write_multi_table batch")
+    assert "不能当作本帧的证据" in evidence["note"]
     assert redis_client.xack.call_count == 1, "隔离记录保存成功后才允许 ACK"
     snapshot = consumer._metrics.snapshot()
     assert snapshot["gauges"]["buffer_rows"] == 0
@@ -247,6 +250,32 @@ async def test_pending_reclaim_offloads_payload_parsing():
 
     assert offloaded, "回收路径必须把批量准备放到执行单元，而不是在事件循环里解码"
     assert offloaded[0] == 2, "一次回收 2 条时应一次性批量准备"
+
+
+@pytest.mark.asyncio
+async def test_segment_evidence_never_borrows_another_frames_success():
+    """批次级计数不得用来证明某一帧已写入。
+
+    构造：同一批次 A 帧数值成功、B 帧数值失败，批次成功行数=1。
+    若用批次计数推导单帧状态，B 会被写成 confirmed_written —— A 的成功算到 B 头上。
+    """
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[([0], LANDED, 1.0)])
+    # 批次级：尝试 2 行、成功 1 行（是 A 的成功）
+    writer._last_sql_value_rows_attempted = 2
+    writer._last_sql_value_rows_succeeded = 1
+    writer._last_sql_quality_rows_attempted = 0
+    writer._last_sql_quality_rows_succeeded = 0
+    consumer = _consumer(writer, MagicMock())
+    failing_frame = _row("B-0")
+
+    evidence = consumer._segment_evidence_for(failing_frame, FAILED_INCOMPLETE)
+
+    assert evidence["value_segment"]["status"] == "unknown", \
+        "批次里另一帧的成功不得被当成本帧的证据"
+    assert evidence["quality_segment"]["status"] == "unknown"
+    assert evidence["batch_execution_summary"]["value_rows_succeeded"] == 1, \
+        "批次统计仍可保留，但必须标明作用域"
 
 
 def test_retry_backoff_never_overflows_for_absurd_attempt_counts():

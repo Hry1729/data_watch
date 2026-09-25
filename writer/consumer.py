@@ -1475,11 +1475,19 @@ class StreamConsumer:
     def _segment_evidence_for(self, row: _BufferedRow, status: str) -> dict:
         """为该行构造分段证据。
 
-        只能报告 writer 能证明的事情：
-          * 值段/质量段的执行确认计数（来自 writer 本次的分段统计）；
-          * 该行的点位与质量键范围，便于判断影响面。
-        **不能**因为整条 SQL 报错就反推每条记录都没写入——那正是需要避免的
-        "把未知当已知"。未被执行或结果不明的部分一律记 unknown。
+        **重要限制**：writer 目前只提供**批次级**累计统计
+        （`_last_sql_*_rows_attempted/succeeded` 在 write_multi_table 开始时清零、
+        随后对整个批次的全部 SQL 累加），没有逐帧归属。
+        因此这些数字**不能**用来推导单帧的 confirmed_written：
+        同一批里 A 帧数值成功、B 帧数值失败时，批次成功行数是 1，
+        若拿它给 B 下结论，就会把 A 的成功算到 B 头上。
+
+        所以：
+          * 单帧状态在拿到 writer 的逐帧分段结果之前一律记 `unknown`
+            （unknown 表示"无法证明"，不代表"未写入"）；
+          * 批次统计单独放在 `batch_execution_summary`，明确标注作用域是整批，
+            不做单帧推断。
+        随后应由 writer 回传带逻辑帧身份的分段结果，再据此填单帧状态。
         """
         def _stat(name):
             value = getattr(self._writer, name, 0)
@@ -1496,33 +1504,31 @@ class StreamConsumer:
                 "ts": row.ts,
             },
             "overall_status": status,
-            # 值段：单段，正常一条逻辑帧只有一个数值 SQL 段
+            # 单帧分段状态：无逐帧归属 → 一律 unknown，绝不冒充 confirmed_written
             "value_segment": {
-                "status": "confirmed_written" if (_stat("_last_sql_value_rows_succeeded") or 0) > 0
-                          else "unknown",
-                "rows_attempted": _stat("_last_sql_value_rows_attempted"),
-                "rows_confirmed": _stat("_last_sql_value_rows_succeeded"),
+                "status": "unknown",
                 "point_ids": sorted(row.columns),
+                "note": "无逐帧归属数据，单帧写入结果无法证明",
             },
-            # 质量段：宽帧会被拆成多段，只保留"已确认成功多少 / 尝试多少"，
-            # 不逐个声称每段的具体归属——那需要 writer 回传分段清单，尚未实现。
             "quality_segment": {
-                "status": "partial_confirmed"
-                          if 0 < (_stat("_last_sql_quality_rows_succeeded") or 0)
-                             < (_stat("_last_sql_quality_rows_attempted") or 0)
-                          else ("confirmed_written"
-                                if (_stat("_last_sql_quality_rows_succeeded") or 0) > 0
-                                and (_stat("_last_sql_quality_rows_succeeded")
-                                     == _stat("_last_sql_quality_rows_attempted"))
-                                else "unknown"),
-                "rows_attempted": _stat("_last_sql_quality_rows_attempted"),
-                "rows_confirmed": _stat("_last_sql_quality_rows_succeeded"),
+                "status": "unknown",
                 "point_ids": sorted(row.qualities, key=lambda x: (len(str(x)), str(x))),
+                "note": "无逐帧归属数据，单帧质量写入结果无法证明",
+            },
+            # 批次级统计：作用域是整批，仅供排查参考，不得用于单帧结论
+            "batch_execution_summary": {
+                "scope": "entire write_multi_table batch, NOT this frame",
+                "value_rows_attempted": _stat("_last_sql_value_rows_attempted"),
+                "value_rows_succeeded": _stat("_last_sql_value_rows_succeeded"),
+                "quality_rows_attempted": _stat("_last_sql_quality_rows_attempted"),
+                "quality_rows_succeeded": _stat("_last_sql_quality_rows_succeeded"),
+                "bisect_attempts": _stat("_last_bisect_attempts"),
             },
             "retry_attempts": row.retry_attempts,
             "delivery_count": row.delivery_count,
-            "note": ("分段归属与逐段错误码尚未由 writer 回传；"
-                     "unknown 表示结果不明，不代表未写入"),
+            "note": ("单帧分段状态为 unknown 是因为 writer 尚未回传逐帧归属；"
+                     "unknown 表示结果不明，不代表未写入。"
+                     "batch_execution_summary 是整批统计，不能当作本帧的证据"),
         }
 
     def _push_incomplete_or_bad_row(self, row: _BufferedRow, status: str) -> bool:

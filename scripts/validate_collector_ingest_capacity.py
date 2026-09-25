@@ -618,6 +618,9 @@ def run(args) -> dict:
                 }
 
         drain_started = time.monotonic()
+        # 真正停止输入的那一刻取快照：排空速率必须用"排空阶段自己的增量"，
+        # 不能把追平阶段仍在生产时完成的帧算进来。
+        drain_start_snapshot = snapshot("drain_start")
         while time.monotonic() - drain_started < args.drain_seconds:
             outbox = collector.outbox.stats()
             with collector._latest_condition:
@@ -628,6 +631,8 @@ def run(args) -> dict:
         drain_s = time.monotonic() - drain_started
         stats_after = command_stats(r)
         final_snapshot = snapshot("drained")
+        drained_confirmed = (final_snapshot["replayed_frames"]
+                             - drain_start_snapshot["replayed_frames"])
         final_outbox = collector.outbox.stats()
         with collector._latest_condition:
             final_latest_pending = len(collector._latest_pending)
@@ -705,18 +710,24 @@ def run(args) -> dict:
             "total_elapsed_seconds": round(
                 (production_end - production_started)
                 + (catchup["seconds"] if catchup else 0.0) + drain_s, 3),
-            "receive_frames_per_second": round(
+            # 实际接收速率用**实际提交量**；目标量单独输出，两者不能混用
+            # （输入未达速时，用目标量当分子会高估实际接收速率）。
+            "production_receive_fps_actual": round(
+                production_submitted / max(production_end - production_started, 1e-9), 2),
+            "production_receive_fps_target": round(
                 (args.devices * (args.seconds * 1000 // args.period_ms))
-                / max(production_end - production_started, 1e-9), 2),
+                / max(args.seconds, 1e-9), 2),
             "committed_frames_total": committed_total,
             "replayed_frames_total": final_snapshot["replayed_frames"],
             "replayed_frames_during_production": replayed_during_production,
             "replayed_fps_during_production": round(
                 replayed_during_production / max(production_end - production_started, 1e-9), 2),
             "steady_confirmed_fps": windows.get("steady_confirmed_fps"),
+            # 排空速率只算**停止输入之后**完成的帧。追平阶段仍在生产，
+            # 它的完成量必须扣除，否则会把那一段的吞吐算进排空。
+            "drained_frames_after_input_stopped": drained_confirmed,
             "replayed_fps_after_production": round(
-                (final_snapshot["replayed_frames"] - replayed_during_production)
-                / max(drain_s, 1e-9), 2),
+                drained_confirmed / max(drain_s, 1e-9), 2),
             "audited_frames": audited,
             "total_frames_in_stream": len(entries),
             "duplicate_frames": duplicates,
