@@ -82,8 +82,14 @@ CREATE TABLE IF NOT EXISTS collector_rejected_gaps (
 );
 """
 # 迁移时用的临时表名：CREATE TABLE IF NOT EXISTS 不支持换名，这里手工替换。
+# 迁移时的临时表名。迁移被中断（DROP 旧表之后、RENAME 之前崩溃）会留下它，
+# 启动时必须先识别这种中间态，否则会新建空表、把历史记录遗留在临时表里。
+_MIGRATING_TABLE = "collector_rejected_gaps__migrating"
 _TABLE_V2_MIGRATING = _TABLE_V2.replace(
-    "collector_rejected_gaps", "collector_rejected_gaps__v2")
+    "collector_rejected_gaps", _MIGRATING_TABLE)
+_REBUILD_TABLE = "collector_rejected_gaps__rebuild"
+_TABLE_V2_REBUILD = _TABLE_V2.replace(
+    "collector_rejected_gaps", _REBUILD_TABLE)
 
 _INDEXES_V2 = """
 CREATE INDEX IF NOT EXISTS idx_rejected_run ON collector_rejected_gaps(run_id);
@@ -166,6 +172,11 @@ class RejectGapLog:
     # 结构初始化与迁移
     # ------------------------------------------------------------------
     def _init_schema(self, conn: sqlite3.Connection) -> None:
+        # 0) 先处理"迁移中断"的残留：上次迁移在 DROP 旧表之后、RENAME 之前崩溃，
+        #    会留下 __migrating 临时表而正式表不存在。若此时直接建新表，
+        #    历史记录就被遗留在临时表里，正常查询看不到——正是要避免的错误状态。
+        self._recover_interrupted_migration(conn)
+
         existing = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
             "AND name='collector_rejected_gaps'").fetchone()
@@ -180,8 +191,8 @@ class RejectGapLog:
             conn.executescript(_INDEXES_V2)
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             return
-        if "contiguous_from_ts_ms" in columns and "run_id" in columns:
-            # v2 早期形态（缺 collection_resumed_at 等新列）：补列即可
+        if "contiguous_from_ts_ms" in columns:
+            # 已有连续区间字段，只是缺后来的状态列：补列即可，不动数据。
             for name, ddl in (("collection_resumed_at", "INTEGER"),
                               ("backfilled_at", "INTEGER"),
                               ("resolved_at", "INTEGER")):
@@ -192,46 +203,175 @@ class RejectGapLog:
             conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             return
         if columns >= _V1_COLUMNS:
-            self._migrate_v1_to_v2(conn)
+            # v1（无 run_id）与"有 run_id/session_id/resolved_at 但无连续区间字段"的
+            # 中间版本都落在这里。后者已有的真实元数据必须保留，只有旧表真正缺少的
+            # 信息才补"未知"。
+            self._migrate_to_v2(conn, columns)
             return
         raise RuntimeError(
             "collector_rejected_gaps has an unrecognised structure: "
             f"{sorted(columns)}")
 
-    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
-        """v1 → v2：新建 v2 表、搬迁全部历史、替换旧表。
+    def _table_exists(self, conn: sqlite3.Connection, name: str) -> bool:
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,)).fetchone() is not None
 
-        旧记录没有运行会话信息，标为 legacy-import / unknown；
-        不能伪造成"本次运行"，否则历史缺口会被当成当前告警。
+    def _recover_interrupted_migration(self, conn: sqlite3.Connection) -> None:
+        """处理上次迁移中断的残留。
 
-        实现注意：`executescript` 会先隐式提交，因此**不能**在它前后用显式
-        BEGIN/COMMIT 包住（会报 "cannot commit - no transaction is active"）。
-        这里改用"建新表 → 迁移 → 换名"的顺序，任何一步失败都不会丢掉旧表。
+        迁移顺序是"建 __migrating → 复制 → DROP 旧表 → RENAME"。
+        现场分析：
+          * 正式表不存在、__migrating 存在 → 上次的 DROP+RENAME 没提交
+            （两者在同一事务里），把 __migrating 的数据**重建**成正式表；
+            不能直接 RENAME：临时表可能是不完整结构（例如由 SQLite 在
+            事务中途留下的中间形态），直接改名会把缺列的表变成正式表。
+          * 正式表与 __migrating 同时存在 → 事务未提交、回滚后残留的中间表，
+            正式表仍是权威，丢弃中间表。
+          * 只有正式表 → 正常。
         """
-        logger.warning("migrating collector rejection gap ledger v1 -> v2 at %s", self.path)
-        conn.execute("DROP TABLE IF EXISTS collector_rejected_gaps__v2")
-        conn.executescript(_TABLE_V2_MIGRATING)
-        conn.execute(
-            """INSERT INTO collector_rejected_gaps__v2 (
-                   run_id, session_id, device_code, group_code, device_type,
-                   scan_rate_ms, reason, first_ts_ms, last_ts_ms,
-                   contiguous_from_ts_ms, frames, first_rejected_at,
-                   last_rejected_at, collection_resumed_at, backfilled_at,
-                   resolved_at)
-               SELECT ?, ?, device_code, group_code, device_type, scan_rate_ms,
-                      reason, first_ts_ms, last_ts_ms, first_ts_ms, frames,
-                      first_rejected_at, last_rejected_at, NULL, NULL, NULL
-               FROM collector_rejected_gaps""",
-            (LEGACY_RUN_ID, UNKNOWN_SESSION_ID),
-        )
-        migrated = conn.execute(
-            "SELECT COUNT(*) FROM collector_rejected_gaps__v2").fetchone()[0]
-        conn.execute("DROP TABLE collector_rejected_gaps")
-        conn.execute("ALTER TABLE collector_rejected_gaps__v2 "
-                     "RENAME TO collector_rejected_gaps")
+        if not self._table_exists(conn, _MIGRATING_TABLE):
+            return
+        if not self._table_exists(conn, "collector_rejected_gaps"):
+            rows = conn.execute(f"SELECT COUNT(*) FROM {_MIGRATING_TABLE}").fetchone()[0]
+            logger.warning(
+                "recovering interrupted rejection-gap migration at %s: rebuilding "
+                "official table from %s (%d row(s))", self.path, _MIGRATING_TABLE, rows)
+            # 用正式 DDL 重建，再把临时表里能识别的列搬过来；
+            # 缺失的列按"未知"补齐，已有的真实值原样保留。
+            self._rebuild_from(conn, _MIGRATING_TABLE)
+        else:
+            logger.warning(
+                "discarding leftover %s at %s: official table is authoritative",
+                _MIGRATING_TABLE, self.path)
+        conn.execute(f"DROP TABLE IF EXISTS {_MIGRATING_TABLE}")
+
+    def _swap_in(self, conn: sqlite3.Connection, source_table: str,
+                 *, old_table: str | None) -> None:
+        """把 source_table 换名为正式表；DROP 旧表与 RENAME 在同一事务内。
+
+        `executescript` 会隐式提交，所以这里全部用单条 execute()。
+        若连接已在事务中（例如调用方自己开了事务做失败注入），不再嵌套 BEGIN，
+        直接执行并让调用方决定提交或回滚——SQLite 的 DDL 在事务内是可回滚的。
+        """
+        owns_txn = not conn.in_transaction
+        if owns_txn:
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            if old_table is not None:
+                conn.execute(f"DROP TABLE {old_table}")
+            conn.execute(f"ALTER TABLE {source_table} RENAME TO collector_rejected_gaps")
+            if owns_txn:
+                conn.execute("COMMIT")
+        except BaseException:
+            if owns_txn:
+                try:
+                    conn.execute("ROLLBACK")
+                except Exception:
+                    logger.exception("gap ledger swap rollback failed")
+            raise
         conn.executescript(_INDEXES_V2)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        logger.warning("migrated %d legacy rejection gap row(s) to v2", migrated)
+
+    def _rebuild_from(self, conn: sqlite3.Connection, source_table: str) -> None:
+        """把 source_table 的数据重建成规范 v2 正式表（缺失列补未知）。"""
+        columns = _columns(conn, source_table)
+        conn.execute("DROP TABLE IF EXISTS collector_rejected_gaps__rebuild")
+        conn.execute(_TABLE_V2_REBUILD)
+        select_cols: list[str] = []
+        for name in ("run_id", "session_id"):
+            select_cols.append(name if name in columns else "?")
+        for name in ("device_code", "group_code", "device_type", "scan_rate_ms", "reason",
+                     "first_ts_ms", "last_ts_ms"):
+            if name not in columns:
+                raise RuntimeError(
+                    f"cannot rebuild gap ledger from {source_table}: missing {name}")
+            select_cols.append(name)
+        select_cols.append("contiguous_from_ts_ms" if "contiguous_from_ts_ms" in columns
+                           else "first_ts_ms")
+        for name in ("frames", "first_rejected_at", "last_rejected_at"):
+            if name not in columns:
+                raise RuntimeError(
+                    f"cannot rebuild gap ledger from {source_table}: missing {name}")
+            select_cols.append(name)
+        for name in ("collection_resumed_at", "backfilled_at", "resolved_at"):
+            select_cols.append(name if name in columns else "NULL")
+        params: tuple = () if "run_id" in columns else (LEGACY_RUN_ID,)
+        if "session_id" not in columns:
+            params = params + (UNKNOWN_SESSION_ID,)
+        conn.execute(
+            f"INSERT INTO collector_rejected_gaps__rebuild ("
+            "run_id, session_id, device_code, group_code, device_type, scan_rate_ms,"
+            " reason, first_ts_ms, last_ts_ms, contiguous_from_ts_ms, frames,"
+            " first_rejected_at, last_rejected_at, collection_resumed_at,"
+            " backfilled_at, resolved_at"
+            f") SELECT {', '.join(select_cols)} FROM {source_table}",
+            params,
+        )
+        migrated = conn.execute(
+            "SELECT COUNT(*) FROM collector_rejected_gaps__rebuild").fetchone()[0]
+        self._swap_in(conn, "collector_rejected_gaps__rebuild", old_table=None)
+        logger.warning("rebuilt %d rejection gap row(s) into the official table", migrated)
+
+    def _migrate_to_v2(self, conn: sqlite3.Connection, columns: set[str]) -> None:
+        """任意旧结构 → v2。整体事务化，且保留旧表已有的真实元数据。
+
+        旧表真正缺少的信息才补"未知"（legacy-import / unknown / NULL）；
+        已经存在的 run_id、session_id、处置状态必须原样保留，
+        否则会把真实运行会话覆盖成"未知"，历史缺口也无法按运行追溯。
+
+        事务边界：`executescript` 会隐式提交，所以**全部用单条 execute()**，
+        把"DROP 旧表 + RENAME 临时表"包在同一个 BEGIN IMMEDIATE / COMMIT 内。
+        提交前正式表始终是旧的，中断最多留下 __migrating 残留，
+        由 _recover_interrupted_migration 处理。
+        """
+        logger.warning("migrating collector rejection gap ledger to v2 at %s "
+                       "(source columns: %s)", self.path, sorted(columns))
+        has = columns.__contains__
+        run_expr = "run_id" if has("run_id") else None
+        session_expr = "session_id" if has("session_id") else None
+        contiguous_expr = "contiguous_from_ts_ms" if has("contiguous_from_ts_ms") else None
+        resumed_expr = "collection_resumed_at" if has("collection_resumed_at") else None
+        backfilled_expr = "backfilled_at" if has("backfilled_at") else None
+        resolved_expr = "resolved_at" if has("resolved_at") else None
+
+        select_cols = []
+        params: list[object] = []
+        for expr, fallback in (
+            (run_expr, LEGACY_RUN_ID), (session_expr, UNKNOWN_SESSION_ID),
+        ):
+            if expr is None:
+                select_cols.append("?")
+                params.append(fallback)
+            else:
+                select_cols.append(expr)
+        select_cols += ["device_code", "group_code", "device_type", "scan_rate_ms",
+                        "reason", "first_ts_ms", "last_ts_ms"]
+        if contiguous_expr is None:
+            select_cols.append("first_ts_ms")       # 旧表没有连续起点，用首帧时间
+        else:
+            select_cols.append(contiguous_expr)
+        select_cols += ["frames", "first_rejected_at", "last_rejected_at"]
+        for expr in (resumed_expr, backfilled_expr, resolved_expr):
+            select_cols.append(expr if expr is not None else "NULL")
+
+        conn.execute(f"DROP TABLE IF EXISTS {_MIGRATING_TABLE}")
+        conn.execute(_TABLE_V2_MIGRATING)           # 建临时新表（自动提交）
+        insert_sql = (
+            f"INSERT INTO {_MIGRATING_TABLE} ("
+            "run_id, session_id, device_code, group_code, device_type, scan_rate_ms,"
+            " reason, first_ts_ms, last_ts_ms, contiguous_from_ts_ms, frames,"
+            " first_rejected_at, last_rejected_at, collection_resumed_at,"
+            " backfilled_at, resolved_at"
+            f") SELECT {', '.join(select_cols)} FROM collector_rejected_gaps"
+        )
+        conn.execute(insert_sql, tuple(params))
+        migrated = conn.execute(
+            f"SELECT COUNT(*) FROM {_MIGRATING_TABLE}").fetchone()[0]
+
+        # 关键：换表整体事务化。DROP 之后如果崩溃，事务回滚，正式表仍是旧的。
+        self._swap_in(conn, _MIGRATING_TABLE, old_table="collector_rejected_gaps")
+        logger.warning("migrated %d rejection gap row(s) to v2", migrated)
 
     # ------------------------------------------------------------------
     # 写入

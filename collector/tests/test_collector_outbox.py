@@ -142,11 +142,6 @@ def test_gap_ledger_reports_unavailable_instead_of_empty(tmp_path):
 
 
 def test_legacy_v1_gap_ledger_is_migrated_and_history_preserved(tmp_path):
-    """旧版（无 run_id）台账必须显式迁移：保留历史，且不伪装成本次运行。
-
-    CREATE TABLE IF NOT EXISTS 不会给已存在的同名表补列，
-    旧版本升级时会直接初始化失败——这里用 v1 结构建库来覆盖这条路径。
-    """
     import sqlite3 as _sq
     from storage.reject_gap_log import LEGACY_RUN_ID, RejectGapLog
 
@@ -180,6 +175,195 @@ def test_legacy_v1_gap_ledger_is_migrated_and_history_preserved(tmp_path):
     assert history[0]["device_code"] == "DEV"
     assert q.rejected_gap_runs()[0]["run_id"] == LEGACY_RUN_ID
     q.close()
+
+
+def _make_v1_ledger(path):
+    """最早结构：没有 run_id / session_id / 状态列。"""
+    import sqlite3 as _sq
+    conn = _sq.connect(path)
+    conn.executescript("""
+        CREATE TABLE collector_rejected_gaps (
+            device_code TEXT NOT NULL, group_code TEXT NOT NULL, device_type TEXT NOT NULL,
+            scan_rate_ms INTEGER NOT NULL, reason TEXT NOT NULL,
+            first_ts_ms INTEGER NOT NULL, last_ts_ms INTEGER NOT NULL, frames INTEGER NOT NULL,
+            first_rejected_at INTEGER NOT NULL, last_rejected_at INTEGER NOT NULL,
+            PRIMARY KEY (device_code, group_code, scan_rate_ms, reason));
+    """)
+    conn.execute("INSERT INTO collector_rejected_gaps VALUES "
+                 "('DEV','g','dt',100,'full',1000,1500,5,111,222)")
+    conn.commit()
+    conn.close()
+
+
+def _make_intermediate_ledger(path):
+    """中间结构：已有 run_id / session_id / resolved_at，但还没有连续区间字段。
+
+    这一版真实存在过（上一轮加 run_id 时），因此必须能识别并**保留已有元数据**。
+    """
+    import sqlite3 as _sq
+    conn = _sq.connect(path)
+    conn.executescript("""
+        CREATE TABLE collector_rejected_gaps (
+            run_id TEXT NOT NULL, session_id TEXT NOT NULL,
+            device_code TEXT NOT NULL, group_code TEXT NOT NULL, device_type TEXT NOT NULL,
+            scan_rate_ms INTEGER NOT NULL, reason TEXT NOT NULL,
+            first_ts_ms INTEGER NOT NULL, last_ts_ms INTEGER NOT NULL, frames INTEGER NOT NULL,
+            first_rejected_at INTEGER NOT NULL, last_rejected_at INTEGER NOT NULL,
+            resolved_at INTEGER,
+            PRIMARY KEY (run_id, device_code, group_code, scan_rate_ms, reason));
+    """)
+    conn.execute(
+        "INSERT INTO collector_rejected_gaps VALUES "
+        "('known-old-run','known-old-session','DEV','g','dt',100,'full',"
+        "1000,1500,5,111,222,9999)")
+    conn.commit()
+    conn.close()
+
+
+def test_intermediate_ledger_keeps_existing_run_and_disposition_metadata(tmp_path):
+    """中间版本已有的 run_id / session_id / 处置状态必须保留，不能被覆盖成未知。"""
+    from storage.reject_gap_log import RejectGapLog
+
+    db = tmp_path / "intermediate.rejects.sqlite"
+    _make_intermediate_ledger(db)
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True
+    assert log.status()["schema_version"] == 2
+
+    # 历史仍按原来的 run_id 可查，且处置状态没被清掉
+    history = log.gaps(run_id="known-old-run")
+    assert len(history) == 1, "已有 run_id 的历史必须保留在原运行批次下"
+    row = history[0]
+    assert row["run_id"] == "known-old-run", "真实 run_id 不得被覆盖成 legacy-import"
+    assert row["session_id"] == "known-old-session", "真实 session 不得被覆盖成 unknown"
+    assert row["resolved_at"] == 9999, "已有人工处置状态不得被清空"
+    assert row["contiguous_from_ts_ms"] == 1000, "新列用首帧时间补齐"
+    # 也不得被当成当前运行的告警
+    assert log.gaps() == []
+    log.close()
+
+
+def test_interrupted_migration_is_recovered_not_replaced_by_empty_table(tmp_path):
+    """迁移中断残留必须被识别：旧记录不能被困在临时表里而正常查询看不到。
+
+    模拟"DROP 旧表之后、RENAME 之前"崩溃：现场只有临时表、没有正式表。
+    若直接建空表，历史就会消失（正是要避免的错误状态）。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, _MIGRATING_TABLE
+
+    db = tmp_path / "interrupted.rejects.sqlite"
+    _make_v1_ledger(db)
+
+    conn = _sq.connect(db)
+    # 模拟中断现场：临时表已建好并复制完历史，正式表已被 DROP、尚未 RENAME
+    conn.execute(f"CREATE TABLE {_MIGRATING_TABLE} AS "
+                 "SELECT 'legacy-import' AS run_id, 'unknown' AS session_id, "
+                 "device_code, group_code, device_type, scan_rate_ms, reason, "
+                 "first_ts_ms, last_ts_ms, first_ts_ms AS contiguous_from_ts_ms, frames, "
+                 "first_rejected_at, last_rejected_at, "
+                 "NULL AS collection_resumed_at, NULL AS backfilled_at, "
+                 "NULL AS resolved_at FROM collector_rejected_gaps")
+    conn.execute("DROP TABLE collector_rejected_gaps")
+    conn.commit()
+    conn.close()
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True, "中断残留必须能被恢复，而不是初始化失败"
+    # 历史必须回到正常查询可见的位置
+    runs = [r["run_id"] for r in log.runs()]
+    assert runs == ["legacy-import"], f"历史记录必须被提升为正式表，实际 {runs}"
+    assert log.gaps(run_id="legacy-import")[0]["frames"] == 5
+    # 临时表不得残留
+    tables = [r[0] for r in log._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    assert _MIGRATING_TABLE not in tables, "恢复后不得残留临时表"
+    log.close()
+
+
+def test_leftover_migrating_table_is_discarded_when_official_exists(tmp_path):
+    """正式表与临时表同时存在（事务已回滚）时，正式表是权威，临时表只是在途残留。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, _MIGRATING_TABLE
+
+    db = tmp_path / "both.rejects.sqlite"
+    _make_v1_ledger(db)
+    conn = _sq.connect(db)
+    conn.execute(f"CREATE TABLE {_MIGRATING_TABLE} (run_id TEXT)")
+    conn.commit()
+    conn.close()
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True
+    assert log.status()["schema_version"] == 2
+    tables = [r[0] for r in log._conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    assert _MIGRATING_TABLE not in tables, "残留临时表必须被清理"
+    # 正式表的历史仍在（按 v1 迁移规则标为 legacy-import）
+    assert log.gaps(run_id="legacy-import")[0]["frames"] == 5
+    log.close()
+
+
+def test_migration_failure_during_swap_keeps_old_table_intact(tmp_path):
+    """换表阶段的失败注入：DROP 之后的异常必须回滚，旧表与记录原样保留。
+
+    这是审查指出的断点——原实现在 DROP 之后、RENAME 之前不具事务保护。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import (
+        SCHEMA_VERSION, RejectGapLog, _MIGRATING_TABLE,
+    )
+
+    db = tmp_path / "swapfail.rejects.sqlite"
+    _make_v1_ledger(db)
+
+    class _FailOnSwap(sqlite3.Connection):
+        """在首次执行 RENAME 时抛错，模拟换表中途失败。"""
+
+        def execute(self, sql, *args, **kwargs):
+            if "RENAME TO collector_rejected_gaps" in str(sql):
+                raise RuntimeError("simulated crash between DROP and RENAME")
+            return super().execute(sql, *args, **kwargs)
+
+    # RENAME 时抛错，模拟换表中途失败；调用方持有事务，异常后可回滚。
+    _sq.connect(db, factory=_FailOnSwap).close()
+    conn = _sq.connect(db, factory=_FailOnSwap, isolation_level=None)
+    conn.row_factory = _sq.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("BEGIN")
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        log = RejectGapLog.__new__(RejectGapLog)
+        log.path = db
+        log._migrate_to_v2(conn, _columns_of(conn, "collector_rejected_gaps"))
+    # 事务回滚后，正式表与它的记录必须原样还在
+    conn.execute("ROLLBACK")
+    assert _table_names(conn).count("collector_rejected_gaps") == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0] == 1
+    assert conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION, \
+        "迁移没成功就不得把版本号标成新版本"
+    conn.close()
+
+    # 重新正常打开：残留的临时表被清理，旧表按 v1 规则迁移成功
+    from storage.reject_gap_log import RejectGapLog as _Log
+    log2 = _Log(db, run_id="run-new", session_id="sess-new")
+    assert log2.available is True
+    assert log2.status()["schema_version"] == 2
+    assert log2.gaps(run_id="legacy-import")[0]["frames"] == 5
+    assert _MIGRATING_TABLE not in [
+        r[0] for r in log2._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    log2.close()
+
+
+def _columns_of(conn, table):
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _table_names(conn):
+    return [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
 
 
 def test_gap_ledger_is_separate_from_the_full_main_queue(tmp_path):
