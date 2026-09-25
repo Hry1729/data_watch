@@ -1348,7 +1348,10 @@ class StreamConsumer:
                     # FAILED_INCOMPLETE 与 BAD_DATA 一样走"持久隔离、不计成功"，
                     # 区别只在记录原因：前者是部分分段已落库、另一部分不可恢复，
                     # 必须把分段状态一并留证，便于事后判断哪部分需要修复。
-                    # 只有隔离记录**可靠保存**后才 ACK；保存失败则留缓冲与 PEL。
+                    # 只有隔离记录写入被 Redis 接受后才 ACK；写入报错则留缓冲与 PEL。
+                    # 注意口径：push_dlq 的 True 只代表 lpush/trim 被执行且未报错，
+                    # **不代表**已通过 WAITAOF 之类的持久确认。要声称"可靠移交"，
+                    # 还需要批量持久确认或同实例幂等状态转移的恢复论证与故障测试。
                     for row in chunk_rows:
                         if await self._run_blocking(
                                 self._push_incomplete_or_bad_row, row, status):
@@ -1523,7 +1526,12 @@ class StreamConsumer:
         }
 
     def _push_incomplete_or_bad_row(self, row: _BufferedRow, status: str) -> bool:
-        """把不可恢复的行转入持久失败隔离。返回 True 表示隔离记录已可靠保存。
+        """把不可恢复的行转入持久失败隔离。返回 True 表示写入被 Redis 接受。
+
+        口径说明：返回值来自 push_dlq 的 pipeline 执行结果，只表示命令未报错，
+        **不是**持久确认（无 WAITAOF）。隔离记录与源消息同在 Redis，
+        恢复结果还取决于写入、ACK、删除与 AOF 的顺序，因此
+        "可靠移交"需要单独的恢复论证与故障测试，本函数不提供该保证。
 
         FAILED_INCOMPLETE 与 BAD_DATA 共用这条通路：两者都不得计入成功，
         也不得继续占用正常生产资源。区别只在留给排查的证据：
