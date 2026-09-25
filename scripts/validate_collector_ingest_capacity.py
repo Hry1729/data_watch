@@ -575,7 +575,39 @@ def run(args) -> dict:
             production_snapshot["elapsed_s"] = round(production_end - production_started, 3)
             samples.append(production_snapshot)
 
+            # 受控积压：继续按额定速率生产，直到积压达到指定帧数。
+            # 用"专门预置的积压"而不是"正常流水线遗留的积压"来测处理余量。
+            seeded = None
+            if args.seed_backlog_frames > 0:
+                seed_started = time.monotonic()
+                deadline = seed_started + args.drain_seconds
+                seed_ticks = 0
+                while collector.outbox.stats()["count"] < args.seed_backlog_frames:
+                    if time.monotonic() > deadline:
+                        break
+                    tick = ticks
+                    for future in [pool.submit(submit, device, tick) for device in devices]:
+                        future.result()
+                    ticks += 1
+                    seed_ticks += 1
+                    submitted += args.devices
+                    # 节流必须用**本阶段自己的** tick 计数，不能用全局 ticks
+                    # （全局已累计生产阶段的时间，算出来的时间点早已过期 → 不节流）。
+                    next_tick = seed_started + seed_ticks * args.period_ms / 1000
+                    time.sleep(max(0, next_tick - time.monotonic()))
+                seeded = {
+                    "seconds": round(time.monotonic() - seed_started, 3),
+                    "produced_frames": seed_ticks * args.devices,
+                    "outbox_frames": collector.outbox.stats()["count"],
+                    "outbox_bytes": collector.outbox.stats()["payload_bytes"],
+                    "target_frames": args.seed_backlog_frames,
+                    "target_reached": (collector.outbox.stats()["count"]
+                                       >= args.seed_backlog_frames),
+                }
+                samples.append(snapshot("seed_end"))
+
             catchup = None
+            catchup_start = None
             if args.catchup_seconds > 0:
                 phase_started = time.monotonic()
                 catchup_started = phase_started
@@ -583,6 +615,9 @@ def run(args) -> dict:
                 catchup_start["elapsed_s"] = 0.0
                 samples.append(catchup_start)
                 catchup_ticks = 0
+                # 追平阶段可以降速：--catchup-rate 0.7 表示按额定输入的 70% 继续采集，
+                # 用受控预置积压观察处理余量（额定输入下净消减 ≈ 0 属于边界，不是余量）。
+                catchup_period_s = (args.period_ms / 1000.0) / max(args.catchup_rate, 1e-9)
                 while time.monotonic() - catchup_started < args.catchup_seconds:
                     current_tick = ticks
                     for future in [pool.submit(submit, device, current_tick) for device in devices]:
@@ -592,7 +627,7 @@ def run(args) -> dict:
                     submitted += args.devices
                     if catchup_ticks % args.sample_every_ticks == 0:
                         samples.append(snapshot("catchup"))
-                    next_tick = catchup_started + catchup_ticks * args.period_ms / 1000
+                    next_tick = catchup_started + catchup_ticks * catchup_period_s
                     time.sleep(max(0, next_tick - time.monotonic()))
                 catchup_seconds_actual = time.monotonic() - catchup_started
                 catchup_end = snapshot("catchup_end")
@@ -601,6 +636,8 @@ def run(args) -> dict:
                 catchup_confirmed = catchup_end["replayed_frames"] - catchup_start["replayed_frames"]
                 catchup = {
                     "seconds": round(catchup_seconds_actual, 3),
+                    "rate_multiple": args.catchup_rate,
+                    "seeded_backlog": seeded,
                     "input_fps": round(catchup_ticks * args.devices
                                        / max(catchup_seconds_actual, 1e-9), 2),
                     "confirmed_frames": catchup_confirmed,
@@ -734,6 +771,7 @@ def run(args) -> dict:
             "correctness_problems": problems,
             "windows": windows,
             "catchup": catchup,
+            "seeded_backlog": seeded,
             "final_outbox": final_outbox, "sqlite_rows_after_close": sqlite_rows,
             "final_latest_pending": final_latest_pending,
             "max_rss_bytes": max(sample["rss_bytes"] for sample in samples),
@@ -858,6 +896,13 @@ if __name__ == "__main__":
     parser.add_argument("--drain-seconds", type=int, default=180)
     parser.add_argument("--catchup-seconds", type=int, default=0,
                         help="保持额定输入观察旧积压是否持续减少的时长")
+    parser.add_argument("--catchup-rate", type=float, default=1.0,
+                        help="追平阶段的输入速率倍数（相对额定）。设为 0.7 即为"
+                             "受控余量测试：用低于额定的输入处理预置积压，"
+                             "观察净消减速率是否达到额定输入的 30%%")
+    parser.add_argument("--seed-backlog-frames", type=int, default=0,
+                        help="受控积压：先按额定速率额外生产这么多帧再进入追平阶段，"
+                             "避免用'正常流水线遗留的积压'充当处理余量证据")
     parser.add_argument("--sample-every-ticks", type=int, default=5)
     parser.add_argument("--audit-stride", type=int, default=97,
                         help="每 N 帧完整核对一帧全字段")
