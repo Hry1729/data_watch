@@ -180,6 +180,58 @@ def test_xack_failure_never_deletes_and_retries_ack_first():
     assert consumer._ack_retry == {}
 
 
+@pytest.mark.asyncio
+async def test_isolated_payload_counts_against_the_total_byte_budget():
+    """隔离区持有的载荷必须计入总字节预算，不能在字面账上消失。"""
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(return_value=[([0], RETRY, 1.0)])
+    redis_client = MagicMock()
+    consumer = _consumer(writer, redis_client)
+    consumer._max_buffer_bytes = 10_000
+    row = _row("1-0")
+    row.payload_bytes = 4_000
+    consumer._buffer = [row]
+
+    for _ in range(consumer._max_row_retry):
+        consumer._buffer = [row]
+        await consumer._flush()
+
+    assert consumer._isolated_bytes == 4_000
+    assert consumer._remaining_byte_capacity() == 10_000 - 4_000, \
+        "隔离区载荷必须从剩余额度里扣除"
+    # 重新入队只改归属，不改变总占用
+    consumer._readmit_isolated(now=row.next_retry_at + 1)
+    assert consumer._isolated_bytes == 0
+    assert consumer._buffer_bytes == 4_000
+    assert consumer._remaining_byte_capacity() == 10_000 - 4_000, \
+        "迁移状态只改归属，总占用不得变化"
+
+
+def test_retry_backoff_never_overflows_for_absurd_attempt_counts():
+    """退避必须对任意重试次数都返回有限合法延迟。
+
+    原实现是 min(base * 2**n, maximum)：先算指数再取上限，
+    n=1025 时 2**1025 无法转 float，故障处理路径自己抛 OverflowError。
+    """
+    consumer = _consumer(MagicMock(), MagicMock())
+    maximum = consumer._retry_backoff_max_s
+    for attempts in (0, 1, 2, 3, 100, 1024, 1025, 4096, 10 ** 9, 2 ** 70):
+        delay = consumer._retry_delay_s(attempts)
+        assert isinstance(delay, float)
+        assert delay == delay, "不得为 NaN"
+        assert delay != float("inf"), "不得为无穷"
+        assert 0 < delay <= maximum, f"attempts={attempts} delay={delay}"
+
+
+def test_retry_backoff_grows_then_saturates():
+    consumer = _consumer(MagicMock(), MagicMock())
+    delays = [consumer._retry_delay_s(n) for n in (1, 2, 3, 10, 10 ** 6)]
+    assert delays[0] == consumer._retry_backoff_base_s
+    assert delays[1] > delays[0], "退避应随次数增长"
+    assert delays[-1] == consumer._retry_backoff_max_s, "最终饱和到上限"
+    assert all(b >= a for a, b in zip(delays, delays[1:])), "必须单调不减"
+
+
 def test_xdel_failure_is_retried_without_repeating_xack():
     writer = MagicMock()
     redis_client = MagicMock()

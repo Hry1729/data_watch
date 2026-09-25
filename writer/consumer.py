@@ -208,6 +208,8 @@ class StreamConsumer:
         # 因此隔离区不会无界增长。
         self._isolated: list[_BufferedRow] = []
         self._isolated_keys: set[tuple[str, str]] = set()
+        # 隔离区持有的载荷字节；纳入总预算，不能在字节账面上消失。
+        self._isolated_bytes: int = 0
         self._max_isolated_rows: int = max(64, self._max_buffer_rows // 4)
         self._max_row_retry: int = max(1, int(w.get("max_row_retry", 3)))
         # 每个回收周期最多放回多少隔离行重试，以及逐行退避区间：
@@ -286,7 +288,9 @@ class StreamConsumer:
             readmitted_bytes += row.payload_bytes
         self._buffer = readmitted + self._buffer
         self._buffer_bytes += readmitted_bytes
-        self._metrics.set_buffer_bytes(self._buffer_bytes + self._inflight_bytes)
+        self._isolated_bytes -= readmitted_bytes
+        self._metrics.set_buffer_bytes(
+            self._buffer_bytes + self._inflight_bytes + self._isolated_bytes)
         self._metrics.set_buffer_rows(len(self._buffer), len(self._isolated))
         logger.info(
             "[consumer] re-admitted %d isolated row(s) for retry "
@@ -294,15 +298,48 @@ class StreamConsumer:
             len(readmitted), len(self._isolated), readmitted_bytes,
         )
 
+    def _remaining_byte_capacity(self) -> int:
+        """剩余**载荷**字节额度。
+
+        总预算必须覆盖所有本地持有状态：主缓冲 + 在途批次 + 隔离区。
+        隔离区保存的是完整 `_BufferedRow`（原始数据、解码后的数值与质量），
+        不扣它会让"32MiB 载荷上限"实际上变成 32MiB + 隔离区大小。
+        隔离区超出份额应靠持久状态承接，而不是在字节账面上消失。
+        """
+        return (self._max_buffer_bytes - self._buffer_bytes
+                - self._inflight_bytes - self._isolated_bytes)
+
+    def _recompute_isolated_bytes(self) -> None:
+        self._isolated_bytes = sum(row.payload_bytes for row in self._isolated)
+        self._metrics.set_buffer_bytes(
+            self._buffer_bytes + self._inflight_bytes + self._isolated_bytes)
+
+    def _retry_delay_s(self, retry_attempts: int) -> float:
+        """指数退避，饱和后再大也不溢出。
+
+        注意不能写成 `min(base * 2**n, maximum)`：那会先算指数再取上限，
+        `2**1025` 无法转成 float，会抛 OverflowError，让故障处理路径自己崩。
+        这里先把指数夹到上限所需的最小值，保证任何输入都得到有限合法延迟。
+        """
+        maximum = self._retry_backoff_max_s
+        base = self._retry_backoff_base_s
+        if base <= 0:
+            return maximum
+        # 达到上限所需的最小指数；超过它就没有再算下去的意义
+        cap = max(0, int(math.ceil(math.log2(max(maximum, base) / base))))
+        exponent = min(max(0, int(retry_attempts) - 1), cap)
+        return min(base * (2 ** exponent), maximum)
+
     def _isolate_row(self, row: _BufferedRow, *, now: float | None = None) -> None:
         """把一行放进隔离区，并设定下一次可重试时间（指数退避、有上界）。"""
         now = time.monotonic() if now is None else now
-        delay = min(self._retry_backoff_base_s * (2 ** max(0, row.retry_attempts - 1)),
-                    self._retry_backoff_max_s)
-        row.next_retry_at = now + delay
+        row.next_retry_at = now + self._retry_delay_s(row.retry_attempts)
         self._isolated.append(row)
         self._isolated_keys.add((row.stream_key, row.entry_id))
         self._buffered_keys.discard((row.stream_key, row.entry_id))
+        self._isolated_bytes += row.payload_bytes
+        self._metrics.set_buffer_bytes(
+            self._buffer_bytes + self._inflight_bytes + self._isolated_bytes)
 
     def oldest_buffered_source_age_ms(self, now_ms: int) -> int | None:
         source_times = [row.ts for row in self._buffer]
@@ -362,7 +399,7 @@ class StreamConsumer:
     def _next_read_scope(self, stream_keys: list[str]) -> tuple[dict[str, str], int]:
         """XREADGROUP 的 COUNT 对每个流生效，故先分配全局容量。"""
         available = self._remaining_capacity()
-        byte_capacity = (self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes)
+        byte_capacity = (self._remaining_byte_capacity())
         if available <= 0 or byte_capacity <= 0 or not stream_keys:
             return {}, 0
         available = min(available, max(1, byte_capacity // self._estimated_entry_bytes))
@@ -508,7 +545,7 @@ class StreamConsumer:
                     prepared = await self._run_blocking(
                         _prepare_payload_batch,
                         [entry_data for _, _, entry_data in batch[:prepare_count]],
-                        max(0, self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes),
+                        max(0, self._remaining_byte_capacity()),
                     )
                     for index, (stream_key, entry_id, entry_data) in enumerate(batch):
                         try:
@@ -822,7 +859,7 @@ class StreamConsumer:
             )
             if isinstance(entry_data, dict) else 0
         )
-        byte_capacity = self._max_buffer_bytes - self._buffer_bytes - self._inflight_bytes
+        byte_capacity = self._remaining_byte_capacity()
         if self._remaining_capacity() <= 0 or (
             payload_bytes > byte_capacity
             and (self._buffer or self._inflight_rows)
