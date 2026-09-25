@@ -70,18 +70,115 @@ def test_rejected_frame_is_recorded_as_a_traceable_gap(tmp_path):
     q.close()
 
 
-def test_repeated_rejections_aggregate_into_one_row_with_a_range(tmp_path):
+def test_contiguous_rejections_merge_and_disjoint_ones_split(tmp_path):
+    """连续拒收合并为一段；中间隔开（或恢复采集后）再拒收必须拆成独立事件。
+
+    审查要求：不能只按"首次—末次"形成一个大区间。当前只有采样时间戳可用，
+    因此按"间隔不超过约一个半采样周期"推断连续性——这是**时间推断**，
+    不代表能精确知道每一帧是否缺失。
+    """
     q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
-    q.record_failure(**sample(1000))
-    for ts in (2000, 3000, 4000):
+    q.record_failure(**sample(1000))          # 被接受，占满队列（本身不是缺口）
+    assert q.rejected_gaps() == []
+
+    # 100ms 周期：2000/2100/2200 相邻 → 同一段
+    for ts in (2000, 2100, 2200):
         with pytest.raises(RuntimeError, match="full"):
             q.record_failure(**sample(ts))
-
     gaps = q.rejected_gaps()
-    assert len(gaps) == 1, "同一 (设备,分组,周期,原因) 的连续缺口应聚合成一行"
+    assert len(gaps) == 1, "相邻采样时间的连续拒收应合并为一段"
     assert gaps[0]["frames"] == 3
-    assert gaps[0]["first_ts_ms"] == 2000
-    assert gaps[0]["last_ts_ms"] == 4000
+    assert gaps[0]["first_ts_ms"] == 2000 and gaps[0]["last_ts_ms"] == 2200
+
+    # 间隔远大于容忍度 → 新的一段，不能并进上面
+    with pytest.raises(RuntimeError, match="full"):
+        q.record_failure(**sample(9000))
+    gaps = q.rejected_gaps()
+    assert len(gaps) == 2, "不连续的拒收必须拆成两个独立缺口事件"
+    assert sorted(g["frames"] for g in gaps) == [1, 3]
+    q.close()
+
+
+def test_gap_event_closes_when_collection_resumes(tmp_path):
+    """采集恢复只关闭"缺口仍在扩大"，不代表缺失数据已补齐。"""
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    q.record_failure(**sample(1000))
+    for ts in (2000, 2100):
+        with pytest.raises(RuntimeError, match="full"):
+            q.record_failure(**sample(ts))
+    q.mark_collection_resumed(device_code="D", group_code="g", scan_rate_ms=100)
+
+    gap = q.rejected_gaps()[0]
+    assert gap["collection_resumed_at"] is not None
+    # 关键：采集恢复 != 数据已补齐
+    assert gap["backfilled_at"] is None
+    assert gap["resolved_at"] is None
+
+    # 恢复之后再拒收 → 新事件，不会并进已关闭的那段
+    with pytest.raises(RuntimeError, match="full"):
+        q.record_failure(**sample(9000))
+    assert len(q.rejected_gaps()) == 2
+    q.close()
+
+
+def test_gap_ledger_reports_unavailable_instead_of_empty(tmp_path):
+    """台账不可用时必须显式报出，不能返回一个无法区分原因的空结果。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, RejectGapLogUnavailable
+
+    db = tmp_path / "broken.sqlite"
+    conn = _sq.connect(db)
+    # 同名表但结构无法识别 → 初始化必须失败而不是静默降级
+    conn.executescript("CREATE TABLE collector_rejected_gaps (something TEXT);")
+    conn.commit()
+    conn.close()
+
+    log = RejectGapLog(db, run_id="r", session_id="s")
+    assert log.available is False
+    status = log.status()
+    assert status["available"] is False and status["error"]
+    with pytest.raises(RejectGapLogUnavailable):
+        log.gaps()
+
+
+def test_legacy_v1_gap_ledger_is_migrated_and_history_preserved(tmp_path):
+    """旧版（无 run_id）台账必须显式迁移：保留历史，且不伪装成本次运行。
+
+    CREATE TABLE IF NOT EXISTS 不会给已存在的同名表补列，
+    旧版本升级时会直接初始化失败——这里用 v1 结构建库来覆盖这条路径。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import LEGACY_RUN_ID, RejectGapLog
+
+    db = tmp_path / "legacy.rejects.sqlite"
+    conn = _sq.connect(db)
+    conn.executescript("""
+        CREATE TABLE collector_rejected_gaps (
+            device_code TEXT NOT NULL, group_code TEXT NOT NULL, device_type TEXT NOT NULL,
+            scan_rate_ms INTEGER NOT NULL, reason TEXT NOT NULL,
+            first_ts_ms INTEGER NOT NULL, last_ts_ms INTEGER NOT NULL, frames INTEGER NOT NULL,
+            first_rejected_at INTEGER NOT NULL, last_rejected_at INTEGER NOT NULL,
+            PRIMARY KEY (device_code, group_code, scan_rate_ms, reason));
+    """)
+    conn.execute("INSERT INTO collector_rejected_gaps VALUES "
+                 "('DEV','g','dt',100,'full',1000,1500,5,111,222)")
+    conn.commit()
+    conn.close()
+
+    q = CollectorRetryOutbox(tmp_path / "q.db")
+    q._reject_log.close()
+    q._reject_log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    status = q.reject_log_status()
+    assert status["available"] is True
+    assert status["schema_version"] == 2
+
+    # 历史保留且标成 legacy-import，不会被当成当前告警
+    assert q.rejected_gaps() == []
+    history = q.rejected_gaps(run_id=LEGACY_RUN_ID)
+    assert len(history) == 1
+    assert history[0]["frames"] == 5
+    assert history[0]["device_code"] == "DEV"
+    assert q.rejected_gap_runs()[0]["run_id"] == LEGACY_RUN_ID
     q.close()
 
 
@@ -99,16 +196,42 @@ def test_gap_ledger_is_separate_from_the_full_main_queue(tmp_path):
 
 
 def test_gap_ledger_does_not_grow_without_bound(tmp_path):
-    """缺口台账按 (run, 设备, 分组, 周期, 原因) 聚合，不随运行时长无限增长。"""
+    """连续拒收聚合成一段，不随运行时长无限增长。"""
     q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
     q.record_failure(**sample(1000))
-    for ts in range(2000, 2100):
+    # 100ms 周期下的连续 100 次拒收
+    for ts in range(2000, 2000 + 100 * 100, 100):
         with pytest.raises(RuntimeError, match="full"):
             q.record_failure(**sample(ts))
-    rows = q._reject_conn.execute(
-        "SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0]
-    assert rows == 1
-    assert q.rejected_gaps()[0]["frames"] == 100
+    gaps = q.rejected_gaps()
+    assert len(gaps) == 1, "连续拒收应聚合成一段"
+    assert gaps[0]["frames"] == 100
+    q.close()
+
+
+def test_accepting_a_frame_again_closes_the_open_gap(tmp_path):
+    """再次成功接收同一 (设备,分组,周期) 时，缺口应自动标记"采集已恢复"。
+
+    这只关闭"缺口仍在扩大"，**不**代表缺失数据已补齐。
+    """
+    q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
+    q.record_failure(**sample(1000))          # 接受，占满队列
+    for ts in (2000, 2100):
+        with pytest.raises(RuntimeError, match="full"):
+            q.record_failure(**sample(ts))    # 队列满 → 拒收，产生缺口
+    gap = q.rejected_gaps()[0]
+    assert gap["frames"] == 2
+    assert gap["collection_resumed_at"] is None, "仍在拒收期间不算恢复"
+
+    # 腾出容量后再次成功接收 → 采集恢复
+    q._conn.execute("DELETE FROM collector_retry_outbox_v2")
+    q._count = 0
+    q._payload_bytes = 0
+    q.record_failure(**sample(3000))
+
+    gap = q.rejected_gaps()[0]
+    assert gap["collection_resumed_at"] is not None, "重新接收成功后应关闭缺口扩大标记"
+    assert gap["backfilled_at"] is None, "采集恢复不得等同于缺失数据已补齐"
     q.close()
 
 
