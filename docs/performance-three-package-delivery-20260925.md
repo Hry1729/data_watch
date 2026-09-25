@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | A 台账迁移可靠性 | `ac16264` | **完成** |
 | B Writer 失败证据与解析 | `2c93ff5` | **完成** |
-| C 测试可信度与性能验证 | `1decdcd`、`b4bbb4a` | **部分完成**：公式与受控积压工具已就绪并实测；**完整入库链路未执行**（见下） |
+| C 测试可信度与性能验证 | `1decdcd`、`b4bbb4a`、`f87de5b`、后续补齐 | **公式与受控积压已完成；完整入库链路已跑通**（见 C3） |
 
 ---
 
@@ -122,20 +122,44 @@ writer 176 passed。
 
 结论：余量必须在**回放确为瓶颈**的配置上测。现有数据仍不足以给出最大处理余量。
 
-### C3 完整入库链路（含 TDengine）—— **未执行**
+### C3 完整入库链路（含 TDengine）—— **已跑通**
 
-`taosws`（TDengine 的 WebSocket 连接器，`writer/tdengine_writer.py` 依赖）
-**不在 PyPI 分发**（`pip install taosws` 报 `from versions: none`）。
-本机已有的是 Windows 版 `_taosws.pyd`（12.6 MB 原生扩展），
-无法在 Linux 容器加载，因此 `scripts/validate_docker_pipeline.py`
-（合成输入→SQLite→Redis→MySQL→TDengine）本轮**没有运行**。
+先更正前一版记录里的错误结论：我此前写"`taosws` 不在 PyPI 分发"是**错的**。
+TDengine 的 WebSocket 连接器在 PyPI 上的**发行名是 `taos-ws-py`**，导入名才是 `taosws`
+（`writer/requirements.txt` 里写的正是 `taos-ws-py`）。按导入名去 `pip install taosws`
+自然得到 `from versions: none`——那是**包名写错**，不是分发限制。
 
-已提供 `outputs/performance-20260925/pipeline-runner.Dockerfile`：
-基础依赖可构建通过；把 TDengine 官方渠道的 **Linux amd64 taosws wheel**
-放入 `outputs/performance-20260925/wheels/` 即可直接建成完整链路 runner。
+修正后一次建成 runner 镜像并在隔离环境跑通完整链路：
+`合成输入 → Collector SQLite 持久队列 → Redis Stream + AOF → Writer → MySQL 映射 → TDengine`。
 
-**因此报告中不得声称"完整入库链路已验证"**，
-实际输入 / 持久接收 / Redis 确认 / TDengine 完整确认四项**尚未分别对齐**。
+| 配置（2 CPU / 2 GiB runner） | 结果 |
+| --- | --- |
+| 10 设备 × 100 点 × 100ms × 30 秒 | `passed=true`；值行 3000、质量行 300000、错误 0/0、DLQ 0、latest 正确；outbox/PEL/lag 清零 |
+| 20 设备 × 200 点 × 100ms × 60 秒 | `passed=true`；值行 12000、质量行 2400000、错误 0/0、DLQ 0、latest 正确；outbox/PEL/lag 清零 |
+
+两档的关键指标：
+
+| 指标 | 10×100 | 20×200 |
+| --- | --- | --- |
+| 生成帧数 / 帧每秒 | 3000 / 100.0 | 12000 / 200.0 |
+| 来源到 TD 完整确认 平均 / P99 / 最大 | 709.1 / 1500 / 1303.7 ms | 718.8 / 1500 / 1281.2 ms |
+| Writer `parse_ms` 平均 / 最大 | 0.013 / 0.15 ms | 0.026 / 0.925 ms |
+| Writer `td_execute_ms` 平均 | 5.45 ms | 15.94 ms |
+| Writer `build_ms` 平均 | 2.76 ms | 10.85 ms |
+| SQL 语句最大字节 | 359433 | 1460803 |
+| 事件循环延迟 P99 / 最大 | 2.8 / 13.0 ms | 24.0 / 159.8 ms |
+| `peak_isolated_rows` | 0 | 0 |
+| 重试计数（连接/schema/size/未知/深度） | 全 0 | 全 0 |
+
+**这次证明了什么**：完整链路在这两档负载下能端到端对齐，TDengine 侧逐行核对通过；
+本轮的计数修正与 Writer 解析下沉没有破坏链路；隔离区在两档都没有被触发（说明没有误隔离）。
+
+**这次没有证明什么**：这只是 **100 / 200 帧每秒**，离百设备每台 1000 点的
+约 1000 帧/秒还差很远；也不是 30–60 分钟的稳态长测；
+20×200 档事件循环延迟最大 159.8 ms 明显高于 10×100 档的 13.0 ms，值得后续单独追。
+
+**仍未完成**：冻结版本上的额定持续容量与 30% 处理余量、浏览器绘制延迟、
+可靠移交恢复论证、查询侧完整性过滤、宽帧提速。
 
 ---
 
@@ -151,7 +175,8 @@ writer 176 passed。
 | 测试两处阶段公式 | **关闭** |
 | 受控积压余量工具 | **关闭**（工具就绪并实测） |
 | 冻结版本持续容量与 30% 余量 | **未完成**（需在回放为瓶颈的配置上复测） |
-| 完整入库链路（含 TDengine） | **未完成**（环境限制，见 C3） |
+| 完整入库链路（含 TDengine） | **关闭**（两档 10×100、20×200 端到端 passed，见 C3） |
+| 额定规模（约 1000 帧/秒）完整链路 | **未完成**（本次只到 100 / 200 帧每秒） |
 | 可靠移交恢复论证与故障注入 | **未完成** |
 | 查询侧完整性过滤 | **未完成** |
 | 浏览器绘制延迟 | **未完成** |
