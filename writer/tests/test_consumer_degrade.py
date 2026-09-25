@@ -278,6 +278,55 @@ async def test_segment_evidence_never_borrows_another_frames_success():
         "批次统计仍可保留，但必须标明作用域"
 
 
+@pytest.mark.asyncio
+async def test_prepare_batch_converts_values_in_the_worker():
+    """逐点数值转换必须能在执行单元里完成，而不是留在事件循环。
+
+    提供 var_map 时 prepared 应带上转换结果；未知 mapping 时不转换（回退原路径）。
+    """
+    from consumer import _prepare_payload_batch
+
+    entry = _entry_data("1-0")
+    entry["values"] = '{"1": "1.5", "2": "not-a-number", "3": "9.5"}'
+    var_map = {"1": "qc1", "2": "qc2", "3": "qc3"}
+
+    prepared = _prepare_payload_batch([entry], 4096, lambda e: var_map)
+    item = prepared[0]
+    assert item.converted_columns == {"qc1": 1.5, "qc3": 9.5}
+    assert item.conversion_bad_var_ids == ["2"], "非法值必须被记下，不能写假 0.0"
+
+    # lookup 返回 None（mapping 未缓存）→ 不做转换，交给 _handle_entry 回退
+    untranslated = _prepare_payload_batch([entry], 4096, lambda e: None)
+    assert untranslated[0].converted_columns is None
+
+
+@pytest.mark.asyncio
+async def test_overflow_reclaim_offloads_payload_parsing():
+    """溢出回收路径也必须复用批量准备，不能直接同步解析。"""
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(
+        side_effect=lambda rows: [([i], LANDED, 1.0) for i in range(len(rows))])
+    redis_client = MagicMock()
+    redis_client.xclaim.return_value = [
+        ("1-0", _entry_data("1-0")), ("2-0", _entry_data("2-0"))]
+    consumer = _consumer(writer, redis_client)
+    consumer._overdelivered_ids = {"rt:stream:qc:g001:0": {"1-0", "2-0"}}
+
+    offloaded = []
+    real_run_blocking = consumer._run_blocking
+
+    async def spy(func, *args, **kwargs):
+        if func is consumer_mod._prepare_payload_batch:
+            offloaded.append(len(args[0]) if args else 0)
+        return await real_run_blocking(func, *args, **kwargs)
+
+    consumer._run_blocking = spy
+    await consumer._recover_overdelivered()
+
+    assert offloaded, "溢出回收必须把批量准备放到执行单元"
+    assert offloaded[0] == 2, "一次回收 2 条时应一次性批量准备"
+
+
 def test_retry_backoff_never_overflows_for_absurd_attempt_counts():
     """退避必须对任意重试次数都返回有限合法延迟。
 

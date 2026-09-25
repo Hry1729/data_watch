@@ -83,12 +83,51 @@ class _PreparedPayload:
     qualities_error: Exception | None = None
     values_parse_ms: float = 0.0
     qualities_parse_ms: float = 0.0
+    # 逐点数值转换的结果（在执行单元里完成）。mapping 变动或未解码时为 None，
+    # 由调用方回退到事件循环内的同步转换。
+    converted_columns: dict | None = None
+    conversion_bad_var_ids: list | None = None
+    conversion_ms: float = 0.0
+
+
+def _convert_values(raw_values: dict, var_map: dict) -> tuple[dict, list]:
+    """把原始字符串值转换成列名字典（float + 有限值检查）。
+
+    这是原本留在事件循环里的重型转换；抽成纯函数后可在执行单元里批量执行。
+    返回 (columns, bad_var_ids)。非法值一律计入 bad_var_ids——禁止写假 0.0。
+    """
+    columns: dict[str, float] = {}
+    bad_var_ids: list[str] = []
+    for var_id, str_val in raw_values.items():
+        col_name = var_map.get(var_id)
+        if not col_name:
+            continue
+        try:
+            num = float(str_val)
+        except (ValueError, TypeError):
+            bad_var_ids.append(str(var_id))
+            continue
+        if not math.isfinite(num):
+            bad_var_ids.append(str(var_id))
+            continue
+        columns[col_name] = num
+    return columns, bad_var_ids
 
 
 def _prepare_payload_batch(
-    entries: list[dict], byte_budget: int,
+    entries: list[dict], byte_budget: int, var_map_lookup=None,
 ) -> list[_PreparedPayload]:
-    """Decode only payloads that fit the reserved raw-byte budget."""
+    """Decode only payloads that fit the reserved raw-byte budget.
+
+    提供 `var_map_lookup(entry) -> dict|None` 时，顺带在这里完成**逐点数值转换**
+    （float 解析 + 有限值检查）与列名映射。这些原本在 _handle_entry 里逐点执行，
+    会把所有 worker 共享的事件循环堵住——故障后大量 PEL 回收时尤其明显。
+
+    lookup 返回 None 表示该条目的 mapping 未知：不做转换，prepared 里
+    converted_columns 保持 None，由 _handle_entry 回退到原路径。
+    mapping 若在后续流程中 reload（同组新增点），转换结果同样会失效并回退重算。
+    因此这里的结果只是快路径，不改变任何判定语义。
+    """
     prepared = []
     remaining = max(0, byte_budget)
     for entry in entries:
@@ -129,6 +168,17 @@ def _prepare_payload_batch(
                 except Exception as exc:
                     item.qualities_error = exc
                 item.qualities_parse_ms = (time.perf_counter() - started) * 1000
+            if var_map_lookup is not None:
+                try:
+                    var_map = var_map_lookup(entry)
+                except Exception:
+                    var_map = None
+                if var_map:
+                    started = time.perf_counter()
+                    item.converted_columns, item.conversion_bad_var_ids = (
+                        _convert_values(item.raw_values, var_map)
+                    )
+                    item.conversion_ms = (time.perf_counter() - started) * 1000
         prepared.append(item)
     return prepared
 
@@ -234,6 +284,22 @@ class StreamConsumer:
             warn_entries=self._dlq_warn_entries,
             **kwargs,
         )
+
+    def _var_map_for_entry(self, entry: dict) -> dict | None:
+        """给执行单元的批量准备提供 var_map；未缓存则返回 None（回退原路径）。
+
+        只读缓存、不触发 MySQL 加载：加载仍由 _handle_entry 负责，
+        避免在执行单元里做 I/O、也避免改变既有的映射加载时机。
+        """
+        try:
+            device_code = entry.get("device_code")
+            group_code = entry.get("group_code")
+            if not device_code or not group_code:
+                return None
+            mapping = self._mapper.get_cached(str(device_code), str(group_code))
+        except Exception:
+            return None
+        return getattr(mapping, "var_map", None) if mapping is not None else None
 
     async def _run_blocking(self, func, *args, **kwargs):
         """在默认执行器运行同步 Redis/DLQ 操作，避免阻塞消费事件循环。"""
@@ -392,9 +458,25 @@ class StreamConsumer:
             for entry_id in requested:
                 if entry_id not in returned:
                     ids.discard(entry_id)
+            # 溢出回收也和另外两条路径共用同一套有界批量准备：
+            # 否则它仍会在事件循环上做 JSON 解码与逐点数值转换。
+            overflow_prepared_list = await self._run_blocking(
+                _prepare_payload_batch,
+                [entry_data for _, entry_data in claimed],
+                max(0, self._remaining_byte_capacity()),
+                self._var_map_for_entry,
+            )
+            overflow_prepared = {
+                entry_id: overflow_prepared_list[i]
+                for i, (entry_id, _) in enumerate(claimed)
+                if i < len(overflow_prepared_list)
+            }
             for entry_id, entry_data in claimed:
                 ids.discard(entry_id)
-                await self._handle_entry(stream_key, entry_id, entry_data, 1)
+                await self._handle_entry(
+                    stream_key, entry_id, entry_data, 1,
+                    prepared=overflow_prepared.get(entry_id),
+                )
             if not ids:
                 del self._overdelivered_ids[stream_key]
         self._overdelivered_cursor = (start + (visited or 1)) % len(keys)
@@ -549,6 +631,7 @@ class StreamConsumer:
                         _prepare_payload_batch,
                         [entry_data for _, _, entry_data in batch[:prepare_count]],
                         max(0, self._remaining_byte_capacity()),
+                        self._var_map_for_entry,
                     )
                     for index, (stream_key, entry_id, entry_data) in enumerate(batch):
                         try:
@@ -705,6 +788,7 @@ class StreamConsumer:
                 _prepare_payload_batch,
                 [entry_data for _, entry_data in claimed_entries],
                 max(0, self._remaining_byte_capacity()),
+                self._var_map_for_entry,
             )
             for index, (entry_id, entry_data) in enumerate(claimed_entries):
                 try:
@@ -795,6 +879,7 @@ class StreamConsumer:
                     _prepare_payload_batch,
                     [entry_data for _, entry_data in claimed],
                     max(0, self._remaining_byte_capacity()),
+                    self._var_map_for_entry,
                 )
                 fallback_prepared = {
                     entry_id: fallback_prepared_list[i]
@@ -1070,23 +1155,16 @@ class StreamConsumer:
 
         # --- 将 var_id 转换为 td_column_name，带类型强制转换 ---
         # 任一非法值整 entry 隔离：禁止写假 0.0，推 DLQ 后再决定是否 ACK
-        columns: dict[str, float] = {}
-        bad_var_ids: list[str] = []
-        parse_started = time.perf_counter()
-        for var_id, str_val in raw_values.items():
-            col_name = mapping.var_map.get(var_id)
-            if not col_name:
-                continue
-            try:
-                num = float(str_val)
-            except (ValueError, TypeError):
-                bad_var_ids.append(str(var_id))
-                continue
-            if not math.isfinite(num):
-                bad_var_ids.append(str(var_id))
-                continue
-            columns[col_name] = num
-        self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
+        # 快路径：转换已在执行单元里随解码一起做完（prepared.converted_columns）。
+        # 只有 mapping 发生过 reload（同组新增点）或本次未解码时才在这里重算。
+        if prepared is not None and prepared.converted_columns is not None:
+            columns = prepared.converted_columns
+            bad_var_ids = list(prepared.conversion_bad_var_ids or [])
+            self._metrics.record_parse(prepared.conversion_ms)
+        else:
+            parse_started = time.perf_counter()
+            columns, bad_var_ids = _convert_values(raw_values, mapping.var_map)
+            self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
 
         if bad_var_ids:
             last_error = f"type_conversion failed var_ids={','.join(bad_var_ids)}"
