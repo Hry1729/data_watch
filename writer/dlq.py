@@ -27,6 +27,7 @@ def push_dlq(
     max_size: int = DEFAULT_DLQ_MAX_SIZE,
     alert_threshold: float = DEFAULT_DLQ_ALERT_THRESHOLD,
     warn_entries: int = DEFAULT_DLQ_WARN_ENTRIES,
+    segment_evidence: dict | None = None,
 ) -> bool:
     dlq_key = f"rt:dlq:{device_type}:{group_code}"
     max_size = max(0, int(max_size))
@@ -40,6 +41,12 @@ def push_dlq(
         "failed_at": int(time.time() * 1000),
         "data": data,
     }
+    # 一条逻辑帧被拆成多段 SQL 时，"整帧失败"不足以定位问题：
+    # 值段可能已确认写入、质量段可能部分写入部分失败。
+    # 这里保存各分段结果（含"结果未知"），供事后判断该修哪一段；
+    # 不保存的话，原始帧虽在，却无法知道已经是半截写入。
+    if segment_evidence is not None:
+        payload["segment_evidence"] = segment_evidence
     try:
         pipe = r.pipeline()
         pipe.lpush(dlq_key, json.dumps(payload))

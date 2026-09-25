@@ -68,6 +68,9 @@ class _BufferedRow:
     retry_attempts: int = 0
     # 隔离行最早可重试的单调时刻；由退避计算，不由"主缓冲是否空了"决定。
     next_retry_at: float = 0.0
+    # 多段失败时的分段证据（各段状态、点范围、错误码）。只在 FAILED_INCOMPLETE
+    # 时填，随隔离记录一起保存，用来判断"哪一段已经写入、哪一段没有"。
+    segment_evidence: dict | None = None
 
 
 @dataclass
@@ -1441,6 +1444,59 @@ class StreamConsumer:
         )
         self._last_performance_log = now
 
+    def _segment_evidence_for(self, row: _BufferedRow, status: str) -> dict:
+        """为该行构造分段证据。
+
+        只能报告 writer 能证明的事情：
+          * 值段/质量段的执行确认计数（来自 writer 本次的分段统计）；
+          * 该行的点位与质量键范围，便于判断影响面。
+        **不能**因为整条 SQL 报错就反推每条记录都没写入——那正是需要避免的
+        "把未知当已知"。未被执行或结果不明的部分一律记 unknown。
+        """
+        def _stat(name):
+            value = getattr(self._writer, name, 0)
+            return int(value) if isinstance(value, (int, float)) else None
+
+        return {
+            "logical_frame": {
+                "stream_key": row.stream_key,
+                "entry_id": row.entry_id,
+                "device_code": row.device_code,
+                "group_code": row.group_code,
+                "child_table": row.child_table,
+                "stable": row.stable,
+                "ts": row.ts,
+            },
+            "overall_status": status,
+            # 值段：单段，正常一条逻辑帧只有一个数值 SQL 段
+            "value_segment": {
+                "status": "confirmed_written" if (_stat("_last_sql_value_rows_succeeded") or 0) > 0
+                          else "unknown",
+                "rows_attempted": _stat("_last_sql_value_rows_attempted"),
+                "rows_confirmed": _stat("_last_sql_value_rows_succeeded"),
+                "point_ids": sorted(row.columns),
+            },
+            # 质量段：宽帧会被拆成多段，只保留"已确认成功多少 / 尝试多少"，
+            # 不逐个声称每段的具体归属——那需要 writer 回传分段清单，尚未实现。
+            "quality_segment": {
+                "status": "partial_confirmed"
+                          if 0 < (_stat("_last_sql_quality_rows_succeeded") or 0)
+                             < (_stat("_last_sql_quality_rows_attempted") or 0)
+                          else ("confirmed_written"
+                                if (_stat("_last_sql_quality_rows_succeeded") or 0) > 0
+                                and (_stat("_last_sql_quality_rows_succeeded")
+                                     == _stat("_last_sql_quality_rows_attempted"))
+                                else "unknown"),
+                "rows_attempted": _stat("_last_sql_quality_rows_attempted"),
+                "rows_confirmed": _stat("_last_sql_quality_rows_succeeded"),
+                "point_ids": sorted(row.qualities, key=lambda x: (len(str(x)), str(x))),
+            },
+            "retry_attempts": row.retry_attempts,
+            "delivery_count": row.delivery_count,
+            "note": ("分段归属与逐段错误码尚未由 writer 回传；"
+                     "unknown 表示结果不明，不代表未写入"),
+        }
+
     def _push_incomplete_or_bad_row(self, row: _BufferedRow, status: str) -> bool:
         """把不可恢复的行转入持久失败隔离。返回 True 表示隔离记录已可靠保存。
 
@@ -1450,6 +1506,7 @@ class StreamConsumer:
         把不完整帧误当成从未写入。
         """
         if status == FAILED_INCOMPLETE:
+            row.segment_evidence = self._segment_evidence_for(row, status)
             return self._push_row_to_dlq(
                 row, last_error=("failed incomplete: 部分 SQL 分段已成功、"
                                  "另一分段确认不可恢复；整帧不完整，不计成功"),
@@ -1472,6 +1529,7 @@ class StreamConsumer:
             data=row.entry_data,
             retry_count=row.delivery_count,
             last_error=last_error,
+            segment_evidence=row.segment_evidence,
         )
         if moved:
             if self._syslog is not None:

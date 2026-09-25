@@ -103,8 +103,17 @@ async def test_failed_incomplete_is_isolated_not_counted_as_success():
 
     dlq.assert_called_once()
     assert "failed incomplete" in dlq.call_args.kwargs["last_error"]
+    # 结构化分段证据必须真的传出去：只有一段汇总说明不足以定位该修哪一段
+    evidence = dlq.call_args.kwargs["segment_evidence"]
+    assert evidence is not None, "FAILED_INCOMPLETE 必须带分段证据"
+    assert evidence["overall_status"] == FAILED_INCOMPLETE
+    assert evidence["logical_frame"]["entry_id"] == "1-0"
+    assert "value_segment" in evidence and "quality_segment" in evidence
+    # 未知必须记为 unknown，不能因为整条 SQL 报错就反推每段都没写入
+    assert evidence["value_segment"]["status"] in {
+        "confirmed_written", "unknown", "partial_confirmed"}
+    assert "unknown 表示结果不明，不代表未写入" in evidence["note"]
     assert redis_client.xack.call_count == 1, "隔离记录保存成功后才允许 ACK"
-    # 关键：不完整帧不得计入完整成功
     snapshot = consumer._metrics.snapshot()
     assert snapshot["gauges"]["buffer_rows"] == 0
 
