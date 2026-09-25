@@ -216,6 +216,39 @@ async def test_isolated_payload_counts_against_the_total_byte_budget():
         "迁移状态只改归属，总占用不得变化"
 
 
+@pytest.mark.asyncio
+async def test_pending_reclaim_offloads_payload_parsing():
+    """PEL 回收路径必须与正常读取共用同一套批量准备，不在事件循环上解码。
+
+    原先回收路径不传 prepared，走 _handle_entry 里的 json.loads，
+    于是"故障后大量 PEL 回收"会把所有 worker 共享的事件循环堵住。
+    """
+    writer = MagicMock()
+    writer.write_multi_table = AsyncMock(
+        side_effect=lambda rows: [([i], LANDED, 1.0) for i in range(len(rows))])
+    redis_client = MagicMock()
+    redis_client.xautoclaim.return_value = (
+        "0-0",
+        [("1-0", _entry_data("1-0")), ("2-0", _entry_data("2-0"))],
+        [],
+    )
+    consumer = _consumer(writer, redis_client)
+
+    offloaded = []
+    real_run_blocking = consumer._run_blocking
+
+    async def spy(func, *args, **kwargs):
+        if func is consumer_mod._prepare_payload_batch:
+            offloaded.append(len(args[0]) if args else 0)
+        return await real_run_blocking(func, *args, **kwargs)
+
+    consumer._run_blocking = spy
+    await consumer._drain_with_xautoclaim("rt:stream:qc:g001:0", "writer-1")
+
+    assert offloaded, "回收路径必须把批量准备放到执行单元，而不是在事件循环里解码"
+    assert offloaded[0] == 2, "一次回收 2 条时应一次性批量准备"
+
+
 def test_retry_backoff_never_overflows_for_absurd_attempt_counts():
     """退避必须对任意重试次数都返回有限合法延迟。
 

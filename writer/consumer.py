@@ -699,10 +699,21 @@ class StreamConsumer:
                 stream_key,
                 [entry_id for entry_id, _ in claimed_entries],
             )
-            for entry_id, entry_data in claimed_entries:
+            # 回收路径与正常读取共用同一套有界批量准备：JSON 解码、数值/质量转换
+            # 都在执行单元里完成，不落在所有 worker 共享的事件循环上。
+            reclaimed_prepared = await self._run_blocking(
+                _prepare_payload_batch,
+                [entry_data for _, entry_data in claimed_entries],
+                max(0, self._remaining_byte_capacity()),
+            )
+            for index, (entry_id, entry_data) in enumerate(claimed_entries):
                 try:
                     delivery_count = delivery_counts.get(entry_id, 1)
-                    await self._handle_entry(stream_key, entry_id, entry_data, delivery_count)
+                    await self._handle_entry(
+                        stream_key, entry_id, entry_data, delivery_count,
+                        prepared=reclaimed_prepared[index]
+                        if index < len(reclaimed_prepared) else None,
+                    )
                 except Exception as exc:
                     # Keep in PEL for a later retry; only confirmed bad data enters DLQ.
                     logger.error(
@@ -779,6 +790,17 @@ class StreamConsumer:
                         message_ids=ids,
                     ),
                 )
+                # 与正常读取共用同一套有界批量准备（JSON/数值/质量转换在执行单元里）
+                fallback_prepared_list = await self._run_blocking(
+                    _prepare_payload_batch,
+                    [entry_data for _, entry_data in claimed],
+                    max(0, self._remaining_byte_capacity()),
+                )
+                fallback_prepared = {
+                    entry_id: fallback_prepared_list[i]
+                    for i, (entry_id, _) in enumerate(claimed)
+                    if i < len(fallback_prepared_list)
+                }
                 for entry_id, entry_data in claimed:
                     try:
                         # delivery_count 来自 xpending_range
@@ -786,7 +808,10 @@ class StreamConsumer:
                             (p["times_delivered"] for p in pending_entries if p["message_id"] == entry_id),
                             1,
                         )
-                        await self._handle_entry(stream_key, entry_id, entry_data, dc)
+                        await self._handle_entry(
+                            stream_key, entry_id, entry_data, dc,
+                            prepared=fallback_prepared.get(entry_id),
+                        )
                     except Exception as exc:
                         # Keep in PEL for a later retry; only confirmed bad data enters DLQ.
                         logger.error(
