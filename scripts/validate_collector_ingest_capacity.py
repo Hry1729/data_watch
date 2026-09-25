@@ -294,31 +294,27 @@ def window_analysis(samples: list[dict], period_ms: int, devices: int,
             "outbox_oldest_age_ms": outbox["oldest_age_ms"],
             "outbox_delta": outbox["count"] - previous_outbox["count"],
         })
-    # 趋势只看预热后的生产窗口：预热期的填充本来就表现为"积压上升"，
-    # 混进来会把稳态误判成 growing。
-    trend_windows = [window for window in windows
-                     if window.get("phase") == "production"
-                     and window.get("to_s", 0.0) > warmup_s]
-    if not windows:
-        return {"windows": [], "trend": "not_tested"}
-    if not trend_windows:
-        trend = "insufficient_windows"
-    else:
-        half = len(trend_windows) // 2
-        if half == 0:
-            trend = "insufficient_windows"
-        else:
-            first_avg = sum(w["outbox_frames"] for w in trend_windows[:half]) / half
-            last_avg = (sum(w["outbox_frames"] for w in trend_windows[half:])
-                        / (len(trend_windows) - half))
-            if last_avg > first_avg * 1.05 and last_avg - first_avg > devices:
-                trend = "growing"
-            elif last_avg < first_avg * 0.95:
-                trend = "shrinking"
-            else:
-                trend = "flat"
+    # 稳态窗口 = 预热之后**开始**的生产窗口。用 from_s 而不是 to_s：
+    # 跨越预热边界的窗口会把填充期的低速确认算进稳态，系统性低估处理能力。
+    # 速率与趋势共用同一个集合，避免两处门槛不一致。
     steady_windows = [window for window in windows
-                      if window["phase"] == "production" and window["from_s"] >= warmup_s]
+                      if window.get("phase") == "production"
+                      and window.get("from_s", 0.0) >= warmup_s]
+    if not windows:
+        return {"windows": [], "trend": "not_tested", "warmup_s": warmup_s,
+                "steady_windows": 0}
+    trend = "insufficient_windows"
+    if len(steady_windows) >= 2:
+        half = len(steady_windows) // 2
+        first_avg = sum(w["outbox_frames"] for w in steady_windows[:half]) / half
+        last_avg = (sum(w["outbox_frames"] for w in steady_windows[half:])
+                    / (len(steady_windows) - half))
+        if last_avg > first_avg * 1.05 and last_avg - first_avg > devices:
+            trend = "growing"
+        elif last_avg < first_avg * 0.95:
+            trend = "shrinking"
+        else:
+            trend = "flat"
     # 聚合速率必须是"窗口总确认量 ÷ 窗口总时长"，不能对各窗口速率取算术平均：
     # 窗口长度由实际采样时间决定，长短不一，简单平均会被短窗口带偏。
     # 反例：0.5s 内 700 帧（1400/s）+ 1.5s 内 1200 帧（800/s）
@@ -392,6 +388,14 @@ def build_verdicts(*, target_frames: int, production_submitted: int, production_
 
     if not windows.get("windows"):
         verdicts["steady_state"] = {"status": NOT_TESTED, "detail": "没有连续窗口样本"}
+    elif windows.get("trend") == "insufficient_windows" or not windows.get("steady_windows"):
+        # 有效窗口不足时必须如实报"未测"，不能因为趋势"不叫 growing"就算通过。
+        verdicts["steady_state"] = {
+            "status": NOT_TESTED,
+            "detail": (f"预热后有效窗口不足（{windows.get('steady_windows')} 个），"
+                       f"无法判定稳态；未测不等于通过。"
+                       f"建议延长 --seconds 或减小 --sample-every-ticks"),
+        }
     else:
         bounded = (windows["trend"] != "growing"
                    and final_outbox["count"] == 0
