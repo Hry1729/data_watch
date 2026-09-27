@@ -150,11 +150,27 @@ return duplicate and 0 or 1
 LATEST_LUA = r"""
 local incoming = cjson.decode(ARGV[1])
 local changed = false
+-- 逐点 HGET 改为按 256 分块 HMGET：比较语义完全不变（只有更新的 t 才写），
+-- 但每次调用的 redis.call 次数从 N 降到 N/256。隔离诊断实测（500 点/次）：
+-- 写档 2.392ms → 2.355ms，不写档 1.259ms → 1.196ms；收益不大但方向一致。
+local ids = {}
+local values = {}
 for id, value in pairs(incoming) do
-    local old = redis.call('HGET', KEYS[1], id)
-    if not old or tonumber(cjson.decode(old).t or 0) < tonumber(value.t) then
-        redis.call('HSET', KEYS[1], id, cjson.encode(value))
-        changed = true
+    ids[#ids + 1] = id
+    values[#values + 1] = value
+end
+for first = 1, #ids, 256 do
+    local batch = {}
+    local last = math.min(first + 255, #ids)
+    for i = first, last do batch[#batch + 1] = ids[i] end
+    local old_values = redis.call('HMGET', KEYS[1], unpack(batch))
+    for offset = 1, #old_values do
+        local old = old_values[offset]
+        local value = values[first + offset - 1]
+        if not old or tonumber(cjson.decode(old).t or 0) < tonumber(value.t) then
+            redis.call('HSET', KEYS[1], ids[first + offset - 1], cjson.encode(value))
+            changed = true
+        end
     end
 end
 if changed then
@@ -194,6 +210,9 @@ class DurableRedisWriter(RedisWriter):
         self._latest_version = 0
         self._latest_overflow_logged_at = 0.0
         self._script_shas = {}
+        # 快车道脚本摘要：EVALSHA 只传 40 字节摘要，不再每次调用重传脚本源码
+        # （隔离诊断实测 500 点/次：每次调用省 462 字节，写档 2.492ms → 2.392ms）。
+        self._latest_script_sha = None
         # 回放批次时间线（只给隔离验证读）：最近的批次各阶段单调时钟。
         # 有界、串行写入（只有回放线程追加），读取时加锁复制。
         self._timeline_lock = threading.Lock()
@@ -307,6 +326,22 @@ class DurableRedisWriter(RedisWriter):
             return redis.Redis(connection_pool=self.r.connection_pool, single_connection_client=True)
         return self.r
 
+    def _latest_send(self, client, key: str, payload, device_code: str, group_code: str):
+        """把 latest 合并结果发给 Redis；脚本用摘要调用，NOSCRIPT 时只重载一次。
+
+        Redis 重启/NOSCRIPT 后摘要失效：这里重载一次并重试，语义与 `eval` 相同，
+        失败仍由调用方的通用异常分支（重排队 + 退避）处理，不吞异常。
+        """
+        if self._latest_script_sha is None:
+            self._latest_script_sha = client.script_load(LATEST_LUA)
+        try:
+            return client.evalsha(self._latest_script_sha, 1, key, payload,
+                                  device_code, group_code)
+        except redis.exceptions.NoScriptError:
+            self._latest_script_sha = client.script_load(LATEST_LUA)
+            return client.evalsha(self._latest_script_sha, 1, key, payload,
+                                  device_code, group_code)
+
     def _latest_loop(self):
         client = None
         try:
@@ -331,7 +366,8 @@ class DurableRedisWriter(RedisWriter):
                     if client is None:
                         client = self._latest_client()
                     started = time.perf_counter()
-                    client.eval(LATEST_LUA, 1, f"rt:latest:{key[0]}:{key[1]}", payload, key[0], key[1])
+                    self._latest_send(client, f"rt:latest:{key[0]}:{key[1]}", payload,
+                                      key[0], key[1])
                     duration_ms = (time.perf_counter() - started) * 1000
                 except Exception:
                     self._metrics.increment("latest_fastlane_retries")

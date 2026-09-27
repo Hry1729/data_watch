@@ -1046,7 +1046,8 @@ def test_fastlane_newer_update_survives_inflight_send(tmp_path):
             entered.set()
             assert release.wait(3)
         return 1
-    w.r.eval.side_effect = send
+    w.r.script_load.return_value = "test-sha"
+    w.r.evalsha.side_effect = send
     w.ping()
     w._queue_latest("D", "g", {"1": {"v": "old", "t": 1, "q": 192}})
     assert entered.wait(3)
@@ -1068,13 +1069,14 @@ def test_fastlane_restores_latest_from_unconfirmed_outbox(tmp_path):
     client = MagicMock()
     pipe = Pipeline([0, 0])
     client.pipeline.return_value = pipe
+    client.script_load.return_value = "test-sha"
     config = SimpleNamespace(redis=SimpleNamespace(stream_shard_count=4, stream_maxlen=1))
     w = DurableRedisWriter(client, config, outbox_path=path)
     w.ping()
     deadline = time.monotonic() + 3
-    while client.eval.call_args is None and time.monotonic() < deadline: time.sleep(.001)
-    assert client.eval.call_args is not None
-    assert msgspec.json.decode(client.eval.call_args.args[3])["1"]["t"] == 1234
+    while client.evalsha.call_args is None and time.monotonic() < deadline: time.sleep(.001)
+    assert client.evalsha.call_args is not None
+    assert msgspec.json.decode(client.evalsha.call_args.args[3])["1"]["t"] == 1234
     assert w.outbox.count() == 1
     w.close()
 
@@ -1153,12 +1155,35 @@ def test_fastlane_failed_group_does_not_starve_other_groups(tmp_path):
             raise RuntimeError("bad latest payload")
         delivered.set()
         return 1
-    w.r.eval.side_effect = send
+    w.r.script_load.return_value = "test-sha"
+    w.r.evalsha.side_effect = send
     w._queue_latest("D", "bad", {"1": {"v": "1", "t": 1, "q": 192}})
     w._queue_latest("D", "good", {"1": {"v": "1", "t": 1, "q": 192}})
     w.ping()
     assert delivered.wait(3)
     assert ("D", "bad") in w._latest_pending
+    w.close()
+
+
+def test_fastlane_reloads_script_once_when_redis_lost_it(tmp_path):
+    """Redis 重启后脚本缓存为空：快车道必须重载脚本并重试，语义与 eval 相同。"""
+    import redis as redis_lib
+    w, _ = durable(tmp_path, [1, 0])
+    calls = []
+    def send(sha, count, key, payload, device, group):
+        calls.append(sha)
+        if len(calls) == 1:
+            raise redis_lib.exceptions.NoScriptError("NOSCRIPT No matching script")
+        return 1
+    w.r.script_load.side_effect = ["sha-1", "sha-2"]
+    w.r.evalsha.side_effect = send
+    w.ping()
+    w._queue_latest("D", "g", {"1": {"v": "1", "t": 1, "q": 192}})
+    deadline = time.monotonic() + 3
+    while (len(calls) < 2 or w._latest_pending) and time.monotonic() < deadline:
+        time.sleep(.001)
+    assert calls == ["sha-1", "sha-2"], "NOSCRIPT 后必须用重载得到的新摘要重试"
+    assert not w._latest_pending, "重试成功后该组必须出队"
     w.close()
 
 
