@@ -1,0 +1,106 @@
+{
+  "label": "tier-25dev",
+  "devices": 25,
+  "seconds": 300.0,
+  "tier": {
+    "devices": 25,
+    "points": 500,
+    "period_ms": 100,
+    "offered_fps": 250.0,
+    "offered_points_per_second": 125000.0
+  },
+  "writer_started": true,
+  "planned_frames": 75000,
+  "attempted_frames": 75000,
+  "accepted_at_feed_end": 74925,
+  "accepted_after_drain": 75000,
+  "redis_confirmed_at_feed_end": 74650,
+  "redis_confirmed_after_drain": 75000,
+  "rejected_frames": 0,
+  "input_rate_ratio": 1.0,
+  "submitted_fps": 250.0,
+  "redis_cpu_main_thread_busy": 0.8404,
+  "redis_cpu_process_busy": 0.8419,
+  "writer_process_cpu_seconds": 65.514,
+  "writer_cpu_busy_ratio": 0.2187,
+  "window_seconds": 299.589,
+  "latency_in_window": {
+    "redis_visible_lag_ms": {
+      "count": 382,
+      "p50": 1375.8,
+      "p95": 1976.0,
+      "max": 2156.8,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 539,
+      "p50": 173.6,
+      "p95": 283.9,
+      "max": 579.2,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "latency_second_half": {
+    "redis_visible_lag_ms": {
+      "count": 192,
+      "p50": 1465.0,
+      "p95": 1976.5,
+      "max": 2156.8,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 270,
+      "p50": 169.1,
+      "p95": 279.8,
+      "max": 473.4,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "td_confirm_lag_ms_p50": 1668.9,
+  "td_confirm_lag_ms_max": 2317.3,
+  "backlog_mean_first_half": 56.1,
+  "backlog_mean_second_half": 58.3,
+  "backlog_max": 177,
+  "pel_share_second_half": 0.652,
+  "redis_used_memory_bytes": 4449400,
+  "rows": {
+    "value_rows": 75000,
+    "quality_rows": 37260000,
+    "per_device_value_rows": {
+      "jt69feffca00": 3000,
+      "jt69feffca01": 3000,
+      "jt69feffca02": 3000,
+      "jt69feffca03": 3000,
+      "jt69feffca04": 3000,
+      "jt69feffca05": 3000,
+      "jt69feffca06": 3000,
+      "jt69feffca07": 3000,
+      "jt69feffca08": 3000,
+      "jt69feffca09": 3000,
+      "jt69feffca10": 3000,
+      "jt69feffca11": 3000,
+      "jt69feffca12": 3000,
+      "jt69feffca13": 3000,
+      "jt69feffca14": 3000,
+      "jt69feffca15": 3000,
+      "jt69feffca16": 3000,
+      "jt69feffca17": 3000,
+      "jt69feffca18": 3000,
+      "jt69feffca19": 3000,
+      "jt69feffca20": 3000,
+      "jt69feffca21": 3000,
+      "jt69feffca22": 3000,
+      "jt69feffca23": 3000,
+      "jt69feffca24": 3000
+    },
+    "expected_value_rows": 75000,
+    "expected_quality_rows": 37260000
+  },
+  "reconcile_status": "pass",
+  "latest_hash_ok_devices": "25/25",
+  "dlq_entries": 0,
+  "collector_drain_seconds": 1.0,
+  "window_wall_seconds": 302.355,
+  "stop_reasons": [],
+  "sustainable": true
+}

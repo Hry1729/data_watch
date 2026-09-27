@@ -1,0 +1,72 @@
+{
+  "mode": "reconcile",
+  "plan_token": "f29a1495",
+  "ticks": 2484,
+  "rows": {
+    "value_rows": null,
+    "quality_rows": null,
+    "expected_value_rows": 71801,
+    "expected_quality_rows": 49362080
+  },
+  "stream_after_drain": {
+    "backlog_frames": 99387,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "40/40",
+  "writer_process_cpu_seconds": null,
+  "writer_cpu_busy_ratio": null,
+  "latest_end_state": {
+    "jtf29a149500": 500,
+    "jtf29a149501": 500,
+    "jtf29a149502": 500,
+    "jtf29a149503": 500,
+    "jtf29a149504": 500,
+    "jtf29a149505": 500,
+    "jtf29a149506": 500,
+    "jtf29a149507": 500,
+    "jtf29a149508": 500,
+    "jtf29a149509": 500,
+    "jtf29a149510": 500,
+    "jtf29a149511": 500,
+    "jtf29a149512": 500,
+    "jtf29a149513": 500,
+    "jtf29a149514": 500,
+    "jtf29a149515": 500,
+    "jtf29a149516": 500,
+    "jtf29a149517": 500,
+    "jtf29a149518": 500,
+    "jtf29a149519": 500,
+    "jtf29a149520": 500,
+    "jtf29a149521": 500,
+    "jtf29a149522": 500,
+    "jtf29a149523": 500,
+    "jtf29a149524": 500,
+    "jtf29a149525": 500,
+    "jtf29a149526": 500,
+    "jtf29a149527": 500,
+    "jtf29a149528": 500,
+    "jtf29a149529": 500,
+    "jtf29a149530": 500,
+    "jtf29a149531": 500,
+    "jtf29a149532": 500,
+    "jtf29a149533": 500,
+    "jtf29a149534": 500,
+    "jtf29a149535": 500,
+    "jtf29a149536": 500,
+    "jtf29a149537": 500,
+    "jtf29a149538": 500,
+    "jtf29a149539": 500
+  },
+  "full_field_sample": {
+    "columns": 497,
+    "results": [],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [
+    "read_counts: ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jtf29a149500): ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jtf29a149501): ConnectionError: [0x0388] Internal error: `Database not exist`"
+  ],
+  "status": "fail"
+}

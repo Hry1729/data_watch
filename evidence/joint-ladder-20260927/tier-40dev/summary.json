@@ -1,0 +1,82 @@
+{
+  "label": "tier-40dev",
+  "devices": 40,
+  "seconds": 248.002,
+  "kind": "collector_window_completed_rebuilt",
+  "planned_frames": 120000,
+  "attempted_frames": 99360,
+  "accepted_at_feed_end": 99240,
+  "accepted_after_drain": 99387,
+  "redis_confirmed_at_feed_end": 71801,
+  "redis_confirmed_after_drain": 99387,
+  "rejected_frames": 13,
+  "submit_failures": 13,
+  "feed_stop_reason": "submit_failed: OperationalError: database or disk is full",
+  "input_rate_ratio": 0.9999,
+  "submitted_fps": 399.94,
+  "redis_cpu_main_thread_busy": 0.945,
+  "redis_cpu_process_busy": 0.9466,
+  "writer_process_cpu_seconds": null,
+  "writer_cpu_busy_ratio": null,
+  "fastlane_merge_ratio": 0.5523,
+  "batch_frames_mean": 13.58,
+  "aof_bytes_written_in_window": 422944413,
+  "window_seconds": 248.002,
+  "latency_in_window": {
+    "redis_visible_lag_ms": {
+      "count": 448,
+      "p50": 33665.4,
+      "p95": 63557.1,
+      "max": 66757.0,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 448,
+      "p50": 209.2,
+      "p95": 445.7,
+      "max": 676.8,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "latency_second_half": {
+    "redis_visible_lag_ms": {
+      "count": 224,
+      "p50": 50068.3,
+      "p95": 65154.7,
+      "max": 66757.0,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 224,
+      "p50": 185.1,
+      "p95": 384.3,
+      "max": 667.7,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "backlog_mean_first_half": 17844.2,
+  "backlog_mean_second_half": 54384.2,
+  "backlog_max": 72560,
+  "pel_share_second_half": 0.0,
+  "rows": {
+    "value_rows": null,
+    "quality_rows": null,
+    "expected_value_rows": 71801,
+    "expected_quality_rows": 49362080
+  },
+  "reconcile_status": "fail",
+  "reconcile_problems": [
+    "read_counts: ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jtf29a149500): ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jtf29a149501): ConnectionError: [0x0388] Internal error: `Database not exist`"
+  ],
+  "latest_hash_ok_devices": "40/40",
+  "dlq_entries": 0,
+  "collector_drain_seconds": 62.832,
+  "stop_reasons": [
+    "提交失败 13 次：submit_failed: OperationalError: database or disk is full",
+    "拒收帧=13",
+    "持续积压：后半窗均值 54384 > 前半窗 17844 × 1.2"
+  ],
+  "sustainable": false
+}

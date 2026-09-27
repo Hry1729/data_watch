@@ -1,0 +1,62 @@
+{
+  "mode": "reconcile",
+  "plan_token": "a5ef7b0d",
+  "ticks": 3000,
+  "rows": {
+    "value_rows": null,
+    "quality_rows": null,
+    "expected_value_rows": 90000,
+    "expected_quality_rows": 44712000
+  },
+  "stream_after_drain": {
+    "backlog_frames": 0,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "0/30",
+  "writer_process_cpu_seconds": null,
+  "writer_cpu_busy_ratio": null,
+  "latest_end_state": {
+    "jta5ef7b0d00": 0,
+    "jta5ef7b0d01": 0,
+    "jta5ef7b0d02": 0,
+    "jta5ef7b0d03": 0,
+    "jta5ef7b0d04": 0,
+    "jta5ef7b0d05": 0,
+    "jta5ef7b0d06": 0,
+    "jta5ef7b0d07": 0,
+    "jta5ef7b0d08": 0,
+    "jta5ef7b0d09": 0,
+    "jta5ef7b0d10": 0,
+    "jta5ef7b0d11": 0,
+    "jta5ef7b0d12": 0,
+    "jta5ef7b0d13": 0,
+    "jta5ef7b0d14": 0,
+    "jta5ef7b0d15": 0,
+    "jta5ef7b0d16": 0,
+    "jta5ef7b0d17": 0,
+    "jta5ef7b0d18": 0,
+    "jta5ef7b0d19": 0,
+    "jta5ef7b0d20": 0,
+    "jta5ef7b0d21": 0,
+    "jta5ef7b0d22": 0,
+    "jta5ef7b0d23": 0,
+    "jta5ef7b0d24": 0,
+    "jta5ef7b0d25": 0,
+    "jta5ef7b0d26": 0,
+    "jta5ef7b0d27": 0,
+    "jta5ef7b0d28": 0,
+    "jta5ef7b0d29": 0
+  },
+  "full_field_sample": {
+    "columns": 497,
+    "results": [],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [
+    "read_counts: ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jta5ef7b0d00): ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jta5ef7b0d01): ConnectionError: [0x0388] Internal error: `Database not exist`"
+  ],
+  "status": "fail"
+}

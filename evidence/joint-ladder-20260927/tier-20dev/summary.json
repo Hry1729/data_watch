@@ -1,0 +1,102 @@
+{
+  "label": "tier-20dev",
+  "devices": 20,
+  "seconds": 300.0,
+  "tier": {
+    "devices": 20,
+    "points": 500,
+    "period_ms": 100,
+    "offered_fps": 200.0,
+    "offered_points_per_second": 100000.0
+  },
+  "writer_started": true,
+  "planned_frames": 60000,
+  "attempted_frames": 60000,
+  "accepted_at_feed_end": 59920,
+  "accepted_after_drain": 60000,
+  "redis_confirmed_at_feed_end": 59640,
+  "redis_confirmed_after_drain": 60000,
+  "rejected_frames": 0,
+  "input_rate_ratio": 1.0,
+  "submitted_fps": 200.0,
+  "redis_cpu_main_thread_busy": 0.7401,
+  "redis_cpu_process_busy": 0.7415,
+  "writer_process_cpu_seconds": 55.65,
+  "writer_cpu_busy_ratio": 0.1858,
+  "window_seconds": 299.484,
+  "latency_in_window": {
+    "redis_visible_lag_ms": {
+      "count": 344,
+      "p50": 789.1,
+      "p95": 1090.7,
+      "max": 1559.2,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 539,
+      "p50": 182.3,
+      "p95": 288.0,
+      "max": 491.7,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "latency_second_half": {
+    "redis_visible_lag_ms": {
+      "count": 180,
+      "p50": 793.1,
+      "p95": 1183.4,
+      "max": 1481.5,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 270,
+      "p50": 179.4,
+      "p95": 282.5,
+      "max": 491.7,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "td_confirm_lag_ms_p50": 1093.8,
+  "td_confirm_lag_ms_max": 4061.8,
+  "backlog_mean_first_half": 35.3,
+  "backlog_mean_second_half": 41.3,
+  "backlog_max": 142,
+  "pel_share_second_half": 0.611,
+  "redis_used_memory_bytes": 4179536,
+  "rows": {
+    "value_rows": 60000,
+    "quality_rows": 29808000,
+    "per_device_value_rows": {
+      "jt399b4c0c00": 3000,
+      "jt399b4c0c01": 3000,
+      "jt399b4c0c02": 3000,
+      "jt399b4c0c03": 3000,
+      "jt399b4c0c04": 3000,
+      "jt399b4c0c05": 3000,
+      "jt399b4c0c06": 3000,
+      "jt399b4c0c07": 3000,
+      "jt399b4c0c08": 3000,
+      "jt399b4c0c09": 3000,
+      "jt399b4c0c10": 3000,
+      "jt399b4c0c11": 3000,
+      "jt399b4c0c12": 3000,
+      "jt399b4c0c13": 3000,
+      "jt399b4c0c14": 3000,
+      "jt399b4c0c15": 3000,
+      "jt399b4c0c16": 3000,
+      "jt399b4c0c17": 3000,
+      "jt399b4c0c18": 3000,
+      "jt399b4c0c19": 3000
+    },
+    "expected_value_rows": 59640,
+    "expected_quality_rows": 29808000
+  },
+  "reconcile_status": "fail",
+  "reconcile_error": null,
+  "latest_hash_ok_devices": "20/20",
+  "dlq_entries": 0,
+  "collector_drain_seconds": 1.501,
+  "window_wall_seconds": 302.723,
+  "stop_reasons": [],
+  "sustainable": true
+}

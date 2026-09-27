@@ -1,0 +1,52 @@
+{
+  "mode": "reconcile",
+  "plan_token": "399b4c0c",
+  "ticks": 3000,
+  "rows": {
+    "value_rows": null,
+    "quality_rows": null,
+    "expected_value_rows": 60000,
+    "expected_quality_rows": 29808000
+  },
+  "stream_after_drain": {
+    "backlog_frames": 0,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "0/20",
+  "writer_process_cpu_seconds": null,
+  "writer_cpu_busy_ratio": null,
+  "latest_end_state": {
+    "jt399b4c0c00": 0,
+    "jt399b4c0c01": 0,
+    "jt399b4c0c02": 0,
+    "jt399b4c0c03": 0,
+    "jt399b4c0c04": 0,
+    "jt399b4c0c05": 0,
+    "jt399b4c0c06": 0,
+    "jt399b4c0c07": 0,
+    "jt399b4c0c08": 0,
+    "jt399b4c0c09": 0,
+    "jt399b4c0c10": 0,
+    "jt399b4c0c11": 0,
+    "jt399b4c0c12": 0,
+    "jt399b4c0c13": 0,
+    "jt399b4c0c14": 0,
+    "jt399b4c0c15": 0,
+    "jt399b4c0c16": 0,
+    "jt399b4c0c17": 0,
+    "jt399b4c0c18": 0,
+    "jt399b4c0c19": 0
+  },
+  "full_field_sample": {
+    "columns": 497,
+    "results": [],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [
+    "read_counts: ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jt399b4c0c00): ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jt399b4c0c01): ConnectionError: [0x0388] Internal error: `Database not exist`"
+  ],
+  "status": "fail"
+}

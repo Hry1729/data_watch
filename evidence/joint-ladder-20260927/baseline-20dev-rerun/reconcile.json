@@ -1,0 +1,52 @@
+{
+  "mode": "reconcile",
+  "plan_token": "14ee5a44",
+  "ticks": 3000,
+  "rows": {
+    "value_rows": null,
+    "quality_rows": null,
+    "expected_value_rows": 60000,
+    "expected_quality_rows": 29808000
+  },
+  "stream_after_drain": {
+    "backlog_frames": 0,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "20/20",
+  "writer_process_cpu_seconds": null,
+  "writer_cpu_busy_ratio": null,
+  "latest_end_state": {
+    "jt14ee5a4400": 500,
+    "jt14ee5a4401": 500,
+    "jt14ee5a4402": 500,
+    "jt14ee5a4403": 500,
+    "jt14ee5a4404": 500,
+    "jt14ee5a4405": 500,
+    "jt14ee5a4406": 500,
+    "jt14ee5a4407": 500,
+    "jt14ee5a4408": 500,
+    "jt14ee5a4409": 500,
+    "jt14ee5a4410": 500,
+    "jt14ee5a4411": 500,
+    "jt14ee5a4412": 500,
+    "jt14ee5a4413": 500,
+    "jt14ee5a4414": 500,
+    "jt14ee5a4415": 500,
+    "jt14ee5a4416": 500,
+    "jt14ee5a4417": 500,
+    "jt14ee5a4418": 500,
+    "jt14ee5a4419": 500
+  },
+  "full_field_sample": {
+    "columns": 497,
+    "results": [],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [
+    "read_counts: ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jt14ee5a4400): ConnectionError: [0x0388] Internal error: `Database not exist`",
+    "read_sample_fields(jt14ee5a4401): ConnectionError: [0x0388] Internal error: `Database not exist`"
+  ],
+  "status": "fail"
+}

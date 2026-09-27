@@ -1,0 +1,97 @@
+{
+  "mode": "reconcile",
+  "plan_token": "69feffca",
+  "ticks": 3000,
+  "rows": {
+    "value_rows": 75000,
+    "quality_rows": 37260000,
+    "per_device_value_rows": {
+      "jt69feffca00": 3000,
+      "jt69feffca01": 3000,
+      "jt69feffca02": 3000,
+      "jt69feffca03": 3000,
+      "jt69feffca04": 3000,
+      "jt69feffca05": 3000,
+      "jt69feffca06": 3000,
+      "jt69feffca07": 3000,
+      "jt69feffca08": 3000,
+      "jt69feffca09": 3000,
+      "jt69feffca10": 3000,
+      "jt69feffca11": 3000,
+      "jt69feffca12": 3000,
+      "jt69feffca13": 3000,
+      "jt69feffca14": 3000,
+      "jt69feffca15": 3000,
+      "jt69feffca16": 3000,
+      "jt69feffca17": 3000,
+      "jt69feffca18": 3000,
+      "jt69feffca19": 3000,
+      "jt69feffca20": 3000,
+      "jt69feffca21": 3000,
+      "jt69feffca22": 3000,
+      "jt69feffca23": 3000,
+      "jt69feffca24": 3000
+    },
+    "expected_value_rows": 75000,
+    "expected_quality_rows": 37260000
+  },
+  "stream_after_drain": {
+    "backlog_frames": 0,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "25/25",
+  "writer_process_cpu_seconds": 65.514,
+  "writer_cpu_busy_ratio": 0.2187,
+  "latest_end_state": {
+    "jt69feffca00": 500,
+    "jt69feffca01": 500,
+    "jt69feffca02": 500,
+    "jt69feffca03": 500,
+    "jt69feffca04": 500,
+    "jt69feffca05": 500,
+    "jt69feffca06": 500,
+    "jt69feffca07": 500,
+    "jt69feffca08": 500,
+    "jt69feffca09": 500,
+    "jt69feffca10": 500,
+    "jt69feffca11": 500,
+    "jt69feffca12": 500,
+    "jt69feffca13": 500,
+    "jt69feffca14": 500,
+    "jt69feffca15": 500,
+    "jt69feffca16": 500,
+    "jt69feffca17": 500,
+    "jt69feffca18": 500,
+    "jt69feffca19": 500,
+    "jt69feffca20": 500,
+    "jt69feffca21": 500,
+    "jt69feffca22": 500,
+    "jt69feffca23": 500,
+    "jt69feffca24": 500
+  },
+  "full_field_sample": {
+    "columns": 497,
+    "results": [
+      {
+        "device": "jt69feffca00",
+        "sampled_ticks": 3,
+        "sampled_frames_found": 3,
+        "checked_cells": 1491,
+        "problems": [],
+        "problem_count": 0
+      },
+      {
+        "device": "jt69feffca01",
+        "sampled_ticks": 3,
+        "sampled_frames_found": 3,
+        "checked_cells": 1491,
+        "problems": [],
+        "problem_count": 0
+      }
+    ],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [],
+  "status": "pass"
+}

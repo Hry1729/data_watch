@@ -1,0 +1,102 @@
+{
+  "label": "baseline-20dev-rerun",
+  "devices": 20,
+  "seconds": 300.0,
+  "tier": {
+    "devices": 20,
+    "points": 500,
+    "period_ms": 100,
+    "offered_fps": 200.0,
+    "offered_points_per_second": 100000.0
+  },
+  "writer_started": true,
+  "planned_frames": 60000,
+  "attempted_frames": 60000,
+  "accepted_at_feed_end": 59960,
+  "accepted_after_drain": 60000,
+  "redis_confirmed_at_feed_end": 59740,
+  "redis_confirmed_after_drain": 60000,
+  "rejected_frames": 0,
+  "input_rate_ratio": 1.0,
+  "submitted_fps": 200.0,
+  "redis_cpu_main_thread_busy": 0.7291,
+  "redis_cpu_process_busy": 0.7305,
+  "writer_process_cpu_seconds": 53.928,
+  "writer_cpu_busy_ratio": 0.1799,
+  "window_seconds": 299.686,
+  "latency_in_window": {
+    "redis_visible_lag_ms": {
+      "count": 340,
+      "p50": 770.1,
+      "p95": 1162.7,
+      "max": 1529.6,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 538,
+      "p50": 166.7,
+      "p95": 269.8,
+      "max": 473.9,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "latency_second_half": {
+    "redis_visible_lag_ms": {
+      "count": 171,
+      "p50": 770.1,
+      "p95": 1162.7,
+      "max": 1529.6,
+      "provenance": "raw_samples_sorted_index"
+    },
+    "latest_lag_ms": {
+      "count": 269,
+      "p50": 164.2,
+      "p95": 264.5,
+      "max": 467.4,
+      "provenance": "raw_samples_sorted_index"
+    }
+  },
+  "td_confirm_lag_ms_p50": 1087.3,
+  "td_confirm_lag_ms_max": 3312.9,
+  "backlog_mean_first_half": 36.4,
+  "backlog_mean_second_half": 39.5,
+  "backlog_max": 140,
+  "pel_share_second_half": 0.606,
+  "redis_used_memory_bytes": 3774472,
+  "rows": {
+    "value_rows": 60000,
+    "quality_rows": 29808000,
+    "per_device_value_rows": {
+      "jt14ee5a4400": 3000,
+      "jt14ee5a4401": 3000,
+      "jt14ee5a4402": 3000,
+      "jt14ee5a4403": 3000,
+      "jt14ee5a4404": 3000,
+      "jt14ee5a4405": 3000,
+      "jt14ee5a4406": 3000,
+      "jt14ee5a4407": 3000,
+      "jt14ee5a4408": 3000,
+      "jt14ee5a4409": 3000,
+      "jt14ee5a4410": 3000,
+      "jt14ee5a4411": 3000,
+      "jt14ee5a4412": 3000,
+      "jt14ee5a4413": 3000,
+      "jt14ee5a4414": 3000,
+      "jt14ee5a4415": 3000,
+      "jt14ee5a4416": 3000,
+      "jt14ee5a4417": 3000,
+      "jt14ee5a4418": 3000,
+      "jt14ee5a4419": 3000
+    },
+    "expected_value_rows": 59740,
+    "expected_quality_rows": 29808000
+  },
+  "reconcile_status": "fail",
+  "reconcile_error": null,
+  "latest_hash_ok_devices": "20/20",
+  "dlq_entries": 0,
+  "collector_drain_seconds": 2.001,
+  "window_wall_seconds": 303.758,
+  "stop_reasons": [],
+  "sustainable": true
+}
