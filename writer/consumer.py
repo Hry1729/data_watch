@@ -88,6 +88,10 @@ class _PreparedPayload:
     converted_columns: dict | None = None
     conversion_bad_var_ids: list | None = None
     conversion_ms: float = 0.0
+    # 本次转换所用的映射快照（就是那个 var_map dict 对象本身）。调用方必须用
+    # **对象身份**与即将使用的 mapping.var_map 比对：映射 reload 会换上一个新 dict，
+    # 身份不同即说明结果可能缺列（新增点），必须重算。空 dict 也要绑定。
+    conversion_var_map: dict | None = None
 
 
 def _convert_values(raw_values: dict, var_map: dict) -> tuple[dict, list]:
@@ -125,7 +129,8 @@ def _prepare_payload_batch(
 
     lookup 返回 None 表示该条目的 mapping 未知：不做转换，prepared 里
     converted_columns 保持 None，由 _handle_entry 回退到原路径。
-    mapping 若在后续流程中 reload（同组新增点），转换结果同样会失效并回退重算。
+    转换结果同时绑定本次使用的 var_map 快照（conversion_var_map），
+    _handle_entry 用对象身份判断是否仍然有效；reload 换了新 dict 就重算。
     因此这里的结果只是快路径，不改变任何判定语义。
     """
     prepared = []
@@ -173,12 +178,15 @@ def _prepare_payload_batch(
                     var_map = var_map_lookup(entry)
                 except Exception:
                     var_map = None
-                if var_map:
+                # 空 dict 同样是有效快照：它表示"按当时映射一个点都映射不上"，
+                # 必须绑定后才能被调用方判定为已失效，而不是被当成"没有结果"。
+                if var_map is not None:
                     started = time.perf_counter()
                     item.converted_columns, item.conversion_bad_var_ids = (
                         _convert_values(item.raw_values, var_map)
                     )
                     item.conversion_ms = (time.perf_counter() - started) * 1000
+                    item.conversion_var_map = var_map
         prepared.append(item)
     return prepared
 
@@ -1138,9 +1146,9 @@ class StreamConsumer:
                 )
                 return
             unmapped_var_ids = [
-                var_id
-                for var_id in unmapped_var_ids
-                if not mapping.var_map.get(var_id)
+                str(var_id)
+                for var_id in raw_values
+                if not mapping.var_map.get(str(var_id))
             ]
         if unmapped_var_ids:
             logger.warning(
@@ -1156,8 +1164,13 @@ class StreamConsumer:
         # --- 将 var_id 转换为 td_column_name，带类型强制转换 ---
         # 任一非法值整 entry 隔离：禁止写假 0.0，推 DLQ 后再决定是否 ACK
         # 快路径：转换已在执行单元里随解码一起做完（prepared.converted_columns）。
-        # 只有 mapping 发生过 reload（同组新增点）或本次未解码时才在这里重算。
-        if prepared is not None and prepared.converted_columns is not None:
+        # 只有转换时的映射快照与此刻要用的 mapping.var_map 是**同一个对象**时才可复用。
+        # 映射 reload（本条目或同批其他条目触发）会换上新的 dict：旧结果的点集可能
+        # 缺少新增点、甚至为空，此时必须重算，不能只看"converted_columns 不是 None"。
+        # 走到这里 unmapped_var_ids 已为空，即 raw_values 的每个点都被 mapping.var_map
+        # 覆盖，因此快路径结果与重算结果等价（逐点覆盖由 _convert_values 保证）。
+        if (prepared is not None and prepared.converted_columns is not None
+                and prepared.conversion_var_map is mapping.var_map):
             columns = prepared.converted_columns
             bad_var_ids = list(prepared.conversion_bad_var_ids or [])
             self._metrics.record_parse(prepared.conversion_ms)

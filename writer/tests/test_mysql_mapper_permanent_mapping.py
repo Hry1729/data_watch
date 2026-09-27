@@ -75,6 +75,37 @@ def test_old_config_versions_share_permanent_mapping_cache() -> None:
     assert len(connection.cursor_instance.executions) == 1
 
 
+def test_published_mapping_snapshot_is_replaced_not_mutated_in_place() -> None:
+    """已发布的映射快照不得被原地修改（reload 必须换对象）。
+
+    consumer 的快路径用对象身份判断"已算好的转换结果是否还对得上当前映射"。
+    若 reload 改成在旧 dict 上 clear()/update()，身份不变但内容已变，
+    旧转换结果就会被误判为有效——新增点位会漏写或写错列。
+    """
+    connection = FakeConnection([mapping_row()])
+    mapper = MysqlMapper(connection)
+
+    first = mapper.get_or_load("QC100", "g001", 12)
+    published = first.var_map
+    snapshot = dict(published)
+
+    connection.cursor_instance.rows = [mapping_row(), mapping_row_new_point()]
+    refreshed = mapper.reload("QC100", "g001", 13)
+
+    assert refreshed is not first
+    assert refreshed.var_map is not published, "reload 必须发布新的 var_map 对象"
+    assert published == snapshot, "已发布的映射快照不得被原地增删"
+    assert refreshed.var_map == {"123": "p0001", "124": "p0002"}
+    assert mapper.get_cached("QC100", "g001") is refreshed
+
+    # 再 reload 一次同样换对象，旧快照内容保持冻结
+    connection.cursor_instance.rows = [mapping_row()]
+    again = mapper.reload("QC100", "g001", 14)
+    assert again.var_map is not refreshed.var_map
+    assert refreshed.var_map == {"123": "p0001", "124": "p0002"}
+    assert again.var_map == {"123": "p0001"}
+
+
 def test_reload_refreshes_same_group_after_new_permanent_mapping() -> None:
     connection = FakeConnection([mapping_row()])
     mapper = MysqlMapper(connection)

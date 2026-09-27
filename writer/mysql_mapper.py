@@ -35,6 +35,11 @@ class GroupMapping:
     config_version: int
     child_table: str
     stable: str
+    # var_map: var_id → td_column_name。
+    # **发布后不得原地修改**：`load()` 每次都新建 dict，`reload()` 整体替换缓存对象。
+    # writer/consumer.py 的快路径用 `conversion_var_map is mapping.var_map` 判断
+    # "已算好的转换结果是否还对得上当前映射"，一旦允许在已发布的 dict 上 clear()/update()，
+    # 身份判断就会失效（旧转换结果会被误判为仍然有效，导致漏点或错列）。
     var_map: dict[str, str] = field(default_factory=dict)   # var_id → td_column_name
     var_type: dict[str, str] = field(default_factory=dict)  # var_id → var_type
 
