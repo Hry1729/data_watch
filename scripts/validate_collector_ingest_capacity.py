@@ -34,25 +34,77 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "collector")]
 
+import hashlib
 import redis
+from data_watch_shared.acceptance import (
+    FAIL,
+    NOT_TESTED,
+    PASS,
+    batch_timeline_analysis,
+    build_frame,
+    correctness_verdict,
+    expected_latest_value,
+    expected_quality,
+    not_tested,
+    overall_status,
+    queue_conservation,
+    window_analysis,
+)
 from data_watch_shared.stream_envelope import stream_key
 from storage.durable_redis_writer import DurableRedisWriter
 
-# 与 collector/core/quality_codes.py、writer/quality_codes.py 同值。
-Q_GOOD = 0
-Q_UNCERTAIN = 2
-Q_BAD = 5
+PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 
-PASS, FAIL, NOT_TESTED = "pass", "fail", "not_tested"
 
-# 固定点位的特殊语义，用于覆盖 NULL / 布尔 / 负值 / 非存储 / STRING / 多采样周期。
-P_NULL = 1          # 值为 None：只进 latest（v="")，不进 stream
-P_BOOL = 2          # bool：必须序列化成 "1"/"0"，不能是 "True"/"False"
-P_NEGATIVE = 3      # 负值
-P_QUALITY_VARY = 4  # 每个 tick 变化的质量码（GOOD / UNCERTAIN / BAD）
-P_NON_STORAGE = 6   # is_storage=0：只进 latest 与 window，不进 stream
-P_STRING_TYPE = 7   # 数据类型 STRING：只进 latest 与 window，不进 stream
-FIXED_SPECIAL = (P_NULL, P_BOOL, P_NEGATIVE, P_QUALITY_VARY, P_NON_STORAGE, P_STRING_TYPE)
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    digest.update(Path(path).read_bytes())
+    return digest.hexdigest()
+
+
+def provenance() -> dict:
+    """把"这份结果由哪一版代码产生"绑进结果本身。
+
+    未提交的工作区无法用 commit 标识，所以记录脚本与共享规则模块的内容哈希：
+    复核者只要重算这两个哈希，就能确认证据与实现对得上。
+    """
+    module = PACKAGE_ROOT / "data_watch_shared" / "acceptance.py"
+    return {
+        "script_sha256": file_sha256(Path(__file__).resolve()),
+        "acceptance_sha256": file_sha256(module) if module.exists() else None,
+        "git_head": _git_head(),
+    }
+
+
+def _git_head() -> str | None:
+    try:
+        import subprocess
+        return subprocess.run(["git", "rev-parse", "HEAD"], cwd=PACKAGE_ROOT,
+                              capture_output=True, text=True, timeout=10).stdout.strip() or None
+    except Exception:
+        return None
+
+
+def _redis_cpu_summary(samples) -> dict:
+    """Redis 单线程忙碌程度：CPU 秒数增量 ÷ 墙钟秒数增量。
+
+    这是判断"回放确认慢"究竟是 Redis 执行命令慢、还是客户端等待的信号之一：
+    比值接近 1 说明该 Redis 实例几乎一直在执行命令（单线程已饱和）。
+    """
+    points = [(sample.get("elapsed_s"), sample.get("redis_cpu_seconds"))
+              for sample in samples
+              if sample.get("redis_cpu_seconds") is not None]
+    if len(points) < 2:
+        return {"status": NOT_TESTED, "detail": "CPU 采样不足"}
+    (t0, c0), (t1, c1) = points[0], points[-1]
+    span = (t1 or 0) - (t0 or 0)
+    if span <= 0:
+        return {"status": NOT_TESTED, "detail": "CPU 采样时间跨度不足"}
+    busy = ((c1 or 0) - (c0 or 0)) / span
+    return {"status": PASS, "cpu_seconds_delta": round((c1 or 0) - (c0 or 0), 3),
+            "wall_seconds": round(span, 3), "busy_ratio": round(busy, 4),
+            "detail": (f"Redis 实例 CPU 忙碌比 {busy:.3f}（单线程执行；接近 1 表示"
+                       "该实例几乎一直在执行命令，客户端等待里包含排队)")}
 
 
 def save_report(path: Path, report: dict) -> None:
@@ -64,47 +116,22 @@ def save_report(path: Path, report: dict) -> None:
         os.fsync(output.fileno())
 
 
+def append_progress(path: Path, event: dict) -> None:
+    """Append a small durable checkpoint without rewriting the final report."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as output:
+        output.write(json.dumps(event, ensure_ascii=False) + "\n")
+        output.flush()
+        os.fsync(output.fileno())
+
+
 # ----------------------------------------------------------------------
 # 测试数据：由 (device, point, tick) 共同决定
+#
+# 期望数据模型与判定词表已统一到 data_watch_shared/acceptance.py：
+# 完整链路脚本用的是同一套 (device, point, tick) 期望值与同一套 pass/fail/not_tested，
+# 不再由各脚本各写一份"通过"口径。
 # ----------------------------------------------------------------------
-
-def _device_seed(device: str) -> int:
-    """设备号 → 稳定的小整数，仅用于让不同设备的数值互相区分。"""
-    return int(device[-3:])
-
-
-def expected_stream_value(device: str, point: int, tick: int) -> str | None:
-    """stream 中该点位应有的字符串值；None 表示该点不进 stream。"""
-    if point in (P_NULL, P_NON_STORAGE, P_STRING_TYPE):
-        return None
-    if point == P_BOOL:
-        return "1" if (tick + _device_seed(device)) % 2 else "0"
-    if point == P_NEGATIVE:
-        return str(-(point * 1000 + tick))
-    return str(point + tick + _device_seed(device) * 7)
-
-
-def expected_latest_value(device: str, point: int, tick: int) -> str:
-    """latest 中该点位应有的字符串值（NULL 点为 ""，非存储点同样写入 latest）。"""
-    if point == P_NULL:
-        return ""
-    if point == P_BOOL:
-        return "1" if (tick + _device_seed(device)) % 2 else "0"
-    if point == P_NEGATIVE:
-        return str(-(point * 1000 + tick))
-    return str(point + tick + _device_seed(device) * 7)
-
-
-def expected_quality(point: int, tick: int) -> int:
-    """该点位在该 tick 的质量码；覆盖 GOOD→变化→恢复 GOOD，以及非法点。"""
-    if point == P_QUALITY_VARY:
-        return (Q_GOOD, Q_UNCERTAIN, Q_BAD)[tick % 3]
-    if point == P_QUALITY_VARY + 1:  # 第 5 点：一次坏值后恢复，验证质量码往返
-        if tick % 20 == 7:
-            return Q_BAD
-        return Q_GOOD
-    return Q_GOOD
-
 
 def sample_for(device: str, point: int, tick: int, period_ms: int, base_ts: int) -> dict:
     """构造与 executor._write_to_redis 同形的 frame / stream / latest 三元组。
@@ -116,27 +143,6 @@ def sample_for(device: str, point: int, tick: int, period_ms: int, base_ts: int)
     value = expected_latest_value(device, point, tick)
     quality = expected_quality(point, tick)
     return {"value": value, "quality": quality, "ts": ts}
-
-
-def build_frame(device: str, points: int, tick: int, period_ms: int, base_ts: int) -> dict:
-    ts = base_ts + tick * period_ms
-    window_values = {str(p): expected_latest_value(device, p, tick) for p in range(1, points + 1)}
-    stream_values: dict[str, str] = {}
-    stream_qualities: dict[str, int] = {}
-    for p in range(1, points + 1):
-        value = expected_stream_value(device, p, tick)
-        if value is None:
-            continue
-        stream_values[str(p)] = value
-        stream_qualities[str(p)] = expected_quality(p, tick)
-    latest = {
-        str(p): {"v": expected_latest_value(device, p, tick), "t": ts,
-                 "q": expected_quality(p, tick)}
-        for p in range(1, points + 1)
-    }
-    return {"ts": ts, "window_values": window_values,
-            "stream_values": stream_values, "stream_qualities": stream_qualities,
-            "latest": latest}
 
 
 # ----------------------------------------------------------------------
@@ -176,8 +182,8 @@ def command_stats(r) -> dict:
 # 数据正确性对账
 # ----------------------------------------------------------------------
 
-def enumerate_frames(r, keys) -> list[tuple[str, str, dict]]:
-    frames = []
+def enumerate_frames(r, keys):
+    """Read bounded Redis pages; never retain every wide frame in Python."""
     for key in keys:
         minimum = "-"
         while True:
@@ -185,18 +191,70 @@ def enumerate_frames(r, keys) -> list[tuple[str, str, dict]]:
             if not batch:
                 break
             for entry_id, fields in batch:
-                frames.append((key, entry_id, fields))
+                yield key, entry_id, fields
             minimum = "(" + batch[-1][0]
-    return frames
 
 
-def select_audit_sample(entries: list, stride: int) -> list:
-    """确定性抽样：保证首帧、末帧与若干等距帧一定被完整核对。"""
-    if not entries:
-        return []
-    indices = set(range(0, len(entries), max(1, stride)))
-    indices.update((0, len(entries) - 1))
-    return [entries[index] for index in sorted(indices)]
+def audit_stream_frames(r, keys, devices: list[str], device_type: str, group: str,
+                        points: int, ticks: int, period_ms: int, base_ts: int,
+                        stride: int) -> dict:
+    """Check every identity and sample complete fields with bounded memory."""
+    seen = {device: bytearray(ticks) for device in devices}
+    total = duplicates = invalid = audited = unique = 0
+    problems: list[str] = []
+    last = None
+    last_audited = False
+    expected = {"group": group, "device_type": device_type}
+
+    def audit(entry):
+        nonlocal audited
+        stream_name, entry_id, fields, device, tick = entry
+        problem = verify_frame_fields(device, fields, points, tick, period_ms,
+                                      base_ts, expected)
+        if problem and len(problems) < 20:
+            problems.append(f"{stream_name} {entry_id}: {problem}")
+        audited += 1
+
+    for stream_name, entry_id, fields in enumerate_frames(r, keys):
+        total += 1
+        device = fields.get("device_code")
+        try:
+            ts = int(fields.get("ts"))
+        except (TypeError, ValueError):
+            ts = None
+        offset = None if ts is None else ts - base_ts
+        tick = (offset // period_ms if offset is not None and offset % period_ms == 0
+                else None)
+        if (device not in seen or tick is None or not 0 <= tick < ticks
+                or stream_name != stream_key(device, device_type, group, 4)):
+            invalid += 1
+            if len(problems) < 20:
+                problems.append(f"{stream_name} {entry_id}: 非本次设备/时间戳/分片身份 "
+                                f"device={device!r} ts={fields.get('ts')!r}")
+            last = None
+            continue
+        if seen[device][tick]:
+            duplicates += 1
+        else:
+            seen[device][tick] = 1
+            unique += 1
+        last = (stream_name, entry_id, fields, device, tick)
+        last_audited = (total - 1) % max(1, stride) == 0
+        if last_audited:
+            audit(last)
+    if last is not None and not last_audited:
+        audit(last)
+    missing = ticks * len(devices) - unique
+    if missing:
+        problems.append(f"缺失帧 {missing}")
+    if duplicates:
+        problems.append(f"重复帧 {duplicates}")
+    if invalid:
+        problems.append(f"非法身份帧 {invalid}")
+    if total != ticks * len(devices):
+        problems.append(f"stream 帧数 {total} != 期望 {ticks * len(devices)}")
+    return {"total": total, "duplicates": duplicates, "invalid": invalid,
+            "missing": missing, "audited": audited, "problems": problems}
 
 
 def verify_frame_fields(device: str, fields: dict, points: int, tick: int,
@@ -260,99 +318,95 @@ def verify_latest_full(r, device: str, points: int, tick: int, period_ms: int,
 
 # ----------------------------------------------------------------------
 # 连续窗口与趋势
+#
+# `window_analysis()` 已统一到 data_watch_shared/acceptance.py：
+# 容量脚本与完整链路脚本必须用同一套"预热后稳态窗口 + 总增量÷总时长"口径，
+# 否则同一批采样在两处会得出不同的速率与趋势。
 # ----------------------------------------------------------------------
 
-def window_analysis(samples: list[dict], period_ms: int, devices: int,
-                    min_span_s: float = 0.2, warmup_s: float = 0.0) -> dict:
-    """按相邻采样点构造连续窗口，给出速率、积压与趋势。
 
-    过短的窗口会把采样抖动放大成天文数字速率，直接丢弃而不参与判定。
-    `warmup_s` 之后才计入稳态速率：异步流水线在启动阶段有正常的填充期，
-    把启动期算进"持续确认速率"会系统性低估处理能力。
-    每个阶段单独计算（阶段内 elapsed_s 从该阶段起点计）。
+def margin_verdict(measured: dict | None, *, target_input_fps: float,
+                   min_effective_seconds: float, rate_multiple: float,
+                   blocked_reason: str | None) -> dict:
+    """处理余量判定：必须用**额定输入**下测得的能力，不能用降速输入顶替。
+
+    measured 的语义：
+      * input_fps        该阶段实际输入帧/秒
+      * confirmed_fps    该阶段实际确认帧/秒（= 处理能力，处理端全程有任务时）
+      * capacity_fps_estimate = confirmed_frames / window_seconds
+      * margin_fraction  = capacity / input − 1（= 净消减 ÷ 输入）
+      * effective_window 积压被处理完的时刻不早于 min_effective_seconds
+
+    判定规则：
+      1. 没有测量 → not_tested（未测不等于余量为零）；
+      2. 追平开始时没有可处理积压 → not_tested（测的会是正常生产尾部积压）；
+      3. 输入未达额定 → fail（能力结论不成立）；
+      4. 有效区间不足 → not_tested（积压被处理得太快，不能据此判无余量）；
+      5. 余量 ≥ 30% → pass；否则 fail（这是额定输入下的真实测量）。
     """
-    windows = []
-    for previous, current in zip(samples, samples[1:]):
-        if previous.get("phase") != current.get("phase"):
-            continue
-        span = current["elapsed_s"] - previous["elapsed_s"]
-        if span < min_span_s:
-            continue
-        outbox = current["outbox"]
-        previous_outbox = previous["outbox"]
-        windows.append({
-            "phase": current.get("phase"),
-            "from_s": previous["elapsed_s"],
-            "to_s": current["elapsed_s"],
-            "span_s": span,
-            "input_delta": current["submitted"] - previous["submitted"],
-            "confirmed_delta": current["replayed_frames"] - previous["replayed_frames"],
-            "input_fps": round((current["submitted"] - previous["submitted"]) / span, 2),
-            "replay_confirmed_fps": round(
-                (current["replayed_frames"] - previous["replayed_frames"]) / span, 2),
-            "outbox_frames": outbox["count"],
-            "outbox_oldest_age_ms": outbox["oldest_age_ms"],
-            "outbox_delta": outbox["count"] - previous_outbox["count"],
-        })
-    # 稳态窗口 = 预热之后**开始**的生产窗口。用 from_s 而不是 to_s：
-    # 跨越预热边界的窗口会把填充期的低速确认算进稳态，系统性低估处理能力。
-    # 速率与趋势共用同一个集合，避免两处门槛不一致。
-    steady_windows = [window for window in windows
-                      if window.get("phase") == "production"
-                      and window.get("from_s", 0.0) >= warmup_s]
-    if not windows:
-        return {"windows": [], "trend": "not_tested", "warmup_s": warmup_s,
-                "steady_windows": 0}
-    trend = "insufficient_windows"
-    if len(steady_windows) >= 2:
-        half = len(steady_windows) // 2
-        first_avg = sum(w["outbox_frames"] for w in steady_windows[:half]) / half
-        last_avg = (sum(w["outbox_frames"] for w in steady_windows[half:])
-                    / (len(steady_windows) - half))
-        if last_avg > first_avg * 1.05 and last_avg - first_avg > devices:
-            trend = "growing"
-        elif last_avg < first_avg * 0.95:
-            trend = "shrinking"
-        else:
-            trend = "flat"
-    # 聚合速率必须是"窗口总确认量 ÷ 窗口总时长"，不能对各窗口速率取算术平均：
-    # 窗口长度由实际采样时间决定，长短不一，简单平均会被短窗口带偏。
-    # 反例：0.5s 内 700 帧（1400/s）+ 1.5s 内 1200 帧（800/s）
-    #   → 简单平均 1100/s，而总量/总时长 = 1900/2 = 950/s，在 1000/s 门槛附近结论相反。
-    steady_confirmed_total = sum(window["confirmed_delta"] for window in steady_windows)
-    steady_span_total = sum(window["span_s"] for window in steady_windows)
-    steady_input_total = sum(window["input_delta"] for window in steady_windows)
+    if measured is None:
+        return not_tested(blocked_reason or "本轮未运行该阶段：未测不等于余量为零")
+    if not measured["backlog_start_frames"]:
+        return not_tested(
+            "追平开始时没有可处理积压（可处理积压=本地持久队列未领取帧数）："
+            "此时测到的是正常生产的尾部积压，不能当作处理余量证据")
+    input_fps = measured["input_fps"]
+    if input_fps < target_input_fps * rate_multiple * 0.98:
+        return {
+            "status": FAIL,
+            "detail": (f"输入 {input_fps:.2f} 帧/秒 未达目标 "
+                       f"{target_input_fps * rate_multiple:.2f} 帧/秒，"
+                       "该阶段的能力结论不成立"),
+        }
+    capacity = measured["capacity_fps_estimate"]
+    margin = measured["margin_fraction"]
+    if margin >= 0.30:
+        status = PASS
+    elif measured["effective_window"]:
+        status = FAIL
+    else:
+        return not_tested(
+            f"积压在 {measured['backlog_exhausted_at_s']}s 内被处理完，"
+            f"有效测量区间不足 {min_effective_seconds}s：区间太短，"
+            "不能据此判定余量（未测不等于无余量）。可加大 --seed-backlog-frames 重测")
     return {
-        "windows": windows,
-        "trend": trend,
-        "warmup_s": warmup_s,
-        "steady_windows": len(steady_windows),
-        "max_outbox_frames": max(window["outbox_frames"] for window in windows),
-        "max_outbox_oldest_age_ms": max(window["outbox_oldest_age_ms"] for window in windows),
-        "max_input_fps": max(window["input_fps"] for window in windows),
-        "min_input_fps": min(window["input_fps"] for window in windows),
-        "max_replay_confirmed_fps": max(window["replay_confirmed_fps"] for window in windows),
-        # 稳态确认速率 = 预热后各窗口 Δ已确认逻辑帧之和 ÷ 各窗口 Δt 之和。
-        # 异步流水线在停止输入瞬间还有正常在途尾批，用"生产期累计确认 ÷ 生产总时长"
-        # 会把这份正常延迟误判成容量不足。
-        "steady_confirmed_fps": (
-            round(steady_confirmed_total / steady_span_total, 2)
-            if steady_span_total > 0 else None),
-        "steady_input_fps": (
-            round(steady_input_total / steady_span_total, 2)
-            if steady_span_total > 0 else None),
-        "steady_span_s": round(steady_span_total, 3),
-        "steady_outbox_max": (
-            max(window["outbox_frames"] for window in steady_windows)
-            if steady_windows else None),
+        "status": status,
+        "detail": (f"额定输入 {input_fps:.2f} 帧/秒持续 {measured['seconds']}s："
+                   f"确认 {measured['confirmed_fps']:.2f} 帧/秒，"
+                   f"估算处理能力 {capacity:.2f} 帧/秒，"
+                   f"额定输入下的处理余量 {margin * 100:.1f}%（目标 30%）；"
+                   f"可处理积压 {measured['backlog_start_frames']} → "
+                   f"{measured['backlog_end_frames']} 帧，"
+                   f"已领取未确认在途估计 {measured['claimed_unconfirmed_frames_estimate']} 帧，"
+                   f"最老积压 {measured['backlog_oldest_age_start_ms']} → "
+                   f"{measured['backlog_oldest_age_end_ms']}ms"),
     }
+
+
+def attempted_verdict_names(*, seeded: bool, rated: bool, degraded: bool) -> list[str]:
+    """本次实际尝试测量的判定项。
+
+    没跑的档位（例如额定轮次里的降速档）不该把总判定压成 not_tested，否则
+    "诚实报未测"会让任何单轮运行都永远拿不到总判定；但**跑了却没测出结果**
+    （例如稳态窗口不足）仍然计入并拉低总判定。两回事分开，不许互相掩盖。
+    """
+    names = ["input_on_schedule", "durable_received", "sustained_replay", "steady_state",
+             "data_correctness", "post_stop_drain"]
+    if seeded:
+        names.append("seeded_backlog")
+    if rated:
+        names.append("rated_catchup_margin")
+    if degraded:
+        names.append("degraded_recovery")
+    return names
 
 
 def build_verdicts(*, target_frames: int, production_submitted: int, production_s: float,
                    target_seconds: float, committed: int, replayed_during_production: int,
                    windows: dict, drain_s: float, final_outbox: dict,
                    correctness_problems: list[str], target_input_fps: float,
-                   catchup: dict | None) -> dict:
+                   seeded: dict | None, rated: dict | None, degraded: dict | None,
+                   min_effective_seconds: float) -> dict:
     verdicts: dict[str, dict] = {}
 
     # 只比较**生产阶段**的提交量：追平阶段的帧不属于额定输入，不能算进"按时完成"。
@@ -386,65 +440,86 @@ def build_verdicts(*, target_frames: int, production_submitted: int, production_
                   f"生产期累计确认 {replayed_during_production} 帧仅供参考，不单独作为容量判据")
     verdicts["sustained_replay"] = {"status": status, "detail": detail}
 
+    # 稳态只描述**生产期预热后**的积压趋势：把"停采后能排空"混进来会把
+    # 一个必然后果当成容量证据，所以排空单独成为 post_stop_drain。
     if not windows.get("windows"):
-        verdicts["steady_state"] = {"status": NOT_TESTED, "detail": "没有连续窗口样本"}
+        verdicts["steady_state"] = not_tested("没有连续窗口样本")
     elif windows.get("trend") == "insufficient_windows" or not windows.get("steady_windows"):
         # 有效窗口不足时必须如实报"未测"，不能因为趋势"不叫 growing"就算通过。
-        verdicts["steady_state"] = {
-            "status": NOT_TESTED,
-            "detail": (f"预热后有效窗口不足（{windows.get('steady_windows')} 个），"
-                       f"无法判定稳态；未测不等于通过。"
-                       f"建议延长 --seconds 或减小 --sample-every-ticks"),
-        }
+        verdicts["steady_state"] = not_tested(
+            f"预热后有效窗口不足（{windows.get('steady_windows')} 个），无法判定稳态；"
+            f"未测不等于通过。建议延长 --seconds 或减小 --sample-every-ticks")
     else:
-        bounded = (windows["trend"] != "growing"
-                   and final_outbox["count"] == 0
-                   and final_outbox["oldest_age_ms"] == 0)
-        status = PASS if bounded else FAIL
+        growing = windows["trend"] == "growing"
         verdicts["steady_state"] = {
-            "status": status,
-            "detail": (f"积压趋势={windows['trend']}，窗口内最大积压 "
+            "status": FAIL if growing else PASS,
+            "detail": (f"生产期积压趋势={windows['trend']}，稳态窗口 "
+                       f"{windows['steady_windows']} 个，窗口内最大积压 "
                        f"{windows['max_outbox_frames']} 帧 / 最老 "
-                       f"{windows['max_outbox_oldest_age_ms']}ms，"
-                       f"停采后 outbox={final_outbox['count']}，排空 {drain_s:.3f}s"),
+                       f"{windows['max_outbox_oldest_age_ms']}ms"),
         }
 
-    verdicts["data_correctness"] = {
-        "status": PASS if not correctness_problems else FAIL,
-        "detail": ("全部检查通过" if not correctness_problems
-                   else f"{len(correctness_problems)} 项不符：" + "; ".join(correctness_problems[:5])),
+    # 数据正确性用共享判定：完整链路脚本走的是同一个 correctness_verdict，
+    # 不允许两处对"不符"给出不同的通过口径。
+    verdicts["data_correctness"] = correctness_verdict(
+        correctness_problems, checked="Collector→Redis 全字段对账")
+
+    # 停采排空：单独命名、单独判定。停采后能排空不证明额定输入下的持续容量达标。
+    drained = final_outbox["count"] == 0 and final_outbox["oldest_age_ms"] == 0
+    verdicts["post_stop_drain"] = {
+        "status": PASS if drained else FAIL,
+        "detail": (f"停采后 outbox={final_outbox['count']}，最老 "
+                   f"{final_outbox['oldest_age_ms']}ms，排空 {drain_s:.3f}s。"
+                   "注：停采后能排空只是必要后果，不证明额定输入的持续容量"),
     }
 
-    if catchup is None:
-        # "未测余量" 不等于 "余量为零"：没运行时只能说尚未验证。
-        verdicts["catchup_margin"] = {
-            "status": NOT_TESTED,
-            "detail": "尚未验证处理余量：本轮未运行“保持额定输入时旧积压是否持续减少”"
-                      "（需 --catchup-seconds）。未测不等于余量为零。",
-        }
+    # 额定追平余量：只能用额定输入（--catchup-rate 1.0）的测量。
+    if rated is not None:
+        verdicts["rated_catchup_margin"] = margin_verdict(
+            rated, target_input_fps=target_input_fps,
+            min_effective_seconds=min_effective_seconds, rate_multiple=1.0,
+            blocked_reason=None)
+    elif degraded is not None:
+        verdicts["rated_catchup_margin"] = not_tested(
+            "本轮只在降速输入下测量（--catchup-rate < 1）：降速后的净消减比例"
+            "不能顶替额定输入下的处理余量。请用 --catchup-rate 1.0 重测")
     else:
-        net_drain = catchup["net_drain_fps"]
-        input_ok = catchup["input_fps"] >= target_input_fps * 0.98
-        # 处理余量 ≈ 净消减速率 / 额定输入速率（在积压尚未耗尽的区间测量）。
-        margin = (net_drain / target_input_fps) if target_input_fps > 0 else 0.0
-        drained = catchup["outbox_end"] < catchup["outbox_start"]
-        if not input_ok:
-            status = FAIL
-        elif margin >= 0.30:
-            status = PASS
-        elif drained:
-            # 积压确实在减少，但余量不足 30%：如实判失败并给出测得的余量。
-            status = FAIL
-        else:
-            status = FAIL
-        verdicts["catchup_margin"] = {
-            "status": status,
-            "detail": (f"保持 {catchup['input_fps']:.2f} 帧/秒输入 {catchup['seconds']}s："
-                       f"确认 {catchup['confirmed_fps']:.2f} 帧/秒，净消减 "
-                       f"{net_drain:.2f} 帧/秒，估算处理余量 {margin * 100:.1f}%"
-                       f"（拟议目标 30%）；积压 {catchup['outbox_start']} → "
-                       f"{catchup['outbox_end']} 帧，最老 "
-                       f"{catchup['oldest_age_start_ms']} → {catchup['oldest_age_end_ms']}ms"),
+        verdicts["rated_catchup_margin"] = not_tested(
+            "尚未验证额定处理余量：需 --seed-backlog-frames（先不启动回放预置有界积压）"
+            "+ --catchup-seconds（额定输入与回放同时启动）。未测不等于余量为零")
+
+    # 降速恢复：与额定余量分开命名、分开判定，绝不参与额定余量结论。
+    if degraded is None:
+        verdicts["degraded_recovery"] = not_tested(
+            "本轮未运行降速恢复档（需 --catchup-rate < 1 且 --catchup-seconds）")
+    else:
+        verdicts["degraded_recovery"] = margin_verdict(
+            degraded, target_input_fps=target_input_fps,
+            min_effective_seconds=min_effective_seconds,
+            rate_multiple=degraded["rate_multiple"],
+            blocked_reason=None)
+        verdicts["degraded_recovery"]["detail"] = (
+            f"（降速 {degraded['rate_multiple']}× 额定，仅作恢复能力描述，"
+            f"不作为额定余量） " + verdicts["degraded_recovery"]["detail"])
+
+    # 预置积压是否真的形成：工具能跑不等于余量验收通过，这一步单独报。
+    if seeded is None:
+        verdicts["seeded_backlog"] = not_tested(
+            "本轮未预置受控积压（需 --seed-backlog-frames）；"
+            "没有受控积压就无法把可处理积压与正常生产尾部积压分开")
+    else:
+        # 暂停没生效 / 预置期间回放仍前进 → 预置积压数字不可信，直接判失败。
+        trustworthy = (seeded["target_reached"]
+                       and seeded["replay_quiescent_before_seed"]
+                       and seeded["replay_paused_during_seed"])
+        verdicts["seeded_backlog"] = {
+            "status": PASS if trustworthy else FAIL,
+            "detail": (f"暂停回放（静止确认 {seeded['replay_quiescent_before_seed']}）后"
+                       f"按正常持久接收路径预置 {seeded['produced_frames']} 帧，"
+                       f"可处理积压 {seeded['backlog_frames']}/{seeded['target_frames']} 帧，"
+                       f"耗时 {seeded['seconds']}s，最老 {seeded['backlog_oldest_age_ms']}ms，"
+                       f"本地在途写 {seeded['in_flight_local_writes']} 帧，"
+                       f"预置期间回放又前进 {seeded['replay_advanced_during_seed']} 帧"),
         }
     return verdicts
 
@@ -464,8 +539,10 @@ def run(args) -> dict:
         raise ValueError("only dedicated performance Redis hosts are allowed")
     if args.profile_phases and args.redis_host != "perf-redis-profile":
         raise ValueError("phase profiling requires the dedicated Redis instance")
+    # 上限 3600s 是为"长测是否持续积压"这一档留的：600s 只能看到锯齿，
+    # 不足以区分"围绕某值波动"和"持续增长"。其余上限（设备/点位/周期/排空）不变。
     if not (1 <= args.devices <= 100 and 8 <= args.points <= 1000
-            and 1 <= args.seconds <= 600 and args.period_ms >= 100
+            and 1 <= args.seconds <= 3600 and args.period_ms >= 100
             and 10 <= args.drain_seconds <= 600):
         raise ValueError("load limits exceeded")
 
@@ -485,6 +562,12 @@ def run(args) -> dict:
     if maxmemory < 256 * 1024 * 1024:
         raise RuntimeError("isolated Redis memory limit unexpectedly low")
     memory_guard = min(int(args.redis_memory_guard_mb) * 1024 * 1024, int(maxmemory * .8))
+    # 本次运行的 Redis 有效配置（appendfsync 等单因素对照必须能从这里核对）。
+    redis_config = {
+        name: r.config_get(name).get(name)
+        for name in ("appendfsync", "appendonly", "maxmemory", "maxmemory-policy",
+                     "auto-aof-rewrite-percentage", "auto-aof-rewrite-min-size")
+    }
 
     collector_class = ProfiledDurableRedisWriter if args.profile_phases else DurableRedisWriter
     collector = collector_class(
@@ -497,8 +580,13 @@ def run(args) -> dict:
     target_input_fps = args.devices * 1000.0 / args.period_ms
     report = {
         "mode": "synthetic_python314t_real_sqlite_redis_aof_no_tdengine",
+        "provenance": provenance(),
+        # 有效配置必须绑在结果里：appendfsync 是本次要对照的单因素，
+        # AOF 重写阈值会 fork 写盘、影响长测，都不能只写在报告正文里。
+        "redis_config": redis_config,
         "verdict_model": "input_on_schedule|durable_received|sustained_replay|"
-                         "steady_state|data_correctness|catchup_margin",
+                         "steady_state|data_correctness|seeded_backlog|"
+                         "rated_catchup_margin|degraded_recovery|post_stop_drain",
         "token": token, "device_type": device_type, "redis_db": 14,
         "redis_host": args.redis_host, "profile_phases": args.profile_phases,
         "python_gil_enabled": sys._is_gil_enabled(),
@@ -514,8 +602,15 @@ def run(args) -> dict:
             "输入由本脚本直接构造并调用 DurableRedisWriter，未经 collector.executor 的分组/过滤代码。",
             "stream_points_written 的口径是已回放到 Redis 的点值数，不含本地接收。",
             "不包含真实 PLC、TDengine、Writer 或浏览器。",
+            "可处理积压 = 本地持久队列里还没被回放领取的帧数（outbox.count）；"
+            "已接收未提交(outbox.waiting_writes)与已领取未确认删除的帧属于在途量，"
+            "单独记录，不计入积压。",
+            "处理余量只在额定输入（--catchup-rate 1.0）与预置积压并存的有效区间测量；"
+            "降速档单列 degraded_recovery，停采排空单列 post_stop_drain，"
+            "三者不得互相顶替。",
         ],
     }
+    # 生产默认行为不变：回放随 ping 启动。
     collector.ping()
     base_ts = int(time.time() * 1000)
     stats_before = command_stats(r)
@@ -526,6 +621,20 @@ def run(args) -> dict:
     stop_reason = "duration"
     production_started = time.monotonic()
     phase_started = production_started
+    progress_path = Path(str(args.output) + ".progress.jsonl")
+    next_progress_at = production_started + 30
+    append_progress(progress_path, {"token": token, "status": "started",
+                                    "report": report, "time_ms": int(time.time() * 1000)})
+
+    def checkpoint(sample: dict, *, force: bool = False) -> None:
+        nonlocal next_progress_at
+        now = time.monotonic()
+        if force or now >= next_progress_at:
+            append_progress(progress_path, {"token": token, "status": "running",
+                                            "time_ms": int(time.time() * 1000),
+                                            "stop_reason": stop_reason,
+                                            "sample": sample})
+            next_progress_at = now + 30
 
     def submit(device: str, tick: int) -> None:
         frame = build_frame(device, args.points, tick, args.period_ms, base_ts)
@@ -535,19 +644,38 @@ def run(args) -> dict:
             frame["stream_values"], frame["stream_qualities"])
         collector.write_latest(device, group, frame["latest"])
 
-    def snapshot(label: str) -> dict:
-        metrics = collector._metrics.snapshot()
+    def snapshot(label: str, phase: str | None = None) -> dict:
+        with collector.outbox._lock:
+            metrics = collector._metrics.snapshot()
+            outbox_stats = collector.outbox.stats()
+        cpu = r.info("cpu")
+        persistence = r.info("persistence")
         return {
             "label": label,
-            "phase": label.split("_")[0],
+            "phase": phase or label.split("_")[0],
             "elapsed_s": round(time.monotonic() - phase_started, 3),
             "submitted": submitted,
             "production_submitted": production_submitted,
             "committed_frames": committed_frames(metrics),
             "replayed_frames": replayed_frames(metrics, args.points),
-            "outbox": collector.outbox.stats(),
+            # 守恒对账用的显式口径（键名与 queue_conservation 读取的一致）：
+            # A = 本地持久提交，D = 已确认并清理完成。
+            "accepted": committed_frames(metrics),
+            "confirmed": replayed_frames(metrics, args.points),
+            "queue_count": outbox_stats.get("count"),
+            "claimed_frames": outbox_stats.get("claimed_frames"),
+            "waiting_writes": outbox_stats.get("waiting_writes"),
+            "oldest_age_ms": outbox_stats.get("oldest_age_ms"),
+            "outbox": outbox_stats,
             "rss_bytes": metrics["runtime"]["rss_bytes"],
             "redis_used_memory_bytes": int(r.info("memory")["used_memory"]),
+            # Redis 是单线程执行命令：CPU 秒数 / 墙钟秒数 ≈ 该实例的忙碌程度。
+            "redis_cpu_seconds": round(
+                float(cpu["used_cpu_sys"]) + float(cpu["used_cpu_user"]), 3),
+            # AOF 重写会 fork 并大量写盘，是长测里最可能的外部扰动；
+            # 记下来是为了让扰动出现在证据里，而不是被当成"系统变慢"。
+            "redis_aof_rewrite_in_progress": int(persistence.get("aof_rewrite_in_progress", 0)),
+            "redis_aof_size_bytes": int(persistence.get("aof_current_size", 0) or 0),
         }
 
     # 生产与追平共用同一个线程池：线程池必须在两个阶段都存活。
@@ -564,6 +692,7 @@ def run(args) -> dict:
                 if ticks % args.sample_every_ticks == 0:
                     current = snapshot("production")
                     samples.append(current)
+                    checkpoint(current)
                     if current["redis_used_memory_bytes"] >= memory_guard:
                         stop_reason = "redis_memory_guard"
                         break
@@ -571,19 +700,33 @@ def run(args) -> dict:
                 time.sleep(max(0, next_tick - time.monotonic()))
             production_end = time.monotonic()
             production_submitted = submitted
-            production_snapshot = snapshot("production_end")
+            production_snapshot = snapshot("production_end", phase="production_end")
             production_snapshot["elapsed_s"] = round(production_end - production_started, 3)
             samples.append(production_snapshot)
+            checkpoint(production_snapshot, force=True)
 
-            # 受控积压：继续按额定速率生产，直到积压达到指定帧数。
-            # 用"专门预置的积压"而不是"正常流水线遗留的积压"来测处理余量。
+            # ---- 受控积压预置（先暂停回放）----
+            # 预置必须在回放**确实停下**之后进行。上一轮
+            # margin-20dev-500pt-70pct.json 的 seeded_backlog.seconds=0 /
+            # produced_frames=0 就是这么来的：回放一直在消费本地队列，
+            # `count < target` 一开始就不成立，所谓"320 帧预置积压"其实只是
+            # 正常生产的尾部积压。
             seeded = None
             if args.seed_backlog_frames > 0:
+                # 同步等到在飞批次结束：只置位不够，一批 WAITAOF 可能正在途中。
+                quiescent = collector.pause_replay()
+                if not quiescent:
+                    stop_reason = "replay_did_not_pause"
+                confirmed_at_pause = replayed_frames(collector._metrics.snapshot(),
+                                                     args.points)
                 seed_started = time.monotonic()
-                deadline = seed_started + args.drain_seconds
+                seed_deadline = seed_started + args.drain_seconds
                 seed_ticks = 0
-                while collector.outbox.stats()["count"] < args.seed_backlog_frames:
-                    if time.monotonic() > deadline:
+                while True:
+                    if collector.outbox.stats()["count"] >= args.seed_backlog_frames:
+                        break
+                    if time.monotonic() > seed_deadline:
+                        stop_reason = "seed_deadline"
                         break
                     tick = ticks
                     for future in [pool.submit(submit, device, tick) for device in devices]:
@@ -593,71 +736,122 @@ def run(args) -> dict:
                     submitted += args.devices
                     # 节流必须用**本阶段自己的** tick 计数，不能用全局 ticks
                     # （全局已累计生产阶段的时间，算出来的时间点早已过期 → 不节流）。
-                    next_tick = seed_started + seed_ticks * args.period_ms / 1000
-                    time.sleep(max(0, next_tick - time.monotonic()))
+                    time.sleep(max(0, seed_started + seed_ticks * args.period_ms / 1000
+                                   - time.monotonic()))
+                backlog = collector.outbox.stats()
+                seed_seconds = time.monotonic() - seed_started
+                confirmed_at_seed_end = replayed_frames(collector._metrics.snapshot(),
+                                                        args.points)
                 seeded = {
-                    "seconds": round(time.monotonic() - seed_started, 3),
+                    "seconds": round(seed_seconds, 3),
                     "produced_frames": seed_ticks * args.devices,
-                    "outbox_frames": collector.outbox.stats()["count"],
-                    "outbox_bytes": collector.outbox.stats()["payload_bytes"],
+                    "replay_pause_requested": True,
+                    "replay_quiescent_before_seed": quiescent,
+                    # 暂停期间回放帧数必须不增长，否则"预置积压"被回放吃掉，
+                    # 数字不可信 —— 这是本轮新增的反证。
+                    "replay_advanced_during_seed": confirmed_at_seed_end - confirmed_at_pause,
+                    "replay_paused_during_seed": confirmed_at_seed_end == confirmed_at_pause,
+                    # 可处理积压 = 本地持久队列里**还没被回放领取**的帧数。
+                    "backlog_frames": backlog["count"],
+                    "backlog_bytes": backlog["payload_bytes"],
+                    "backlog_oldest_age_ms": backlog["oldest_age_ms"],
+                    # 已接收但尚未本地提交的量属于在途写，不是可处理积压。
+                    "in_flight_local_writes": backlog["waiting_writes"],
                     "target_frames": args.seed_backlog_frames,
-                    "target_reached": (collector.outbox.stats()["count"]
-                                       >= args.seed_backlog_frames),
+                    "target_reached": backlog["count"] >= args.seed_backlog_frames,
                 }
-                samples.append(snapshot("seed_end"))
+                seed_snapshot = snapshot("seed_end", phase="seed")
+                samples.append(seed_snapshot)
+                checkpoint(seed_snapshot, force=True)
 
-            catchup = None
-            catchup_start = None
+            # ---- 额定追平 / 降速恢复（分别命名、分别判定）----
+            # 积压形成之后再同时启动回放与输入；只在积压未耗尽、处理端仍有任务的
+            # 区间测量能力，积压一被处理完就停止计时（否则尾巴上净消减必然是 0）。
+            rated = None
+            degraded = None
             if args.catchup_seconds > 0:
+                # 积压确认形成之后，才同时恢复回放并开始额定输入。
+                collector.resume_replay()
+                rate = max(args.catchup_rate, 1e-9)
+                phase_name = "rated_catchup" if rate >= 1.0 else "degraded_recovery"
                 phase_started = time.monotonic()
-                catchup_started = phase_started
-                catchup_start = snapshot("catchup_start")
-                catchup_start["elapsed_s"] = 0.0
-                samples.append(catchup_start)
-                catchup_ticks = 0
-                # 追平阶段可以降速：--catchup-rate 0.7 表示按额定输入的 70% 继续采集，
-                # 用受控预置积压观察处理余量（额定输入下净消减 ≈ 0 属于边界，不是余量）。
-                catchup_period_s = (args.period_ms / 1000.0) / max(args.catchup_rate, 1e-9)
-                while time.monotonic() - catchup_started < args.catchup_seconds:
+                window_started = phase_started
+                window_start = snapshot(phase_name + "_start", phase=phase_name)
+                window_start["elapsed_s"] = 0.0
+                samples.append(window_start)
+                checkpoint(window_start, force=True)
+                window_ticks = 0
+                exhausted_at = None
+                period_s = (args.period_ms / 1000.0) / rate
+                while time.monotonic() - window_started < args.catchup_seconds:
                     current_tick = ticks
                     for future in [pool.submit(submit, device, current_tick) for device in devices]:
                         future.result()
                     ticks += 1
-                    catchup_ticks += 1
+                    window_ticks += 1
                     submitted += args.devices
-                    if catchup_ticks % args.sample_every_ticks == 0:
-                        samples.append(snapshot("catchup"))
-                    next_tick = catchup_started + catchup_ticks * catchup_period_s
-                    time.sleep(max(0, next_tick - time.monotonic()))
-                catchup_seconds_actual = time.monotonic() - catchup_started
-                catchup_end = snapshot("catchup_end")
-                catchup_end["elapsed_s"] = round(catchup_seconds_actual, 3)
-                samples.append(catchup_end)
-                catchup_confirmed = catchup_end["replayed_frames"] - catchup_start["replayed_frames"]
-                catchup = {
-                    "seconds": round(catchup_seconds_actual, 3),
-                    "rate_multiple": args.catchup_rate,
+                    if window_ticks % args.sample_every_ticks == 0:
+                        current = snapshot(phase_name, phase=phase_name)
+                        samples.append(current)
+                        checkpoint(current)
+                    if (args.seed_backlog_frames > 0
+                            and collector.outbox.stats()["count"] == 0):
+                        exhausted_at = time.monotonic() - window_started
+                        break
+                    time.sleep(max(0, window_started + window_ticks * period_s
+                                   - time.monotonic()))
+                window_s = time.monotonic() - window_started
+                window_end = snapshot(phase_name + "_end", phase=phase_name)
+                window_end["elapsed_s"] = round(window_s, 3)
+                samples.append(window_end)
+                checkpoint(window_end, force=True)
+                confirmed = (window_end["replayed_frames"]
+                             - window_start["replayed_frames"])
+                backlog_drop = (window_start["outbox"]["count"]
+                                - window_end["outbox"]["count"])
+                input_fps = round(window_ticks * args.devices / max(window_s, 1e-9), 2)
+                measured = {
+                    "seconds": round(window_s, 3),
+                    "rate_multiple": rate,
                     "seeded_backlog": seeded,
-                    "input_fps": round(catchup_ticks * args.devices
-                                       / max(catchup_seconds_actual, 1e-9), 2),
-                    "confirmed_frames": catchup_confirmed,
-                    "confirmed_fps": round(catchup_confirmed
-                                           / max(catchup_seconds_actual, 1e-9), 2),
-                    "outbox_start": catchup_start["outbox"]["count"],
-                    "outbox_end": catchup_end["outbox"]["count"],
-                    "outbox_bytes_start": catchup_start["outbox"]["payload_bytes"],
-                    "outbox_bytes_end": catchup_end["outbox"]["payload_bytes"],
-                    "oldest_age_start_ms": catchup_start["outbox"]["oldest_age_ms"],
-                    "oldest_age_end_ms": catchup_end["outbox"]["oldest_age_ms"],
-                    "net_drain_fps": round(
-                        (catchup_start["outbox"]["count"] - catchup_end["outbox"]["count"])
-                        / max(catchup_seconds_actual, 1e-9), 2),
+                    "input_fps": input_fps,
+                    "confirmed_frames": confirmed,
+                    "confirmed_fps": round(confirmed / max(window_s, 1e-9), 2),
+                    "backlog_start_frames": window_start["outbox"]["count"],
+                    "backlog_end_frames": window_end["outbox"]["count"],
+                    "backlog_bytes_start": window_start["outbox"]["payload_bytes"],
+                    "backlog_bytes_end": window_end["outbox"]["payload_bytes"],
+                    "backlog_oldest_age_start_ms": window_start["outbox"]["oldest_age_ms"],
+                    "backlog_oldest_age_end_ms": window_end["outbox"]["oldest_age_ms"],
+                    "net_drain_fps": round(backlog_drop / max(window_s, 1e-9), 2),
+                    # 已领取但尚未确认删除的在途量（估计）：积压减少量里没有被
+                    # "已确认逻辑帧"解释掉的部分。它与可处理积压分开记录。
+                    "claimed_unconfirmed_frames_estimate": max(0, backlog_drop - confirmed),
+                    "backlog_exhausted_at_s": (round(exhausted_at, 3)
+                                               if exhausted_at is not None else None),
+                    "effective_window": (exhausted_at is None
+                                         or exhausted_at >= args.min_effective_seconds),
                 }
+                # 处理能力用实测确认量 ÷ 窗口时长：窗口在积压耗尽处停止计时，
+                # 因此这个估计在整个窗口内都成立。
+                measured["capacity_fps_estimate"] = round(
+                    confirmed / max(window_s, 1e-9), 2)
+                measured["margin_fraction"] = (
+                    measured["capacity_fps_estimate"] / input_fps - 1.0
+                    if input_fps > 0 else 0.0)
+                if rate >= 1.0:
+                    rated = measured
+                else:
+                    degraded = measured
 
+        # 排空前确保回放已恢复（幂等）：只预置积压、不跑追平阶段时，也必须让
+        # 本地队列能真正排出去，否则排空阶段会一直等到超时。
+        collector.resume_replay()
         drain_started = time.monotonic()
         # 真正停止输入的那一刻取快照：排空速率必须用"排空阶段自己的增量"，
         # 不能把追平阶段仍在生产时完成的帧算进来。
         drain_start_snapshot = snapshot("drain_start")
+        checkpoint(drain_start_snapshot, force=True)
         while time.monotonic() - drain_started < args.drain_seconds:
             outbox = collector.outbox.stats()
             with collector._latest_condition:
@@ -668,6 +862,7 @@ def run(args) -> dict:
         drain_s = time.monotonic() - drain_started
         stats_after = command_stats(r)
         final_snapshot = snapshot("drained")
+        checkpoint(final_snapshot, force=True)
         drained_confirmed = (final_snapshot["replayed_frames"]
                              - drain_start_snapshot["replayed_frames"])
         final_outbox = collector.outbox.stats()
@@ -680,34 +875,10 @@ def run(args) -> dict:
 
         # ---- 数据正确性对账 ----
         problems: list[str] = []
-        entries = enumerate_frames(r, keys)
-        expected_total = ticks * args.devices
-        if len(entries) != expected_total:
-            problems.append(f"stream 帧数 {len(entries)} != 期望 {expected_total}")
-
-        identities: dict[tuple, int] = {}
-        tick_of_ts: dict[int, int] = {}
-        for _, _, fields in entries:
-            key = (fields.get("device_code"), int(fields.get("ts", -1)))
-            identities[key] = identities.get(key, 0) + 1
-        duplicates = sum(count - 1 for count in identities.values() if count > 1)
-        if duplicates:
-            problems.append(f"重复帧 {duplicates}")
-        for tick in range(ticks):
-            tick_of_ts[base_ts + tick * args.period_ms] = tick
-
-        audited = 0
-        for stream_key_value, entry_id, fields in select_audit_sample(entries, args.audit_stride):
-            tick = tick_of_ts.get(int(fields.get("ts", -1)))
-            if tick is None:
-                problems.append(f"帧 {entry_id} ts={fields.get('ts')!r} 不属于本次运行")
-                continue
-            problem = verify_frame_fields(fields.get("device_code"), fields, args.points, tick,
-                                          args.period_ms, base_ts,
-                                          {"group": group, "device_type": device_type})
-            if problem:
-                problems.append(f"{stream_key_value} {entry_id}: {problem}")
-            audited += 1
+        audit = audit_stream_frames(r, keys, devices, device_type, group,
+                                    args.points, ticks, args.period_ms, base_ts,
+                                    args.audit_stride)
+        problems.extend(audit["problems"])
 
         latest_problems = []
         for device in devices[:args.latest_devices]:
@@ -727,26 +898,47 @@ def run(args) -> dict:
         # 预热取额定周期数的 10 倍或 2 秒的较大者：异步流水线需要时间填满在途窗口。
         warmup_s = max(2.0, args.period_ms / 1000.0 * 10)
         windows = window_analysis(samples, args.period_ms, args.devices, warmup_s=warmup_s)
+        conservation = queue_conservation(
+            [sample for sample in samples
+             if sample.get("phase") in ("production", "production_end")])
         verdicts = build_verdicts(
             target_frames=report["target_frames"], production_submitted=production_submitted,
             production_s=production_end - production_started, target_seconds=args.seconds,
             committed=committed_total, replayed_during_production=replayed_during_production,
             windows=windows, drain_s=drain_s, final_outbox=final_outbox,
             correctness_problems=problems, target_input_fps=target_input_fps,
-            catchup=catchup)
+            seeded=seeded, rated=rated, degraded=degraded,
+            min_effective_seconds=args.min_effective_seconds)
+        verdicts["queue_conservation"] = {
+            "status": conservation["status"],
+            "detail": conservation.get("detail", "本地队列 A/D/Q 守恒对账"),
+        }
+        catchup_seconds_total = ((rated["seconds"] if rated else 0.0)
+                                 + (degraded["seconds"] if degraded else 0.0))
 
         report.update({
             "verdicts": verdicts,
-            "overall_passed": all(value["status"] == PASS for value in verdicts.values()),
+            # 总体状态是 pass|fail|not_tested 三态字符串：未测不再被折算成通过。
+            "overall_status": overall_status(verdicts),
+            # 本次实际尝试的判定项：没跑的档位不算不通过，但跑了没测出结果仍算未测。
+            "measured_status": overall_status({
+                **{name: verdicts[name] for name in attempted_verdict_names(
+                    seeded=seeded is not None, rated=rated is not None,
+                    degraded=degraded is not None)},
+                "queue_conservation": verdicts["queue_conservation"],
+            }),
             "stop_reason": stop_reason, "ticks": ticks,
             "submitted_frames": submitted,
             "production_submitted_frames": production_submitted,
             "production_seconds": round(production_end - production_started, 3),
-            "catchup_seconds": round(catchup["seconds"], 3) if catchup else 0.0,
+            "catchup_seconds": round(catchup_seconds_total, 3),
+            "seeded_backlog": seeded,
+            "rated_catchup": rated,
+            "degraded_recovery": degraded,
             "drain_seconds": round(drain_s, 3),
             "total_elapsed_seconds": round(
                 (production_end - production_started)
-                + (catchup["seconds"] if catchup else 0.0) + drain_s, 3),
+                + catchup_seconds_total + drain_s, 3),
             # 实际接收速率用**实际提交量**；目标量单独输出，两者不能混用
             # （输入未达速时，用目标量当分子会高估实际接收速率）。
             "production_receive_fps_actual": round(
@@ -765,13 +957,18 @@ def run(args) -> dict:
             "drained_frames_after_input_stopped": drained_confirmed,
             "replayed_fps_after_production": round(
                 drained_confirmed / max(drain_s, 1e-9), 2),
-            "audited_frames": audited,
-            "total_frames_in_stream": len(entries),
-            "duplicate_frames": duplicates,
+            "audited_frames": audit["audited"],
+            "total_frames_in_stream": audit["total"],
+            "duplicate_frames": audit["duplicates"],
+            "missing_frames": audit["missing"],
+            "invalid_identity_frames": audit["invalid"],
             "correctness_problems": problems,
             "windows": windows,
-            "catchup": catchup,
-            "seeded_backlog": seeded,
+            # 队列守恒对账：只取生产阶段的窗口，用 A/D/Q 三个显式口径对账，
+            # 任何不能被 ΔA、ΔD、Δ在途解释的差额都要列出来。
+            "conservation": conservation,
+            "batch_timeline": batch_timeline_analysis(collector.delivery_timeline()),
+            "redis_cpu": _redis_cpu_summary(samples),
             "final_outbox": final_outbox, "sqlite_rows_after_close": sqlite_rows,
             "final_latest_pending": final_latest_pending,
             "max_rss_bytes": max(sample["rss_bytes"] for sample in samples),
@@ -800,6 +997,10 @@ def run(args) -> dict:
                           else "correctness problems present",
             }
         save_report(Path(args.output), report)
+        append_progress(progress_path, {"token": token, "status": "complete",
+                                        "time_ms": int(time.time() * 1000),
+                                        "overall_status": report["overall_status"],
+                                        "measured_status": report["measured_status"]})
         print(json.dumps({key: value for key, value in report.items()
                           if key not in ("samples", "windows", "profile_windows")},
                          ensure_ascii=False, indent=2), flush=True)
@@ -808,6 +1009,9 @@ def run(args) -> dict:
         report.update({"error": repr(exc), "submitted_frames": submitted, "ticks": ticks,
                        "samples": samples})
         save_report(Path(args.output), report)
+        append_progress(progress_path, {"token": token, "status": "error",
+                                        "time_ms": int(time.time() * 1000),
+                                        "error": repr(exc)})
         raise
     finally:
         collector.close()
@@ -895,13 +1099,18 @@ if __name__ == "__main__":
     parser.add_argument("--period-ms", type=int, default=100)
     parser.add_argument("--drain-seconds", type=int, default=180)
     parser.add_argument("--catchup-seconds", type=int, default=0,
-                        help="保持额定输入观察旧积压是否持续减少的时长")
+                        help="预置积压形成后，额定输入与回放同时启动的测量时长；"
+                             "积压被处理完即提前结束计时")
     parser.add_argument("--catchup-rate", type=float, default=1.0,
-                        help="追平阶段的输入速率倍数（相对额定）。设为 0.7 即为"
-                             "受控余量测试：用低于额定的输入处理预置积压，"
-                             "观察净消减速率是否达到额定输入的 30%%")
+                        help="该阶段的输入速率倍数（相对额定）。1.0（默认）=额定追平，"
+                             "结果进 rated_catchup_margin；< 1 只作降速恢复描述，"
+                             "单列 degraded_recovery，绝不顶替额定余量")
+    parser.add_argument("--min-effective-seconds", type=float, default=5.0,
+                        help="有效测量区间下限：积压在此时间内被处理完则报 not_tested，"
+                             "不判为无余量")
     parser.add_argument("--seed-backlog-frames", type=int, default=0,
-                        help="受控积压：先按额定速率额外生产这么多帧再进入追平阶段，"
+                        help="受控积压：回放**暂停**期间按正常持久接收路径预置这么多帧，"
+                             "确认积压形成后再同时启动回放与额定输入，"
                              "避免用'正常流水线遗留的积压'充当处理余量证据")
     parser.add_argument("--sample-every-ticks", type=int, default=5)
     parser.add_argument("--audit-stride", type=int, default=97,
@@ -924,4 +1133,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     result = run(args)
-    raise SystemExit(0 if result.get("overall_passed") else 1)
+    # 退出码看本次实际尝试的判定项：没跑的档位（如额定轮次里的降速档）不该让
+    # 一轮合格运行变成失败；但跑了没测出结果仍是 not_tested，不算通过。
+    raise SystemExit(0 if result.get("measured_status") == PASS else 1)
