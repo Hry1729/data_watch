@@ -1,0 +1,3205 @@
+{
+  "mode": "collector",
+  "tier": {
+    "devices": 20,
+    "points": 500,
+    "period_ms": 100,
+    "offered_fps": 200.0,
+    "offered_points_per_second": 100000.0
+  },
+  "plan_token": "0aac325e",
+  "submit_seconds": 120.18,
+  "submitted_frames": 12560,
+  "submitted_fps": 104.51,
+  "accepted_frames": 12560,
+  "confirmed_frames": 12560,
+  "confirmed_fps_in_window": 103.83,
+  "latest_sent_groups": 12560,
+  "collector_drain_seconds": 2.014,
+  "final_outbox": {
+    "count": 0,
+    "payload_bytes": 0,
+    "oldest_age_ms": 0,
+    "claimed_frames": 0,
+    "waiting_writes": 0,
+    "waiting_bytes": 0
+  },
+  "redis_cpu_main_thread_busy": 0.4266,
+  "redis_cpu_process_busy": 0.4274,
+  "redis_commandstats_tail": {
+    "cmdstat_xadd": {
+      "calls": 12560
+    },
+    "cmdstat_lindex": {
+      "calls": 12560
+    },
+    "cmdstat_hmget": {
+      "calls": 50240
+    },
+    "cmdstat_hset": {
+      "calls": 6305120
+    },
+    "cmdstat_evalsha": {
+      "calls": 25120
+    }
+  },
+  "samples": [
+    {
+      "t_rel": 0.243,
+      "tick": 1,
+      "accepted_frames": 20,
+      "confirmed_frames": 1,
+      "latest_sent_groups": 19,
+      "outbox": {
+        "count": 19,
+        "oldest_age_ms": 234,
+        "claimed_frames": 2,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 0.903,
+      "tick": 4,
+      "accepted_frames": 80,
+      "confirmed_frames": 1,
+      "latest_sent_groups": 79,
+      "outbox": {
+        "count": 79,
+        "oldest_age_ms": 894,
+        "claimed_frames": 2,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 1.464,
+      "tick": 7,
+      "accepted_frames": 140,
+      "confirmed_frames": 3,
+      "latest_sent_groups": 139,
+      "outbox": {
+        "count": 137,
+        "oldest_age_ms": 1419,
+        "claimed_frames": 90,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 2.007,
+      "tick": 10,
+      "accepted_frames": 200,
+      "confirmed_frames": 3,
+      "latest_sent_groups": 199,
+      "outbox": {
+        "count": 197,
+        "oldest_age_ms": 1962,
+        "claimed_frames": 90,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 2.582,
+      "tick": 13,
+      "accepted_frames": 260,
+      "confirmed_frames": 93,
+      "latest_sent_groups": 259,
+      "outbox": {
+        "count": 167,
+        "oldest_age_ms": 1560,
+        "claimed_frames": 110,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 3.145,
+      "tick": 16,
+      "accepted_frames": 320,
+      "confirmed_frames": 203,
+      "latest_sent_groups": 319,
+      "outbox": {
+        "count": 117,
+        "oldest_age_ms": 1123,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 45,
+      "pending_frames": 45
+    },
+    {
+      "t_rel": 3.738,
+      "tick": 19,
+      "accepted_frames": 380,
+      "confirmed_frames": 203,
+      "latest_sent_groups": 379,
+      "outbox": {
+        "count": 177,
+        "oldest_age_ms": 1679,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 4.295,
+      "tick": 22,
+      "accepted_frames": 440,
+      "confirmed_frames": 311,
+      "latest_sent_groups": 439,
+      "outbox": {
+        "count": 129,
+        "oldest_age_ms": 1236,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 38,
+      "pending_frames": 38
+    },
+    {
+      "t_rel": 4.849,
+      "tick": 25,
+      "accepted_frames": 500,
+      "confirmed_frames": 311,
+      "latest_sent_groups": 499,
+      "outbox": {
+        "count": 189,
+        "oldest_age_ms": 1788,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 5.405,
+      "tick": 28,
+      "accepted_frames": 560,
+      "confirmed_frames": 415,
+      "latest_sent_groups": 559,
+      "outbox": {
+        "count": 145,
+        "oldest_age_ms": 1337,
+        "claimed_frames": 109,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 47,
+      "pending_frames": 47
+    },
+    {
+      "t_rel": 5.977,
+      "tick": 31,
+      "accepted_frames": 620,
+      "confirmed_frames": 415,
+      "latest_sent_groups": 619,
+      "outbox": {
+        "count": 205,
+        "oldest_age_ms": 1909,
+        "claimed_frames": 109,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 6.544,
+      "tick": 34,
+      "accepted_frames": 680,
+      "confirmed_frames": 524,
+      "latest_sent_groups": 679,
+      "outbox": {
+        "count": 156,
+        "oldest_age_ms": 1467,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 7.094,
+      "tick": 37,
+      "accepted_frames": 740,
+      "confirmed_frames": 630,
+      "latest_sent_groups": 739,
+      "outbox": {
+        "count": 110,
+        "oldest_age_ms": 1008,
+        "claimed_frames": 110,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 7.644,
+      "tick": 40,
+      "accepted_frames": 800,
+      "confirmed_frames": 630,
+      "latest_sent_groups": 799,
+      "outbox": {
+        "count": 170,
+        "oldest_age_ms": 1558,
+        "claimed_frames": 110,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 8.214,
+      "tick": 43,
+      "accepted_frames": 860,
+      "confirmed_frames": 740,
+      "latest_sent_groups": 859,
+      "outbox": {
+        "count": 120,
+        "oldest_age_ms": 1153,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 65,
+      "pending_frames": 64
+    },
+    {
+      "t_rel": 8.802,
+      "tick": 46,
+      "accepted_frames": 920,
+      "confirmed_frames": 740,
+      "latest_sent_groups": 919,
+      "outbox": {
+        "count": 180,
+        "oldest_age_ms": 1708,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 9.367,
+      "tick": 49,
+      "accepted_frames": 980,
+      "confirmed_frames": 848,
+      "latest_sent_groups": 979,
+      "outbox": {
+        "count": 132,
+        "oldest_age_ms": 1264,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 39,
+      "pending_frames": 39
+    },
+    {
+      "t_rel": 9.944,
+      "tick": 52,
+      "accepted_frames": 1040,
+      "confirmed_frames": 952,
+      "latest_sent_groups": 1037,
+      "outbox": {
+        "count": 88,
+        "oldest_age_ms": 881,
+        "claimed_frames": 78,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 45,
+      "pending_frames": 45
+    },
+    {
+      "t_rel": 10.542,
+      "tick": 55,
+      "accepted_frames": 1100,
+      "confirmed_frames": 952,
+      "latest_sent_groups": 1099,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1438,
+        "claimed_frames": 78,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 11.108,
+      "tick": 58,
+      "accepted_frames": 1160,
+      "confirmed_frames": 1030,
+      "latest_sent_groups": 1159,
+      "outbox": {
+        "count": 130,
+        "oldest_age_ms": 1262,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 34,
+      "pending_frames": 34
+    },
+    {
+      "t_rel": 11.669,
+      "tick": 61,
+      "accepted_frames": 1220,
+      "confirmed_frames": 1030,
+      "latest_sent_groups": 1219,
+      "outbox": {
+        "count": 190,
+        "oldest_age_ms": 1824,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 12.243,
+      "tick": 64,
+      "accepted_frames": 1280,
+      "confirmed_frames": 1131,
+      "latest_sent_groups": 1279,
+      "outbox": {
+        "count": 149,
+        "oldest_age_ms": 1408,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 45,
+      "pending_frames": 45
+    },
+    {
+      "t_rel": 12.81,
+      "tick": 67,
+      "accepted_frames": 1340,
+      "confirmed_frames": 1131,
+      "latest_sent_groups": 1339,
+      "outbox": {
+        "count": 209,
+        "oldest_age_ms": 1974,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 13.378,
+      "tick": 70,
+      "accepted_frames": 1400,
+      "confirmed_frames": 1238,
+      "latest_sent_groups": 1399,
+      "outbox": {
+        "count": 162,
+        "oldest_age_ms": 1535,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 13.957,
+      "tick": 73,
+      "accepted_frames": 1460,
+      "confirmed_frames": 1343,
+      "latest_sent_groups": 1459,
+      "outbox": {
+        "count": 117,
+        "oldest_age_ms": 1145,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 58,
+      "pending_frames": 58
+    },
+    {
+      "t_rel": 14.557,
+      "tick": 76,
+      "accepted_frames": 1520,
+      "confirmed_frames": 1343,
+      "latest_sent_groups": 1519,
+      "outbox": {
+        "count": 177,
+        "oldest_age_ms": 1708,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 15.118,
+      "tick": 79,
+      "accepted_frames": 1580,
+      "confirmed_frames": 1449,
+      "latest_sent_groups": 1579,
+      "outbox": {
+        "count": 131,
+        "oldest_age_ms": 1270,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 35,
+      "pending_frames": 35
+    },
+    {
+      "t_rel": 15.672,
+      "tick": 82,
+      "accepted_frames": 1640,
+      "confirmed_frames": 1449,
+      "latest_sent_groups": 1639,
+      "outbox": {
+        "count": 191,
+        "oldest_age_ms": 1824,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 16.242,
+      "tick": 85,
+      "accepted_frames": 1700,
+      "confirmed_frames": 1552,
+      "latest_sent_groups": 1699,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1383,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 42,
+      "pending_frames": 42
+    },
+    {
+      "t_rel": 16.796,
+      "tick": 88,
+      "accepted_frames": 1760,
+      "confirmed_frames": 1552,
+      "latest_sent_groups": 1759,
+      "outbox": {
+        "count": 208,
+        "oldest_age_ms": 1937,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 17.363,
+      "tick": 91,
+      "accepted_frames": 1820,
+      "confirmed_frames": 1660,
+      "latest_sent_groups": 1819,
+      "outbox": {
+        "count": 160,
+        "oldest_age_ms": 1498,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 17.933,
+      "tick": 94,
+      "accepted_frames": 1880,
+      "confirmed_frames": 1766,
+      "latest_sent_groups": 1879,
+      "outbox": {
+        "count": 114,
+        "oldest_age_ms": 1097,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 35,
+      "pending_frames": 35
+    },
+    {
+      "t_rel": 18.522,
+      "tick": 97,
+      "accepted_frames": 1940,
+      "confirmed_frames": 1766,
+      "latest_sent_groups": 1939,
+      "outbox": {
+        "count": 174,
+        "oldest_age_ms": 1655,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 19.082,
+      "tick": 100,
+      "accepted_frames": 2000,
+      "confirmed_frames": 1874,
+      "latest_sent_groups": 1999,
+      "outbox": {
+        "count": 126,
+        "oldest_age_ms": 1224,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 98,
+      "pending_frames": 75
+    },
+    {
+      "t_rel": 19.676,
+      "tick": 103,
+      "accepted_frames": 2060,
+      "confirmed_frames": 1979,
+      "latest_sent_groups": 2059,
+      "outbox": {
+        "count": 81,
+        "oldest_age_ms": 789,
+        "claimed_frames": 29,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 20.247,
+      "tick": 106,
+      "accepted_frames": 2120,
+      "confirmed_frames": 2008,
+      "latest_sent_groups": 2119,
+      "outbox": {
+        "count": 112,
+        "oldest_age_ms": 1090,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 43,
+      "pending_frames": 42
+    },
+    {
+      "t_rel": 20.836,
+      "tick": 109,
+      "accepted_frames": 2180,
+      "confirmed_frames": 2008,
+      "latest_sent_groups": 2179,
+      "outbox": {
+        "count": 172,
+        "oldest_age_ms": 1642,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 21.403,
+      "tick": 112,
+      "accepted_frames": 2240,
+      "confirmed_frames": 2114,
+      "latest_sent_groups": 2239,
+      "outbox": {
+        "count": 126,
+        "oldest_age_ms": 1230,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 40,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 21.963,
+      "tick": 115,
+      "accepted_frames": 2300,
+      "confirmed_frames": 2114,
+      "latest_sent_groups": 2299,
+      "outbox": {
+        "count": 186,
+        "oldest_age_ms": 1785,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 22.536,
+      "tick": 118,
+      "accepted_frames": 2360,
+      "confirmed_frames": 2218,
+      "latest_sent_groups": 2359,
+      "outbox": {
+        "count": 142,
+        "oldest_age_ms": 1337,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 38,
+      "pending_frames": 38
+    },
+    {
+      "t_rel": 23.092,
+      "tick": 121,
+      "accepted_frames": 2420,
+      "confirmed_frames": 2218,
+      "latest_sent_groups": 2419,
+      "outbox": {
+        "count": 202,
+        "oldest_age_ms": 1893,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 23.662,
+      "tick": 124,
+      "accepted_frames": 2480,
+      "confirmed_frames": 2325,
+      "latest_sent_groups": 2479,
+      "outbox": {
+        "count": 155,
+        "oldest_age_ms": 1459,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 24.234,
+      "tick": 127,
+      "accepted_frames": 2540,
+      "confirmed_frames": 2430,
+      "latest_sent_groups": 2539,
+      "outbox": {
+        "count": 110,
+        "oldest_age_ms": 1070,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 21,
+      "pending_frames": 15
+    },
+    {
+      "t_rel": 24.827,
+      "tick": 130,
+      "accepted_frames": 2600,
+      "confirmed_frames": 2430,
+      "latest_sent_groups": 2599,
+      "outbox": {
+        "count": 170,
+        "oldest_age_ms": 1627,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 25.405,
+      "tick": 133,
+      "accepted_frames": 2660,
+      "confirmed_frames": 2537,
+      "latest_sent_groups": 2659,
+      "outbox": {
+        "count": 123,
+        "oldest_age_ms": 1210,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 66,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 25.969,
+      "tick": 136,
+      "accepted_frames": 2720,
+      "confirmed_frames": 2537,
+      "latest_sent_groups": 2719,
+      "outbox": {
+        "count": 183,
+        "oldest_age_ms": 1766,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 26.54,
+      "tick": 139,
+      "accepted_frames": 2780,
+      "confirmed_frames": 2639,
+      "latest_sent_groups": 2779,
+      "outbox": {
+        "count": 141,
+        "oldest_age_ms": 1336,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 22,
+      "pending_frames": 22
+    },
+    {
+      "t_rel": 27.093,
+      "tick": 142,
+      "accepted_frames": 2840,
+      "confirmed_frames": 2639,
+      "latest_sent_groups": 2839,
+      "outbox": {
+        "count": 201,
+        "oldest_age_ms": 1889,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 27.663,
+      "tick": 145,
+      "accepted_frames": 2900,
+      "confirmed_frames": 2744,
+      "latest_sent_groups": 2899,
+      "outbox": {
+        "count": 156,
+        "oldest_age_ms": 1454,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 28.236,
+      "tick": 148,
+      "accepted_frames": 2960,
+      "confirmed_frames": 2851,
+      "latest_sent_groups": 2959,
+      "outbox": {
+        "count": 109,
+        "oldest_age_ms": 1059,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 18,
+      "pending_frames": 8
+    },
+    {
+      "t_rel": 28.846,
+      "tick": 151,
+      "accepted_frames": 3020,
+      "confirmed_frames": 2958,
+      "latest_sent_groups": 3019,
+      "outbox": {
+        "count": 62,
+        "oldest_age_ms": 633,
+        "claimed_frames": 42,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 30,
+      "pending_frames": 30
+    },
+    {
+      "t_rel": 29.4,
+      "tick": 154,
+      "accepted_frames": 3080,
+      "confirmed_frames": 2958,
+      "latest_sent_groups": 3079,
+      "outbox": {
+        "count": 122,
+        "oldest_age_ms": 1187,
+        "claimed_frames": 42,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 29.96,
+      "tick": 157,
+      "accepted_frames": 3140,
+      "confirmed_frames": 3000,
+      "latest_sent_groups": 3139,
+      "outbox": {
+        "count": 140,
+        "oldest_age_ms": 1302,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 37,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 30.515,
+      "tick": 160,
+      "accepted_frames": 3200,
+      "confirmed_frames": 3000,
+      "latest_sent_groups": 3199,
+      "outbox": {
+        "count": 200,
+        "oldest_age_ms": 1857,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 31.085,
+      "tick": 163,
+      "accepted_frames": 3260,
+      "confirmed_frames": 3105,
+      "latest_sent_groups": 3259,
+      "outbox": {
+        "count": 155,
+        "oldest_age_ms": 1448,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 31.656,
+      "tick": 166,
+      "accepted_frames": 3320,
+      "confirmed_frames": 3213,
+      "latest_sent_groups": 3319,
+      "outbox": {
+        "count": 107,
+        "oldest_age_ms": 1007,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 32.211,
+      "tick": 169,
+      "accepted_frames": 3380,
+      "confirmed_frames": 3213,
+      "latest_sent_groups": 3379,
+      "outbox": {
+        "count": 167,
+        "oldest_age_ms": 1562,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 32.789,
+      "tick": 172,
+      "accepted_frames": 3440,
+      "confirmed_frames": 3320,
+      "latest_sent_groups": 3439,
+      "outbox": {
+        "count": 120,
+        "oldest_age_ms": 1168,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 70,
+      "pending_frames": 65
+    },
+    {
+      "t_rel": 33.395,
+      "tick": 175,
+      "accepted_frames": 3500,
+      "confirmed_frames": 3320,
+      "latest_sent_groups": 3499,
+      "outbox": {
+        "count": 180,
+        "oldest_age_ms": 1738,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 33.97,
+      "tick": 178,
+      "accepted_frames": 3560,
+      "confirmed_frames": 3427,
+      "latest_sent_groups": 3559,
+      "outbox": {
+        "count": 133,
+        "oldest_age_ms": 1310,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 35,
+      "pending_frames": 35
+    },
+    {
+      "t_rel": 34.526,
+      "tick": 181,
+      "accepted_frames": 3620,
+      "confirmed_frames": 3427,
+      "latest_sent_groups": 3619,
+      "outbox": {
+        "count": 193,
+        "oldest_age_ms": 1866,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 35.117,
+      "tick": 184,
+      "accepted_frames": 3680,
+      "confirmed_frames": 3528,
+      "latest_sent_groups": 3679,
+      "outbox": {
+        "count": 152,
+        "oldest_age_ms": 1449,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 8,
+      "pending_frames": 8
+    },
+    {
+      "t_rel": 35.694,
+      "tick": 187,
+      "accepted_frames": 3740,
+      "confirmed_frames": 3633,
+      "latest_sent_groups": 3739,
+      "outbox": {
+        "count": 107,
+        "oldest_age_ms": 1064,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 19,
+      "pending_frames": 15
+    },
+    {
+      "t_rel": 36.29,
+      "tick": 190,
+      "accepted_frames": 3800,
+      "confirmed_frames": 3633,
+      "latest_sent_groups": 3799,
+      "outbox": {
+        "count": 167,
+        "oldest_age_ms": 1623,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 36.87,
+      "tick": 193,
+      "accepted_frames": 3860,
+      "confirmed_frames": 3738,
+      "latest_sent_groups": 3858,
+      "outbox": {
+        "count": 122,
+        "oldest_age_ms": 1203,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 49,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 37.43,
+      "tick": 196,
+      "accepted_frames": 3920,
+      "confirmed_frames": 3738,
+      "latest_sent_groups": 3919,
+      "outbox": {
+        "count": 182,
+        "oldest_age_ms": 1757,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 38.004,
+      "tick": 199,
+      "accepted_frames": 3980,
+      "confirmed_frames": 3839,
+      "latest_sent_groups": 3979,
+      "outbox": {
+        "count": 141,
+        "oldest_age_ms": 1330,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 43,
+      "pending_frames": 43
+    },
+    {
+      "t_rel": 38.575,
+      "tick": 202,
+      "accepted_frames": 4040,
+      "confirmed_frames": 3945,
+      "latest_sent_groups": 4039,
+      "outbox": {
+        "count": 95,
+        "oldest_age_ms": 902,
+        "claimed_frames": 53,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 39.133,
+      "tick": 205,
+      "accepted_frames": 4100,
+      "confirmed_frames": 3945,
+      "latest_sent_groups": 4099,
+      "outbox": {
+        "count": 155,
+        "oldest_age_ms": 1459,
+        "claimed_frames": 53,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 39.7,
+      "tick": 208,
+      "accepted_frames": 4160,
+      "confirmed_frames": 3998,
+      "latest_sent_groups": 4159,
+      "outbox": {
+        "count": 162,
+        "oldest_age_ms": 1515,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 40.278,
+      "tick": 211,
+      "accepted_frames": 4220,
+      "confirmed_frames": 4104,
+      "latest_sent_groups": 4218,
+      "outbox": {
+        "count": 116,
+        "oldest_age_ms": 1129,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 49,
+      "pending_frames": 50
+    },
+    {
+      "t_rel": 40.876,
+      "tick": 214,
+      "accepted_frames": 4280,
+      "confirmed_frames": 4104,
+      "latest_sent_groups": 4279,
+      "outbox": {
+        "count": 176,
+        "oldest_age_ms": 1692,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 41.439,
+      "tick": 217,
+      "accepted_frames": 4340,
+      "confirmed_frames": 4211,
+      "latest_sent_groups": 4339,
+      "outbox": {
+        "count": 129,
+        "oldest_age_ms": 1247,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 37,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 41.996,
+      "tick": 220,
+      "accepted_frames": 4400,
+      "confirmed_frames": 4211,
+      "latest_sent_groups": 4399,
+      "outbox": {
+        "count": 189,
+        "oldest_age_ms": 1804,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 42.586,
+      "tick": 223,
+      "accepted_frames": 4460,
+      "confirmed_frames": 4314,
+      "latest_sent_groups": 4459,
+      "outbox": {
+        "count": 146,
+        "oldest_age_ms": 1388,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 41,
+      "pending_frames": 41
+    },
+    {
+      "t_rel": 43.142,
+      "tick": 226,
+      "accepted_frames": 4520,
+      "confirmed_frames": 4314,
+      "latest_sent_groups": 4519,
+      "outbox": {
+        "count": 206,
+        "oldest_age_ms": 1945,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 43.712,
+      "tick": 229,
+      "accepted_frames": 4580,
+      "confirmed_frames": 4421,
+      "latest_sent_groups": 4579,
+      "outbox": {
+        "count": 159,
+        "oldest_age_ms": 1494,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 44.287,
+      "tick": 232,
+      "accepted_frames": 4640,
+      "confirmed_frames": 4525,
+      "latest_sent_groups": 4639,
+      "outbox": {
+        "count": 115,
+        "oldest_age_ms": 1115,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 46,
+      "pending_frames": 46
+    },
+    {
+      "t_rel": 44.885,
+      "tick": 235,
+      "accepted_frames": 4700,
+      "confirmed_frames": 4525,
+      "latest_sent_groups": 4699,
+      "outbox": {
+        "count": 175,
+        "oldest_age_ms": 1678,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 45.46,
+      "tick": 238,
+      "accepted_frames": 4760,
+      "confirmed_frames": 4632,
+      "latest_sent_groups": 4759,
+      "outbox": {
+        "count": 128,
+        "oldest_age_ms": 1250,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 37,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 46.019,
+      "tick": 241,
+      "accepted_frames": 4820,
+      "confirmed_frames": 4632,
+      "latest_sent_groups": 4819,
+      "outbox": {
+        "count": 188,
+        "oldest_age_ms": 1809,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 46.585,
+      "tick": 244,
+      "accepted_frames": 4880,
+      "confirmed_frames": 4735,
+      "latest_sent_groups": 4879,
+      "outbox": {
+        "count": 145,
+        "oldest_age_ms": 1365,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 43,
+      "pending_frames": 43
+    },
+    {
+      "t_rel": 47.142,
+      "tick": 247,
+      "accepted_frames": 4940,
+      "confirmed_frames": 4735,
+      "latest_sent_groups": 4939,
+      "outbox": {
+        "count": 205,
+        "oldest_age_ms": 1922,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 47.74,
+      "tick": 250,
+      "accepted_frames": 5000,
+      "confirmed_frames": 4947,
+      "latest_sent_groups": 4996,
+      "outbox": {
+        "count": 53,
+        "oldest_age_ms": 529,
+        "claimed_frames": 42,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 42,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 48.307,
+      "tick": 253,
+      "accepted_frames": 5060,
+      "confirmed_frames": 4947,
+      "latest_sent_groups": 5059,
+      "outbox": {
+        "count": 113,
+        "oldest_age_ms": 1085,
+        "claimed_frames": 42,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 48.862,
+      "tick": 256,
+      "accepted_frames": 5120,
+      "confirmed_frames": 4989,
+      "latest_sent_groups": 5119,
+      "outbox": {
+        "count": 131,
+        "oldest_age_ms": 1230,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 41,
+      "pending_frames": 41
+    },
+    {
+      "t_rel": 49.417,
+      "tick": 259,
+      "accepted_frames": 5180,
+      "confirmed_frames": 4989,
+      "latest_sent_groups": 5179,
+      "outbox": {
+        "count": 191,
+        "oldest_age_ms": 1785,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 49.972,
+      "tick": 262,
+      "accepted_frames": 5240,
+      "confirmed_frames": 5093,
+      "latest_sent_groups": 5239,
+      "outbox": {
+        "count": 147,
+        "oldest_age_ms": 1358,
+        "claimed_frames": 109,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 46,
+      "pending_frames": 46
+    },
+    {
+      "t_rel": 50.528,
+      "tick": 265,
+      "accepted_frames": 5300,
+      "confirmed_frames": 5093,
+      "latest_sent_groups": 5299,
+      "outbox": {
+        "count": 207,
+        "oldest_age_ms": 1915,
+        "claimed_frames": 109,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 51.098,
+      "tick": 268,
+      "accepted_frames": 5360,
+      "confirmed_frames": 5202,
+      "latest_sent_groups": 5359,
+      "outbox": {
+        "count": 158,
+        "oldest_age_ms": 1474,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 51.687,
+      "tick": 271,
+      "accepted_frames": 5420,
+      "confirmed_frames": 5310,
+      "latest_sent_groups": 5418,
+      "outbox": {
+        "count": 110,
+        "oldest_age_ms": 1104,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 28,
+      "pending_frames": 26
+    },
+    {
+      "t_rel": 52.29,
+      "tick": 274,
+      "accepted_frames": 5480,
+      "confirmed_frames": 5310,
+      "latest_sent_groups": 5479,
+      "outbox": {
+        "count": 170,
+        "oldest_age_ms": 1660,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 52.858,
+      "tick": 277,
+      "accepted_frames": 5540,
+      "confirmed_frames": 5415,
+      "latest_sent_groups": 5539,
+      "outbox": {
+        "count": 125,
+        "oldest_age_ms": 1222,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 32,
+      "pending_frames": 32
+    },
+    {
+      "t_rel": 53.416,
+      "tick": 280,
+      "accepted_frames": 5600,
+      "confirmed_frames": 5415,
+      "latest_sent_groups": 5599,
+      "outbox": {
+        "count": 185,
+        "oldest_age_ms": 1781,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 53.987,
+      "tick": 283,
+      "accepted_frames": 5660,
+      "confirmed_frames": 5516,
+      "latest_sent_groups": 5659,
+      "outbox": {
+        "count": 144,
+        "oldest_age_ms": 1351,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 32,
+      "pending_frames": 32
+    },
+    {
+      "t_rel": 54.545,
+      "tick": 286,
+      "accepted_frames": 5720,
+      "confirmed_frames": 5516,
+      "latest_sent_groups": 5719,
+      "outbox": {
+        "count": 204,
+        "oldest_age_ms": 1910,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 55.119,
+      "tick": 289,
+      "accepted_frames": 5780,
+      "confirmed_frames": 5623,
+      "latest_sent_groups": 5779,
+      "outbox": {
+        "count": 157,
+        "oldest_age_ms": 1477,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 55.69,
+      "tick": 292,
+      "accepted_frames": 5840,
+      "confirmed_frames": 5729,
+      "latest_sent_groups": 5839,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1071,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 25,
+      "pending_frames": 24
+    },
+    {
+      "t_rel": 56.272,
+      "tick": 295,
+      "accepted_frames": 5900,
+      "confirmed_frames": 5729,
+      "latest_sent_groups": 5899,
+      "outbox": {
+        "count": 171,
+        "oldest_age_ms": 1622,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 56.844,
+      "tick": 298,
+      "accepted_frames": 5960,
+      "confirmed_frames": 5836,
+      "latest_sent_groups": 5959,
+      "outbox": {
+        "count": 124,
+        "oldest_age_ms": 1208,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 34,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 57.422,
+      "tick": 301,
+      "accepted_frames": 6020,
+      "confirmed_frames": 5940,
+      "latest_sent_groups": 6019,
+      "outbox": {
+        "count": 80,
+        "oldest_age_ms": 767,
+        "claimed_frames": 43,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 57.98,
+      "tick": 304,
+      "accepted_frames": 6080,
+      "confirmed_frames": 5940,
+      "latest_sent_groups": 6079,
+      "outbox": {
+        "count": 140,
+        "oldest_age_ms": 1326,
+        "claimed_frames": 43,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 58.555,
+      "tick": 307,
+      "accepted_frames": 6140,
+      "confirmed_frames": 5983,
+      "latest_sent_groups": 6139,
+      "outbox": {
+        "count": 157,
+        "oldest_age_ms": 1474,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 59.121,
+      "tick": 310,
+      "accepted_frames": 6200,
+      "confirmed_frames": 6089,
+      "latest_sent_groups": 6199,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1068,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 23,
+      "pending_frames": 22
+    },
+    {
+      "t_rel": 59.704,
+      "tick": 313,
+      "accepted_frames": 6260,
+      "confirmed_frames": 6089,
+      "latest_sent_groups": 6259,
+      "outbox": {
+        "count": 171,
+        "oldest_age_ms": 1622,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 60.273,
+      "tick": 316,
+      "accepted_frames": 6320,
+      "confirmed_frames": 6196,
+      "latest_sent_groups": 6318,
+      "outbox": {
+        "count": 124,
+        "oldest_age_ms": 1216,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 36,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 60.851,
+      "tick": 319,
+      "accepted_frames": 6380,
+      "confirmed_frames": 6196,
+      "latest_sent_groups": 6379,
+      "outbox": {
+        "count": 184,
+        "oldest_age_ms": 1770,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 61.428,
+      "tick": 322,
+      "accepted_frames": 6440,
+      "confirmed_frames": 6300,
+      "latest_sent_groups": 6439,
+      "outbox": {
+        "count": 140,
+        "oldest_age_ms": 1342,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 38,
+      "pending_frames": 38
+    },
+    {
+      "t_rel": 61.989,
+      "tick": 325,
+      "accepted_frames": 6500,
+      "confirmed_frames": 6300,
+      "latest_sent_groups": 6499,
+      "outbox": {
+        "count": 200,
+        "oldest_age_ms": 1903,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 62.558,
+      "tick": 328,
+      "accepted_frames": 6560,
+      "confirmed_frames": 6404,
+      "latest_sent_groups": 6559,
+      "outbox": {
+        "count": 156,
+        "oldest_age_ms": 1472,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 63.13,
+      "tick": 331,
+      "accepted_frames": 6620,
+      "confirmed_frames": 6509,
+      "latest_sent_groups": 6619,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1075,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 25,
+      "pending_frames": 23
+    },
+    {
+      "t_rel": 63.722,
+      "tick": 334,
+      "accepted_frames": 6680,
+      "confirmed_frames": 6509,
+      "latest_sent_groups": 6679,
+      "outbox": {
+        "count": 171,
+        "oldest_age_ms": 1635,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 64.283,
+      "tick": 337,
+      "accepted_frames": 6740,
+      "confirmed_frames": 6616,
+      "latest_sent_groups": 6739,
+      "outbox": {
+        "count": 124,
+        "oldest_age_ms": 1206,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 100,
+      "pending_frames": 67
+    },
+    {
+      "t_rel": 64.848,
+      "tick": 340,
+      "accepted_frames": 6800,
+      "confirmed_frames": 6616,
+      "latest_sent_groups": 6799,
+      "outbox": {
+        "count": 184,
+        "oldest_age_ms": 1758,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 65.421,
+      "tick": 343,
+      "accepted_frames": 6860,
+      "confirmed_frames": 6719,
+      "latest_sent_groups": 6859,
+      "outbox": {
+        "count": 141,
+        "oldest_age_ms": 1334,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 38,
+      "pending_frames": 38
+    },
+    {
+      "t_rel": 65.989,
+      "tick": 346,
+      "accepted_frames": 6920,
+      "confirmed_frames": 6719,
+      "latest_sent_groups": 6919,
+      "outbox": {
+        "count": 201,
+        "oldest_age_ms": 1900,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 66.579,
+      "tick": 349,
+      "accepted_frames": 6980,
+      "confirmed_frames": 6931,
+      "latest_sent_groups": 6979,
+      "outbox": {
+        "count": 49,
+        "oldest_age_ms": 537,
+        "claimed_frames": 45,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 31,
+      "pending_frames": 26
+    },
+    {
+      "t_rel": 67.207,
+      "tick": 352,
+      "accepted_frames": 7040,
+      "confirmed_frames": 6931,
+      "latest_sent_groups": 7039,
+      "outbox": {
+        "count": 109,
+        "oldest_age_ms": 1099,
+        "claimed_frames": 45,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 67.792,
+      "tick": 355,
+      "accepted_frames": 7100,
+      "confirmed_frames": 6976,
+      "latest_sent_groups": 7099,
+      "outbox": {
+        "count": 124,
+        "oldest_age_ms": 1257,
+        "claimed_frames": 97,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 34,
+      "pending_frames": 34
+    },
+    {
+      "t_rel": 68.362,
+      "tick": 358,
+      "accepted_frames": 7160,
+      "confirmed_frames": 6976,
+      "latest_sent_groups": 7159,
+      "outbox": {
+        "count": 184,
+        "oldest_age_ms": 1826,
+        "claimed_frames": 97,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 68.948,
+      "tick": 361,
+      "accepted_frames": 7220,
+      "confirmed_frames": 7073,
+      "latest_sent_groups": 7219,
+      "outbox": {
+        "count": 147,
+        "oldest_age_ms": 1429,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 69.511,
+      "tick": 364,
+      "accepted_frames": 7280,
+      "confirmed_frames": 7073,
+      "latest_sent_groups": 7279,
+      "outbox": {
+        "count": 207,
+        "oldest_age_ms": 1992,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 70.085,
+      "tick": 367,
+      "accepted_frames": 7340,
+      "confirmed_frames": 7178,
+      "latest_sent_groups": 7339,
+      "outbox": {
+        "count": 162,
+        "oldest_age_ms": 1543,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 70.667,
+      "tick": 370,
+      "accepted_frames": 7400,
+      "confirmed_frames": 7283,
+      "latest_sent_groups": 7399,
+      "outbox": {
+        "count": 117,
+        "oldest_age_ms": 1151,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 62,
+      "pending_frames": 61
+    },
+    {
+      "t_rel": 71.266,
+      "tick": 373,
+      "accepted_frames": 7460,
+      "confirmed_frames": 7283,
+      "latest_sent_groups": 7459,
+      "outbox": {
+        "count": 177,
+        "oldest_age_ms": 1717,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 71.824,
+      "tick": 376,
+      "accepted_frames": 7520,
+      "confirmed_frames": 7388,
+      "latest_sent_groups": 7519,
+      "outbox": {
+        "count": 132,
+        "oldest_age_ms": 1272,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 41,
+      "pending_frames": 41
+    },
+    {
+      "t_rel": 72.385,
+      "tick": 379,
+      "accepted_frames": 7580,
+      "confirmed_frames": 7388,
+      "latest_sent_groups": 7579,
+      "outbox": {
+        "count": 192,
+        "oldest_age_ms": 1834,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 72.966,
+      "tick": 382,
+      "accepted_frames": 7640,
+      "confirmed_frames": 7492,
+      "latest_sent_groups": 7639,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1407,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 73.52,
+      "tick": 385,
+      "accepted_frames": 7700,
+      "confirmed_frames": 7492,
+      "latest_sent_groups": 7699,
+      "outbox": {
+        "count": 208,
+        "oldest_age_ms": 1961,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 74.1,
+      "tick": 388,
+      "accepted_frames": 7760,
+      "confirmed_frames": 7598,
+      "latest_sent_groups": 7759,
+      "outbox": {
+        "count": 162,
+        "oldest_age_ms": 1536,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 74.67,
+      "tick": 391,
+      "accepted_frames": 7820,
+      "confirmed_frames": 7704,
+      "latest_sent_groups": 7819,
+      "outbox": {
+        "count": 116,
+        "oldest_age_ms": 1132,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 52,
+      "pending_frames": 52
+    },
+    {
+      "t_rel": 75.263,
+      "tick": 394,
+      "accepted_frames": 7880,
+      "confirmed_frames": 7704,
+      "latest_sent_groups": 7879,
+      "outbox": {
+        "count": 176,
+        "oldest_age_ms": 1697,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 75.843,
+      "tick": 397,
+      "accepted_frames": 7940,
+      "confirmed_frames": 7810,
+      "latest_sent_groups": 7939,
+      "outbox": {
+        "count": 130,
+        "oldest_age_ms": 1268,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 88,
+      "pending_frames": 88
+    },
+    {
+      "t_rel": 76.426,
+      "tick": 400,
+      "accepted_frames": 8000,
+      "confirmed_frames": 7912,
+      "latest_sent_groups": 7999,
+      "outbox": {
+        "count": 88,
+        "oldest_age_ms": 847,
+        "claimed_frames": 54,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 76.989,
+      "tick": 403,
+      "accepted_frames": 8060,
+      "confirmed_frames": 7912,
+      "latest_sent_groups": 8059,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1409,
+        "claimed_frames": 54,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 77.553,
+      "tick": 406,
+      "accepted_frames": 8120,
+      "confirmed_frames": 7966,
+      "latest_sent_groups": 8119,
+      "outbox": {
+        "count": 154,
+        "oldest_age_ms": 1454,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 78.124,
+      "tick": 409,
+      "accepted_frames": 8180,
+      "confirmed_frames": 8070,
+      "latest_sent_groups": 8179,
+      "outbox": {
+        "count": 110,
+        "oldest_age_ms": 1060,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 16,
+      "pending_frames": 5
+    },
+    {
+      "t_rel": 78.723,
+      "tick": 412,
+      "accepted_frames": 8240,
+      "confirmed_frames": 8070,
+      "latest_sent_groups": 8239,
+      "outbox": {
+        "count": 170,
+        "oldest_age_ms": 1626,
+        "claimed_frames": 108,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 79.298,
+      "tick": 415,
+      "accepted_frames": 8300,
+      "confirmed_frames": 8178,
+      "latest_sent_groups": 8299,
+      "outbox": {
+        "count": 122,
+        "oldest_age_ms": 1212,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 81,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 79.874,
+      "tick": 418,
+      "accepted_frames": 8360,
+      "confirmed_frames": 8178,
+      "latest_sent_groups": 8359,
+      "outbox": {
+        "count": 182,
+        "oldest_age_ms": 1774,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 80.448,
+      "tick": 421,
+      "accepted_frames": 8420,
+      "confirmed_frames": 8280,
+      "latest_sent_groups": 8419,
+      "outbox": {
+        "count": 140,
+        "oldest_age_ms": 1344,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 42,
+      "pending_frames": 42
+    },
+    {
+      "t_rel": 81.01,
+      "tick": 424,
+      "accepted_frames": 8480,
+      "confirmed_frames": 8280,
+      "latest_sent_groups": 8479,
+      "outbox": {
+        "count": 200,
+        "oldest_age_ms": 1905,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 81.596,
+      "tick": 427,
+      "accepted_frames": 8540,
+      "confirmed_frames": 8384,
+      "latest_sent_groups": 8539,
+      "outbox": {
+        "count": 156,
+        "oldest_age_ms": 1490,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 82.171,
+      "tick": 430,
+      "accepted_frames": 8600,
+      "confirmed_frames": 8489,
+      "latest_sent_groups": 8599,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1092,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 27,
+      "pending_frames": 25
+    },
+    {
+      "t_rel": 82.769,
+      "tick": 433,
+      "accepted_frames": 8660,
+      "confirmed_frames": 8489,
+      "latest_sent_groups": 8659,
+      "outbox": {
+        "count": 171,
+        "oldest_age_ms": 1657,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 83.353,
+      "tick": 436,
+      "accepted_frames": 8720,
+      "confirmed_frames": 8595,
+      "latest_sent_groups": 8719,
+      "outbox": {
+        "count": 125,
+        "oldest_age_ms": 1233,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 38,
+      "pending_frames": 38
+    },
+    {
+      "t_rel": 83.923,
+      "tick": 439,
+      "accepted_frames": 8780,
+      "confirmed_frames": 8595,
+      "latest_sent_groups": 8779,
+      "outbox": {
+        "count": 185,
+        "oldest_age_ms": 1802,
+        "claimed_frames": 101,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 84.504,
+      "tick": 442,
+      "accepted_frames": 8840,
+      "confirmed_frames": 8696,
+      "latest_sent_groups": 8839,
+      "outbox": {
+        "count": 144,
+        "oldest_age_ms": 1383,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 42,
+      "pending_frames": 11
+    },
+    {
+      "t_rel": 85.061,
+      "tick": 445,
+      "accepted_frames": 8900,
+      "confirmed_frames": 8696,
+      "latest_sent_groups": 8899,
+      "outbox": {
+        "count": 204,
+        "oldest_age_ms": 1940,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 85.658,
+      "tick": 448,
+      "accepted_frames": 8960,
+      "confirmed_frames": 8906,
+      "latest_sent_groups": 8959,
+      "outbox": {
+        "count": 54,
+        "oldest_age_ms": 530,
+        "claimed_frames": 54,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 86.214,
+      "tick": 451,
+      "accepted_frames": 9020,
+      "confirmed_frames": 8906,
+      "latest_sent_groups": 9019,
+      "outbox": {
+        "count": 114,
+        "oldest_age_ms": 1086,
+        "claimed_frames": 54,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 86.789,
+      "tick": 454,
+      "accepted_frames": 9080,
+      "confirmed_frames": 8960,
+      "latest_sent_groups": 9079,
+      "outbox": {
+        "count": 120,
+        "oldest_age_ms": 1162,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 76,
+      "pending_frames": 65
+    },
+    {
+      "t_rel": 87.385,
+      "tick": 457,
+      "accepted_frames": 9140,
+      "confirmed_frames": 8960,
+      "latest_sent_groups": 9139,
+      "outbox": {
+        "count": 180,
+        "oldest_age_ms": 1726,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 87.948,
+      "tick": 460,
+      "accepted_frames": 9200,
+      "confirmed_frames": 9065,
+      "latest_sent_groups": 9199,
+      "outbox": {
+        "count": 135,
+        "oldest_age_ms": 1304,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 41,
+      "pending_frames": 41
+    },
+    {
+      "t_rel": 88.506,
+      "tick": 463,
+      "accepted_frames": 9260,
+      "confirmed_frames": 9065,
+      "latest_sent_groups": 9259,
+      "outbox": {
+        "count": 195,
+        "oldest_age_ms": 1862,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 89.077,
+      "tick": 466,
+      "accepted_frames": 9320,
+      "confirmed_frames": 9169,
+      "latest_sent_groups": 9319,
+      "outbox": {
+        "count": 151,
+        "oldest_age_ms": 1420,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 89.641,
+      "tick": 469,
+      "accepted_frames": 9380,
+      "confirmed_frames": 9169,
+      "latest_sent_groups": 9379,
+      "outbox": {
+        "count": 211,
+        "oldest_age_ms": 1984,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 90.216,
+      "tick": 472,
+      "accepted_frames": 9440,
+      "confirmed_frames": 9276,
+      "latest_sent_groups": 9439,
+      "outbox": {
+        "count": 164,
+        "oldest_age_ms": 1553,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 90.788,
+      "tick": 475,
+      "accepted_frames": 9500,
+      "confirmed_frames": 9381,
+      "latest_sent_groups": 9499,
+      "outbox": {
+        "count": 119,
+        "oldest_age_ms": 1161,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 69,
+      "pending_frames": 63
+    },
+    {
+      "t_rel": 91.383,
+      "tick": 478,
+      "accepted_frames": 9560,
+      "confirmed_frames": 9381,
+      "latest_sent_groups": 9559,
+      "outbox": {
+        "count": 179,
+        "oldest_age_ms": 1720,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 91.951,
+      "tick": 481,
+      "accepted_frames": 9620,
+      "confirmed_frames": 9487,
+      "latest_sent_groups": 9619,
+      "outbox": {
+        "count": 133,
+        "oldest_age_ms": 1284,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 17,
+      "pending_frames": 17
+    },
+    {
+      "t_rel": 92.507,
+      "tick": 484,
+      "accepted_frames": 9680,
+      "confirmed_frames": 9487,
+      "latest_sent_groups": 9679,
+      "outbox": {
+        "count": 193,
+        "oldest_age_ms": 1839,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 93.075,
+      "tick": 487,
+      "accepted_frames": 9740,
+      "confirmed_frames": 9591,
+      "latest_sent_groups": 9739,
+      "outbox": {
+        "count": 149,
+        "oldest_age_ms": 1396,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 93.63,
+      "tick": 490,
+      "accepted_frames": 9800,
+      "confirmed_frames": 9591,
+      "latest_sent_groups": 9799,
+      "outbox": {
+        "count": 209,
+        "oldest_age_ms": 1951,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 94.207,
+      "tick": 493,
+      "accepted_frames": 9860,
+      "confirmed_frames": 9697,
+      "latest_sent_groups": 9859,
+      "outbox": {
+        "count": 163,
+        "oldest_age_ms": 1529,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 94.774,
+      "tick": 496,
+      "accepted_frames": 9920,
+      "confirmed_frames": 9804,
+      "latest_sent_groups": 9919,
+      "outbox": {
+        "count": 116,
+        "oldest_age_ms": 1119,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 48,
+      "pending_frames": 48
+    },
+    {
+      "t_rel": 95.384,
+      "tick": 499,
+      "accepted_frames": 9980,
+      "confirmed_frames": 9911,
+      "latest_sent_groups": 9979,
+      "outbox": {
+        "count": 69,
+        "oldest_age_ms": 693,
+        "claimed_frames": 38,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 95.943,
+      "tick": 502,
+      "accepted_frames": 10040,
+      "confirmed_frames": 9911,
+      "latest_sent_groups": 10039,
+      "outbox": {
+        "count": 129,
+        "oldest_age_ms": 1252,
+        "claimed_frames": 38,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 96.514,
+      "tick": 505,
+      "accepted_frames": 10100,
+      "confirmed_frames": 9949,
+      "latest_sent_groups": 10099,
+      "outbox": {
+        "count": 151,
+        "oldest_age_ms": 1429,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 97.091,
+      "tick": 508,
+      "accepted_frames": 10160,
+      "confirmed_frames": 10053,
+      "latest_sent_groups": 10159,
+      "outbox": {
+        "count": 107,
+        "oldest_age_ms": 1024,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 97.652,
+      "tick": 511,
+      "accepted_frames": 10220,
+      "confirmed_frames": 10053,
+      "latest_sent_groups": 10219,
+      "outbox": {
+        "count": 167,
+        "oldest_age_ms": 1584,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 98.23,
+      "tick": 514,
+      "accepted_frames": 10280,
+      "confirmed_frames": 10160,
+      "latest_sent_groups": 10279,
+      "outbox": {
+        "count": 120,
+        "oldest_age_ms": 1174,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 78,
+      "pending_frames": 66
+    },
+    {
+      "t_rel": 98.827,
+      "tick": 517,
+      "accepted_frames": 10340,
+      "confirmed_frames": 10160,
+      "latest_sent_groups": 10339,
+      "outbox": {
+        "count": 180,
+        "oldest_age_ms": 1735,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 99.415,
+      "tick": 520,
+      "accepted_frames": 10400,
+      "confirmed_frames": 10265,
+      "latest_sent_groups": 10399,
+      "outbox": {
+        "count": 135,
+        "oldest_age_ms": 1330,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 34,
+      "pending_frames": 34
+    },
+    {
+      "t_rel": 99.989,
+      "tick": 523,
+      "accepted_frames": 10460,
+      "confirmed_frames": 10265,
+      "latest_sent_groups": 10459,
+      "outbox": {
+        "count": 195,
+        "oldest_age_ms": 1902,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 100.563,
+      "tick": 526,
+      "accepted_frames": 10520,
+      "confirmed_frames": 10367,
+      "latest_sent_groups": 10519,
+      "outbox": {
+        "count": 153,
+        "oldest_age_ms": 1472,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 101.143,
+      "tick": 529,
+      "accepted_frames": 10580,
+      "confirmed_frames": 10469,
+      "latest_sent_groups": 10579,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1086,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 29,
+      "pending_frames": 26
+    },
+    {
+      "t_rel": 101.741,
+      "tick": 532,
+      "accepted_frames": 10640,
+      "confirmed_frames": 10469,
+      "latest_sent_groups": 10639,
+      "outbox": {
+        "count": 171,
+        "oldest_age_ms": 1649,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 102.309,
+      "tick": 535,
+      "accepted_frames": 10700,
+      "confirmed_frames": 10575,
+      "latest_sent_groups": 10699,
+      "outbox": {
+        "count": 125,
+        "oldest_age_ms": 1219,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 36,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 102.89,
+      "tick": 538,
+      "accepted_frames": 10760,
+      "confirmed_frames": 10575,
+      "latest_sent_groups": 10759,
+      "outbox": {
+        "count": 185,
+        "oldest_age_ms": 1797,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 103.45,
+      "tick": 541,
+      "accepted_frames": 10820,
+      "confirmed_frames": 10678,
+      "latest_sent_groups": 10819,
+      "outbox": {
+        "count": 142,
+        "oldest_age_ms": 1351,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 37,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 104.01,
+      "tick": 544,
+      "accepted_frames": 10880,
+      "confirmed_frames": 10678,
+      "latest_sent_groups": 10879,
+      "outbox": {
+        "count": 202,
+        "oldest_age_ms": 1911,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 104.588,
+      "tick": 547,
+      "accepted_frames": 10940,
+      "confirmed_frames": 10782,
+      "latest_sent_groups": 10939,
+      "outbox": {
+        "count": 158,
+        "oldest_age_ms": 1489,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 105.178,
+      "tick": 550,
+      "accepted_frames": 11000,
+      "confirmed_frames": 10889,
+      "latest_sent_groups": 10999,
+      "outbox": {
+        "count": 111,
+        "oldest_age_ms": 1073,
+        "claimed_frames": 54,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 105.749,
+      "tick": 553,
+      "accepted_frames": 11060,
+      "confirmed_frames": 10943,
+      "latest_sent_groups": 11059,
+      "outbox": {
+        "count": 117,
+        "oldest_age_ms": 1131,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 65,
+      "pending_frames": 65
+    },
+    {
+      "t_rel": 106.345,
+      "tick": 556,
+      "accepted_frames": 11120,
+      "confirmed_frames": 10943,
+      "latest_sent_groups": 11119,
+      "outbox": {
+        "count": 177,
+        "oldest_age_ms": 1692,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 106.919,
+      "tick": 559,
+      "accepted_frames": 11180,
+      "confirmed_frames": 11048,
+      "latest_sent_groups": 11179,
+      "outbox": {
+        "count": 132,
+        "oldest_age_ms": 1285,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 37,
+      "pending_frames": 37
+    },
+    {
+      "t_rel": 107.479,
+      "tick": 562,
+      "accepted_frames": 11240,
+      "confirmed_frames": 11048,
+      "latest_sent_groups": 11239,
+      "outbox": {
+        "count": 192,
+        "oldest_age_ms": 1843,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 108.056,
+      "tick": 565,
+      "accepted_frames": 11300,
+      "confirmed_frames": 11152,
+      "latest_sent_groups": 11299,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1407,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 108.609,
+      "tick": 568,
+      "accepted_frames": 11360,
+      "confirmed_frames": 11152,
+      "latest_sent_groups": 11359,
+      "outbox": {
+        "count": 208,
+        "oldest_age_ms": 1960,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 109.18,
+      "tick": 571,
+      "accepted_frames": 11420,
+      "confirmed_frames": 11257,
+      "latest_sent_groups": 11419,
+      "outbox": {
+        "count": 163,
+        "oldest_age_ms": 1529,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 109.758,
+      "tick": 574,
+      "accepted_frames": 11480,
+      "confirmed_frames": 11364,
+      "latest_sent_groups": 11479,
+      "outbox": {
+        "count": 116,
+        "oldest_age_ms": 1134,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 54,
+      "pending_frames": 55
+    },
+    {
+      "t_rel": 110.354,
+      "tick": 577,
+      "accepted_frames": 11540,
+      "confirmed_frames": 11364,
+      "latest_sent_groups": 11539,
+      "outbox": {
+        "count": 176,
+        "oldest_age_ms": 1695,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 110.924,
+      "tick": 580,
+      "accepted_frames": 11600,
+      "confirmed_frames": 11470,
+      "latest_sent_groups": 11599,
+      "outbox": {
+        "count": 130,
+        "oldest_age_ms": 1263,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 27,
+      "pending_frames": 27
+    },
+    {
+      "t_rel": 111.483,
+      "tick": 583,
+      "accepted_frames": 11660,
+      "confirmed_frames": 11470,
+      "latest_sent_groups": 11659,
+      "outbox": {
+        "count": 190,
+        "oldest_age_ms": 1822,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 112.051,
+      "tick": 586,
+      "accepted_frames": 11720,
+      "confirmed_frames": 11572,
+      "latest_sent_groups": 11719,
+      "outbox": {
+        "count": 148,
+        "oldest_age_ms": 1388,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 112.609,
+      "tick": 589,
+      "accepted_frames": 11780,
+      "confirmed_frames": 11572,
+      "latest_sent_groups": 11779,
+      "outbox": {
+        "count": 208,
+        "oldest_age_ms": 1947,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 113.187,
+      "tick": 592,
+      "accepted_frames": 11840,
+      "confirmed_frames": 11679,
+      "latest_sent_groups": 11839,
+      "outbox": {
+        "count": 161,
+        "oldest_age_ms": 1519,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 113.765,
+      "tick": 595,
+      "accepted_frames": 11900,
+      "confirmed_frames": 11785,
+      "latest_sent_groups": 11899,
+      "outbox": {
+        "count": 115,
+        "oldest_age_ms": 1132,
+        "claimed_frames": 105,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 53,
+      "pending_frames": 53
+    },
+    {
+      "t_rel": 114.376,
+      "tick": 598,
+      "accepted_frames": 11960,
+      "confirmed_frames": 11890,
+      "latest_sent_groups": 11959,
+      "outbox": {
+        "count": 70,
+        "oldest_age_ms": 706,
+        "claimed_frames": 39,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 114.949,
+      "tick": 601,
+      "accepted_frames": 12020,
+      "confirmed_frames": 11890,
+      "latest_sent_groups": 12019,
+      "outbox": {
+        "count": 130,
+        "oldest_age_ms": 1278,
+        "claimed_frames": 39,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 115.515,
+      "tick": 604,
+      "accepted_frames": 12080,
+      "confirmed_frames": 11929,
+      "latest_sent_groups": 12079,
+      "outbox": {
+        "count": 151,
+        "oldest_age_ms": 1429,
+        "claimed_frames": 104,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 116.099,
+      "tick": 607,
+      "accepted_frames": 12140,
+      "confirmed_frames": 12033,
+      "latest_sent_groups": 12139,
+      "outbox": {
+        "count": 107,
+        "oldest_age_ms": 1057,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 8,
+      "pending_frames": 5
+    },
+    {
+      "t_rel": 116.678,
+      "tick": 610,
+      "accepted_frames": 12200,
+      "confirmed_frames": 12033,
+      "latest_sent_groups": 12199,
+      "outbox": {
+        "count": 167,
+        "oldest_age_ms": 1608,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 117.261,
+      "tick": 613,
+      "accepted_frames": 12260,
+      "confirmed_frames": 12139,
+      "latest_sent_groups": 12259,
+      "outbox": {
+        "count": 121,
+        "oldest_age_ms": 1206,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 90,
+      "pending_frames": 62
+    },
+    {
+      "t_rel": 117.853,
+      "tick": 616,
+      "accepted_frames": 12320,
+      "confirmed_frames": 12139,
+      "latest_sent_groups": 12319,
+      "outbox": {
+        "count": 181,
+        "oldest_age_ms": 1767,
+        "claimed_frames": 103,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 118.435,
+      "tick": 619,
+      "accepted_frames": 12380,
+      "confirmed_frames": 12242,
+      "latest_sent_groups": 12379,
+      "outbox": {
+        "count": 138,
+        "oldest_age_ms": 1349,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 36,
+      "pending_frames": 36
+    },
+    {
+      "t_rel": 118.99,
+      "tick": 622,
+      "accepted_frames": 12440,
+      "confirmed_frames": 12242,
+      "latest_sent_groups": 12439,
+      "outbox": {
+        "count": 198,
+        "oldest_age_ms": 1904,
+        "claimed_frames": 102,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 119.564,
+      "tick": 625,
+      "accepted_frames": 12500,
+      "confirmed_frames": 12344,
+      "latest_sent_groups": 12499,
+      "outbox": {
+        "count": 156,
+        "oldest_age_ms": 1470,
+        "claimed_frames": 106,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 0,
+      "pending_frames": 0
+    },
+    {
+      "t_rel": 120.139,
+      "tick": 628,
+      "accepted_frames": 12560,
+      "confirmed_frames": 12450,
+      "latest_sent_groups": 12559,
+      "outbox": {
+        "count": 110,
+        "oldest_age_ms": 1079,
+        "claimed_frames": 107,
+        "waiting_writes": 0
+      },
+      "backlog_frames": 23,
+      "pending_frames": 18
+    }
+  ],
+  "samples_total": 210,
+  "stream_keys": [
+    "rt:stream:jnt0aac325e:gjt:0",
+    "rt:stream:jnt0aac325e:gjt:1",
+    "rt:stream:jnt0aac325e:gjt:2",
+    "rt:stream:jnt0aac325e:gjt:3"
+  ]
+}

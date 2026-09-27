@@ -1,0 +1,66 @@
+{
+  "token": "0aac325e",
+  "devices": [
+    "jt0aac325e00",
+    "jt0aac325e01",
+    "jt0aac325e02",
+    "jt0aac325e03",
+    "jt0aac325e04",
+    "jt0aac325e05",
+    "jt0aac325e06",
+    "jt0aac325e07",
+    "jt0aac325e08",
+    "jt0aac325e09",
+    "jt0aac325e10",
+    "jt0aac325e11",
+    "jt0aac325e12",
+    "jt0aac325e13",
+    "jt0aac325e14",
+    "jt0aac325e15",
+    "jt0aac325e16",
+    "jt0aac325e17",
+    "jt0aac325e18",
+    "jt0aac325e19"
+  ],
+  "device_type": "jnt0aac325e",
+  "group": "gjt",
+  "stable": "sdjnt0aac325e",
+  "mysql_database": "dwjnt_0aac325e",
+  "points": 500,
+  "period_ms": 100,
+  "seconds": 120.0,
+  "shard_count": 4,
+  "base_ts": 1790489876833,
+  "tier": {
+    "devices": 20,
+    "points": 500,
+    "period_ms": 100,
+    "offered_fps": 200.0,
+    "offered_points_per_second": 100000.0
+  },
+  "provenance": {
+    "file_sha256": {
+      "collector/storage/durable_redis_writer.py": "c97135e131a8d724287bce10f029b5383507cfe536e7640b65b752502a7a39f4",
+      "writer/main.py": "77839bad843e3878b9f01814a96496328816d51edb18f8bb3eddbe14c75164bb",
+      "writer/consumer.py": "0ad254a37806a4fa11361e3b034bf1f14cd5e8802d56bfdeec24123f13c3bc9f",
+      "writer/tdengine_writer.py": "dc5a6e028838b23d9b488be1b66bbedbd1c9c20e29ad94181035d42c8403c728",
+      "scripts/diagnose_joint_pipeline.py": "a76bb8b16eb83982dafe872ccf622787e500d47add2d105fadcdf0f45b1f463d",
+      "data_watch_shared/acceptance.py": "083db9343b9a4c808ccd37a4ecf92ae4c9cf17ce5e9668cf8525775315d4d521"
+    },
+    "python": "3.14.6",
+    "gil_enabled": false
+  },
+  "runtime_settings": "/evidence/runtime-joint/config/settings.toml",
+  "prep_provenance": {
+    "file_sha256": {
+      "collector/storage/durable_redis_writer.py": "c97135e131a8d724287bce10f029b5383507cfe536e7640b65b752502a7a39f4",
+      "writer/main.py": "77839bad843e3878b9f01814a96496328816d51edb18f8bb3eddbe14c75164bb",
+      "writer/consumer.py": "0ad254a37806a4fa11361e3b034bf1f14cd5e8802d56bfdeec24123f13c3bc9f",
+      "writer/tdengine_writer.py": "dc5a6e028838b23d9b488be1b66bbedbd1c9c20e29ad94181035d42c8403c728",
+      "scripts/diagnose_joint_pipeline.py": "a76bb8b16eb83982dafe872ccf622787e500d47add2d105fadcdf0f45b1f463d",
+      "data_watch_shared/acceptance.py": "083db9343b9a4c808ccd37a4ecf92ae4c9cf17ce5e9668cf8525775315d4d521"
+    },
+    "python": "3.12.14",
+    "gil_enabled": null
+  }
+}

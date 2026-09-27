@@ -1,0 +1,17 @@
+﻿# SHA256 清单 · evidence/joint-20260927
+# 路径相对本文件所在目录；顶层证据文件 + 关联源码/报告（../../）。
+# 未包含：runtime-joint/config/settings.toml（含口令，已排除）。
+
+# 证据文件
+8a59a51fb262a94c0228185960581cf0b92d01889889dfd3d62f0ea4678d96da  extract_writer_timings.py
+30b46d22036ca5f4f9f55b86eb460a309c9f3aa4a27d0dcba9b4842f9b726a21  joint-collector.json
+e07d8659f73d41e0f2824c7450f119fb1b7691db893009a7532c077a26613ff4  joint-collector-run1-driver-limited.json
+4e2dc6aea45868e3ab68042213a7c617c6ea7bfc9d1711a3d1f8d163a37eb453  joint-plan.json
+fa97acfbb8615c237ee0b9261aebd931c7cba2ef855cde31978850bc2a3203a4  joint-plan-run1.json
+063a350ba992a7316e09ed85e08c9f9844518ca1656dae3479952a487a44b44b  joint-reconcile.json
+2e12d68607edd47a5d30b104cb80130cfd62a7312897e9ac2761127872055506  README.md
+b0cf0d547493ce2d4a610b296dece236a2d2b197214b33d8cce306ce9664872a  writer-joint-run2.log
+
+# 关联的源码与报告（相对本目录 = 仓库根）
+37ce499ed36ba65b7a2c3fcdaa0bb5bfec64e3fabedcadb47877f471e1a741b7  ../../scripts/diagnose_joint_pipeline.py
+4b2a28f2dd337c173b365a2bee109bc5baf0a146ea460b357d9130abb9c2db80  ../../docs/joint-measurement-20260927.md

@@ -1,0 +1,63 @@
+{
+  "mode": "reconcile",
+  "plan_token": "b35f74f3",
+  "ticks": 1200,
+  "rows": {
+    "value_rows": 24000,
+    "quality_rows": 11923200,
+    "per_device_value_rows": {
+      "jtb35f74f300": 1200,
+      "jtb35f74f301": 1200,
+      "jtb35f74f302": 1200,
+      "jtb35f74f303": 1200,
+      "jtb35f74f304": 1200,
+      "jtb35f74f305": 1200,
+      "jtb35f74f306": 1200,
+      "jtb35f74f307": 1200,
+      "jtb35f74f308": 1200,
+      "jtb35f74f309": 1200,
+      "jtb35f74f310": 1200,
+      "jtb35f74f311": 1200,
+      "jtb35f74f312": 1200,
+      "jtb35f74f313": 1200,
+      "jtb35f74f314": 1200,
+      "jtb35f74f315": 1200,
+      "jtb35f74f316": 1200,
+      "jtb35f74f317": 1200,
+      "jtb35f74f318": 1200,
+      "jtb35f74f319": 1200
+    },
+    "expected_value_rows": 24000,
+    "expected_quality_rows": 11923200
+  },
+  "stream_after_drain": {
+    "backlog_frames": 0,
+    "pending_frames": 0
+  },
+  "dlq_entries": 0,
+  "latest_hash_ok_devices": "2/2",
+  "full_field_sample": {
+    "columns": 497,
+    "results": [
+      {
+        "device": "jtb35f74f300",
+        "sampled_ticks": 3,
+        "sampled_frames_found": 3,
+        "checked_cells": 1491,
+        "problems": [],
+        "problem_count": 0
+      },
+      {
+        "device": "jtb35f74f301",
+        "sampled_ticks": 3,
+        "sampled_frames_found": 3,
+        "checked_cells": 1491,
+        "problems": [],
+        "problem_count": 0
+      }
+    ],
+    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"
+  },
+  "problems": [],
+  "status": "pass"
+}
