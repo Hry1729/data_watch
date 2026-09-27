@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -184,6 +184,8 @@ class DurableRedisWriter(RedisWriter):
         )
         self._pending_frame = threading.local()
         self._stop = threading.Event()
+        self._replay_paused = threading.Event()
+        self._replay_idle = threading.Event()
         self._thread = None
         self._latest_thread = None
         self._latest_condition = threading.Condition()
@@ -192,14 +194,50 @@ class DurableRedisWriter(RedisWriter):
         self._latest_version = 0
         self._latest_overflow_logged_at = 0.0
         self._script_shas = {}
+        # 回放批次时间线（只给隔离验证读）：最近的批次各阶段单调时钟。
+        # 有界、串行写入（只有回放线程追加），读取时加锁复制。
+        self._timeline_lock = threading.Lock()
+        self._timeline: deque = deque(maxlen=512)
+        self._claim_context: dict | None = None
+        self._prev_claim_at: float | None = None
+        self._prev_aof_confirmed_at: float | None = None
 
-    def ping(self):
+    def ping(self, *, start_replay: bool = True):
+        """启动 latest 快车道；历史回放默认同时启动（生产行为不变）。
+
+        `start_replay=False` 只给隔离验证用：先通过正常持久接收路径堆出有界积压，
+        确认积压形成后再调 `start_replay()`，才能把"预置积压"和"正常生产尾部积压"
+        区分开。生产调用方一律走默认值。
+        """
         if self._thread is None:
             self._latest_thread = threading.Thread(target=self._latest_loop, name="collector-latest", daemon=True)
             self._latest_thread.start()
+            if start_replay:
+                self.start_replay()
+        super().ping()
+
+    def start_replay(self):
+        """显式启动历史回放线程（幂等）。暂停期间积压保留在本地持久队列里。"""
+        if self._thread is None:
             self._thread = threading.Thread(target=self._replay_loop, name="collector-outbox", daemon=True)
             self._thread.start()
-        super().ping()
+
+    def pause_replay(self, timeout_s: float = 30.0) -> bool:
+        """暂停历史回放，并等到**在飞的那一批**真的结束才返回。
+
+        只给隔离验证用：需要在"回放确实停下"的前提下预置有界积压，否则本地队列
+        被持续消费，堆不出可处理积压。生产调用方不会用到。
+        置位只表示"请求暂停"：一批 WAITAOF 可能正在途中，必须等回放线程回到
+        暂停点才能认为积压冻结。返回是否在超时内确认静止。
+        """
+        self._replay_paused.set()
+        return self._replay_idle.wait(timeout_s)
+
+    def resume_replay(self):
+        """恢复历史回放（幂等）。生产调用方不会用到。"""
+        self._replay_paused.clear()
+        self._replay_idle.clear()
+        self._pending_event.set()
 
     def write_window_stream(self, device_code, device_type, group_code, scan_rate_ms, ts,
                             config_version, frame, stream_values, stream_qualities=None):
@@ -393,7 +431,9 @@ class DurableRedisWriter(RedisWriter):
                     pipe.execute_command("WAITAOF", 1, 0, 2000)
                     started = time.perf_counter()
                     results = pipe.execute()
-                    duration_ms = (time.perf_counter() - started) * 1000
+                    write_sent_at = started
+                    delivery_done_at = time.perf_counter()
+                    duration_ms = (delivery_done_at - started) * 1000
                     if not results or not isinstance(results[-1], (list, tuple)) or int(results[-1][0]) < 1:
                         raise RuntimeError("Redis AOF persistence not confirmed; backlog retained")
                 break
@@ -415,10 +455,43 @@ class DurableRedisWriter(RedisWriter):
             self._metrics.increment("redis_confirmed_bytes", batch_bytes)
         except Exception:
             logger.exception("Redis batch metric failed after AOF confirmation")
+        self._record_timeline(len(batch), batch_bytes, write_sent_at, delivery_done_at)
+
+    def _record_timeline(self, frames: int, batch_bytes: int,
+                         write_sent_at: float, delivery_done_at: float) -> None:
+        """追加一条批次时间线（有界）。
+
+        这里**不**试图把 EVALSHA 执行与 WAITAOF 等待从一次流水线往返里拆开：
+        两者在同一次 pipeline.execute() 内，客户端只能测到总往返。
+        要分开必须靠 Redis 侧计数（commandstats / INFO cpu），脚本会另行采集。
+        """
+        context = self._claim_context
+        if context is None:
+            return
+        self._prev_aof_confirmed_at = delivery_done_at
+        record = dict(context)
+        record.update({
+            "frames": frames,
+            "bytes": batch_bytes,
+            "write_sent_at": write_sent_at,
+            "aof_confirmed_at": delivery_done_at,
+            # 一次流水线往返的总耗时：既含 Redis 执行脚本，也含 WAITAOF 的等待。
+            "deliver_ms": (delivery_done_at - write_sent_at) * 1000,
+            "write_ms": (write_sent_at - context["claim_at"]) * 1000,
+        })
+        with self._timeline_lock:
+            self._timeline.append(record)
 
     def _replay_loop(self):
         last_stats = 0.0
         while not self._stop.is_set():
+            if self._replay_paused.is_set():
+                # 暂停期间不消费本地队列：积压必须留在持久队列里可查。
+                # 置位 _replay_idle 表示"当前没有在飞批次"，pause_replay 等这个信号。
+                self._replay_idle.set()
+                self._stop.wait(0.05)
+                continue
+            self._replay_idle.clear()
             self._pending_event.clear()
             now = time.monotonic()
             if now - last_stats >= 10:
@@ -430,13 +503,43 @@ class DurableRedisWriter(RedisWriter):
                     logger.exception("outbox telemetry failed")
                 last_stats = now
             try:
+                self._prepare_claim_context()
                 count = self.outbox.replay_pending(self)
             except Exception:
+                self._claim_context = None
                 logger.warning("durable delivery deferred; local backlog retained", exc_info=True)
                 self._stop.wait(1)
                 continue
+            finally:
+                self._claim_context = None
             if not count:
                 self._pending_event.wait(1)
+
+    def _prepare_claim_context(self):
+        """记录"这一轮领取"的起点与队列状态，供批次时间线归因。
+
+        领取之前队列里最老帧的等待时间，就是这一批帧端到端延迟里"排队"那一段；
+        与批次自身的 AOF 等待分开记，才能判断等待是本批造成的还是上一批挡住的。
+        """
+        try:
+            stats = self.outbox.stats()
+            queue_frames = stats.get("count")
+            oldest_age = stats.get("oldest_age_ms")
+        except Exception:
+            queue_frames = oldest_age = None
+        self._claim_context = {
+            "claim_at": time.monotonic(),
+            "queue_frames_at_claim": queue_frames,
+            "queue_oldest_age_ms_at_claim": oldest_age,
+            "prev_claim_at": self._prev_claim_at,
+            "prev_aof_confirmed_at": self._prev_aof_confirmed_at,
+        }
+        self._prev_claim_at = self._claim_context["claim_at"]
+
+    def delivery_timeline(self) -> list[dict]:
+        """最近的回放批次时间线副本（隔离验证用；生产不读）。"""
+        with self._timeline_lock:
+            return [dict(record) for record in self._timeline]
 
     def close(self):
         self._stop.set()

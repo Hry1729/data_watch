@@ -88,8 +88,13 @@ _MIGRATING_TABLE = "collector_rejected_gaps__migrating"
 _TABLE_V2_MIGRATING = _TABLE_V2.replace(
     "collector_rejected_gaps", _MIGRATING_TABLE)
 _REBUILD_TABLE = "collector_rejected_gaps__rebuild"
-_TABLE_V2_REBUILD = _TABLE_V2.replace(
-    "collector_rejected_gaps", _REBUILD_TABLE)
+# 历史版本真实用过的临时表名：4d86b6d 的 v1→v2 迁移把历史整表搬到
+# `collector_rejected_gaps__v2`，然后 `DROP 正式表` + `RENAME __v2 → 正式表`。
+# 那一版**没有**事务，两条语句之间崩溃就会留下"正式表不存在、__v2 有全部历史"，
+# 而 __v2 的结构与正式 v2 表完全相同。不认识这个名字就等于把历史丢在临时表里。
+_LEGACY_V2_TABLE = "collector_rejected_gaps__v2"
+# 启动时必须扫描的残留临时表（新旧真实用过的名字都要覆盖）。
+_LEFTOVER_TABLES = (_MIGRATING_TABLE, _LEGACY_V2_TABLE, _REBUILD_TABLE)
 
 _INDEXES_V2 = """
 CREATE INDEX IF NOT EXISTS idx_rejected_run ON collector_rejected_gaps(run_id);
@@ -218,33 +223,117 @@ class RejectGapLog:
             (name,)).fetchone() is not None
 
     def _recover_interrupted_migration(self, conn: sqlite3.Connection) -> None:
-        """处理上次迁移中断的残留。
+        """处理上次迁移中断的残留（含历史版本用过的临时表名）。
 
-        迁移顺序是"建 __migrating → 复制 → DROP 旧表 → RENAME"。
-        现场分析：
-          * 正式表不存在、__migrating 存在 → 上次的 DROP+RENAME 没提交
-            （两者在同一事务里），把 __migrating 的数据**重建**成正式表；
-            不能直接 RENAME：临时表可能是不完整结构（例如由 SQLite 在
-            事务中途留下的中间形态），直接改名会把缺列的表变成正式表。
-          * 正式表与 __migrating 同时存在 → 事务未提交、回滚后残留的中间表，
-            正式表仍是权威，丢弃中间表。
-          * 只有正式表 → 正常。
+        现场分析（正式表 = collector_rejected_gaps）：
+          * 正式表不存在、只有 1 张残留表 → 上次的换表没有提交，残留表里是全部
+            历史。把它**重建成**正式表，而不是新建空表：新建空表会让正常查询
+            看不到历史，等于"恢复成功"的假象。
+            不能直接 RENAME：残留表可能是不完整结构，改名会把缺列的表变成正式表。
+          * 正式表不存在、有 2 张以上**含数据**的残留表 → 无法判断哪张才是权威
+            副本。保留全部数据并显式报错（台账变为不可用），绝不挑一张、更不新建
+            空表。空残留表没有数据可保，作为换表残渣清理并记录。
+          * 正式表存在、残留表行数 > 正式表行数 → 残留表可能有正式表没有的历史。
+            不删除，显式报错并把两张表的行数报告出来。
+          * 正式表存在、残留表**每一行都能在正式表里按内容找到**（含重数）→ 正式表
+            确实包含了残留表的全部内容，丢弃残留表并记录行数。
+            行数少**不足以**证明这一点：正式表 1 条 A、残留 1 条 B，或残留里有正式表
+            没有的少数几条，都必须保留并报错。所以这里做的是**内容覆盖证明**，
+            不是行数比较。
         """
-        if not self._table_exists(conn, _MIGRATING_TABLE):
+        leftovers = self._leftover_tables(conn)
+        if not leftovers:
             return
-        if not self._table_exists(conn, "collector_rejected_gaps"):
-            rows = conn.execute(f"SELECT COUNT(*) FROM {_MIGRATING_TABLE}").fetchone()[0]
+        # 空表没有任何数据可保，属于换表过程的残渣，不参与"哪张是权威副本"的判断。
+        nonempty = {name: rows for name, rows in leftovers.items() if rows > 0}
+        official_exists = self._table_exists(conn, "collector_rejected_gaps")
+        if not official_exists:
+            if len(nonempty) > 1:
+                raise RuntimeError(
+                    "ambiguous rejection-gap recovery at "
+                    f"{self.path}: official table is missing but multiple leftover "
+                    f"tables contain rows {nonempty}; refusing to pick one or to create "
+                    "an empty official table. Original data is preserved for manual review."
+                )
+            source = None
+            if nonempty:
+                source, rows = next(iter(nonempty.items()))
+                logger.warning(
+                    "recovering interrupted rejection-gap migration at %s: rebuilding "
+                    "official table from %s (%d row(s))", self.path, source, rows)
+                self._rebuild_from(conn, source)
+            for name in sorted(leftovers):
+                if name != source:
+                    logger.warning(
+                        "discarding empty leftover %s at %s", name, self.path)
+                    conn.execute(f"DROP TABLE IF EXISTS {name}")
+            if source is not None:
+                conn.execute(f"DROP TABLE IF EXISTS {source}")
+            return
+
+        official_rows = conn.execute(
+            "SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0]
+        official_columns = _columns(conn, "collector_rejected_gaps")
+        conflicting = {name: rows for name, rows in nonempty.items()
+                       if rows > official_rows}
+        if conflicting:
+            raise RuntimeError(
+                "conflicting rejection-gap ledgers at "
+                f"{self.path}: official table has {official_rows} row(s) but leftover "
+                f"tables hold more {conflicting}; refusing to delete data. "
+                "Original tables are preserved for manual review."
+            )
+        for name, rows in sorted(leftovers.items()):
+            if rows:
+                covered, reason = self._content_covered_by_official(
+                    conn, name, official_columns)
+                if not covered:
+                    raise RuntimeError(
+                        "conflicting rejection-gap ledgers at "
+                        f"{self.path}: leftover table {name} holds {rows} row(s) not "
+                        f"provably contained in the official table {reason}; refusing "
+                        "to delete data. Original tables are preserved for manual review."
+                    )
             logger.warning(
-                "recovering interrupted rejection-gap migration at %s: rebuilding "
-                "official table from %s (%d row(s))", self.path, _MIGRATING_TABLE, rows)
-            # 用正式 DDL 重建，再把临时表里能识别的列搬过来；
-            # 缺失的列按"未知"补齐，已有的真实值原样保留。
-            self._rebuild_from(conn, _MIGRATING_TABLE)
-        else:
-            logger.warning(
-                "discarding leftover %s at %s: official table is authoritative",
-                _MIGRATING_TABLE, self.path)
-        conn.execute(f"DROP TABLE IF EXISTS {_MIGRATING_TABLE}")
+                "discarding leftover %s (%d row(s), official table has %d) at %s: "
+                "official table is authoritative", name, rows, official_rows, self.path)
+            conn.execute(f"DROP TABLE IF EXISTS {name}")
+
+    def _content_covered_by_official(self, conn: sqlite3.Connection, leftover: str,
+                                     official_columns: set[str]) -> tuple[bool, str]:
+        """残留表的每一行（按重数）是否都能在正式表里找到。
+
+        残留表有正式表缺少的列时，其中的历史元数据无法证明已覆盖，拒绝删除。
+        否则按**共同列**全等比较（`IS` 是 SQLite 的 NULL 安全等值），
+        正式表多出来的列不参与比较。没有共同列也按"未覆盖"处理。
+        """
+        leftover_columns = _columns(conn, leftover)
+        extra_columns = sorted(leftover_columns - official_columns)
+        if extra_columns:
+            return False, f"(extra columns only in leftover: {', '.join(extra_columns)})"
+        shared = sorted(leftover_columns & official_columns)
+        if not shared:
+            return False, "（两张表没有可比较的共同列）"
+        columns = ", ".join(shared)
+        match = " AND ".join(f"o.{name} IS l.{name}" for name in shared)
+        uncovered = conn.execute(
+            f"SELECT COUNT(*) FROM (SELECT {columns}, COUNT(*) AS copies "
+            f"FROM {leftover} GROUP BY {columns}) AS l "
+            f"WHERE l.copies > (SELECT COUNT(*) FROM collector_rejected_gaps AS o "
+            f"WHERE {match})"
+        ).fetchone()[0]
+        if uncovered:
+            return False, f"（有 {uncovered} 组行的重数超过正式表）"
+        return True, ""
+
+    def _leftover_tables(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """启动时存在的残留临时表 → 行数（新旧真实用过的名字都扫描）。"""
+        found: dict[str, int] = {}
+        for name in _LEFTOVER_TABLES:
+            if self._table_exists(conn, name):
+                found[name] = conn.execute(
+                    f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+        return found
 
     def _swap_in(self, conn: sqlite3.Connection, source_table: str,
                  *, old_table: str | None) -> None:
@@ -274,10 +363,17 @@ class RejectGapLog:
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def _rebuild_from(self, conn: sqlite3.Connection, source_table: str) -> None:
-        """把 source_table 的数据重建成规范 v2 正式表（缺失列补未知）。"""
+        """把 source_table 的数据重建成规范 v2 正式表（缺失列补未知）。
+
+        source_table 本身就是残留临时表（`__v2` / `__migrating` / `__rebuild`），
+        所以重建目标必须换成**另一张**临时表名：沿用固定名字会在建表前
+        把正在读的源表 DROP 掉，历史数据当场丢失。
+        两张名字都在 _LEFTOVER_TABLES 里，任何中断残留下次启动都能被识别。
+        """
         columns = _columns(conn, source_table)
-        conn.execute("DROP TABLE IF EXISTS collector_rejected_gaps__rebuild")
-        conn.execute(_TABLE_V2_REBUILD)
+        target = _REBUILD_TABLE if source_table != _REBUILD_TABLE else _MIGRATING_TABLE
+        conn.execute(f"DROP TABLE IF EXISTS {target}")
+        conn.execute(_TABLE_V2.replace("collector_rejected_gaps", target))
         select_cols: list[str] = []
         for name in ("run_id", "session_id"):
             select_cols.append(name if name in columns else "?")
@@ -300,7 +396,7 @@ class RejectGapLog:
         if "session_id" not in columns:
             params = params + (UNKNOWN_SESSION_ID,)
         conn.execute(
-            f"INSERT INTO collector_rejected_gaps__rebuild ("
+            f"INSERT INTO {target} ("
             "run_id, session_id, device_code, group_code, device_type, scan_rate_ms,"
             " reason, first_ts_ms, last_ts_ms, contiguous_from_ts_ms, frames,"
             " first_rejected_at, last_rejected_at, collection_resumed_at,"
@@ -309,8 +405,8 @@ class RejectGapLog:
             params,
         )
         migrated = conn.execute(
-            "SELECT COUNT(*) FROM collector_rejected_gaps__rebuild").fetchone()[0]
-        self._swap_in(conn, "collector_rejected_gaps__rebuild", old_table=None)
+            f"SELECT COUNT(*) FROM {target}").fetchone()[0]
+        self._swap_in(conn, target, old_table=None)
         logger.warning("rebuilt %d rejection gap row(s) into the official table", migrated)
 
     def _migrate_to_v2(self, conn: sqlite3.Connection, columns: set[str]) -> None:

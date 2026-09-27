@@ -126,6 +126,8 @@ class CollectorRetryOutbox:
         self._worker_error: BaseException | None = None
         self._write_queue: deque[_InsertRequest] = deque()
         self._waiting_bytes = 0
+        # 已领取未清理的帧数（回放线程串行领取，因此最多一批）。
+        self._claimed_frames = 0
         # A new session on every start also isolates new frames after a backup restore.
         self._session_id = str(uuid4())
         self._next_seq = 1
@@ -466,6 +468,21 @@ class CollectorRetryOutbox:
             raise RejectGapLogUnavailable("rejection gap ledger not initialised")
         return log.runs()
 
+    def _set_claimed_gauge(self, frames: int) -> None:
+        """记录已领取未清理的帧数，并对齐同名指标。
+
+        这个值是**独立观测**：守恒对账是
+        `已持久提交 − 已确认清理 == 队列条数`；已领取未清理仍在队列里，
+        claimed 是队列条数的在途子集，不可重复相加。
+        若只用 `A − D − 队列条数` 反推 claimed，差额会被自动吸收。
+        """
+        self._claimed_frames = int(frames)
+        if self._metrics is not None:
+            try:
+                self._metrics.set_gauge("outbox_claimed_frames", int(frames))
+            except Exception:
+                logger.exception("claimed frame gauge update failed")
+
     def replay_pending(self, redis_writer, *, max_batch: int = 4096,
                        max_batch_bytes: int = 32 * 1024 * 1024) -> int:
         """One replay owner; delete only after the entire batch is durably accepted."""
@@ -499,6 +516,9 @@ class CollectorRetryOutbox:
                         break
             if not rows:
                 return 0
+            # 已领取但尚未清理完成的帧数：这是"队列 API 条数 vs A−D 计数"之外的
+            # **独立观测**，守恒对账必须靠它，否则差额会被自动吸收、永远为 0。
+            self._set_claimed_gauge(len(rows))
             redis_writer.write_durable_frames(rows)
             with self._lock:
                 self._conn.execute("BEGIN IMMEDIATE")
@@ -517,6 +537,7 @@ class CollectorRetryOutbox:
                         logger.exception("outbox replay cleanup rollback failed")
                     raise
                 self._count -= len(rows)
+                self._set_claimed_gauge(0)
                 self._payload_bytes -= sum(
                     len(row["frame_json"]) + len(row["stream_values_json"])
                     + len(row["stream_qualities_json"] or b"") + len(row["latest_fields_json"])
@@ -538,6 +559,8 @@ class CollectorRetryOutbox:
                 ).fetchone()[0]
             return len(rows)
         finally:
+            if self._claimed_frames:
+                self._set_claimed_gauge(0)
             self._replay_lock.release()
 
     def iter_pending_latest(self, *, batch_size: int = 16):
@@ -584,12 +607,16 @@ class CollectorRetryOutbox:
         with self._lock:
             count = int(self._count)
             payload_bytes = int(self._payload_bytes)
+            claimed = int(self._claimed_frames)
             oldest_age_ms = max(0, int(time.time() * 1000) - self._oldest_ms) if self._oldest_ms is not None else 0
         with self._write_condition:
             return {
                 "count": count,
                 "payload_bytes": payload_bytes,
                 "oldest_age_ms": oldest_age_ms,
+                # 已领取未清理：这些帧已从"待回放"里取出但还没提交本地清理，
+                # `count` 里仍然包含它们，守恒对账时要单独作为独立观测使用。
+                "claimed_frames": claimed,
                 "waiting_writes": len(self._write_queue),
                 "waiting_bytes": self._waiting_bytes,
             }

@@ -17,6 +17,48 @@ def sample(ts=1234):
         latest_fields={"1":{"v":"7","t":ts,"q":192}})
 
 
+def test_claimed_frames_is_an_independent_observation_of_in_flight_rows(tmp_path):
+    """`claimed_frames` 必须在投递期间非零、清理后归零。
+
+    守恒对账要求 `A−D == 队列条数`，claimed 是队列条数的在途子集。
+    claimed 必须独立观测；从 A、D、队列条数反推会自动吸收差额。
+    """
+    path = tmp_path / "claimed.db"
+    q = CollectorRetryOutbox(path)
+    q.record_failure(**sample(1000))
+    q.record_failure(**sample(1100))
+    assert q.stats()["claimed_frames"] == 0, "未领取时应为 0"
+
+    observed = {}
+
+    def _observe(rows):
+        observed["during"] = q.stats()["claimed_frames"]
+        observed["rows"] = len(rows)
+
+    writer = MagicMock()
+    writer.write_durable_frames.side_effect = _observe
+    assert q.replay_pending(writer) == 2
+    assert observed["during"] == observed["rows"] == 2, \
+        "投递期间必须能从独立观测看到在途帧数"
+    after = q.stats()
+    assert after["claimed_frames"] == 0, "清理提交后必须归零"
+    assert after["count"] == 0
+    q.close()
+
+
+def test_claimed_frames_returns_to_zero_when_delivery_fails(tmp_path):
+    """投递失败时在途计数不得残留（否则守恒对账会永远差一批）。"""
+    q = CollectorRetryOutbox(tmp_path / "claimed-fail.db")
+    q.record_failure(**sample(1000))
+    writer = MagicMock()
+    writer.write_durable_frames.side_effect = RuntimeError("no fsync")
+    with pytest.raises(RuntimeError):
+        q.replay_pending(writer)
+    assert q.stats()["claimed_frames"] == 0
+    assert q.stats()["count"] == 1, "数据必须留在本地队列里"
+    q.close()
+
+
 def test_restart_and_retry_preserve_original_samples(tmp_path):
     path=tmp_path/"queue.db"
     q=CollectorRetryOutbox(path)
@@ -366,6 +408,293 @@ def _table_names(conn):
         "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
 
 
+def _make_legacy_v2_leftover(path, *, columns="full", rows=3, run_id="run-real",
+                              session_id="sess-real", resolved_at=7777):
+    """构造 4d86b6d 那一版真实留下过的中间态。
+
+    旧实现（4d86b6d）的 v1→v2 迁移是：建 `collector_rejected_gaps__v2` → 复制
+    历史 → **DROP 正式表** → `RENAME __v2 → 正式表`，两条语句之间没有事务。
+    崩溃现场因此是"临时表 __v2 里有全部历史、正式表不存在"。
+    夹具用的是**旧版真实表名**，不是新代码自己生成的 __migrating。
+
+    columns="full" 时用与正式 v2 表完全相同的结构（旧版 _TABLE_V2）；
+    columns="v1" 时只有 v1 列（临时表是不完整结构的形态）。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import _LEGACY_V2_TABLE, _TABLE_V2
+
+    conn = _sq.connect(path)
+    if columns == "full":
+        conn.executescript(_TABLE_V2.replace("collector_rejected_gaps",
+                                             _LEGACY_V2_TABLE))
+        sql = (f"INSERT INTO {_LEGACY_V2_TABLE} (run_id, session_id, device_code, "
+               "group_code, device_type, scan_rate_ms, reason, first_ts_ms, last_ts_ms, "
+               "contiguous_from_ts_ms, frames, first_rejected_at, last_rejected_at, "
+               "collection_resumed_at, backfilled_at, resolved_at) VALUES "
+               "(?, ?, 'DEV', 'g', 'dt', 100, 'full', 1000, 1500, 1000, 5, 111, 222, "
+               "NULL, NULL, ?)")
+        conn.executemany(sql, [(run_id, session_id, resolved_at)] * rows)
+    else:
+        # 不完整结构：只有 v1 列，缺 run_id/session_id/状态列
+        conn.executescript(
+            f"CREATE TABLE {_LEGACY_V2_TABLE} ("
+            "device_code TEXT, group_code TEXT, device_type TEXT, scan_rate_ms INTEGER, "
+            "reason TEXT, first_ts_ms INTEGER, last_ts_ms INTEGER, frames INTEGER, "
+            "first_rejected_at INTEGER, last_rejected_at INTEGER)")
+        conn.executemany(
+            f"INSERT INTO {_LEGACY_V2_TABLE} VALUES ('DEV','g','dt',100,'full',"
+            "1000,1500,5,111,222)", [()] * rows)
+    conn.commit()
+    conn.close()
+
+
+def test_legacy_v2_leftover_is_recovered_with_real_metadata(tmp_path):
+    """旧版真实残留表名 __v2（全 v2 结构）必须被恢复，真实元数据原样保留。
+
+    修复前的行为：只认 __migrating，于是新建空的正式表，历史被困在 __v2 里，
+    正常查询看不到——"恢复成功"的假象。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import (
+        SCHEMA_VERSION, RejectGapLog, _LEGACY_V2_TABLE,
+    )
+
+    db = tmp_path / "legacy-v2.rejects.sqlite"
+    _make_legacy_v2_leftover(db, columns="full", rows=3)
+    conn = _sq.connect(db)
+    assert "collector_rejected_gaps" not in _table_names(conn)
+    conn.close()
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True, (
+        f"旧版 __v2 残留必须能恢复，实际 error={log.status()['error']}")
+    assert log.status()["schema_version"] == SCHEMA_VERSION
+    history = log.gaps(run_id="run-real")
+    assert len(history) == 3, "历史记录必须出现在正式表的正常查询里"
+    assert {row["session_id"] for row in history} == {"sess-real"}
+    assert {row["resolved_at"] for row in history} == {7777}, \
+        "已有的处置时间必须保留，不能被补成 NULL"
+    assert log.gaps() == [], "历史记录不得被当成本次运行的告警"
+    assert log.status()["gap_rows_total"] == 3
+    assert _LEGACY_V2_TABLE not in _table_names(log._conn), "恢复后不得残留临时表"
+    log.close()
+
+
+def test_legacy_v2_leftover_with_partial_structure_gets_unknown_fields(tmp_path):
+    """残留表结构不完整时，只对真正缺失的字段补未知，数据本身照搬。"""
+    from storage.reject_gap_log import (
+        LEGACY_RUN_ID, SCHEMA_VERSION, UNKNOWN_SESSION_ID, RejectGapLog,
+    )
+
+    db = tmp_path / "legacy-v2-partial.rejects.sqlite"
+    _make_legacy_v2_leftover(db, columns="v1", rows=2)
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True, f"error={log.status()['error']}"
+    assert log.status()["schema_version"] == SCHEMA_VERSION
+    history = log.gaps(run_id=LEGACY_RUN_ID)
+    assert len(history) == 2 and history[0]["frames"] == 5
+    assert history[0]["session_id"] == UNKNOWN_SESSION_ID
+    assert history[0]["contiguous_from_ts_ms"] == history[0]["first_ts_ms"], \
+        "缺连续区间字段时用首帧时间补齐"
+    log.close()
+
+
+def test_ambiguous_nonempty_leftovers_are_preserved_and_reported(tmp_path):
+    """多张含数据的残留表并存：保留原数据、显式报告，不新建空表冒充恢复。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog
+
+    db = tmp_path / "ambiguous.rejects.sqlite"
+    _make_legacy_v2_leftover(db, columns="full", rows=3)
+    conn = _sq.connect(db)
+    conn.execute("CREATE TABLE collector_rejected_gaps__migrating AS "
+                 "SELECT * FROM collector_rejected_gaps__v2")
+    conn.commit()
+    conn.close()
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is False, "无法判断权威副本时必须显式不可用"
+    assert "ambiguous" in log.status()["error"]
+    conn = _sq.connect(db)
+    names = set(_table_names(conn))
+    assert "collector_rejected_gaps" not in names, "不得新建空表冒充恢复成功"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps__v2").fetchone()[0] == 3
+    assert conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps__migrating").fetchone()[0] == 3
+    conn.close()
+
+
+def test_empty_leftover_does_not_block_recovery_from_the_nonempty_one(tmp_path):
+    """空残留表没有数据可保，不能因为它的存在把恢复判成"无法判断"。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import (
+        RejectGapLog, _MIGRATING_TABLE, _TABLE_V2,
+    )
+
+    db = tmp_path / "empty-leftover.rejects.sqlite"
+    _make_legacy_v2_leftover(db, columns="full", rows=2)
+    conn = _sq.connect(db)
+    # 当前实现建的临时表：CREATE 成功但 INSERT 前崩溃 → 空表
+    conn.executescript(_TABLE_V2.replace("collector_rejected_gaps", _MIGRATING_TABLE))
+    conn.commit()
+    conn.close()
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True, f"error={log.status()['error']}"
+    assert len(log.gaps(run_id="run-real")) == 2
+    assert _MIGRATING_TABLE not in _table_names(log._conn)
+    log.close()
+
+
+def test_leftover_with_more_rows_than_official_is_not_deleted(tmp_path):
+    """残留表比正式表行数还多：可能有正式表没有的历史，禁止删除，必须报告。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog
+
+    db = tmp_path / "conflict.rejects.sqlite"
+    _make_v1_ledger(db)                       # 正式表：1 行
+    _make_legacy_v2_leftover(db, columns="full", rows=4)
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is False
+    assert "conflicting" in log.status()["error"]
+    conn = _sq.connect(db)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM collector_rejected_gaps__v2").fetchone()[0] == 4
+    conn.close()
+
+
+def _make_v2_ledger(path, table, reasons):
+    """按完整 v2 结构建表并按 reason 造行（行内容由 reason 区分）。"""
+    import sqlite3 as _sq
+    from storage.reject_gap_log import _TABLE_V2
+
+    conn = _sq.connect(path)
+    conn.executescript(_TABLE_V2.replace("collector_rejected_gaps", table))
+    conn.executemany(
+        f"INSERT INTO {table} (run_id, session_id, device_code, group_code, device_type, "
+        "scan_rate_ms, reason, first_ts_ms, last_ts_ms, contiguous_from_ts_ms, frames, "
+        "first_rejected_at, last_rejected_at, collection_resumed_at, backfilled_at, "
+        "resolved_at) VALUES ('run-old','sess-old','DEV','g','dt',100,?,1000,1500,1000,5,"
+        "111,222,NULL,NULL,NULL)",
+        [(reason,) for reason in reasons])
+    conn.commit()
+    conn.close()
+
+
+def test_leftover_extra_metadata_is_not_discarded_by_shared_column_match(tmp_path):
+    """相同旧列仍不能证明残留独有的运行及处置元数据已在正式表中。"""
+    from storage.reject_gap_log import RejectGapLog, _LEGACY_V2_TABLE
+
+    db = tmp_path / "extra-metadata.rejects.sqlite"
+    _make_v1_ledger(db)
+    _make_legacy_v2_leftover(db, columns="full", rows=1, resolved_at=7777)
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is False
+    assert "extra column" in log.status()["error"]
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM collector_rejected_gaps"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            f"SELECT run_id, resolved_at FROM {_LEGACY_V2_TABLE}"
+        ).fetchone() == ("run-real", 7777)
+    log.close()
+
+
+def test_leftover_with_same_row_count_but_different_content_is_not_deleted(tmp_path):
+    """行数相同不等于内容相同：正式表 1 行 A、残留 1 行 B 时必须保留并报错。
+
+    修复前只比较行数（残留 ≤ 正式就删），会把残留里正式表没有的那条历史删掉。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, _LEGACY_V2_TABLE
+
+    db = tmp_path / "same-count-different-content.rejects.sqlite"
+    _make_v2_ledger(db, "collector_rejected_gaps", ["full"])
+    _make_v2_ledger(db, _LEGACY_V2_TABLE, ["partial"])
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is False, "内容未被正式表覆盖的残留不得被当作可删"
+    assert "conflicting" in log.status()["error"]
+    conn = _sq.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0] == 1
+    assert conn.execute(
+        f"SELECT COUNT(*) FROM {_LEGACY_V2_TABLE}").fetchone()[0] == 1, \
+        "残留表的数据必须原样保留，等人工核对"
+    conn.close()
+
+
+def test_leftover_with_few_rows_absent_from_official_is_not_deleted(tmp_path):
+    """残留行数比正式表少，但其中有正式表没有的记录 → 必须保留并报错。
+
+    这是"行数少所以可以删"最危险的形态：少数独有记录恰恰是最容易丢的历史。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, _LEGACY_V2_TABLE
+
+    db = tmp_path / "few-unique-rows.rejects.sqlite"
+    _make_v2_ledger(db, "collector_rejected_gaps", ["full", "partial", "gap"])
+    _make_v2_ledger(db, _LEGACY_V2_TABLE, ["full", "late-only-in-leftover"])
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is False
+    assert "conflicting" in log.status()["error"]
+    conn = _sq.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM collector_rejected_gaps").fetchone()[0] == 3
+    assert conn.execute(
+        f"SELECT COUNT(*) FROM {_LEGACY_V2_TABLE}").fetchone()[0] == 2
+    conn.close()
+
+
+def test_fully_covered_leftover_is_still_discarded(tmp_path):
+    """反向对照：残留每一行都能在正式表里找到时，仍按正常路径丢弃残留。
+
+    没有这一条，"不许删除"就变成了"永远保留所有残留"，会把正常恢复路径堵死。
+    """
+    import sqlite3 as _sq
+    from storage.reject_gap_log import RejectGapLog, _LEGACY_V2_TABLE
+
+    db = tmp_path / "covered.rejects.sqlite"
+    _make_v2_ledger(db, "collector_rejected_gaps", ["full", "partial", "gap"])
+    _make_v2_ledger(db, _LEGACY_V2_TABLE, ["full", "partial"])
+
+    log = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert log.available is True, f"error={log.status()['error']}"
+    assert log.status()["gap_rows_total"] == 3
+    assert _LEGACY_V2_TABLE not in _table_names(log._conn)
+    log.close()
+
+
+def test_user_version_and_repeat_open_are_consistent_after_v2_recovery(tmp_path):
+    """恢复必须可重复打开：第二次打开不再迁移、user_version 与 schema 一致。"""
+    from storage.reject_gap_log import SCHEMA_VERSION, RejectGapLog
+
+    db = tmp_path / "repeat.rejects.sqlite"
+    _make_legacy_v2_leftover(db, columns="full", rows=2)
+
+    first = RejectGapLog(db, run_id="run-new", session_id="sess-new")
+    assert first.available is True
+    first_version = first.status()["schema_version"]
+    first_count = first.status()["gap_rows_total"]
+    first.close()
+
+    second = RejectGapLog(db, run_id="run-2", session_id="sess-2")
+    assert second.available is True
+    assert second.status()["schema_version"] == first_version == SCHEMA_VERSION
+    assert second.status()["gap_rows_total"] == first_count == 2
+    # 第二次打开后仍可正常写入与查询（结构完整）
+    second.record_rejection(device_code="DEV2", group_code="g", device_type="dt",
+                            scan_rate_ms=100, reason="full", ts_ms=5000, now_ms=6000)
+    assert len(second.gaps(run_id="run-2")) == 1
+    second.close()
+
+
 def test_gap_ledger_is_separate_from_the_full_main_queue(tmp_path):
     """缺口台账必须写在独立文件里：主队列满的正是它自己，记在同一个库里等于没记。"""
     q = CollectorRetryOutbox(tmp_path / "q.db", max_records=1)
@@ -447,6 +776,7 @@ def test_history_frame_counter_is_idempotent_when_local_cleanup_fails(tmp_path):
         q.replay_pending(writer)
     assert real_write.call_count == 1, "Redis 侧确实已确认过"
     assert q.count() == 3, "本地清理失败必须保留原帧"
+    assert q.stats()["claimed_frames"] == 0, "本地清理失败后领取状态不得残留"
     assert metrics.snapshot()["counters"].get("history_frames_confirmed", 0) == 0, \
         "清理未提交就不得计数"
 
