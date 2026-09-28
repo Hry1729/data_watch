@@ -40,6 +40,12 @@ class TaskScheduler:
     ):
         self.tasks: Dict[str, CollectTask] = {}
         self._running = False
+        # 正常停机：先停止新增采样，再给**已在途**的采样周期一段有界时间完成解析与存储。
+        # 原实现直接 cancel 设备循环，取消点可能落在"读取成功、尚未写 Redis"的窗口里，
+        # 导致正常停机丢样（复现证据：outputs/central-restore-20260928/shutdown-cancel-repro.json）。
+        self._drain_timeout: float = 10.0
+        self._cancel_timeout: float = 1.0
+        self._stop_requested = False
         self._loop_tasks: List[asyncio.Task] = []
         self._device_loop_tasks: Dict[str, List[asyncio.Task]] = {}
         self._execute_func: Optional[Callable] = None
@@ -404,19 +410,59 @@ class TaskScheduler:
             "Device %s reloaded: %d new collect tasks", device_id, len(new_tasks)
         )
 
-    async def stop(self) -> None:
-        """停止调度器"""
+    async def stop(self, *, drain_timeout: Optional[float] = None) -> dict:
+        """停止调度器：**先停止新增采样，再让已在途的采样周期收尾**。
+
+        与旧行为的区别（最小修复，不重构调度器）：
+          * 旧：立刻 cancel 设备循环 → 取消点可能落在 execute_func 内部
+            （读取已成功、解析/写 Redis 尚未完成）→ 正常停机丢样；
+          * 新：置 _running=False，循环在下一轮开始前退出（不再新增采样），
+            然后等这些循环任务自然结束（在途周期跑完解析与存储）；
+            超过 drain_timeout 才取消，并留下明确诊断（日志 + 指标）。
+        异常取消能力保留：超时路径仍然 cancel，不承诺强杀/断电不丢样。
+        """
+        self._stop_requested = True
         self._running = False
-        for task in self._loop_tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        timeout = self._drain_timeout if drain_timeout is None else drain_timeout
+        loops = list(self._loop_tasks)
+        timed_out: List[asyncio.Task] = []
+        if loops:
+            _, pending = await asyncio.wait(loops, timeout=timeout)
+            timed_out = [task for task in pending]
+            if timed_out:
+                self._metrics.increment("scheduler_drain_timeout_count")
+                logger.error(
+                    "Scheduler drain timed out after %.2fs: %d loop(s) still busy; "
+                    "cancelling them (in-flight cycle may be incomplete)",
+                    timeout,
+                    len(timed_out),
+                )
+                for task in timed_out:
+                    task.cancel()
+                _, still_pending = await asyncio.wait(
+                    timed_out, timeout=self._cancel_timeout
+                )
+                if still_pending:
+                    self._metrics.increment("scheduler_cancel_timeout_count")
+                    logger.error(
+                        "Scheduler cancellation timed out after %.2fs: %d loop(s) "
+                        "still running; keeping storage and executor open",
+                        self._cancel_timeout,
+                        len(still_pending),
+                    )
+                    raise RuntimeError(
+                        f"Scheduler stop failed: {len(still_pending)} loop(s) "
+                        "still running after cancellation"
+                    )
+                await asyncio.gather(*timed_out, return_exceptions=True)
         self._device_loop_tasks.clear()
         self._loop_tasks.clear()
         self._metrics.set_gauge("scheduler_active_loops", 0)
-        logger.info("Scheduler stopped")
+        result = {"drained": not timed_out, "timed_out": len(timed_out),
+                  "drain_timeout_s": timeout}
+        logger.info("Scheduler stopped (drained=%s, timed_out=%d)",
+                    result["drained"], result["timed_out"])
+        return result
 
     @property
     def stats(self):
