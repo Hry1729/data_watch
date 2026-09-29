@@ -111,18 +111,19 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 | `deploy/backend.env.example` | backend 容器环境变量模板 |
 | `deploy/taos.cfg` | TDengine 服务配置 |
 | `deploy/redis.conf` | Redis 服务配置：内存保险丝（maxmemory）+ 持久化策略，由 compose 挂载，容器重建可复现 |
-| `deploy/stack-up.ps1` | 一键从 tar 载入镜像并拉起中心全栈（redis + tdengine + backend + frontend） |
+| `deploy/stack-up.ps1` | 一键从 tar 载入镜像并拉起中心全栈（mysql + redis + tdengine + backend + frontend） |
 
 `deploy/docker-compose.yml` 当前服务：
 
 | 服务 | 镜像 | 端口 | 说明 |
 |------|------|------|------|
-| redis | `redis:latest` | `127.0.0.1:6379:6379` | profile `infra`，可选由 compose 托管；要求 `REDIS_PASSWORD`，仅主机回环可达 |
+| mysql | `mysql:8.4` | `127.0.0.1:3306:3306` | profile `infra`，可选由 compose 托管；数据在 `mysql_data` 命名卷，业务表仍需恢复 |
+| redis | `redis:7.4` | `127.0.0.1:6379:6379` | profile `infra`，可选由 compose 托管；要求 `REDIS_PASSWORD`，仅主机回环可达 |
 | tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，固定 `hostname`/`TAOS_FQDN=tdengine`（否则容器内解析不了自身 FQDN 会启动即崩），挂载 `taos.cfg` 与日志卷 |
 | backend | `data-watch-backend:latest` | `8000:8000` | 读取 `deploy/backend.env` |
 | frontend | `data-watch-frontend:latest` | `8080:80` | nginx 静态资源 + API/WS 代理 |
 
-MySQL 当前不在 compose 中，需使用宿主机或外部 MySQL。
+三种数据库都可由 Compose 的 `infra` profile 托管，也可使用现场已有的外部服务。Compose 新建 MySQL 容器只准备数据库实例和空 `device_watch`，不会自动恢复设备/点位业务表。
 
 ### 4.2 构建中心镜像
 
@@ -170,17 +171,19 @@ docker save data-watch-frontend:latest   -o "$ReleaseRoot\docker-images\data-wat
 
 ### 4.4 导出基础设施镜像
 
-仅当目标机没有可用的 Redis/TDengine，且准备由 compose 托管两库时，才需要带这两个 tar。输出目录仍是 `docker-images\`，文件名固定为 `redis.tar` 和 `tdengine.tar`，不要写成 `redis:latest.tar`。
+当目标机准备由 Compose 托管 MySQL、Redis、TDengine 时，随发布包导出三种基础设施镜像。输出目录仍是 `docker-images\`，文件名固定为 `mysql.tar`、`redis.tar`、`tdengine.tar`。
 
 ```powershell
 New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
-docker pull redis:latest
+docker pull mysql:8.4
+docker pull redis:7.4
 docker pull tdengine/tsdb-amd64:3.4.0.9
-docker save redis:latest                 -o "$ReleaseRoot\docker-images\redis.tar"
+docker save mysql:8.4                   -o "$ReleaseRoot\docker-images\mysql.tar"
+docker save redis:7.4                   -o "$ReleaseRoot\docker-images\redis.tar"
 docker save tdengine/tsdb-amd64:3.4.0.9  -o "$ReleaseRoot\docker-images\tdengine.tar"
 ```
 
-> 仓库内已有的 `deploy\data-watch-images.zip` 是这两个镜像的打包版，与上面单独导出的 tar 二选一；用 zip 时解压到 `docker-images\` 即可。
+> 仓库内旧的 `deploy\data-watch-images.zip` 实际只含旧版 `data-watch-backend.tar` 和 `data-watch-frontend.tar`，不含 MySQL/Redis/TDengine，也不能代替本次发布的应用镜像。目标机使用按发布指定提交重新导出的 tar。
 
 ### 4.5 复制部署配置到发布目录
 
@@ -207,7 +210,7 @@ D:\data_watch_release\
 ├─ docker-images\
 │  ├─ data-watch-backend.tar
 │  ├─ data-watch-frontend.tar
-
+│  ├─ mysql.tar
 │  ├─ redis.tar
 │  └─ tdengine.tar
 └─ deploy\
@@ -220,7 +223,7 @@ D:\data_watch_release\
    └─ stack-up.ps1
 ```
 
-镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据；整个 `docker-images\` 目录独立于三个 Windows 安装包。
+镜像只包含程序环境，不包含 MySQL/Redis/TDengine 业务数据；完整 MySQL 备份如 `E:\device_watch.sql` 单独保管与恢复，不放入仓库或镜像。整个 `docker-images\` 目录独立于三个 Windows 安装包。
 
 ---
 
@@ -228,16 +231,16 @@ D:\data_watch_release\
 <!-- xiaohu-illustration:ops-deploy-02-stack -->
 ![小狐配图：目标机叠叠乐](../images/xiaohu-ops-deploy-02-stack.png)
 
-本章在目标机执行。先准备已验证的 MySQL `device_watch` 业务库，再判断 Redis/TDengine 是否由 compose 托管并选择启动方式；首次空库的责任与检查见第 6 节。
+本章在目标机执行。先确认 `E:\device_watch.sql` 等业务库备份与本次发布版本匹配，再选择 Compose 全栈或已有外部数据库。首次空卷部署应先单独启动 MySQL 并导入备份，之后才启动 Backend；已有数据卷的更新不重复初始化或导入。初始化责任与检查见第 6 节。
 
 ### 5.1 部署方式选择
 
 | 场景 | 使用方式 | 说明 |
 |------|----------|------|
-| 目标机已有 Redis/TDengine | 只启动 backend/frontend | 手工加载 backend/frontend 镜像后执行 `docker compose up -d` |
-| compose 托管 Redis/TDengine | 启动中心全栈 | 执行 `stack-up.ps1`，脚本自动加载 tar 镜像并拉起 redis、tdengine、backend、frontend |
+| 目标机已有 MySQL/Redis/TDengine | 只启动 backend/frontend | 环境文件填各外部服务地址；手工加载本次 backend/frontend 镜像后执行 `docker compose up -d` |
+| Compose 托管 MySQL/Redis/TDengine | 启动中心全栈 | 执行 `stack-up.ps1`，加载五个 tar 并拉起 mysql、redis、tdengine、backend、frontend |
 
-MySQL 不由当前 compose 托管，必须使用宿主机、外部服务器或现场已有 MySQL。
+全栈模式的 MySQL 使用 `mysql_data` 命名卷，只在首次创建空卷时读取 `MYSQL_ROOT_PASSWORD` 和 `MYSQL_DATABASE`。`stack-up.ps1` 不导入业务 SQL；首次建好实例后仍需把 `E:\device_watch.sql` 导入 `device_watch`。
 
 ### 5.2 配置 backend.env
 
@@ -259,11 +262,12 @@ BACKEND_LOG_LEVEL=INFO
 BACKEND_CORS_ORIGINS=http://localhost:8080,http://127.0.0.1:8080,http://localhost:1420,http://127.0.0.1:1420
 BACKEND_ENV=production
 
-MYSQL_HOST=host.docker.internal
+MYSQL_HOST=mysql
 MYSQL_PORT=3306
-MYSQL_USER=<mysql-user>
-MYSQL_PASSWORD=<mysql-password>
+MYSQL_USER=root
+MYSQL_PASSWORD=<strong-mysql-password>
 MYSQL_DATABASE=device_watch
+MYSQL_ROOT_PASSWORD=<same-strong-mysql-password>
 
 TDENGINE_HOST=tdengine
 TDENGINE_PORT=6041
@@ -289,8 +293,8 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 
 说明：
 
-- MySQL 可为宿主机、外部服务器或其他容器；compose 当前不托管 MySQL。
-- 若 Redis/TDengine 由 compose 托管，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine`。
+- 全栈模式下 `MYSQL_HOST=mysql`、`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine`；`MYSQL_USER=root` 时 `MYSQL_ROOT_PASSWORD` 必须与 Backend 的 `MYSQL_PASSWORD` 一致，且非空。`stack-up.ps1` 通过 `--env-file backend.env` 将初始化密码传给 Compose。
+- 外部数据库模式下分别填 Backend 容器可达的 MySQL/Redis/TDengine 地址；不启动 `infra` profile，也不需要 `mysql.tar` 等基础设施镜像。Compose 的 `mysql` 服务不会自动接入外部 MySQL。
 - 若 Redis/TDengine 在 Docker 宿主机运行，Docker Desktop 下可使用 `host.docker.internal`；若在另一台服务器，使用 Backend 容器实际可达的 DNS/IP，不要沿用 `redis`/`tdengine` 服务名。MySQL 同理；`host.docker.internal` 不是远端数据库地址。
 - Compose `infra` 模式下 Redis 只发布到宿主机 `127.0.0.1:6379`，Backend 应通过 Docker 内网的 `redis:6379` 访问；Redis 与 Backend 必须使用同一个 `REDIS_PASSWORD`。
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值；`AUTH_BOOTSTRAP_SUPER_PASSWORD` 不得提交到仓库或写成示例弱密码。
@@ -301,7 +305,7 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 
 ### 5.3 启动中心服务
 
-现场已有外部 Redis/TDengine 时，只启动 backend/frontend（此时环境文件须填写外部数据库的可达地址）：
+现场已有外部 MySQL/Redis/TDengine 时，只启动 backend/frontend（环境文件须填写外部数据库的可达地址）：
 
 ```powershell
 cd D:\data_watch_release\docker-images
@@ -309,33 +313,62 @@ docker load -i .\data-watch-backend.tar
 docker load -i .\data-watch-frontend.tar
 
 cd D:\data_watch_release\deploy
-docker compose -f .\docker-compose.yml up -d
+docker compose --env-file .\backend.env -f .\docker-compose.yml up -d --pull never --no-build
 ```
 
-compose 托管 Redis/TDengine，并拉起完整中心栈（先设置非空 Redis 密码，MySQL 业务库仍需提前准备）：
+Compose 托管三库的**首次空卷部署**，先填写非空 MySQL/Redis 密码，只启动 MySQL 并恢复业务库，避免 Backend 在空业务库上先行启动：
 
 ```powershell
-cd D:\data_watch_release\deploy
+Set-Location "D:\data_watch_release\deploy"
+docker load -i "..\docker-images\mysql.tar"
+docker compose --env-file .\backend.env -f .\docker-compose.yml --profile infra up -d --pull never --no-build mysql
+```
+
+确认 `mysql_data` 是新建空卷后，把经验证且与本次版本匹配的 `E:\device_watch.sql` 复制到 MySQL 容器，使用容器内客户端交互输入密码导入。SQL 文件不进入 Git 或镜像：
+
+```powershell
+docker cp "E:\device_watch.sql" data-watch-mysql:/tmp/device_watch.sql
+docker exec -it data-watch-mysql mysql -u root -p
+```
+
+在 `mysql>` 提示符下执行（若备份自带 `CREATE DATABASE`/`USE`，先核对其目标库确为 `device_watch`）：
+
+```sql
+USE device_watch;
+SET autocommit=0;
+SOURCE /tmp/device_watch.sql;
+COMMIT;
+SET autocommit=1;
+SHOW TABLES;
+SELECT COUNT(*) FROM device;
+SELECT COUNT(*) FROM device_variable;
+```
+
+导入后复核设备、点位和 `td_column_name` 映射，然后运行全栈脚本。已有 `mysql_data` 卷的应用更新**跳过以上导入步骤**，直接运行该脚本；MySQL 初始化密码变量不会改变已有卷的 root 密码。
+
+```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\stack-up.ps1
 ```
 
 > 目标机离线且没有 PowerShell 7 时，用 Windows 自带的 `powershell.exe` 即可，不需要安装 `pwsh`。如果现场已经安装 PowerShell 7，也可以使用 `pwsh -File .\stack-up.ps1`。
 
-`stack-up.ps1` 会逐个检查并加载这 4 个运行镜像 tar（路径统一在 `docker-images\` 下，固定文件名，缺任一即报错）：
+`stack-up.ps1` 会逐个检查并加载这 5 个运行镜像 tar（路径统一在 `docker-images\` 下，固定文件名，缺任一即报错）：
 
+- `..\docker-images\mysql.tar`
 - `..\docker-images\redis.tar`
 - `..\docker-images\tdengine.tar`
-
 - `..\docker-images\data-watch-backend.tar`
 - `..\docker-images\data-watch-frontend.tar`
 
-脚本最后执行 `docker compose -f .\docker-compose.yml --profile infra up -d --pull never`，因此会同时拉起 redis、tdengine、backend、frontend。
+脚本最后执行 `docker compose --env-file .\backend.env -f .\docker-compose.yml --profile infra up -d --pull never --no-build`，因此会同时拉起 mysql、redis、tdengine、backend、frontend。后续应用更新保留所有命名卷，不执行 `down -v`。
 
-> 目标机使用预构建的 Backend/Frontend 运行镜像，不在现场重建。`stack-up.ps1` 在启动前强制检查并加载四个 tar；镜像缺失或标签不符时应重新生成 Docker 发布包，而不是把构建基础镜像塞进 Windows 安装器。
+> 目标机使用预构建的 Backend/Frontend 运行镜像，不在现场重建。`stack-up.ps1` 在启动前强制检查并加载五个 tar；镜像缺失或标签不符时应重新生成 Docker 发布包，而不是把构建基础镜像塞进 Windows 安装器。
+
+TDengine 的 `device_data` 可由 Writer 在首帧按 MySQL 映射创建；无 Collector 的演示流程见第 6 节。首次全栈启动后先验证数据可读，再启动真实采集/Writer。
 
 ### 5.4 Redis 数据与 stream 容量
 
-重新部署 Redis 前若要清空旧数据，必须连命名卷一起删。否则旧 `dump.rdb` 可能被重新加载，一旦超过 `redis.conf` 的 `maxmemory`，noeviction 会全面拒写：
+正常应用更新保留 Redis/MySQL/TDengine 全部命名卷。以下清空 Redis 的命令**仅适用于已确认不需要旧数据的隔离测试环境**；重新部署 Redis 且有意清空旧数据时，需同时处理命名卷，否则旧 `dump.rdb` 可能被重新加载，一旦超过 `redis.conf` 的 `maxmemory`，noeviction 会全面拒写：
 
 ```powershell
 docker rm -f data-watch-redis
@@ -343,7 +376,7 @@ docker volume ls
 docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此前缀
 ```
 
-独立离线资源目录中的 `docker-images\redis.tar` 版本以 Docker 发布包为准；`redis:latest` 是浮动标签，重新拉取不保证版本一致。`redis.conf` 的 `maxmemory 3gb` 是 12G 虚机下的内存保险丝，撞顶会拒写而非把 TDengine 一起拖垮。
+独立离线资源目录中的 `docker-images\redis.tar` 应为 Compose 固定的 `redis:7.4`；`redis.conf` 的 `maxmemory 3gb` 是 12G 虚机下的内存保险丝，撞顶会拒写而非把 TDengine 一起拖垮。
 
 **关于 `stream_maxlen`（stream 容量上限）**
 
@@ -412,7 +445,7 @@ frontend 容器内 nginx 负责：
 
 仓库目前只有 `scripts/sql/db1_*`、`db2_*`、`db4_*`、`db5_*`、`db6_*` 等**增量**文件，没有可单独创建全部业务表的完整基线 SQL。不能把空 `device_watch` 库加上 `AUTH_AUTO_BOOTSTRAP=true` 当作完成首装，也不能在未核对现有表结构时把这些增量脚本全部重跑；其中 `db5` 需要支持 `DELIMITER` 的 MySQL 客户端和人工核对。新机应随发布包另行交付经验证的 `device_watch` 备份/基线及其版本记录，先按该交付件恢复，再检查 `device`、`device_type`、`device_variable`、`device_point_group`、`comm_protocol`、`point_storage_mapping` 等当前代码实际查询的表与字段，确认设备和点位映射数量，然后启动 Backend。迁移旧机时还要保留用户/权限、设备配置及必要的日志/告警表。无真实设备配置的空业务库无法让 Collector 或演示脚本产生桥吊 100 数据。
 
-`deploy/stack-up.ps1` 仅加载镜像并拉起容器，不执行上述 MySQL 恢复。旧的 `scripts/init_tdengine_v2.py` 生成 `st_*_g001`/`t_*_g001`，与当前 Writer 使用的 `sd*`/`sq*` 结构不同，**不要用它准备本次发布的 TDengine 库**。有真实 Collector 时，让 Writer 在首帧按 MySQL 映射建表；随后核对值表、质量表和一条真实历史查询。仅有 `/healthz` 成功不能证明数据库可读。
+`deploy/stack-up.ps1` 仅加载五个镜像并拉起容器，不执行上述 MySQL 恢复。旧的 `scripts/init_tdengine_v2.py` 生成 `st_*_g001`/`t_*_g001`，与当前 Writer 使用的 `sd*`/`sq*` 结构不同，**不要用它准备本次发布的 TDengine 库**。有真实 Collector 时，让 Writer 在首帧按 MySQL 映射建表；随后核对值表、质量表和一条真实历史查询。仅有 `/healthz` 成功不能证明数据库可读。
 
 ### 无 Collector 的桥吊 100 演示结构
 

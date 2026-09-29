@@ -65,7 +65,7 @@ PLC / OPC → Collector → Edge Storage → SQLite outbox
 - Windows 开发环境；现场角色包依赖 Windows 服务与驱动生态。
 - Backend 使用 free-threaded Python 3.14t；CLI 源码开发使用 Python 3.11+。
 - Node.js 22 与 pnpm；桌面端开发还需要 Rust、Tauri 2 和 WebView2。
-- MySQL、Redis 与 TDengine 3.4.0.9。当前 Compose 可托管 Redis / TDengine，但 **不包含 MySQL**。
+- MySQL 8.4、Redis 7.4 与 TDengine 3.4.0.9。Compose 的 `infra` 模式可托管三库；首次部署仍需先恢复完整 MySQL 业务库，步骤见[运维部署](docs/04-运维部署/README.md)。
 - OPC DA 场景需要 .NET Framework 4.8、x86 COM / DCOM 环境。
 
 ### 1. 准备配置

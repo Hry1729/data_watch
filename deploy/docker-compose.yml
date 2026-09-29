@@ -1,8 +1,27 @@
 name: data_watch
 
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: data-watch-mysql
+    profiles:
+      - infra
+    # Pass --env-file ./backend.env to Compose when starting the infra profile.
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-device_watch}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+
   redis:
-    image: redis:latest
+    image: redis:7.4
     container_name: data-watch-redis
     profiles:
       - infra
@@ -86,6 +105,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  mysql_data:
   redis_data:
   tdengine_data:
   tdengine_log:

@@ -176,7 +176,9 @@ test("driver management uses a full-height paginated table with truncated descri
   assert.match(source, /\[10, 20, 50\]/);
   assert.match(source, /source === "bundled"/);
   assert.match(source, /item\.aliases/);
-  assert.match(source, /protected: bundled/);
+  assert.match(source, /protected: item\.protected/);
+  assert.match(source, /if \(row\.source === "bundled" \|\| row\.source === "builtin" \|\| row\.protected\) \{[\s\S]*?protected: true/);
+  assert.match(source, /const official = local\.source === "official";[\s\S]*?protected: false/);
   assert.match(source, /&& !row\.protected/);
   assert.match(source, /安装包内置/);
 });
