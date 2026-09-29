@@ -33,6 +33,10 @@
         </div>
       </div>
     </section>
+    <div v-if="overviewError" class="dashboard-module-state" role="alert">
+      <span>总览加载失败</span>
+      <ElButton text type="primary" @click="retryDashboardModule('总览', loadOverview)">重试</ElButton>
+    </div>
 
     <section class="main-grid">
       <div class="trend-card art-card flex flex-col h-[360px] p-5 bg-[var(--default-box-color)]">
@@ -41,15 +45,22 @@
             <h4 class="text-lg font-medium text-g-900">采集量 / 告警趋势</h4>
           </div>
           <ElSpace>
-            <ElRadioGroup v-model="trendRangeType" size="small" class="range-switch" @change="loadTrend">
+            <ElRadioGroup v-model="trendRangeType" size="small" class="range-switch" @change="retryDashboardModule('趋势', loadTrend)">
               <ElRadioButton label="今天" value="today" />
               <ElRadioButton label="24h" value="last24h" />
               <ElRadioButton label="7d" value="last7d" />
             </ElRadioGroup>
-            <ElButton text type="primary" @click="loadTrend">刷新</ElButton>
+            <ElButton text type="primary" @click="retryDashboardModule('趋势', loadTrend)">刷新</ElButton>
           </ElSpace>
         </div>
         <div class="chart-frame chart-frame--lg flex-1 min-h-0">
+          <div v-if="trendError" class="dashboard-module-state" role="alert">
+            <span>趋势加载失败</span>
+            <ElButton text type="primary" @click="retryDashboardModule('趋势', loadTrend)">重试</ElButton>
+          </div>
+          <div v-else-if="trendLoading" class="dashboard-module-state" role="status">
+            趋势加载中…
+          </div>
           <div ref="trendChartRef" class="chart-surface chart-surface--lg h-full" />
         </div>
       </div>
@@ -61,6 +72,13 @@
           </div>
         </div>
         <div class="health-card__body flex-1 min-h-0 pt-4">
+          <div v-if="healthError" class="dashboard-module-state" role="alert">
+            <span>设备通讯概览加载失败</span>
+            <ElButton text type="primary" @click="retryDashboardModule('设备通讯概览', loadConnectionHealth)">重试</ElButton>
+          </div>
+          <div v-else-if="healthLoading" class="dashboard-module-state" role="status">
+            设备通讯概览加载中…
+          </div>
           <ArtRingChart
             :data="healthChartData"
             :radius="['54%', '70%']"
@@ -82,6 +100,13 @@
           <ElButton text type="primary" @click="goToDevice">查看设备</ElButton>
         </div>
         <div class="distribution-body flex-1 min-h-0 pt-4">
+          <div v-if="deviceTypeError" class="dashboard-module-state" role="alert">
+            <span>设备类型分布加载失败</span>
+            <ElButton text type="primary" @click="retryDashboardModule('设备类型分布', loadDeviceTypeDistribution)">重试</ElButton>
+          </div>
+          <div v-else-if="deviceTypeLoading" class="dashboard-module-state" role="status">
+            设备类型分布加载中…
+          </div>
           <ArtHBarChart
             :data="deviceTypeChartData"
             :xAxisData="deviceTypeXAxisData"
@@ -101,6 +126,13 @@
           <ElButton text type="primary" @click="goToSystemLog">查看更多</ElButton>
         </div>
         <div class="table-like mt-2 flex-1 min-h-0 overflow-y-auto">
+          <div v-if="recentLogsError" class="dashboard-module-state" role="alert">
+            <span>系统报警加载失败</span>
+            <ElButton text type="primary" @click="retryDashboardModule('系统报警', loadRecentLogs)">重试</ElButton>
+          </div>
+          <div v-else-if="recentLogsLoading" class="dashboard-module-state" role="status">
+            系统报警加载中…
+          </div>
           <div class="table-like__head recent-head shrink-0">
             <span>时间</span>
             <span>级别</span>
@@ -121,7 +153,7 @@
               <span class="ellipsis">{{ item.content }}</span>
             </div>
           </div>
-          <ElEmpty v-else description="暂无系统报警" :image-size="96" />
+          <ElEmpty v-else-if="!recentLogsError && !recentLogsLoading" description="暂无系统报警" :image-size="96" />
         </div>
       </div>
     </section>
@@ -144,6 +176,7 @@
     fetchDashboardTrend,
     fetchLogList
   } from '@/api/device-monitor'
+  import { settleDashboardModules } from '@/utils/dashboard-loads'
 
   defineOptions({ name: 'MonitorDashboard' })
 
@@ -194,8 +227,15 @@
   const connectionHealthList = ref<Api.DeviceMonitor.DashboardDeviceConnectionHealthItem[]>([])
   const recentLogList = ref<Api.DeviceMonitor.LogListItem[]>([])
   const overviewLoading = ref(false)
+  const overviewError = ref(false)
+  const trendLoading = ref(false)
+  const trendError = ref(false)
   const deviceTypeLoading = ref(false)
+  const deviceTypeError = ref(false)
   const healthLoading = ref(false)
+  const healthError = ref(false)
+  const recentLogsLoading = ref(false)
+  const recentLogsError = ref(false)
 
   const {
     chartRef: trendChartRef,
@@ -205,6 +245,7 @@
   let refreshTimer: ReturnType<typeof setInterval> | null = null
   let dashboardLoadingPromise: Promise<void> | null = null
   let lastDashboardLoadedAt = 0
+  let trendRequestVersion = 0
 
   const palette = ['#4A6CF7', '#3DBB9A', '#F4A542', '#D66B88', '#6E7FA6', '#95A3BF']
   const DASHBOARD_REFRESH_INTERVAL_MS = 30000
@@ -343,6 +384,7 @@
 
   const loadOverview = async () => {
     overviewLoading.value = true
+    overviewError.value = false
     try {
       const overview = await fetchDashboardOverview()
       statsData.value = {
@@ -354,16 +396,25 @@
         systemAlertCount: overview.systemAlertTotal
       }
       systemAlertCompare.value = overview.systemAlertComparePrev || { countDiff: 0, ratioDiff: 0 }
+    } catch (error) {
+      overviewError.value = true
+      throw error
     } finally {
       overviewLoading.value = false
     }
   }
 
   const loadTrend = async () => {
-    const trend = await fetchDashboardTrend({
+    const requestVersion = ++trendRequestVersion
+    trendLoading.value = true
+    trendError.value = false
+    try {
+      const trend = await fetchDashboardTrend({
         rangeType: trendRangeType.value,
         metricKeys: ['collectCount', 'alarmCount', 'onlineRate']
       })
+
+      if (requestVersion !== trendRequestVersion) return
 
       trendSummary.value = trend.summary
 
@@ -439,13 +490,28 @@
       }
 
       updateTrendChart(trendOptions)
+    } catch (error) {
+      if (requestVersion !== trendRequestVersion) return
+      trendError.value = true
+      throw error
+    } finally {
+      if (requestVersion === trendRequestVersion) trendLoading.value = false
+    }
+  }
+
+  const retryDashboardModule = (name: string, load: () => Promise<void>) => {
+    void load().catch((error) => console.error(`工作台${name}加载失败:`, error))
   }
 
   const loadDeviceTypeDistribution = async () => {
     deviceTypeLoading.value = true
+    deviceTypeError.value = false
     try {
       const data = await fetchDashboardDeviceTypeDistribution(10)
       deviceTypeGroups.value = data.groups || []
+    } catch (error) {
+      deviceTypeError.value = true
+      throw error
     } finally {
       deviceTypeLoading.value = false
     }
@@ -453,6 +519,7 @@
 
   const loadConnectionHealth = async () => {
     healthLoading.value = true
+    healthError.value = false
     try {
       const health = await fetchDashboardDeviceConnectionHealth({
         statRange: 'last24h',
@@ -462,14 +529,19 @@
 
       connectionHealthOverview.value = health.overview
       connectionHealthList.value = health.list || []
-
+    } catch (error) {
+      healthError.value = true
+      throw error
     } finally {
       healthLoading.value = false
     }
   }
 
   const loadRecentLogs = async () => {
-    const now = new Date()
+    recentLogsLoading.value = true
+    recentLogsError.value = false
+    try {
+      const now = new Date()
       const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
       const startTime = formatLocalDateTime(twentyFourHoursAgo)
       const endTime = formatLocalDateTime(now)
@@ -491,6 +563,12 @@
         .slice(0, 8)
 
       recentLogList.value = mergedList
+    } catch (error) {
+      recentLogsError.value = true
+      throw error
+    } finally {
+      recentLogsLoading.value = false
+    }
   }
 
   const loadDashboard = async (force = false) => {
@@ -504,21 +582,23 @@
     }
 
     dashboardLoadingPromise = (async () => {
-      await loadOverview()
       const tasks = [
-        loadTrend(),
-        loadDeviceTypeDistribution(),
-        loadConnectionHealth(),
-        loadRecentLogs()
+        loadOverview,
+        loadTrend,
+        loadDeviceTypeDistribution,
+        loadConnectionHealth,
+        loadRecentLogs
       ]
 
-      const results = await Promise.allSettled(tasks)
+      const results = await settleDashboardModules(tasks)
       results.forEach((result) => {
         if (result.status === 'rejected') {
           console.error('工作台模块加载失败:', result.reason)
         }
       })
-      lastDashboardLoadedAt = Date.now()
+      if (results.every((result) => result.status === 'fulfilled')) {
+        lastDashboardLoadedAt = Date.now()
+      }
     })()
 
     try {
@@ -543,19 +623,7 @@
 
   const goToDevice = () => router.push('/device-monitor/device')
 
-  // 重置数据状态，用于触发动画效果
-  const resetDataForAnimation = () => {
-    statsData.value = { totalDevices: 0, onlineDevices: 0, offlineDevices: 0, riskDevices: 0, totalPoints: 0, systemAlertCount: 0 }
-    systemAlertCompare.value = { countDiff: 0, ratioDiff: 0 }
-    trendSummary.value = { collectCountTotal: 0, alarmCountTotal: 0, onlineRateAvg: 0 }
-    connectionHealthOverview.value = { onlineDevices: 0, offlineDevices: 0, riskDevices: 0 }
-    overviewLoading.value = true
-    deviceTypeLoading.value = true
-    healthLoading.value = true
-  }
-
   onActivated(() => {
-    resetDataForAnimation()
     lastDashboardLoadedAt = 0 // 重置时间戳，确保会加载数据
     void loadDashboard()
     startRefreshTimer()
@@ -576,6 +644,14 @@
     flex-direction: column;
     gap: 16px;
     padding-bottom: 24px;
+  }
+
+  .dashboard-module-state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
   }
 
   .stats-grid,

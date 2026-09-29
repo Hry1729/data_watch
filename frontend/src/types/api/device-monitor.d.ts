@@ -106,6 +106,18 @@ declare namespace Api {
       deviceName?: string
       deviceStatus?: DeviceStatus
       connectStatus?: ConnectStatus
+      includeSummary?: boolean
+    }
+
+    /** 设备统计摘要查询参数；连接状态筛选被忽略以保留状态分布。 */
+    type DeviceSummaryParams = Pick<DeviceSearchParams, 'keyword' | 'deviceType' | 'deviceCode' | 'deviceName' | 'deviceStatus'>
+
+    interface DeviceSummary {
+      total: number
+      onlineCount: number
+      offlineCount: number
+      unstableCount: number
+      disabledCount: number
     }
 
     /** 设备列表响应 */
@@ -152,7 +164,15 @@ declare namespace Api {
       driverName: string
       createTime?: string
       updateTime?: string
+      currentValue?: string | number | boolean | null
     }
+
+    interface PointLatestValue {
+      currentValue?: string | number | boolean | null
+      updateTime?: string
+    }
+
+    type PointLatestValueMap = Record<string, PointLatestValue>
 
     /** 点位设备树节点（评审版） */
     interface PointDeviceTreeNode {

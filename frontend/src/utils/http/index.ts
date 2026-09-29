@@ -37,10 +37,24 @@ interface ExtendedAxiosRequestConfig extends AxiosRequestConfig {
   showErrorMessage?: boolean
   showSuccessMessage?: boolean
   skipAuthorization?: boolean
+  metadata?: { startedAt?: number }
 }
 
 function isBinaryResponse(config?: AxiosRequestConfig) {
   return config?.responseType === 'blob' || config?.responseType === 'arraybuffer'
+}
+
+function getRequestLogMetadata(config: AxiosRequestConfig, headers?: AxiosResponse['headers']) {
+  const requestConfig = config as ExtendedAxiosRequestConfig
+  const requestId = String(headers?.['x-request-id'] || headers?.['X-Request-Id'] || '') || undefined
+  const startedAt = requestConfig.metadata?.startedAt
+
+  return {
+    url: config.url?.split(/[?#]/, 1)[0],
+    method: config.method?.toUpperCase(),
+    requestId,
+    durationMs: startedAt === undefined ? undefined : Math.max(0, Date.now() - startedAt)
+  }
 }
 
 const { VITE_API_URL, VITE_WITH_CREDENTIALS } = import.meta.env
@@ -72,6 +86,8 @@ axiosInstance.interceptors.request.use(
     const { accessToken } = useUserStore()
     if (!request.skipAuthorization && accessToken) request.headers.set('Authorization', accessToken)
 
+    request.metadata = { ...request.metadata, startedAt: Date.now() }
+
     if (request.data && !(request.data instanceof FormData) && !request.headers['Content-Type']) {
       request.headers.set('Content-Type', 'application/json')
       request.data = JSON.stringify(request.data)
@@ -92,7 +108,7 @@ axiosInstance.interceptors.response.use(
     const { code, msg } = response.data
     if (code === ApiStatus.success) return response
     if (code === ApiStatus.unauthorized) handleUnauthorizedError(msg)
-    throw createHttpError(msg || $t('httpMsg.requestFailed'), code)
+    throw createHttpError(msg || $t('httpMsg.requestFailed'), code, getRequestLogMetadata(response.config, response.headers))
   },
   (error) => {
     if (error.response?.status === ApiStatus.unauthorized) handleUnauthorizedError()
@@ -101,8 +117,12 @@ axiosInstance.interceptors.response.use(
 )
 
 /** 统一创建HttpError */
-function createHttpError(message: string, code: number) {
-  return new HttpError(message, code)
+function createHttpError(
+  message: string,
+  code: number,
+  options?: { data?: unknown; url?: string; method?: string; requestId?: string; durationMs?: number }
+) {
+  return new HttpError(message, code, options)
 }
 
 /** 处理401错误（带防抖） */

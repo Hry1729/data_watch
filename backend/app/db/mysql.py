@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from time import perf_counter
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.core.request_metrics import record_operation
 
 
 @lru_cache(maxsize=1)
@@ -16,6 +18,20 @@ def get_mysql_engine() -> AsyncEngine:
     # SQLAlchemy 基于 PyMySQL 的 ping 签名来判断 pymysql 的预检行为，
     # 而 aiomysql 的适配器始终要求 ping(False)。
     engine.sync_engine.dialect._send_false_to_ping = True
+
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _start_query(conn, cursor, statement, parameters, context, executemany) -> None:
+        context._request_query_started = perf_counter()
+
+    @event.listens_for(engine.sync_engine, "after_cursor_execute")
+    def _finish_query(conn, cursor, statement, parameters, context, executemany) -> None:
+        record_operation("mysql", perf_counter() - context._request_query_started)
+
+    @event.listens_for(engine.sync_engine, "handle_error")
+    def _failed_query(exception_context) -> None:
+        started = getattr(exception_context.execution_context, "_request_query_started", None)
+        if started is not None:
+            record_operation("mysql", perf_counter() - started)
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_connection_timezone(dbapi_connection, _connection_record) -> None:

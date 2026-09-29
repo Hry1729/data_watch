@@ -105,6 +105,8 @@ flowchart TD
 
 `views/` 按业务域组织（dashboard/device_monitor/system/auth/exception/result/outside）；`store/modules/user` 等保存用户与权限状态；i18n（`locales`）、主题（`config`/directives）。
 
+设备页的列表与统计摘要分别请求，统计首次返回前显示占位；点位页先呈现 MySQL 配置分页，再按当前页 ID 从 Redis 批量补齐实时值。实时值失败时仅提示并重试当前页，不清空已加载的点位配置。工作台总览、趋势、设备类型、通讯状态和报警模块并行加载，每个模块独立显示加载/错误状态与重试入口；趋势切换时旧请求结果不能覆盖新选择。HTTP 错误区分请求超时和网络失败，并在可用时携带请求 ID 与耗时供排查。
+
 ---
 
 ## 6. 主要流程

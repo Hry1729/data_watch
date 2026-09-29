@@ -4,6 +4,7 @@ import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
+import json
 import logging
 import re
 from typing import Any
@@ -13,9 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.request_metrics import measure_operation
 from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workbook_bytes
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
-from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
+from app.core.time_utils import LOCAL_TZ, now_local, parse_local_datetime, to_local_naive
+from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
 from app.services.device_activity import fetch_latest_collect_times
 
@@ -267,6 +270,17 @@ class CatalogService:
         devices = [self._to_device_item(row) for row in rows]
         filtered_devices = [device for device in devices if self._matches_basic_device_filters(device, params)]
 
+        connect_status = self._normalize_text(params.get("connectStatus"))
+        include_summary = str(params.get("includeSummary", "true")).strip().lower() not in {"false", "0"}
+        if not include_summary and not connect_status:
+            page_devices, page_no, page_size = self._paginate_records(filtered_devices, params)
+            latest_map = await self._fetch_latest_collect_times(page_devices)
+            items = [
+                self._serialize_device_item(device, latest_map.get(device.device_code))
+                for device in page_devices
+            ]
+            return self._build_page_payload(items, len(filtered_devices), page_no, page_size)
+
         # 获取所有过滤后设备的最新采集时间，用于统计在线/离线数量
         all_latest_map = await self._fetch_latest_collect_times(filtered_devices)
         all_items = [
@@ -293,6 +307,20 @@ class CatalogService:
         result["onlineCount"] = online_count
         result["offlineCount"] = offline_count
         return result
+
+    async def get_device_summary(self, params: dict[str, Any]) -> dict[str, int]:
+        rows = await self._fetch_device_rows()
+        devices = [self._to_device_item(row) for row in rows]
+        devices = [device for device in devices if self._matches_basic_device_filters(device, params)]
+        latest_map = await self._fetch_latest_collect_times(devices)
+        items = [self._serialize_device_item(device, latest_map.get(device.device_code)) for device in devices]
+        return {
+            "total": len(items),
+            "onlineCount": sum(item["connectStatus"] == "online" for item in items),
+            "offlineCount": sum(item["connectStatus"] == "offline" for item in items),
+            "unstableCount": sum(item["connectStatus"] == "unstable" for item in items),
+            "disabledCount": sum(item["deviceStatus"] == "disabled" for item in items),
+        }
 
     async def get_device(self, device_id: int) -> dict[str, Any]:
         if device_id <= 0:
@@ -803,29 +831,97 @@ class CatalogService:
         return list(groups.values())
 
     async def list_points(self, params: dict[str, Any]) -> dict[str, Any]:
-        rows = await self._fetch_point_rows()
-        points = [self._to_point_item(row) for row in rows]
-        points = self._filter_point_items(points, params)
-
-        # 先分页，只对当前页点位查询 TDengine 最新值
         page_no = self._to_positive_int(params.get("pageNo") or params.get("current"), default=1)
         page_size = self._to_positive_int(params.get("pageSize") or params.get("size"), default=20)
-        total = len(points)
-        start = (page_no - 1) * page_size
-        end = start + page_size
-        page_points = points[start:end]
-
-        # 只查询当前页点位的最新值
-        latest_value_map = await self._fetch_latest_point_value_map(page_points)
+        where_clause, query_params = self._build_point_filter(params)
+        total = await self._count_point_rows(where_clause, query_params)
+        rows = await self._fetch_point_rows(
+            where_clause=where_clause,
+            query_params=query_params,
+            limit=page_size,
+            offset=(page_no - 1) * page_size,
+        )
+        page_points = [self._to_point_item(row) for row in rows]
 
         items = [
-            self._serialize_point_item(point, latest_value_map.get(point.point_id))
+            self._serialize_point_item(point, None)
             for point in page_points
         ]
         result = self._build_page_payload(items, total, page_no, page_size)
         # recentUpdateCount 保留但不统计（因为只查询了当前页）
         result["recentUpdateCount"] = 0
         return result
+
+    async def get_point_latest_values(self, raw_point_ids: list[Any] | Any) -> dict[str, dict[str, Any]]:
+        if raw_point_ids is None:
+            raise ApiError(400, "pointIds must contain at least one valid id", status_code=400)
+        try:
+            point_ids = self._normalize_id_list(raw_point_ids, field_name="pointIds")
+        except ApiError as exc:
+            raise ApiError(exc.code, exc.message, status_code=exc.code) from exc
+        if len(point_ids) > 100:
+            raise ApiError(400, "pointIds must contain at most 100 ids", status_code=400)
+
+        statement = text(
+            """
+            SELECT dv.id AS point_id, d.device_code AS device_code,
+                   COALESCE(NULLIF(dpg.group_code, ''), 'g001') AS group_code,
+                   dv.var_type AS data_type
+            FROM device_variable AS dv
+            JOIN device AS d ON d.id = dv.device_id
+            LEFT JOIN device_point_group AS dpg ON dpg.id = dv.point_group_id
+            WHERE dv.id IN :point_ids AND COALESCE(dv.deleted, 0) = 0
+            """
+        ).bindparams(bindparam("point_ids", expanding=True))
+        rows = (
+            await self.session.execute(statement, {"point_ids": point_ids})
+        ).mappings().all()
+        if len(rows) != len(point_ids):
+            raise ApiError(404, "Point not found", status_code=404)
+
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in rows:
+            key = (str(row["device_code"]), str(row["group_code"]))
+            grouped.setdefault(key, []).append(dict(row))
+
+        try:
+            with measure_operation("redis"):
+                async with asyncio.timeout(3.0):
+                    redis = await get_redis_client()
+                    pipeline = redis.pipeline(transaction=False)
+                    for (device_code, group_code), group_rows in grouped.items():
+                        pipeline.hmget(
+                            f"rt:latest:{device_code}:{group_code}",
+                            [str(row["point_id"]) for row in group_rows],
+                        )
+                    groups_values = await pipeline.execute()
+        except TimeoutError as exc:
+            logger.warning("[catalog] 批量查询点位实时值超时: %s", exc)
+            raise ApiError(504, "实时数据读取超时", status_code=504) from exc
+        except Exception as exc:
+            logger.warning("[catalog] 批量查询点位实时值失败: %s", exc)
+            raise ApiError(503, "实时数据服务暂不可用", status_code=503) from exc
+
+        latest_values: dict[str, dict[str, Any]] = {}
+        for group_rows, raw_values in zip(grouped.values(), groups_values, strict=False):
+            for row, raw_value in zip(group_rows, raw_values, strict=False):
+                if raw_value is None:
+                    continue
+                try:
+                    entry = json.loads(raw_value)
+                    if not isinstance(entry, dict) or entry.get("v") is None:
+                        continue
+                    current_value = self._normalize_point_value(
+                        self._normalize_data_type(row["data_type"]), entry["v"]
+                    )
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                point_value: dict[str, Any] = {"currentValue": current_value}
+                collected_at = parse_local_datetime(entry.get("t"))
+                if collected_at is not None:
+                    point_value["updateTime"] = self._format_datetime(collected_at)
+                latest_values[str(row["point_id"])] = point_value
+        return latest_values
 
     async def get_point(
         self,
@@ -2225,46 +2321,125 @@ class CatalogService:
         ).mappings().all()
         return [dict(row) for row in rows]
 
-    async def _fetch_point_rows(self) -> list[dict[str, Any]]:
+    async def _fetch_point_rows(
+        self,
+        *,
+        where_clause: str = "",
+        query_params: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        paging_clause = " LIMIT :page_limit OFFSET :page_offset" if limit is not None else ""
+        bind_values = dict(query_params or {})
+        if limit is not None:
+            bind_values.update(page_limit=limit, page_offset=offset)
+        statement = text(
+            # 查询设备的测点详细信息
+            f"""
+            SELECT
+                dv.id AS point_id,
+                dv.device_id AS device_id,
+                d.device_code AS device_code,
+                COALESCE(d.device_name, d.device_code) AS device_name,
+                COALESCE(dv.var_name, CAST(dv.var_seq AS CHAR), '') AS point_name,
+                COALESCE(dv.var_address, '') AS io_address,
+                UPPER(COALESCE(dv.var_type, 'STRING')) AS data_type,
+                COALESCE(dv.description, '') AS description,
+                COALESCE(cp.protocol, '') AS driver_name,
+                dv.create_time AS create_time,
+                dv.update_time AS update_time,
+                dv.var_seq AS var_seq,
+                dv.scan_rate AS scan_rate,
+                COALESCE(dv.is_alarm, 0) AS is_alarm,
+                COALESCE(dv.is_storage, 0) AS is_storage,
+                CASE
+                    WHEN UPPER(COALESCE(dv.io_type, '')) IN ('OUTPUT', 'WRITE', 'RW')
+                        THEN 0
+                    ELSE 1
+                END AS is_readonly,
+                d.group_id AS group_id,
+                dv.td_column_name AS td_column_name,
+                COALESCE(dv.enable, 0) AS enabled
+            FROM device_variable AS dv
+            JOIN device AS d ON d.id = dv.device_id
+            LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
+            WHERE COALESCE(dv.deleted, 0) = 0{where_clause}
+            ORDER BY dv.id ASC{paging_clause}
+            """
+        )
+        if "device_ids" in bind_values:
+            statement = statement.bindparams(bindparam("device_ids", expanding=True))
         rows = (
-            await self.session.execute(
-                text(
-                    # 查询设备的测点详细信息
-                    """
-                    SELECT
-                        dv.id AS point_id,
-                        dv.device_id AS device_id,
-                        d.device_code AS device_code,
-                        COALESCE(d.device_name, d.device_code) AS device_name,
-                        COALESCE(dv.var_name, CAST(dv.var_seq AS CHAR), '') AS point_name,
-                        COALESCE(dv.var_address, '') AS io_address,
-                        UPPER(COALESCE(dv.var_type, 'STRING')) AS data_type,
-                        COALESCE(dv.description, '') AS description,
-                        COALESCE(cp.protocol, '') AS driver_name,
-                        dv.create_time AS create_time,
-                        dv.update_time AS update_time,
-                        dv.var_seq AS var_seq,
-                        dv.scan_rate AS scan_rate,
-                        COALESCE(dv.is_alarm, 0) AS is_alarm,
-                        COALESCE(dv.is_storage, 0) AS is_storage,
-                        CASE
-                            WHEN UPPER(COALESCE(dv.io_type, '')) IN ('OUTPUT', 'WRITE', 'RW')
-                                THEN 0
-                            ELSE 1
-                        END AS is_readonly,
-                        d.group_id AS group_id,
-                        dv.td_column_name AS td_column_name,
-                        COALESCE(dv.enable, 0) AS enabled
-                    FROM device_variable AS dv
-                    JOIN device AS d ON d.id = dv.device_id
-                    LEFT JOIN comm_protocol AS cp ON cp.id = d.protocol_id
-                    WHERE COALESCE(dv.deleted, 0) = 0
-                    ORDER BY dv.id ASC
-                    """
-                )
-            )
+            await self.session.execute(statement, bind_values)
         ).mappings().all()
         return [dict(row) for row in rows]
+
+    async def _count_point_rows(self, where_clause: str, query_params: dict[str, Any]) -> int:
+        statement = text(
+            "SELECT COUNT(*) FROM device_variable AS dv "
+            "JOIN device AS d ON d.id = dv.device_id "
+            f"WHERE COALESCE(dv.deleted, 0) = 0{where_clause}"
+        )
+        if "device_ids" in query_params:
+            statement = statement.bindparams(bindparam("device_ids", expanding=True))
+        result = await self.session.execute(statement, query_params)
+        return int(result.scalar_one())
+
+    def _build_point_filter(self, params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        clauses: list[str] = []
+        bind_values: dict[str, Any] = {}
+
+        for field, column in (("deviceId", "dv.device_id"), ("groupId", "d.group_id"), ("varSeq", "dv.var_seq")):
+            value = self._to_positive_int(params.get(field), required=False)
+            if value is not None:
+                name = field.lower()
+                clauses.append(f"{column} = :{name}")
+                bind_values[name] = value
+
+        if params.get("deviceIds") is not None:
+            bind_values["device_ids"] = self._normalize_id_list(params["deviceIds"], field_name="deviceIds")
+            clauses.append("dv.device_id IN :device_ids")
+
+        point_name = "COALESCE(NULLIF(dv.var_name, ''), CAST(dv.var_seq AS CHAR), '')"
+        text_filters = (
+            ("deviceCode", "d.device_code"),
+            ("pointName", point_name),
+            ("ioAddress", "dv.var_address"),
+        )
+        for field, column in text_filters:
+            value = self._normalize_text(params.get(field))
+            if value:
+                name = field.lower()
+                clauses.append(f"LOCATE(:{name}, LOWER(TRIM(COALESCE({column}, '')))) > 0")
+                bind_values[name] = value
+
+        data_type = self._normalize_text(params.get("dataType"))
+        if data_type:
+            clauses.append(
+                "CASE WHEN UPPER(TRIM(COALESCE(dv.var_type, 'STRING'))) "
+                "IN ('BOOL', 'INT', 'DINT', 'REAL', 'STRING', 'WORD', 'DWORD') "
+                "THEN UPPER(TRIM(COALESCE(dv.var_type, 'STRING'))) ELSE 'STRING' END = :datatype"
+            )
+            bind_values["datatype"] = data_type.upper()
+
+        keyword = self._normalize_text(params.get("keyword"))
+        if keyword:
+            searchable = (
+                point_name,
+                "dv.var_address",
+                "dv.description",
+                "d.device_code",
+                "CAST(dv.var_seq AS CHAR)",
+            )
+            clauses.append(
+                "(" + " OR ".join(
+                    f"LOCATE(:keyword, LOWER(TRIM(COALESCE({column}, '')))) > 0"
+                    for column in searchable
+                ) + ")"
+            )
+            bind_values["keyword"] = keyword
+
+        return "".join(f" AND {clause}" for clause in clauses), bind_values
 
     def _to_device_item(self, row: dict[str, Any]) -> DeviceCatalogItem:
         return DeviceCatalogItem(
@@ -2733,11 +2908,14 @@ class CatalogService:
             devices_by_type.setdefault(type_code, []).append(device)
 
         if not devices_by_type:
-            return {}
+            return redis_times
 
         type_codes = list(devices_by_type.keys())
         results = await asyncio.gather(
-            *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
+            *(
+                asyncio.wait_for(self._fetch_type_latest_collect_times(database_name, type_code), timeout=5.0)
+                for type_code in type_codes
+            ),
             return_exceptions=True,
         )
 

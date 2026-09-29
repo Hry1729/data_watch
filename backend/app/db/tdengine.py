@@ -13,10 +13,12 @@ from sqlalchemy.engine import Engine, URL
 from sqlalchemy.exc import NoSuchModuleError
 
 from app.core.config import get_settings
+from app.core.request_metrics import measure_operation
 
 logger = logging.getLogger("backend.tdengine")
 
 _POOL_SIZE = 5
+_QUEUE_WAIT_SECONDS = 3.0
 _query_semaphore = asyncio.Semaphore(_POOL_SIZE)
 _engine_lock = threading.Lock()
 _tdengine_engine: Engine | None = None
@@ -95,9 +97,30 @@ class TDengineClient:
             resolved_table_name = table_name
         return f"{self.quote_identifier(database_name)}.{self.quote_identifier(resolved_table_name)}"
 
-    async def fetch_all(self, sql: str, database: str | None = None) -> list[tuple[Any, ...]]:
-        async with _query_semaphore:
-            return await asyncio.to_thread(self._fetch_all_sync, sql, database)
+    async def fetch_all(
+        self, sql: str, database: str | None = None, timeout: float | None = None,
+    ) -> list[tuple[Any, ...]]:
+        with measure_operation("td_queue"):
+            try:
+                await asyncio.wait_for(_query_semaphore.acquire(), timeout=_QUEUE_WAIT_SECONDS)
+            except TimeoutError as exc:
+                raise TimeoutError("TDengine query queue timed out") from exc
+
+        async def run_query() -> list[tuple[Any, ...]]:
+            try:
+                with measure_operation("td_query"):
+                    return await asyncio.to_thread(self._fetch_all_sync, sql, database)
+            finally:
+                _query_semaphore.release()
+
+        task = asyncio.create_task(run_query())
+        try:
+            if timeout is None:
+                return await asyncio.shield(task)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except (TimeoutError, asyncio.CancelledError):
+            task.add_done_callback(_consume_query_result)
+            raise
 
     def _fetch_all_sync(self, sql: str, database: str | None = None) -> list[tuple[Any, ...]]:
         if self.use_ssl:
@@ -174,6 +197,13 @@ def _log_pool_unavailable_once(exc: Exception) -> None:
         exc,
     )
     _pool_unavailable_logged = True
+
+
+def _consume_query_result(task: asyncio.Task[list[tuple[Any, ...]]]) -> None:
+    try:
+        task.result()
+    except (Exception, asyncio.CancelledError):
+        pass
 
 
 async def close_tdengine() -> None:

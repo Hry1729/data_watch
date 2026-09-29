@@ -213,7 +213,7 @@ sequenceDiagram
 |------|------|
 | 鉴权 | `/api/auth/login`、`/logout`、`/api/user/password/change` |
 | 用户/角色/菜单 | `/api/user`、`/api/role`、`/api/v3/system/menu`（system_manage） |
-| 设备/点位目录 | `/api/device-monitor/device`、`/point`、`/import`（catalog） |
+| 设备/点位目录 | `/api/device-monitor/device/list`、`/device/summary`、`/point/list`、`/point/latest`、`/import`（catalog） |
 | 仪表盘 | `/api/device-monitor/dashboard/*` |
 | 历史 | `/api/device-monitor/history/*`、`/export` |
 | 日志 | `/api/device-monitor/log/*` |
@@ -222,6 +222,8 @@ sequenceDiagram
 | 历史 WS | perspective 端点（历史快照） |
 
 响应统一经 `core/responses.py` 包装；异常经 `core/exceptions.py` 的 `ApiError` 与注册的处理器转标准错误体。完整字段见《03-数据与契约/契约/API契约》《WebSocket协议》。
+
+设备列表可先返回当前页，统计摘要另取；点位目录在 MySQL 侧计数与分页，当前页实时值由 Redis 批量接口单独读取。关键页面请求的 `x-request-id` 与 `server-timing` 响应头、MySQL/Redis/TDengine 分段耗时写入后端请求日志。趋势请求设总超时，并区分数据服务失败与真实零值。
 
 ---
 

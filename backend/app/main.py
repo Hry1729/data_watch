@@ -26,6 +26,7 @@ from app.db.redis import close_redis
 from app.db.tdengine import close_tdengine
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
+from app.core.request_metrics import observe_http
 from app.core.log_writer import write_system_log, write_system_log_sync
 from app.core.log_scheduler import start_log_scheduler, stop_log_scheduler
 from app.http_body import RequestBodyTooLarge, read_limited_body
@@ -277,6 +278,9 @@ class ASGICompatWebSocket(TurboWebSocket):
 
 class EnhancedASGITurboAPI(TurboAPI):
     async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        await observe_http(self._dispatch_asgi, scope, receive, send)
+
+    async def _dispatch_asgi(self, scope: dict, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
             lifespan_cm = None
             lifespan_started = False

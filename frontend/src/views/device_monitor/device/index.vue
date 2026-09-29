@@ -105,7 +105,8 @@
                 <ArtSvgIcon icon="ri:hard-drive-2-line" />
               </div>
               <div class="total-card__content">
-                <ArtCountTo :target="currentScopeCount" :duration="2000" />
+                <ArtCountTo v-if="deviceListLoaded" :target="currentScopeCount" :duration="2000" />
+                <span v-else class="text-g-900 tabular-nums">—</span>
                 <span class="total-card__label">当前范围</span>
               </div>
               <div class="total-card__progress"></div>
@@ -124,6 +125,9 @@
               icon="ri:wifi-off-line"
               iconStyle="bg-[rgba(212,79,99,0.1)] text-[#d44f63]"
             />
+            <ElButton v-if="summaryError" type="warning" link @click="loadDeviceSummary">
+              统计加载失败，重试
+            </ElButton>
           </div>
         </div>
 
@@ -146,7 +150,7 @@
             :loading="loading"
             :show-zebra="false"
             layout="search,refresh,size,fullscreen,columns"
-            @refresh="refreshData"
+            @refresh="handleRefresh"
           >
             <template #left>
               <ElSpace wrap>
@@ -253,6 +257,7 @@
     fetchDeleteDevice,
     fetchDeviceGroupTree,
     fetchDeviceList,
+    fetchDeviceSummary,
     fetchDriverOptions,
     fetchExportDevices,
     fetchImportDevices,
@@ -269,6 +274,7 @@
 
   type DeviceListItem = Api.DeviceMonitor.DeviceListItem
   type DeviceSearchParams = Api.DeviceMonitor.DeviceSearchParams
+  type DeviceSummary = Api.DeviceMonitor.DeviceSummary
   type ImportResult = Api.DeviceMonitor.ImportResult
 
   interface TreeNode {
@@ -398,13 +404,13 @@
     { prop: 'operation', label: '操作', width: 160, fixed: 'right', useSlot: true }
   ]
 
+  const deviceListLoaded = ref(false)
   const {
     loading,
     data,
     pagination,
     columns,
     columnChecks,
-    responseMeta,
     getData,
     replaceSearchParams,
     refreshData,
@@ -425,10 +431,48 @@
         size: 'pageSize'
       },
       columnsFactory
+    },
+    hooks: {
+      onSuccess: () => {
+        deviceListLoaded.value = true
+      },
+      onCacheHit: () => {
+        deviceListLoaded.value = true
+      }
     }
   })
 
   const tableRows = computed(() => data.value as DeviceListItem[])
+  const deviceSummary = ref<DeviceSummary | null>(null)
+  const summaryError = ref(false)
+  let summaryScope = ''
+  let summaryRequestId = 0
+
+  const loadDeviceSummary = async () => {
+    const params: Api.DeviceMonitor.DeviceSummaryParams = {
+      keyword: searchForm.value.keyword,
+      deviceStatus: searchForm.value.deviceStatus,
+      deviceType: activeGroupValue.value,
+      deviceCode: selectedDeviceCode.value,
+      deviceName: searchForm.value.deviceName
+    }
+    const scope = JSON.stringify(params)
+    const requestId = ++summaryRequestId
+    if (summaryScope !== scope) {
+      summaryScope = scope
+      deviceSummary.value = null
+    }
+    summaryError.value = false
+    try {
+      const result = await fetchDeviceSummary(params)
+      if (requestId !== summaryRequestId) return
+      deviceSummary.value = result
+    } catch (error) {
+      if (requestId !== summaryRequestId) return
+      console.error('加载设备统计失败:', error)
+      summaryError.value = true
+    }
+  }
 
   const deviceTreeCount = computed(() => {
     // 排除"全部设备"节点（key 为 'all'），避免重复计算
@@ -447,18 +491,20 @@
   })
   const currentScopeCount = computed(() => pagination.total || tableRows.value.length)
 
-  // 计算在线/异常比例（基于后端返回的统计信息）
-  const onlineRate = computed(() => {
-    const totalCount = pagination.total
-    const onlineCount = (responseMeta.value?.onlineCount as number) || 0
+  // 统计接口独立于列表，实时状态筛选不改变在线/异常比例的统计范围。
+  const onlineRate = computed<number | null>(() => {
+    if (!deviceSummary.value) return null
+    const totalCount = deviceSummary.value.total
+    const onlineCount = deviceSummary.value.onlineCount
     if (!totalCount) return 0
     return Number(((onlineCount / totalCount) * 100).toFixed(1))
   })
-  const abnormalRate = computed(() => {
-    const totalCount = pagination.total
-    const offlineCount = (responseMeta.value?.offlineCount as number) || 0
+  const abnormalRate = computed<number | null>(() => {
+    if (!deviceSummary.value) return null
+    const totalCount = deviceSummary.value.total
+    const onlineCount = deviceSummary.value.onlineCount
     if (!totalCount) return 0
-    return Number(((offlineCount / totalCount) * 100).toFixed(1))
+    return Number((((totalCount - onlineCount) / totalCount) * 100).toFixed(1))
   })
 
   const collapsedGroupList = computed(() => {
@@ -559,9 +605,16 @@
       deviceStatus: searchForm.value.deviceStatus,
       connectStatus: searchForm.value.connectStatus,
       deviceType: activeGroupValue.value,
-      deviceCode: selectedDeviceCode.value
+      deviceCode: selectedDeviceCode.value,
+      deviceName: searchForm.value.deviceName
     })
     getData()
+    void loadDeviceSummary()
+  }
+
+  const handleRefresh = () => {
+    void refreshData()
+    void loadDeviceSummary()
   }
 
   const handleSearch = () => {
@@ -619,6 +672,7 @@
         await fetchDeleteDevice(row.id)
         ElMessage.success('删除成功')
         refreshRemove()
+        void loadDeviceSummary()
         loadDeviceGroupTree()
       } catch {
         ElMessage.error('删除失败')
@@ -639,6 +693,7 @@
         ElMessage.success('批量删除成功')
         selectedRows.value = []
         refreshRemove()
+        void loadDeviceSummary()
         loadDeviceGroupTree()
       } catch {
         ElMessage.error('批量删除失败')
@@ -712,6 +767,7 @@
         const result = await fetchImportDevices(file)
         showImportResult(result)
         refreshCreate()
+        void loadDeviceSummary()
         loadDeviceGroupTree()
       } catch (error) {
         ElMessage.error(error instanceof Error ? error.message : '导入失败')
@@ -780,10 +836,12 @@
         await fetchAddDevice(formData)
         ElMessage.success('新增成功')
         refreshCreate()
+        void loadDeviceSummary()
       } else {
         await fetchUpdateDevice(formData)
         ElMessage.success('编辑成功')
         refreshUpdate()
+        void loadDeviceSummary()
       }
 
       dialogVisible.value = false
@@ -805,6 +863,7 @@
   onMounted(() => {
     loadDeviceGroupTree()
     loadDriverOptions()
+    void loadDeviceSummary()
   })
 </script>
 

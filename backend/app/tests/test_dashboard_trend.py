@@ -1,12 +1,15 @@
 import os
 import sys
+import asyncio
 import unittest
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from app.core.time_utils import LOCAL_TZ
+from app.core.exceptions import ApiError
+from app.services import dashboard as dashboard_module
 from app.services.dashboard import DashboardService, DashboardTrendDevice
 
 
@@ -93,6 +96,7 @@ class TestDashboardTrend(unittest.IsolatedAsyncioTestCase):
         tdengine.fetch_all.assert_awaited_once_with(
             "SHOW TABLES",
             database="device_data",
+            timeout=dashboard_module._TREND_QUERY_TIMEOUT_SECONDS,
         )
 
     async def test_trend_table_probe_failure_does_not_query_every_device(self):
@@ -101,14 +105,15 @@ class TestDashboardTrend(unittest.IsolatedAsyncioTestCase):
         tdengine.fetch_all = AsyncMock(side_effect=RuntimeError("Authentication failure"))
         service = DashboardService(session=None, tdengine=tdengine)
 
-        result = await service._filter_trend_devices_with_existing_tables(
-            [
-                DashboardTrendDevice(device_id=1, device_code="QC100"),
-                DashboardTrendDevice(device_id=2, device_code="QC101"),
-            ]
-        )
+        with self.assertRaises(ApiError) as failure:
+            await service._filter_trend_devices_with_existing_tables(
+                [
+                    DashboardTrendDevice(device_id=1, device_code="QC100"),
+                    DashboardTrendDevice(device_id=2, device_code="QC101"),
+                ]
+            )
 
-        self.assertEqual(result, [])
+        self.assertEqual(failure.exception.status_code, 503)
         self.assertEqual(tdengine.fetch_all.await_count, 1)
 
     async def test_dashboard_device_query_only_includes_enabled_devices(self):
@@ -141,6 +146,63 @@ class TestDashboardTrend(unittest.IsolatedAsyncioTestCase):
             "SHOW STABLES",
             database="device_data",
         )
+
+    async def test_trend_reuses_successful_result(self):
+        dashboard_module._trend_cache.clear()
+        service = DashboardService(session=None, tdengine=None)
+        service._build_trend = AsyncMock(return_value={"series": [1]})
+
+        first = await service.get_trend({"rangeType": "today"})
+        second = await service.get_trend({"rangeType": "today"})
+
+        self.assertIs(first, second)
+        self.assertEqual(service._build_trend.await_count, 1)
+
+    async def test_trend_timeout_fails_and_is_not_cached(self):
+        dashboard_module._trend_cache.clear()
+        service = DashboardService(session=None, tdengine=None)
+
+        async def never_finishes(*_args):
+            await asyncio.Event().wait()
+
+        service._build_trend = AsyncMock(side_effect=never_finishes)
+        with patch.object(dashboard_module, "_TREND_TIMEOUT_SECONDS", 0.01):
+            with self.assertRaises(ApiError) as failure:
+                await service.get_trend({"rangeType": "today"})
+        self.assertEqual(failure.exception.status_code, 504)
+
+        service._build_trend = AsyncMock(return_value={"series": [2]})
+        self.assertEqual(await service.get_trend({"rangeType": "today"}), {"series": [2]})
+        self.assertEqual(service._build_trend.await_count, 1)
+
+    async def test_trend_query_failure_is_not_cached_and_cancels_other_device_wrappers(self):
+        dashboard_module._trend_cache.clear()
+        service = DashboardService(session=None, tdengine=None)
+        start = datetime(2026, 8, 6, 10)
+        devices = [
+            DashboardTrendDevice(device_id=1, device_code="QC301"),
+            DashboardTrendDevice(device_id=2, device_code="QC302"),
+        ]
+        service._resolve_time_range = lambda _range_type: (start, start + timedelta(hours=1))
+        service._build_bucket_starts = lambda *_args: [start]
+        service._fetch_trend_devices = AsyncMock(return_value=devices)
+        service._filter_trend_devices_with_existing_tables = AsyncMock(return_value=devices)
+        second_cancelled = asyncio.Event()
+
+        async def query(*, device, **_kwargs):
+            if device.device_id == 1:
+                await asyncio.sleep(0)
+                raise ApiError(503, "TDengine unavailable", status_code=503)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                second_cancelled.set()
+
+        service._fetch_device_bucket_counts = AsyncMock(side_effect=query)
+        with self.assertRaises(ApiError):
+            await service.get_trend({"rangeType": "last7d"})
+        await asyncio.wait_for(second_cancelled.wait(), timeout=1)
+        self.assertFalse(dashboard_module._trend_cache)
 
 
 if __name__ == "__main__":

@@ -204,6 +204,8 @@ pageNo=1&pageSize=20
 | `/dashboard/device-connection-health` | 连接健康 |
 | `/dashboard/alarm-distribution` | 告警分布 |
 
+`/dashboard/trend` 对慢查询设有限时。超时返回 HTTP 504；TDengine 查询或告警统计不可用时返回 HTTP 503，调用方应显示失败并提供重试，不能把错误当作零值趋势。相同查询参数的成功结果在服务进程内短时缓存 30 秒。
+
 #### 设备 / 点位 / 驱动
 
 | 路径 | 用途 |
@@ -211,8 +213,14 @@ pageNo=1&pageSize=20
 | `/driver/list`、`/driver/options` | 驱动与协议选项 |
 | `/device/list`、`/device/{id}`、`/device`、`/device/batch` | 设备查询/详情/CRUD/批量操作 |
 | `/device/import`、`/device/export`、`/device/group-tree` | 设备导入导出/树 |
+| `/device/summary` | 按设备基础筛选条件返回 `total`、`onlineCount`、`offlineCount`、`unstableCount`、`disabledCount` |
 | `/point/list`、`/point/{id}`、`/point`、`/point/batch` | 点位查询/详情/CRUD/批量操作 |
 | `/point/import`、`/point/import/template`、`/point/export`、`/point/device-tree` | 点位导入导出/树 |
+| `/point/latest` | 批量读取指定点位的 Redis 最新值与采集时间 |
+
+`GET /device/list` 可传 `includeSummary=false`：此时无 `connectStatus` 筛选时先分页，再只查询当前页的采集活动时间；默认保留原有统计行为。`GET /device/summary` 使用与设备列表相同的 `keyword`、`deviceType`、`deviceCode`、`deviceName`、`deviceStatus` 基础筛选，不接收连接状态筛选，因此状态分布统计与连接状态列表筛选分开。两者均需 `device_monitor:device:view` 权限。
+
+`GET /point/list` 在 MySQL 侧执行筛选、总数统计与分页，返回点位配置；未加载实时值时 `currentValue` 为 `"--"`。`GET /point/latest` 需 `device_monitor:point:view` 权限，使用重复的 `pointIds` 查询参数传入 1～100 个点位 ID；返回以点位 ID 字符串为键的对象，存在有效最新值时字段为 `currentValue` 和可选 `updateTime`。无值的点位不出现在该对象中。ID 无效或超过 100 个返回 HTTP 400，点位不存在返回 HTTP 404，Redis 不可用或读取超时分别返回 HTTP 503/504。
 
 #### 实时监控
 

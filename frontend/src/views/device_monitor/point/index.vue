@@ -103,7 +103,8 @@
                 <ArtSvgIcon icon="ri:flashlight-line" />
               </div>
               <div class="total-card__content">
-                <ArtCountTo :target="pagination.total || data.length" :duration="2000" />
+                <ArtCountTo v-if="pointListLoaded" :target="pagination.total || data.length" :duration="2000" />
+                <span v-else class="text-g-900 tabular-nums">—</span>
                 <span class="total-card__label">点位总数</span>
               </div>
               <div class="total-card__progress"></div>
@@ -131,6 +132,13 @@
         />
 
         <div class="table-panel">
+          <div v-if="pointLatestError" class="point-latest-state" role="alert">
+            <span>当前页实时值加载失败，点位配置仍可使用</span>
+            <ElButton text type="primary" @click="loadPointLatestValues">重试当前页</ElButton>
+          </div>
+          <div v-else-if="pointLatestLoading" class="point-latest-state" role="status">
+            正在加载当前页实时值…
+          </div>
           <ArtTableHeader
             v-model:columns="columnChecks"
             v-model:showSearchBar="showSearchBar"
@@ -206,7 +214,7 @@
 </template>
 
 <script setup lang="ts">
-  import { computed, defineAsyncComponent, h, nextTick, onMounted, ref, watch } from 'vue'
+  import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
   import { useRoute } from 'vue-router'
   import { Search, Folder, Monitor, Plus, Upload, Download, Delete } from '@element-plus/icons-vue'
   import { ElButton, ElMessage, ElMessageBox, type ElTree } from 'element-plus'
@@ -229,11 +237,13 @@
     fetchImportPointsFromTemplate,
     fetchPointDetail,
     fetchPointDeviceTree,
+    fetchPointLatestValues,
     fetchPointList,
     fetchUpdatePoint
   } from '@/api/device-monitor'
   import type { ColumnOption } from '@/types/component'
   import { DialogType } from '@/types'
+  import { mergePointLatestValues } from '@/utils/point-latest-values'
 
   defineOptions({ name: 'PointManage' })
 
@@ -350,6 +360,11 @@
     { prop: 'operation', label: '操作', width: 168, fixed: 'right', useSlot: true }
   ]
 
+  const pointListRevision = ref(0)
+  const pointListLoaded = ref(false)
+  const pointLatestLoading = ref(false)
+  const pointLatestError = ref(false)
+
   const {
     loading,
     data,
@@ -379,7 +394,58 @@
         size: 'pageSize'
       },
       columnsFactory
+    },
+    hooks: {
+      onSuccess: () => {
+        pointListLoaded.value = true
+        pointListRevision.value += 1
+      },
+      onCacheHit: () => {
+        pointListLoaded.value = true
+        pointListRevision.value += 1
+      }
     }
+  })
+
+  const pointPageKey = computed(() => (data.value as PointListItem[]).map((row) => row.id).join(','))
+  let pointLatestValueRequestVersion = 0
+
+  const loadPointLatestValues = async () => {
+    const requestVersion = ++pointLatestValueRequestVersion
+    const listRevision = pointListRevision.value
+    const currentRows = data.value as PointListItem[]
+    const pointIds = currentRows.map((row) => row.id)
+    pointLatestError.value = false
+    if (!pointIds.length) {
+      pointLatestLoading.value = false
+      return
+    }
+
+    pointLatestLoading.value = true
+    try {
+      const latestValues = await fetchPointLatestValues(pointIds)
+      if (requestVersion !== pointLatestValueRequestVersion || listRevision !== pointListRevision.value) return
+
+      const merged = mergePointLatestValues(data.value as PointListItem[], pointIds, latestValues)
+      if (merged) data.value = merged as typeof data.value
+    } catch (error) {
+      if (requestVersion === pointLatestValueRequestVersion && listRevision === pointListRevision.value) {
+        pointLatestError.value = true
+        console.error('加载点位当前值失败:', error)
+      }
+    } finally {
+      if (requestVersion === pointLatestValueRequestVersion && listRevision === pointListRevision.value) {
+        pointLatestLoading.value = false
+      }
+    }
+  }
+
+  watch([pointListRevision, pointPageKey], () => {
+    void loadPointLatestValues()
+  }, { immediate: true })
+
+  onUnmounted(() => {
+    pointLatestValueRequestVersion += 1
   })
 
   const deviceCount = computed(() => {
@@ -389,7 +455,8 @@
   })
 
   // 计算近期更新比例（基于后端返回的统计信息）
-  const recentUpdateRate = computed(() => {
+  const recentUpdateRate = computed<number | null>(() => {
+    if (!pointListLoaded.value) return null
     const totalCount = pagination.total
     const recentUpdateCount = (responseMeta.value?.recentUpdateCount as number) || 0
     if (!totalCount) return 0
@@ -918,6 +985,15 @@
     flex: 1;
     flex-direction: column;
     min-height: 0;
+  }
+
+  .point-latest-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
   }
 
   .tree-shell {

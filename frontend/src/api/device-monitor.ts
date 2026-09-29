@@ -164,8 +164,17 @@ export function fetchDeviceList(params: Api.DeviceMonitor.DeviceSearchParams) {
       deviceCode: params.deviceCode,
       deviceName: params.deviceName,
       deviceStatus: params.deviceStatus,
-      connectStatus: params.connectStatus
+      connectStatus: params.connectStatus,
+      includeSummary: params.includeSummary ?? false
     }
+  })
+}
+
+/** 获取设备统计摘要；默认统计当前基础筛选范围，不受连接状态筛选影响。 */
+export function fetchDeviceSummary(params: Api.DeviceMonitor.DeviceSummaryParams = {}) {
+  return request.get<Api.DeviceMonitor.DeviceSummary>({
+    url: `${BASE_URL}/device/summary`,
+    params
   })
 }
 
@@ -272,6 +281,25 @@ export function fetchPointList(params: Api.DeviceMonitor.PointSearchParams) {
       ioAddress: params.ioAddress
     }
   })
+}
+
+/** 批量获取当前页点位实时值。 */
+export function fetchPointLatestValues(pointIds: number[]) {
+  const batches: number[][] = []
+  for (let index = 0; index < pointIds.length; index += 100) {
+    batches.push(pointIds.slice(index, index + 100))
+  }
+
+  return Promise.all(
+    batches.map((batch) => {
+      const params = new URLSearchParams()
+      batch.forEach((id) => params.append('pointIds', String(id)))
+      return request.get<Api.DeviceMonitor.PointLatestValueMap>({
+        url: `${BASE_URL}/point/latest`,
+        params
+      })
+    })
+  ).then((results) => Object.assign({}, ...results))
 }
 
 /** 获取点位详情 */

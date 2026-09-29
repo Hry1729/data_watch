@@ -208,7 +208,7 @@ b1 与 a1 的**最大积压同为 420 帧**，却被判成 `growing`。
 **保留**
 * B1（脚本摘要）+ B2（分块 HMGET）：严格减少工作量、语义不变、回归全绿（附"端到端收益不可辨"的说明）。
 * 两个诊断工具 + 证据：`scripts/diagnose_latest_duplication.py`、`scripts/diagnose_writer_tdengine_capability.py`。
-* 设计文档 `docs/bounded-inflight-replay-design-20260927.md`（仅设计，未启用）。
+* 设计文档 `docs/06-验证记录/2026-09/bounded-inflight-replay-design-20260927.md`（仅设计，未启用）。
 * 新增回归用例：`collector/tests/test_collector_outbox.py` 的 NOSCRIPT 重载用例。
 
 **撤销 / 更正（都在工具内，不涉及生产行为）**
@@ -225,7 +225,7 @@ b1 与 a1 的**最大积压同为 420 帧**，却被判成 `growing`。
 
 ## 6. 有界在途是否值得进入下一轮开发？
 
-**值得，但有前置条件**；本轮只提交设计（`docs/bounded-inflight-replay-design-20260927.md`），不改生产默认。
+**值得，但有前置条件**；本轮只提交设计（`docs/06-验证记录/2026-09/bounded-inflight-replay-design-20260927.md`），不改生产默认。
 
 判断依据（本轮实测）：
 

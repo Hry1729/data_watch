@@ -7,8 +7,8 @@
 - **已有测试支持**：本机已跑过并留下原始结果。
 - **仍需实验验证**：只有推断或间接证据。
 
-原始资料：`docs/performance-optimization-validation-20260924.md`、
-`outputs/performance-20260924/`、`docs/*20260924.json`、`C:\Users\myrh\Downloads\Data_Watch_性能与入库修复方案.md`。
+原始资料：`docs/06-验证记录/2026-09/performance-optimization-validation-20260924.md`、
+`outputs/performance-20260924/`、`docs/06-验证记录/2026-09/*20260924.json`、`C:\Users\myrh\Downloads\Data_Watch_性能与入库修复方案.md`。
 
 ---
 
@@ -113,7 +113,7 @@ Frontend：frontend/src/views/device_monitor/realtime/index.vue:1029 setInterval
   `HMGET` → `cjson.decode(old)` → 比较 `t` → `cjson.encode(value)` → `HSET`。
   1000 点即每帧约 1000 次 HMGET + 最多 2000 次 cjson 调用。
 - ◐ **这段工作在生产稳态下是重复劳动**：实时快车道（B）已经用同样的点、同样的 `t` 写过 latest。
-  `docs/collector-frame-lua-decode-profile-20260924.json` 的隔离微基准显示移除该段
+  `docs/06-验证记录/2026-09/collector-frame-lua-decode-profile-20260924.json` 的隔离微基准显示移除该段
   （`skip_latest_*`）把 `eval_ms_mean` 从 2.632ms 降到 0.930ms，即该段约占 Lua 执行时间的三分之二。
   该 JSON 的 `method` 明确写了这是"预置更新的 latest"稳态模拟，且注明 skip 变体"unsafe in production"——
   本轮不能直接删，必须先证明覆盖。
@@ -272,7 +272,7 @@ BEGIN IMMEDIATE … DELETE … COMMIT   只有到这里才本地删除          
 | P0-1 | 新增 `scripts/validate_collector_ingest_capacity.py` | 六项独立判定（pass/fail/not_tested）；连续窗口的输入速率、回放确认速率、outbox 条数与最老年龄；趋势（growing/shrinking/flat）；生产期内回放速率；`--catchup-seconds` 测"保持额定输入时旧积压是否减少"；按 (device, point, tick) 生成数据并做全字段抽样对账（NULL/布尔/负值/质量变化/非存储点/STRING 点/点位映射）；默认保留证据 | 旧脚本 `target_met` 只描述"输入是否按时提交完成"，无法说明容量达标；旧脚本只查每帧两个点值 | 小负载冒烟（4 设备×8 点×2s）能同时给出六项判定；构造已知错误（如改质量码）能被 `data_correctness` 抓到 |
 | P0-2 | `scripts/validate_docker_pipeline.py` | 全字段对账替代"只查 p1/pN"；质量码改为变化的合法值；`steady_state_passed` 增加趋势判定与"保持输入时积压下降"档 | 同上，全链路侧 | 同上 |
 | P0-3 | `collector/storage/collector_outbox.py` | 增加 `durable_frames_accepted` 计数器 | 现在没有任何指标表示"本地持久接收了多少帧"：`stream_points_written` 的口径是**已回放到 Redis 的点值数**（`durable_redis_writer.py:375`；durable 路径覆盖了 `write_window_stream` 且不调用 `super()`，所以 `redis_writer.py:209` 的本地累加在该路径上不生效） | 新计数器在排空后等于输入帧数；`collector/tests/test_collector_outbox.py` 全绿 |
-| P0-4 | `docs/performance-optimization-validation-20260924.md` | 把"全部正确"等过强表述改为实际检查范围（行数、身份、每帧 2 个点值、latest 全点）；保留原始 JSON 不动 | 交付要求：不夸大正确性范围 | 文档改动只涉及结论表述范围，不改历史数字 |
+| P0-4 | `docs/06-验证记录/2026-09/performance-optimization-validation-20260924.md` | 把"全部正确"等过强表述改为实际检查范围（行数、身份、每帧 2 个点值、latest 全点）；保留原始 JSON 不动 | 交付要求：不夸大正确性范围 | 文档改动只涉及结论表述范围，不改历史数字 |
 
 ### P1 降低 Collector→Redis 每帧成本
 

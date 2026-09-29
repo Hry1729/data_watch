@@ -14,7 +14,8 @@
               <ArtSvgIcon icon="ri:hard-drive-3-line" />
             </div>
             <div class="total-card__content">
-              <ArtCountTo :target="stats.total" :duration="2000" />
+              <ArtCountTo v-if="statsLoaded" :target="stats.total" :duration="2000" />
+              <span v-else>—</span>
               <span class="total-card__label">设备总数</span>
             </div>
             <div class="total-card__progress"></div>
@@ -88,6 +89,14 @@
         </div>
       </div>
 
+      <div v-if="statsError" class="stats-state" role="alert">
+        <span>设备统计加载失败</span>
+        <ElButton text type="primary" @click="loadStats">重试</ElButton>
+      </div>
+      <div v-else-if="statsLoading && !statsLoaded" class="stats-state" role="status">
+        设备统计加载中…
+      </div>
+
       <div class="card-grid-wrapper">
         <MonitorLoadingPlaceholder
           v-if="loading"
@@ -134,13 +143,6 @@
           @current-change="handlePageChange"
         />
       </div>
-      <ElAlert
-        v-if="statsTruncated"
-        class="stats-limit-warning"
-        title="设备数量超过统计安全上限，比例统计暂不计算；请缩小筛选范围。"
-        type="warning"
-        :closable="false"
-      />
     </ElCard>
   </div>
 </template>
@@ -152,8 +154,7 @@
   import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
   import ArtProgressCard from '@/components/core/cards/art-progress-card/index.vue'
   import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
-  import { fetchDeviceGroupTree, fetchDeviceList } from '@/api/device-monitor'
-  import { loadAllDevicePages } from '@/utils/device-pagination'
+  import { fetchDeviceGroupTree, fetchDeviceList, fetchDeviceSummary } from '@/api/device-monitor'
 
   defineOptions({ name: 'DeviceMonitor' })
 
@@ -167,7 +168,9 @@
   const deviceTypeOptions = ref<{ label: string; value: string }[]>([])
   const pageNo            = ref(1)
   const listTotal         = ref(0)
-  const statsTruncated     = ref(false)
+  const statsLoaded       = ref(false)
+  const statsLoading      = ref(false)
+  const statsError        = ref(false)
   const DEVICE_LIST_PAGE_SIZE = 100
 
   // 统计数据
@@ -175,19 +178,19 @@
 
   // 计算百分比
   const onlineRate = computed<number | null>(() => {
-    if (statsTruncated.value) return null
+    if (!statsLoaded.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.online / stats.value.total) * 100).toFixed(1))
   })
 
   const offlineRate = computed<number | null>(() => {
-    if (statsTruncated.value) return null
+    if (!statsLoaded.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.offline / stats.value.total) * 100).toFixed(1))
   })
 
   const disabledRate = computed<number | null>(() => {
-    if (statsTruncated.value) return null
+    if (!statsLoaded.value) return null
     if (!stats.value.total) return 0
     return Number(((stats.value.disabled / stats.value.total) * 100).toFixed(1))
   })
@@ -266,7 +269,7 @@
     }
   }
 
-  // 加载当前页设备列表；统计与选择器使用独立的全量分页加载。
+  // 加载当前页设备列表；统计卡片由设备摘要接口独立提供。
   let listRequestVersion = 0
   const loadDeviceList = async (silent = false) => {
     const requestVersion = ++listRequestVersion
@@ -287,9 +290,6 @@
       }
     } catch (error) {
       console.error('加载设备列表失败:', error)
-      if (!silent && requestVersion === listRequestVersion) {
-        deviceList.value = []
-      }
     } finally {
       if (!silent && requestVersion === listRequestVersion) loading.value = false
     }
@@ -299,18 +299,22 @@
   let statsRequestVersion = 0
   const loadStats = async () => {
     const requestVersion = ++statsRequestVersion
+    statsLoading.value = true
+    statsError.value = false
     try {
-      const allResult = await loadAllDevicePages((page, size) => fetchDeviceList({ pageNo: page, pageSize: size }))
+      const summary = await fetchDeviceSummary()
       if (requestVersion !== statsRequestVersion) return
-      const all = allResult.list || []
-      stats.value.total    = allResult.total || all.length
-      stats.value.online   = all.filter((d) => d.connectStatus === 'online').length
-      stats.value.offline  = all.filter((d) => d.connectStatus === 'offline').length
-      stats.value.unstable = all.filter((d) => d.connectStatus === 'unstable').length
-      stats.value.disabled = all.filter((d) => d.deviceStatus === 'disabled').length
-      statsTruncated.value = allResult.truncated
+      stats.value.total    = summary.total
+      stats.value.online   = summary.onlineCount
+      stats.value.offline  = summary.offlineCount
+      stats.value.unstable = summary.unstableCount
+      stats.value.disabled = summary.disabledCount
+      statsLoaded.value = true
     } catch (error) {
       console.error('加载统计数据失败:', error)
+      if (requestVersion === statsRequestVersion) statsError.value = true
+    } finally {
+      if (requestVersion === statsRequestVersion) statsLoading.value = false
     }
   }
 
@@ -389,6 +393,15 @@
     justify-content: space-between;
     padding: 4px 2px;
     margin-bottom: 16px;
+  }
+
+  .stats-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
   }
 
   .head-left { flex-shrink: 0; }

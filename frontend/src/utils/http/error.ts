@@ -23,6 +23,7 @@
  */
 import { AxiosError } from 'axios'
 import { ApiStatus } from './status'
+import { classifyNoResponseError } from './error-classification'
 import { $t } from '@/locales'
 
 // 错误响应接口
@@ -49,6 +50,10 @@ export interface ErrorLogData {
   url?: string
   /** 请求方法 */
   method?: string
+  /** 服务端请求追踪编号 */
+  requestId?: string
+  /** 请求耗时（毫秒） */
+  durationMs?: number
   /** 错误堆栈信息 */
   stack?: string
 }
@@ -60,6 +65,8 @@ export class HttpError extends Error {
   public readonly timestamp: string
   public readonly url?: string
   public readonly method?: string
+  public readonly requestId?: string
+  public readonly durationMs?: number
 
   constructor(
     message: string,
@@ -68,6 +75,8 @@ export class HttpError extends Error {
       data?: unknown
       url?: string
       method?: string
+      requestId?: string
+      durationMs?: number
     }
   ) {
     super(message)
@@ -77,6 +86,8 @@ export class HttpError extends Error {
     this.timestamp = new Date().toISOString()
     this.url = options?.url
     this.method = options?.method
+    this.requestId = options?.requestId
+    this.durationMs = options?.durationMs
   }
 
   public toLogData(): ErrorLogData {
@@ -87,6 +98,8 @@ export class HttpError extends Error {
       timestamp: this.timestamp,
       url: this.url,
       method: this.method,
+      requestId: this.requestId,
+      durationMs: this.durationMs,
       stack: this.stack
     }
   }
@@ -128,12 +141,20 @@ export function handleError(error: AxiosError<ErrorResponse>): never {
   const statusCode = error.response?.status
   const errorMessage = error.response?.data?.msg || error.message
   const requestConfig = error.config
+  const requestMetadata = (requestConfig as (typeof requestConfig & { metadata?: { startedAt?: number } }) | undefined)
+    ?.metadata
+  const requestUrl = requestConfig?.url?.split(/[?#]/, 1)[0]
+  const requestMethod = requestConfig?.method?.toUpperCase()
+  const durationMs = requestMetadata?.startedAt === undefined ? undefined : Math.max(0, Date.now() - requestMetadata.startedAt)
+  const requestId = String(error.response?.headers?.['x-request-id'] || error.response?.headers?.['X-Request-Id'] || '') || undefined
 
-  // 处理网络错误
+  // Axios 默认用 ECONNABORTED 表示请求超时；区分于连接失败。
   if (!error.response) {
-    throw new HttpError($t('httpMsg.networkError'), ApiStatus.error, {
-      url: requestConfig?.url,
-      method: requestConfig?.method?.toUpperCase()
+    const errorKind = classifyNoResponseError(error.code)
+    throw new HttpError($t(errorKind === 'timeout' ? 'httpMsg.requestTimeout' : 'httpMsg.networkError'), errorKind === 'timeout' ? ApiStatus.requestTimeout : ApiStatus.error, {
+      url: requestUrl,
+      method: requestMethod,
+      durationMs
     })
   }
 
@@ -143,8 +164,10 @@ export function handleError(error: AxiosError<ErrorResponse>): never {
     : errorMessage || $t('httpMsg.requestFailed')
   throw new HttpError(message, statusCode || ApiStatus.error, {
     data: error.response.data,
-    url: requestConfig?.url,
-    method: requestConfig?.method?.toUpperCase()
+    url: requestUrl,
+    method: requestMethod,
+    requestId,
+    durationMs
   })
 }
 

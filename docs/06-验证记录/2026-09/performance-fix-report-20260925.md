@@ -1,6 +1,6 @@
 # Data Watch 性能与可靠性修复报告（2026-09-25）
 
-> ## ⚠️ 本报告已被 `docs/performance-review-remediation-20260925.md` 更正，请以该文为准
+> ## ⚠️ 本报告已被 `docs/06-验证记录/2026-09/performance-review-remediation-20260925.md` 更正，请以该文为准
 >
 > 本报告撰写于独立审查之前，其中以下结论**已被撤回或修正**，不要再引用：
 >
@@ -29,9 +29,9 @@
 基线提交：`a03c951c621709205518b95f141a4fff728fd108`（`main`）。
 本报告只覆盖本轮实际做过的诊断、修改与测量；未做提交或推送（需另行授权）。
 
-- 诊断全文（数据链路、逐条核实、重复处理与边界、分阶段计划）：`docs/performance-diagnosis-20260925.md`
+- 诊断全文（数据链路、逐条核实、重复处理与边界、分阶段计划）：`docs/06-验证记录/2026-09/performance-diagnosis-20260925.md`
 - 原始结果：`outputs/performance-20260925/`
-- 上轮报告更正说明：`docs/performance-optimization-validation-20260924.md` 顶部
+- 上轮报告更正说明：`docs/06-验证记录/2026-09/performance-optimization-validation-20260924.md` 顶部
 
 ---
 
@@ -135,7 +135,7 @@
 
 ### 2.4 文档更正（P0）
 
-- `docs/performance-optimization-validation-20260924.md` 顶部加更正说明：
+- `docs/06-验证记录/2026-09/performance-optimization-validation-20260924.md` 顶部加更正说明：
   原文"全部正确/核对通过"的实际检查范围是行数、身份、每帧 2 个点值、latest 全点；
   未覆盖 NULL/布尔/负值/非存储点/STRING 点/质量变化/点位映射，且两个脚本都未经过
   `executor.py` 的过滤代码。**历史数字与原始 JSON 一字未改。**
@@ -241,7 +241,7 @@ Collector 容器 2 CPU / 2 GiB；未启动 TDengine / Writer / 前端。
 | --- | --- | --- |
 | 功能正确性 | **部分通过** | 本轮脚本对抽样帧做全字段对账（含 NULL/布尔/负值/质量变化/非存储/STRING/映射），全部 pass、无重复、latest 全点位正确。但抽样不是逐帧全量；TDengine 侧全字段对账仍未做 |
 | 持续容量 | **未达标** | §4.3；最好一档（100×200×60s）回放为输入的 95.6%，无 30% 余量 |
-| 故障恢复 | **本轮未新增验证** | 上轮 receipt v2 故障、TDengine 停机恢复、Redis 强杀 AOF 恢复的证据仍有效（`docs/receipt-v2-fault-validation-20260924.json`、`tdengine-fault-validation-20260924.json`）。本轮没有引入新的故障面，但**没有重跑**，也没有测硬件断电 |
+| 故障恢复 | **本轮未新增验证** | 上轮 receipt v2 故障、TDengine 停机恢复、Redis 强杀 AOF 恢复的证据仍有效（`docs/06-验证记录/2026-09/receipt-v2-fault-validation-20260924.json`、`tdengine-fault-validation-20260924.json`）。本轮没有引入新的故障面，但**没有重跑**，也没有测硬件断电 |
 | 浏览器体验 | **未验证** | 代码中不存在"发送完成→浏览器应用→绘制"的计时；上轮 108ms 只到 WebSocket 收包 |
 | Writer 持续容量 | **未验证** | 本轮未改 writer，也未做独立注入测试；R6/R7/R8 已确认存在但未修 |
 | 目标机 / 现场 | **未验证** | 全部为本机 Docker，非目标机上限；未接 PLC |

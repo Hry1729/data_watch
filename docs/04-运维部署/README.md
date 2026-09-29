@@ -157,6 +157,8 @@ frontend 镜像要点：
 
 中心 Docker 镜像与 Windows 三角色安装包独立发布。离线场景把预构建的运行镜像导出到发布目录 `docker-images\`；文件名不写 Docker tag 里的 `:latest`，统一使用固定 tar 文件名。`data-watch-python314t:latest` 只在打包机构建 Backend 时使用，不导出到目标机，也不进入 Windows 安装包。
 
+发布时先检出**本次指定的分支/提交**，从同一份源码分别构建 Backend 和 Frontend，再一起导出两个 tar，记录提交号及镜像 ID。`latest` 只是本机镜像标签，不证明它来自本次发布；目标机不能混用不同批次的前后端（本批前端会调用新增的 `/device/summary`、`/point/latest`）。不要默认 `main` 或现场已有的 `latest` 就是本次验证版本。
+
 ```powershell
 $ReleaseRoot = "D:\data_watch_release"
 New-Item -ItemType Directory -Force "$ReleaseRoot\docker-images" | Out-Null
@@ -226,7 +228,7 @@ D:\data_watch_release\
 <!-- xiaohu-illustration:ops-deploy-02-stack -->
 ![小狐配图：目标机叠叠乐](../images/xiaohu-ops-deploy-02-stack.png)
 
-本章在目标机执行。先判断 Redis/TDengine 是否由 compose 托管，再选择启动方式。
+本章在目标机执行。先准备已验证的 MySQL `device_watch` 业务库，再判断 Redis/TDengine 是否由 compose 托管并选择启动方式；首次空库的责任与检查见第 6 节。
 
 ### 5.1 部署方式选择
 
@@ -273,11 +275,11 @@ TDENGINE_LOG_DIR=/tdengine-logs
 REDIS_HOST=redis
 REDIS_PORT=6379
 REDIS_DB=0
-REDIS_PASSWORD=
+REDIS_PASSWORD=<strong-random-redis-password>
 
 AUTH_SECRET_KEY=<generate-a-strong-random-secret>
 AUTH_AUTO_BOOTSTRAP=true
-AUTH_BOOTSTRAP_SUPER_PASSWORD=
+AUTH_BOOTSTRAP_SUPER_PASSWORD=<unique-strong-bootstrap-password>
 PERSPECTIVE_ENABLED=true
 
 # Agent 服务凭据（Backend 调用 Agent 装卸驱动时使用）
@@ -289,7 +291,7 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 
 - MySQL 可为宿主机、外部服务器或其他容器；compose 当前不托管 MySQL。
 - 若 Redis/TDengine 由 compose 托管，`REDIS_HOST=redis`、`TDENGINE_HOST=tdengine`。
-- 若 Redis/TDengine 是宿主机或外部服务，把 host 改为 `host.docker.internal` 或实际 IP。
+- 若 Redis/TDengine 在 Docker 宿主机运行，Docker Desktop 下可使用 `host.docker.internal`；若在另一台服务器，使用 Backend 容器实际可达的 DNS/IP，不要沿用 `redis`/`tdengine` 服务名。MySQL 同理；`host.docker.internal` 不是远端数据库地址。
 - Compose `infra` 模式下 Redis 只发布到宿主机 `127.0.0.1:6379`，Backend 应通过 Docker 内网的 `redis:6379` 访问；Redis 与 Backend 必须使用同一个 `REDIS_PASSWORD`。
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值；`AUTH_BOOTSTRAP_SUPER_PASSWORD` 不得提交到仓库或写成示例弱密码。
 - 生产/非开发环境首次启动且数据库中不存在 `Super` 时，`AUTH_AUTO_BOOTSTRAP=true` 必须同时提供 `AUTH_BOOTSTRAP_SUPER_PASSWORD`：至少 16 个字符，含大小写字母、数字和符号，且不得含空白。首次登录会要求改密，改密后从运行环境移除该变量；已有 disabled/deleted 的 `Super` 不会被复活。
@@ -299,7 +301,7 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 
 ### 5.3 启动中心服务
 
-只启动 backend/frontend：
+现场已有外部 Redis/TDengine 时，只启动 backend/frontend（此时环境文件须填写外部数据库的可达地址）：
 
 ```powershell
 cd D:\data_watch_release\docker-images
@@ -310,7 +312,7 @@ cd D:\data_watch_release\deploy
 docker compose -f .\docker-compose.yml up -d
 ```
 
-compose 托管 Redis/TDengine，并拉起完整中心栈：
+compose 托管 Redis/TDengine，并拉起完整中心栈（先设置非空 Redis 密码，MySQL 业务库仍需提前准备）：
 
 ```powershell
 cd D:\data_watch_release\deploy
@@ -375,6 +377,8 @@ docker logs -f data-watch-backend
 docker logs -f data-watch-frontend
 ```
 
+`/healthz` 只表示 Backend HTTP 路由可响应并回显配置的数据库名称，**不会实际查询 MySQL、Redis 或 TDengine**。数据库可读、Writer 入库和工作台趋势应按第 12 节分别验收。
+
 访问地址：
 
 ```text
@@ -401,11 +405,38 @@ frontend 容器内 nginx 负责：
 
 | 库 | 谁初始化 | 内容 | 部署要求 |
 |----|----------|------|----------|
-| MySQL `device_watch` | backend | SQLAlchemy 建表，播种超管、菜单、权限 | backend 必须先成功连接一次目标库 |
-| TDengine `device_data` | writer | `CREATE DATABASE IF NOT EXISTS`，按需建 stable/child/columns | 可空库，writer 首次写入自建 |
+| MySQL `device_watch` 业务表 | 现场交付/数据库管理员 | 设备、点位、协议、映射等完整业务基线及相应增量迁移 | **Backend 启动前**恢复与本次发布匹配的已验证库备份或正式建库交付件 |
+| MySQL 鉴权表 | backend（启用 `AUTH_AUTO_BOOTSTRAP` 时） | 仅鉴权模型的建表/迁移，以及用户、角色、菜单、权限种子 | 已有可连接的 `device_watch` 业务库与首装密码 |
+| TDengine `device_data` | writer | `CREATE DATABASE IF NOT EXISTS`，首次实际写入时按 MySQL 映射建 `sd*`/`sq*` 超级表、子表及列 | 可从空库开始，但未采集前不保证表已出现 |
 | Redis | 无 schema | latest/window/stream/dlq 运行时产生 | 只需服务可用 |
 
-注意：collector/writer 不负责初始化 MySQL。目标库为空且 backend 未初始化时，app 登录会失败，collector 也读不到设备拓扑。
+仓库目前只有 `scripts/sql/db1_*`、`db2_*`、`db4_*`、`db5_*`、`db6_*` 等**增量**文件，没有可单独创建全部业务表的完整基线 SQL。不能把空 `device_watch` 库加上 `AUTH_AUTO_BOOTSTRAP=true` 当作完成首装，也不能在未核对现有表结构时把这些增量脚本全部重跑；其中 `db5` 需要支持 `DELIMITER` 的 MySQL 客户端和人工核对。新机应随发布包另行交付经验证的 `device_watch` 备份/基线及其版本记录，先按该交付件恢复，再检查 `device`、`device_type`、`device_variable`、`device_point_group`、`comm_protocol`、`point_storage_mapping` 等当前代码实际查询的表与字段，确认设备和点位映射数量，然后启动 Backend。迁移旧机时还要保留用户/权限、设备配置及必要的日志/告警表。无真实设备配置的空业务库无法让 Collector 或演示脚本产生桥吊 100 数据。
+
+`deploy/stack-up.ps1` 仅加载镜像并拉起容器，不执行上述 MySQL 恢复。旧的 `scripts/init_tdengine_v2.py` 生成 `st_*_g001`/`t_*_g001`，与当前 Writer 使用的 `sd*`/`sq*` 结构不同，**不要用它准备本次发布的 TDengine 库**。有真实 Collector 时，让 Writer 在首帧按 MySQL 映射建表；随后核对值表、质量表和一条真实历史查询。仅有 `/healthz` 成功不能证明数据库可读。
+
+### 无 Collector 的桥吊 100 演示结构
+
+[桥吊 100 模拟脚本](../测试/README.md)不创建 MySQL 配置或 TDengine 表。若目标机需要离线复现本机演示，应先恢复**与快照相同的** MySQL 设备/点位映射，并单独交付 [`tdengine-schema-20260929.json`](../tdengine-schema-20260929.json)。这个 JSON 只记录 2026-09-29 本机 `device_data` 的 3 张超级表和桥吊 100、101 的 4 张子表 DDL，**没有历史数据，也不是任意新现场的通用 schema**。目标机 TDengine 必须为兼容的 3.4.0.9，并确认 `device_data` 数据库尚不存在；已有库一律不要覆盖或删除，应走备份/迁移流程。
+
+若上述前提满足，将 JSON 复制到目标机 `D:\data_watch_release\deploy\tdengine-schema-20260929.json`，用 Windows PowerShell 生成仅含建库、建超级表、建子表的 SQL，再用 TDengine 自带客户端交互输入密码执行：
+
+```powershell
+Set-Location "D:\data_watch_release\deploy"
+$snapshot = Get-Content -LiteralPath ".\tdengine-schema-20260929.json" -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($snapshot.database -notmatch '^CREATE DATABASE `device_data`') { throw 'schema database 不匹配' }
+$statements = @($snapshot.database, 'USE `device_data`')
+$statements += @($snapshot.stables.PSObject.Properties | ForEach-Object { $_.Value })
+$statements += @($snapshot.tables.PSObject.Properties | ForEach-Object { $_.Value })
+$sql = @($statements | ForEach-Object { $_.TrimEnd(';') + ';' })
+[IO.File]::WriteAllLines((Join-Path (Get-Location) 'tdengine-schema-replay.sql'), $sql, [Text.UTF8Encoding]::new($false))
+
+# 先交互查询 SHOW DATABASES; 确认 device_data 不存在，然后退出客户端。
+docker exec -it data-watch-tdengine taos -u root -p
+docker cp ".\tdengine-schema-replay.sql" data-watch-tdengine:/tmp/tdengine-schema-replay.sql
+docker exec -it data-watch-tdengine taos -u root -p -f /tmp/tdengine-schema-replay.sql
+```
+
+若 `SHOW DATABASES` 已有 `device_data`，**到此停止，不执行后两条命令**。执行后在新的 `taos` 会话先运行 `USE device_data;`，再核对 `SHOW STABLES;`、`SHOW TABLES;`、`DESCRIBE qc100;` 和 `DESCRIBE qc100_q;`，然后按[测试说明](../测试/README.md)运行限时模拟并核对 `qc101` 未变化。TDengine 结构恢复不能代替 MySQL 业务库恢复，也不能从这份 JSON 还原旧历史样本。
 
 ---
 
@@ -621,6 +652,8 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 | Redis | 实时缓存通常不迁移；如果 Stream 中还有未落库数据，先停采集并等 writer 消费完成 |
 | ProgramData | 角色配置、日志和边缘 `edge.db`/outbox；DPAPI 密文不可跨机解密，迁移后需重新配置密码 |
 
+新装机器须随发布包取得与当前源码匹配的 MySQL 完整业务基线或已验证备份；仓库里的增量 SQL 不能代替该基线。TDengine 的结构 JSON 只能重建本机样例表，历史行仍须由正式备份恢复。迁移后分别核对 MySQL 表与设备点位映射、TDengine 真实表查询、Redis 写入路径，再允许 Collector/Writer 上线。
+
 ---
 
 ## 12. 验收清单
@@ -629,13 +662,17 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 
 ### 中心镜像部署
 
-- `docker compose ps` 中 backend/frontend running；
+- 核对发布指定分支/提交、Backend 与 Frontend 镜像 ID 和配套 tar；两个镜像均来自本次验证源码，而非现场遗留的 `latest`；
+- MySQL `device_watch` 业务基线/备份已先行恢复，设备、点位、列映射与本次发布相符；
+- `docker compose ps` 中 backend/frontend running；若使用 `infra`，Redis/TDengine 也应运行；
 - 访问 `http://127.0.0.1:8080` 正常；
 - `/api/auth/login` 可达；
 - 首装生产环境已验收 `AUTH_BOOTSTRAP_SUPER_PASSWORD` 强度、首次 `mustChangePassword=true`、改密后旧 token 失效且重新登录成功；改密后已移除该环境变量；
 - WebSocket 经 8080 可连接；
 - Redis 仅回环或 Docker 私网可达，密码/ACL/TLS 验收记录完整；
-- backend 能连 MySQL/Redis/TDengine；
+- `/healthz` 只验 HTTP 存活；另用真实登录、设备列表及摘要、点位列表及当前值查询确认 MySQL/Redis 可读；
+- TDengine 空库有实际采集时由 Writer 建 `sd*`/`sq*` 结构并写入；无采集的演示库按第 6 节复制与 MySQL 映射匹配的 schema，分别检查值表、质量表与工作台趋势结果；
+- 工作台各模块失败时有独立提示/重试；趋势 503/504 不显示成零值；对照 `x-request-id` 和后端日志定位慢请求；
 - TDengine 日志页在 compose 托管 TDengine 时可用，外部 TDengine 时优雅提示不可用。
 
 ### 分布式边缘部署

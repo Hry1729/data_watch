@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
 import re
+from time import monotonic
 from typing import Any
 
 from sqlalchemy import bindparam, text
@@ -18,6 +19,11 @@ from app.db.tdengine import TDengineClient
 from app.services.device_activity import fetch_latest_collect_times
 
 logger = logging.getLogger("backend.dashboard")
+_TREND_TIMEOUT_SECONDS = 10.0
+_TREND_QUERY_TIMEOUT_SECONDS = 8.0
+_TREND_CACHE_TTL_SECONDS = 30.0
+_TREND_CACHE_MAX_ENTRIES = 16
+_trend_cache: dict[tuple[str, str, tuple[str, ...]], tuple[float, dict[str, Any]]] = {}
 
 
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -293,11 +299,30 @@ class DashboardService:
 
     async def get_trend(self, params: dict[str, Any]) -> dict[str, Any]:
         range_type = self._normalize_range_type(params.get("rangeType"))
-        start_dt, end_dt = self._resolve_time_range(range_type)
         granularity = self._resolve_granularity(range_type, params.get("granularity"))
+        metric_keys = self._normalize_metric_keys(params.get("metricKeys"))
+        cache_key = (range_type, granularity, tuple(metric_keys))
+        cached = _trend_cache.get(cache_key)
+        if cached is not None and cached[0] > monotonic():
+            return cached[1]
+
+        try:
+            async with asyncio.timeout(_TREND_TIMEOUT_SECONDS):
+                result = await self._build_trend(range_type, granularity, metric_keys)
+        except TimeoutError as exc:
+            raise ApiError(504, "趋势查询超时，请稍后重试", status_code=504) from exc
+
+        if len(_trend_cache) >= _TREND_CACHE_MAX_ENTRIES:
+            _trend_cache.pop(next(iter(_trend_cache)))
+        _trend_cache[cache_key] = (monotonic() + _TREND_CACHE_TTL_SECONDS, result)
+        return result
+
+    async def _build_trend(
+        self, range_type: str, granularity: str, metric_keys: list[str],
+    ) -> dict[str, Any]:
+        start_dt, end_dt = self._resolve_time_range(range_type)
         bucket_delta = self._granularity_to_delta(granularity)
         bucket_starts = self._build_bucket_starts(start_dt, end_dt, bucket_delta)
-        metric_keys = self._normalize_metric_keys(params.get("metricKeys"))
 
         configured_trend_devices = await self._fetch_trend_devices()
         trend_devices = await self._filter_trend_devices_with_existing_tables(
@@ -307,17 +332,24 @@ class DashboardService:
         active_devices_by_bucket: dict[datetime, set[int]] = defaultdict(set)
 
         if trend_devices and bucket_starts:
-            query_results = await asyncio.gather(
-                *(
+            tasks = [
+                asyncio.create_task(
                     self._fetch_device_bucket_counts(
                         device=device,
                         start_dt=start_dt,
                         end_dt=end_dt,
                         granularity=granularity,
                     )
-                    for device in trend_devices
                 )
-            )
+                for device in trend_devices
+            ]
+            try:
+                query_results = await asyncio.gather(*tasks)
+            finally:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
             for device, device_counts in zip(trend_devices, query_results, strict=False):
                 for bucket_start, count in device_counts.items():
                     collect_count_by_bucket[bucket_start] += count
@@ -1084,10 +1116,14 @@ class DashboardService:
 
         database_name = self._resolve_current_tdengine_database()
         try:
-            rows = await self.tdengine.fetch_all("SHOW TABLES", database=database_name)
+            rows = await self.tdengine.fetch_all(
+                "SHOW TABLES", database=database_name, timeout=_TREND_QUERY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            raise
         except Exception as exc:
             logger.warning("[dashboard] trend table discovery failed: %s", exc)
-            return []
+            raise ApiError(503, "趋势数据服务暂不可用", status_code=503) from exc
 
         existing_tables = {
             str(row[0]).strip().casefold()
@@ -1125,14 +1161,18 @@ class DashboardService:
         )
 
         try:
-            rows = await self.tdengine.fetch_all(statement, database=database_name)
+            rows = await self.tdengine.fetch_all(
+                statement, database=database_name, timeout=_TREND_QUERY_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            raise
         except Exception as exc:
             logger.warning(
                 "[dashboard] 趋势采集量查询失败 device=%s: %s",
                 device.device_code,
                 exc,
             )
-            return {}
+            raise ApiError(503, "趋势数据服务暂不可用", status_code=503) from exc
 
         return self._normalize_bucket_rows(rows, granularity)
 
@@ -1182,16 +1222,21 @@ class DashboardService:
         if not devices_by_type:
             return dict(redis_times)
 
-        type_codes = await self._filter_existing_stable_types(
-            database_name,
-            list(devices_by_type.keys()),
-        )
-        if not type_codes:
+        try:
+            async with asyncio.timeout(5):
+                type_codes = await self._filter_existing_stable_types(
+                    database_name,
+                    list(devices_by_type.keys()),
+                )
+                if not type_codes:
+                    return dict(redis_times)
+                results = await asyncio.gather(
+                    *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
+                    return_exceptions=True,
+                )
+        except TimeoutError:
+            logger.warning("[dashboard] 查询缺失设备最后采集时间超时")
             return dict(redis_times)
-        results = await asyncio.gather(
-            *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
-            return_exceptions=True,
-        )
 
         last_ts_by_table: dict[str, datetime] = {}
         for type_code, result in zip(type_codes, results, strict=False):
@@ -1342,8 +1387,9 @@ class DashboardService:
                 row["bucket"]: int(row["count"])
                 for row in rows.mappings().all()
             }
-        except Exception:
-            return [0] * len(bucket_starts)
+        except Exception as exc:
+            logger.warning("[dashboard] trend alarm query failed: %s", exc)
+            raise ApiError(503, "趋势告警数据暂不可用", status_code=503) from exc
 
         return [
             counts_by_bucket.get(bucket_start.strftime(bucket_key_format), 0)

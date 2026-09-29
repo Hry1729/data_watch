@@ -9,18 +9,20 @@
     - runtime image tar files are loaded from ..\docker-images\. Backend and
       frontend are prebuilt release images; target machines do not rebuild them.
     - redis config is pinned via redis.conf (mounted by docker-compose.yml).
-    - tdengine schema (device_data + supertables) is auto-created by writer on
-      first write, or manually via scripts/init_tdengine_v2.py.
+    - TDengine database/stables are initialized by the current Writer; device
+      child tables are materialized as data arrives. Do NOT use the legacy
+      scripts/init_tdengine_v2.py (its table naming/schema is obsolete).
+      See section 6 of the deployment guide linked from docs/README.md for restore
+      when no Collector/Writer is available.
 
   NOTE: use this ONLY when compose owns redis/tdengine too. If the site already
   has its own redis/tdengine, do NOT run this — start just the app services with
   `docker compose up -d` instead.
 
-  Named volumes (redis_data / tdengine_data) persist data across container
-  recreation. To start from a CLEAN slate, remove the volumes BEFORE running
-  (project name is data_watch, so the volumes are prefixed data_watch_):
-      docker volume ls
-      docker volume rm data_watch_redis_data data_watch_tdengine_data data_watch_tdengine_log
+  Named volumes (redis_data / tdengine_data) persist across container recreation.
+  Before any recovery/rebuild, preserve the old data and log volumes and record
+  their names. A fresh volume does not recover history. This script does not
+  initialize MySQL business tables or verify database query readiness.
 
 .EXAMPLE
   powershell.exe -ExecutionPolicy Bypass -File .\stack-up.ps1

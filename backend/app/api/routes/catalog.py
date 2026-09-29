@@ -7,6 +7,7 @@ from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.permissions import require_permissions
 from app.core.audit import audit_log
+from app.core.exceptions import ApiError
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
 from app.db.tdengine import get_tdengine_client
@@ -150,6 +151,7 @@ async def device_list(
     deviceName: str | None = None,
     deviceStatus: str | None = None,
     connectStatus: str | None = None,
+    includeSummary: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     await require_permissions(credentials, "device_monitor:device:view")
@@ -169,8 +171,34 @@ async def device_list(
                     "deviceName": deviceName,
                     "deviceStatus": deviceStatus,
                     "connectStatus": connectStatus,
+                    "includeSummary": includeSummary,
                 }
             )
+        )
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/device/summary")
+async def device_summary(
+    keyword: str | None = None,
+    deviceType: str | None = None,
+    deviceCode: str | None = None,
+    deviceName: str | None = None,
+    deviceStatus: str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_device_summary(
+            _compact_params({
+                "keyword": keyword,
+                "deviceType": deviceType,
+                "deviceCode": deviceCode,
+                "deviceName": deviceName,
+                "deviceStatus": deviceStatus,
+            })
         )
         return success_response(data=data)
 
@@ -375,6 +403,22 @@ async def point_list(
                 }
             )
         )
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/point/latest")
+async def point_latest(
+    pointIds: list[str] | str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    try:
+        await require_permissions(credentials, "device_monitor:point:view")
+    except ApiError as exc:
+        raise ApiError(exc.code, exc.message, status_code=exc.code) from exc
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.get_point_latest_values(pointIds)
         return success_response(data=data)
 
 
