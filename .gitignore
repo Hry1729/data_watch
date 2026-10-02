@@ -105,3 +105,14 @@ backend/cli-releases/
 frontend/src/views/landing/
 frontend/src/views/monitor-screen/
 frontend/src/views/monitor-light/
+
+# 本地测试 / 诊断辅助（仅本地保留，不上传）
+docs/测试/*.ps1
+docs/测试/*.cmd
+docs/测试/scenario_io.py
+docs/测试/simulate_*.py
+docs/测试/diagnose_*.py
+docs/测试/test_scenarios.py
+docs/测试/入库诊断说明.md
+frontend/tests/history-zoom.test.ts
+frontend/tests/realtime-samples.test.ts
