@@ -303,6 +303,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import * as echarts from 'echarts'
+import { createHistoryDataZoom, historySampleData } from '@/utils/history-zoom'
 import MonitorLoadingPlaceholder from '@/components/device-monitor/MonitorLoadingPlaceholder.vue'
 import {
   fetchHistoryChart,
@@ -646,16 +647,18 @@ const buildChartOption = (): echarts.EChartsOption => {
     const isStep = isStepPoint(s)
     const seriesItem: any = {
       name: s.name,
-      data: s.data,
+      data: historySampleData(s.data),
+      dimensions: [{ name: 'time', type: 'time' }, { name: 'value', type: 'float' }],
+      encode: { x: 'time', y: 'value' },
       type: chartType.value === 'area' ? 'line' : chartType.value,
-      smooth: !isStep,
+      smooth: false,
       step: isStep ? 'end' : false,
       symbol: 'circle',
       symbolSize: 4,
       showSymbol: false,
-      // 性能优化配置
-      sampling: 'lttb',
-      large: true
+      clip: true,
+      // 接口已降采样；保留全部返回点，避免二次抽样隐藏小跳变。
+      progressive: 0
     }
 
     if (chartType.value === 'area') {
@@ -669,8 +672,6 @@ const buildChartOption = (): echarts.EChartsOption => {
 
   return {
     animation: false, // 禁用动画提升性能
-    progressive: 5000,
-    progressiveThreshold: 10000,
     tooltip: {
       trigger: 'axis',
       confine: true,
@@ -688,8 +689,9 @@ const buildChartOption = (): echarts.EChartsOption => {
     },
     grid: {
       left: '3%',
-      right: '4%',
-      bottom: '15%',
+      right: 85,
+      top: 55,
+      bottom: 85,
       containLabel: true
     },
     xAxis: {
@@ -697,24 +699,10 @@ const buildChartOption = (): echarts.EChartsOption => {
       boundaryGap: ['0%', '0%']
     },
     yAxis: {
-      type: 'value'
+      type: 'value',
+      scale: true
     },
-    dataZoom: [
-      {
-        type: 'slider',
-        show: true,
-        xAxisIndex: [0],
-        start: 0,
-        end: 100,
-        bottom: 30
-      },
-      {
-        type: 'inside',
-        xAxisIndex: [0],
-        start: 0,
-        end: 100
-      }
-    ],
+    dataZoom: createHistoryDataZoom(),
     series
   }
 }
@@ -736,7 +724,7 @@ const initOrUpdateChart = () => {
     }
 
     if (!chartInstance) {
-      chartInstance = echarts.init(chartRef.value)
+      chartInstance = echarts.init(chartRef.value, undefined, { renderer: 'svg' })
     }
 
     chartInstance.setOption(buildChartOption(), true)

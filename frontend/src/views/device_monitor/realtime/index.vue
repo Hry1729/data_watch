@@ -76,7 +76,7 @@
       <!-- 中央趋势图区域 -->
       <ElCard class="chart-card">
         <div class="chart-header">
-          <span class="chart-title" title="按最新值变化绘制，不代表完整采样序列">实时值变化趋势</span>
+          <span class="chart-title" title="按收到的最新采样绘制；完整采样请查看历史数据">实时值趋势</span>
           <div class="chart-actions">
             <ElButton
               size="small"
@@ -304,6 +304,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
+import { expandRealtimeSamples, type RealtimeSample } from '@/utils/realtime-samples'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
@@ -1348,9 +1349,19 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
         .map((point) => [String(point.pointId), point])
     )
     const convertedPoints: Array<Record<string, unknown>> = []
-    for (const [pointId, entry] of Object.entries(
-      payload.values as Record<string, { v: string; t: number; q: number }>
-    )) {
+    const samples = expandRealtimeSamples(
+      payload.values as Record<string, RealtimeSample>,
+      (payload.freshness || {}) as Record<string, unknown>,
+      (pointId) => {
+        const point = pointById.get(pointId)
+        if (!point) return undefined
+        const v = pendingValues.has(point.varSeq)
+          ? pendingValues.get(point.varSeq) : realtimeValues.value.get(point.varSeq)
+        if (v === undefined) return undefined
+        return { v, q: pendingQuality.get(point.varSeq) ?? realtimeQuality.value.get(point.varSeq) }
+      }
+    )
+    for (const [pointId, entry] of Object.entries(samples)) {
       const point = pointById.get(pointId)
       if (!point) continue
       convertedPoints.push({
@@ -1411,9 +1422,6 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     const quality = item.quality as number | undefined
 
     if (varSeq !== undefined) {
-      const previousValue = pendingValues.has(varSeq)
-        ? pendingValues.get(varSeq)
-        : realtimeValues.value.get(varSeq)
       if (writeImmediate) {
         realtimeValues.value.set(varSeq, value as number | string)
         if (typeof quality === 'number') realtimeQuality.value.set(varSeq, quality)
@@ -1422,9 +1430,8 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
         if (typeof quality === 'number') pendingQuality.set(varSeq, quality)
       }
 
-      // latest只给出可见的变化，不代表完整采样序列。
-      if (selectedPoints.value.some((p) => p.varSeq === varSeq) &&
-          (writeImmediate || previousValue !== value)) {
+      // 保留收到的新采样，包括未变化的值；latest推送仍不等于完整历史序列。
+      if (selectedPoints.value.some((p) => p.varSeq === varSeq)) {
         const sampledAt = item.sampledAt
         const record = {
           timestamp: typeof sampledAt === 'number' ? new Date(sampledAt) : now,
