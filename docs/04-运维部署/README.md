@@ -287,7 +287,8 @@ AUTH_BOOTSTRAP_SUPER_PASSWORD=<unique-strong-bootstrap-password>
 PERSPECTIVE_ENABLED=true
 
 # Agent 服务凭据（Backend 调用 Agent 装卸驱动时使用）
-DATAWATCH_AGENT_SERVICE_TOKEN=<generate-a-strong-random-token>
+# 值来自 Agent 安装器生成的 token 文件，不要自行编造；见下方说明
+DATAWATCH_AGENT_SERVICE_TOKEN=<copy-from-role-data-root-agent_service_token.txt>
 DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 ```
 
@@ -300,7 +301,11 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值；`AUTH_BOOTSTRAP_SUPER_PASSWORD` 不得提交到仓库或写成示例弱密码。
 - 生产/非开发环境首次启动且数据库中不存在 `Super` 时，`AUTH_AUTO_BOOTSTRAP=true` 必须同时提供 `AUTH_BOOTSTRAP_SUPER_PASSWORD`：至少 16 个字符，含大小写字母、数字和符号，且不得含空白。首次登录会要求改密，改密后从运行环境移除该变量；已有 disabled/deleted 的 `Super` 不会被复活。
 - `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
-- **`DATAWATCH_AGENT_SERVICE_TOKEN`（新增）**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` 保持一致。生成方式：`python -c "import secrets; print(secrets.token_hex(32))"`。
+- **`DATAWATCH_AGENT_SERVICE_TOKEN`**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` **完全一致**。
+  - **优先做法：直接取安装器已生成的值。** 角色安装包在安装时生成该令牌并写入角色数据根：中心式为 `C:\ProgramData\DataWatch\agent_service_token.txt`，分布式中心为 `C:\ProgramData\DataWatch Distributed Center\agent_service_token.txt`。安装后令牌由安装器以 CSPRNG 生成（256 位），且文件 ACL 只授予**管理员 + SYSTEM**。
+  - **安全读取**：以管理员身份读取该文件并只粘贴到目标 `backend.env`。**不要把真实令牌写入 Markdown、工单、聊天记录、日志或任何提交**；也不要把文件复制到普通用户可读的位置。
+  - **仅在没有安装器产物时**（例如纯 Docker / 手工部署，Agent 由通用脚本安装）才自行生成：`python -c "import secrets; print(secrets.token_hex(32))"`，并同时写入 Agent 侧与 Backend 侧。
+  - **轮换与回滚（必须两端一起改）**：①生成新值；②同时更新 Agent 侧（`agent_service_token.txt` + Agent 服务环境）与 Backend 侧 `backend.env`；③重启 Agent 服务与 Backend；④验证 Backend 的驱动装卸接口可用、Agent 日志出现鉴权成功。**任一侧先改都会导致 Backend 调 Agent 失败**——这正是"旧凭据失效可验证"的判据。失败时把旧值写回两侧并重启即可回滚（无需重新安装）。
 - **`DATAWATCH_AGENT_BASE_URL`（新增）**: Agent 地址。Docker 部署 Backend 时，Agent 在宿主机使用 `http://host.docker.internal:7070`；多节点部署时改为 Agent 实际 IP。
 
 ### 5.3 启动中心服务
