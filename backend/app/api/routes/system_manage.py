@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any
 
@@ -254,12 +254,14 @@ async def update_role(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:role:update")
+    principal = await require_permissions(credentials, "system:role:update")
     role_payload = RolePayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.update_role(role_id, role_payload)
+        data = await service.update_role(
+            role_id, role_payload, current_user_roles=principal["roles"]
+        )
         return success_response(data=data)
 
 
@@ -269,12 +271,14 @@ async def update_role_status(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:role:update")
+    principal = await require_permissions(credentials, "system:role:update")
     status_payload = RoleStatusPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.update_role_status(role_id, enabled=status_payload.enabled)
+        data = await service.update_role_status(
+            role_id, enabled=status_payload.enabled, current_user_roles=principal["roles"]
+        )
         return success_response(data=data)
 
 
@@ -283,11 +287,11 @@ async def delete_role(
     role_id: int,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:role:delete")
+    principal = await require_permissions(credentials, "system:role:delete")
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.delete_role(role_id)
+        data = await service.delete_role(role_id, current_user_roles=principal["roles"])
         return success_response(data=data)
 
 
@@ -310,12 +314,17 @@ async def update_role_grant(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:role:grant")
+    principal = await require_permissions(credentials, "system:role:grant")
     grant_payload = RoleGrantPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.update_role_grant(role_id, grant_payload)
+        data = await service.update_role_grant(
+            role_id,
+            grant_payload,
+            current_user_id=principal["user_id"],
+            current_user_roles=principal["roles"],
+        )
         return success_response(data=data)
 
 

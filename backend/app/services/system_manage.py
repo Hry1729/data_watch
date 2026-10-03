@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime
@@ -273,9 +273,15 @@ class SystemManageService:
         await self.session.commit()
         return {"id": role.id}
 
-    async def update_role(self, role_id: int, payload: RolePayload) -> dict[str, int]:
+    async def update_role(
+        self, role_id: int, payload: RolePayload, *, current_user_roles: list[str]
+    ) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
+        await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
         if payload.role_code != role.role_code:
+            # 不允许把别的角色改名成 R_SUPER（B21）：编码唯一，一旦成功即等于获得超级身份。
+            if payload.role_code == "R_SUPER" and not self._is_current_super(current_user_roles):
+                raise ApiError(403, "只有超级管理员可以授予超级管理员角色")
             duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
             if duplicate is not None and duplicate.id != role.id:
                 raise ApiError(400, "角色编码已存在")
@@ -286,16 +292,20 @@ class SystemManageService:
         await self.session.commit()
         return {"id": role.id}
 
-    async def update_role_status(self, role_id: int, *, enabled: bool) -> dict[str, int]:
+    async def update_role_status(
+        self, role_id: int, *, enabled: bool, current_user_roles: list[str]
+    ) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
+        await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
         if role.role_code == "R_SUPER" and not enabled:
             raise ApiError(400, "超级管理员角色不能禁用")
         role.enabled = enabled
         await self.session.commit()
         return {"id": role.id}
 
-    async def delete_role(self, role_id: int) -> dict[str, int]:
+    async def delete_role(self, role_id: int, *, current_user_roles: list[str]) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
+        await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
         if role.role_code == "R_SUPER":
             raise ApiError(400, "超级管理员角色不能删除")
         in_use = await self.session.scalar(
@@ -346,12 +356,25 @@ class SystemManageService:
             ],
         }
 
-    async def update_role_grant(self, role_id: int, payload: RoleGrantPayload) -> dict[str, int]:
-        await self._get_role_or_raise(role_id)
+    async def update_role_grant(
+        self,
+        role_id: int,
+        payload: RoleGrantPayload,
+        *,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
+        role = await self._get_role_or_raise(role_id)
+        await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
         menu_ids = await self._expand_menu_ids(payload.menu_ids)
         explicit_permission_ids = await self._resolve_permission_ids(payload.permission_ids)
         page_permission_ids = await self._resolve_page_permission_ids(menu_ids)
         permission_ids = sorted(set(explicit_permission_ids).union(page_permission_ids))
+        await self._assert_can_grant_permissions(
+            permission_ids,
+            current_user_id=current_user_id,
+            current_user_roles=current_user_roles,
+        )
         await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role_id))
         await self.session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
         await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role_id))
@@ -792,6 +815,43 @@ class SystemManageService:
 
     def _is_current_super(self, current_user_roles: list[str]) -> bool:
         return "R_SUPER" in set(current_user_roles)
+
+    async def _assert_can_manage_role(self, role: SysRole, *, current_user_roles: list[str]) -> None:
+        """非超级管理员不得管理内置超级角色（B21）。
+
+        否则被授予角色管理权的用户可以改写/禁用/删除 R_SUPER，或清空它的授权，
+        绕开"内置超级角色受保护"的既有约束。
+        """
+        if role.role_code == "R_SUPER" and not self._is_current_super(current_user_roles):
+            raise ApiError(403, "只有超级管理员可以管理超级管理员角色")
+
+    async def _assert_can_grant_permissions(
+        self,
+        permission_ids: list[int],
+        *,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> None:
+        """非超级管理员只能授出**自己已持有**的操作权限（B21）。
+
+        否则被授予角色管理权的用户可以把任意（甚至自己都没有的）权限授给自己的角色，
+        形成权限提升。
+        """
+        if self._is_current_super(current_user_roles) or not permission_ids:
+            return
+        requested = set(
+            (
+                await self.session.execute(
+                    select(SysPermission.permission_code).where(SysPermission.id.in_(permission_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        granted = set(await self.auth_service.fetch_user_permission_codes(current_user_id))
+        excess = sorted(code for code in requested if code and code not in granted)
+        if excess:
+            raise ApiError(403, "不能授予超出你自身权限范围的操作权限: " + ", ".join(excess[:5]))
 
     def _serialize_user(self, user: SysUser, role_codes: list[str]) -> dict[str, Any]:
         return {
