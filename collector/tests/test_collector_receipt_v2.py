@@ -3,6 +3,8 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
+from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -277,10 +279,14 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
         "import sys; from storage.collector_outbox import CollectorRetryOutbox; "
         "q=CollectorRetryOutbox(sys.argv[1]); print('ready', flush=True); sys.stdin.read()"
     )
+    # 用 collector 目录作为子进程的 cwd，让 `import storage` 按生产运行方式解析
+    # （`python -c` 的 sys.path[0] 即 cwd）。pytest 只为父进程插入了该目录，
+    # 子进程不会继承，所以不能依赖它。
+    collector_dir = Path(__file__).resolve().parents[1]
     child = subprocess.Popen(
         [sys.executable, "-c", child_code, str(path)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=os.environ.copy(),
+        text=True, env=os.environ.copy(), cwd=str(collector_dir),
     )
     try:
         assert child.stdout.readline().strip() == "ready"
@@ -293,7 +299,19 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
         child.stdout.close()
         child.stderr.close()
     assert path.with_name(path.name + ".owner.lock").exists()
-    reopened = CollectorRetryOutbox(path)
+    # 持有者进程结束后锁必须可再取得；用有界等待而不是假定"立即"释放：
+    # `sys.executable` 可能是 venv 转发器，真实解释器作为它的子进程运行，
+    # 因此 kill() 掉被启动的那个进程并不等于持锁进程已退出（要等管道拆完）。
+    deadline = time.monotonic() + 10.0
+    while True:
+        try:
+            reopened = CollectorRetryOutbox(path)
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+            continue
+        break
     reopened.close()
     reopened.close()
 
