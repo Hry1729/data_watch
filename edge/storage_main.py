@@ -145,13 +145,18 @@ def main() -> int:
         level=os.environ.get("DATAWATCH_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
+    try:
+        data_root = _resolve_data_root(args.data_root)
+        # `--data-root` 必须同时成为下游路径解析的事实源：edge_database_path() 与
+        # default_token_file() 只读 DATAWATCH_DATA_ROOT，不认命令行参数。不桥接的话，
+        # 数据库与令牌文件仍会落到源码树内的 edge/data/（这正是本地"裸跑"会污染仓库的原因）。
+        if args.data_root and args.data_root.strip():
+            os.environ["DATAWATCH_DATA_ROOT"] = str(data_root)
+    except ValueError as exc:
+        logging.getLogger("edge.storage").error("%s", exc)
+        return 2
     if args.rotate_ipc_tokens:
         # 轮换/吊销入口：只在解析数据根之后写盘，失败即退出，不启动服务。
-        try:
-            _resolve_data_root(args.data_root)
-        except ValueError as exc:
-            logging.getLogger("edge.storage").error("%s", exc)
-            return 2
         target = ensure_token_file(rotate=True)
         logging.getLogger("edge.storage").warning(
             "Rotated Edge Storage IPC tokens in %s. The running Edge Storage reloads this file "
@@ -168,11 +173,6 @@ def main() -> int:
             "--allow-non-loopback (or DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1) to override.",
             args.host,
         )
-        return 2
-    try:
-        data_root = _resolve_data_root(args.data_root)
-    except ValueError as exc:
-        logging.getLogger("edge.storage").error("%s", exc)
         return 2
     engine = StorageEngine(
         edge_database_path(),

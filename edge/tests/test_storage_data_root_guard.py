@@ -69,3 +69,35 @@ def test_real_entry_refuses_and_does_not_touch_install(monkeypatch, tmp_path):
     assert "Refusing to fall back" in combined
     after = sorted(p for p in INSTALLED_DEFAULT.rglob("*") if p.exists()) if INSTALLED_DEFAULT.exists() else []
     assert before == after, "真实安装目录被改动"
+
+
+def test_data_root_option_governs_database_and_token_paths(monkeypatch, tmp_path):
+    """`--data-root` 必须同时决定数据库与令牌文件位置。
+
+    回归背景：`edge_database_path()` / `default_token_file()` 只读 DATAWATCH_DATA_ROOT，
+    不认命令行参数；若入口不做桥接，`--data-root` 只影响 runtime 目录，数据库与令牌文件
+    仍会落到**仓库内** edge/data/，导致本地裸跑污染工作区（并可能把 IPC 凭据误提交）。
+    """
+    root = tmp_path / "edge-root"
+    monkeypatch.delenv("DATAWATCH_DATA_ROOT", raising=False)
+    monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_TOKEN_FILE", str(root / "edge" / "storage-ipc-tokens.json"))
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "edge" / "storage_main.py"),
+            "--data-root",
+            str(root),
+            "--rotate-ipc-tokens",
+        ],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={k: v for k, v in __import__("os").environ.items() if k != "DATAWATCH_DATA_ROOT"},
+    )
+    assert proc.returncode == 0, (proc.returncode, proc.stderr[-500:])
+    # 令牌文件落在指定数据根之下。
+    assert (root / "edge" / "storage-ipc-tokens.json").is_file()
+    # 仓库内的默认位置不得被创建。
+    assert not (REPO_ROOT / "edge" / "data" / "storage-ipc-tokens.json").exists()

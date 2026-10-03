@@ -84,6 +84,10 @@ collector/sidecars/*/bin/*.exe
 backend/exports/
 outputs/
 
+# Edge 运行时数据（源码运行时 edge_database_path() 的默认位置）：
+# 内含 edge.db 与 storage-ipc-tokens.json（IPC 凭据），绝不可入库。
+edge/data/
+
 # 根目录历史快照
 data_watch_full_*.zip
 executables_*.zip
