@@ -153,7 +153,12 @@ RBAC 规则：
 
 > 本节从当前 live MySQL `information_schema` 自动整理，避免旧 SQL 注释乱码或旧文档过期字段污染现行文档。字段以当前实际数据库为准；若字段与代码不一致，按本项目规则改代码、不改 schema。
 
-当前 MySQL `device_watch` 基线共 26 张表。
+**live `device_watch` 共 35 张表**（2026-10 以只读查询 live `information_schema` 核对）。本节此前声称的"当前 26 张表"已过时，**勿再引用该数字**。
+
+> - 本节逐表列出其中 **26 张**；**尚未收录的 9 张**为：`collector_setting`、`data_watch_schema_migration`、`device_assignment`、`driver_operation`、`installed_driver`、`node_registration_code`、`point_storage_mapping`、`point_storage_mapping_staging`、`sys_node`。**不要把本节当作完整基线。**
+> - 本节列出的 26 张表在 live 库中**均存在**；不存在"只写在文档里"的表。
+> - 仓库**没有**可单独建出全部业务表的完整基线 SQL：`scripts/sql/` 只有 `db1`–`db6` 增量脚本，另有 12 张表由 `backend/app/models/` 的 ORM 模型定义。`device_type`、`device_group`、`comm_protocol`、`device`、`device_variable`、`unit_dict`、`variable_template` 等业务表在 live 库中存在，但其 DDL **不在本仓库**；新机首装必须按运维手册交付经验证的库备份/基线，不能只跑增量脚本。
+> - **重建方式**（只读，不改业务库）：按 `table_schema='device_watch'` 从 `information_schema.columns` / `statistics` 导出，重新生成本节并覆盖全部 35 张表；同时逐列核对 `backend/app/models/` 与 `scripts/sql/db*.sql`，把新增列（如 `config_version` 一类）一并补齐。
 
 ### 8.1 设备与点位域
 
