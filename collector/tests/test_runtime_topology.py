@@ -7,6 +7,8 @@
 4. 新增 center 设备：调用端口映射、生成任务，不要求真实代理进程。
 """
 
+import asyncio
+import copy
 import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -259,3 +261,73 @@ async def test_add_device_rejects_duplicate():
     second = manager.add_device(dev_cfg, var_cfgs)
     assert second is None
     assert manager.devices["DUP"] is first  # 原对象未被覆盖
+
+
+# ── B3：热替换必须收尾旧代重连任务 ───────────────────────────────────────────
+
+
+def _candidate_like(device):
+    """构造同 device_id 的候选 Device（浅拷贝，驱动置空）。"""
+    candidate = copy.copy(device)
+    candidate.driver = None
+    candidate.active = True
+    return candidate
+
+
+@pytest.mark.asyncio
+async def test_swap_device_cancels_old_reconnect_task_and_frees_slot():
+    """热替换后旧重连任务必须让出槽位，否则新代永远拿不到重连任务。"""
+    manager = _empty_manager()
+    dev_cfg = DeviceConfig("SWAP_PLC", "QC", "s7", "192.168.1.71", port=102, slot=1)
+    var_cfgs = [VariableConfig("v1", "SWAP_PLC", "DB100.DBW0", "INT", 1, True, 1)]
+    old = manager.add_device(dev_cfg, var_cfgs)
+
+    old.driver = AsyncMock()
+    old.driver.disconnect = AsyncMock()
+    old_driver = old.driver
+    old.status = DeviceStatus.ERROR
+    manager._sleep = AsyncMock()  # 旧任务不得真正等待
+    await manager.schedule_reconnect(old)
+    stale_task = manager._reconnect_tasks["SWAP_PLC"]
+
+    candidate = _candidate_like(old)
+    await manager.swap_device("SWAP_PLC", candidate)
+
+    assert stale_task.done(), "旧重连任务必须已被收尾"
+    assert "SWAP_PLC" not in manager._reconnect_tasks, "旧任务必须让出槽位"
+    assert manager.devices["SWAP_PLC"] is candidate
+    old_driver.disconnect.assert_awaited_once()
+
+    # 关键：新代不再被旧任务占位挡住，能拿到自己的重连任务。
+    manager._sleep = asyncio.sleep
+    manager._reconnect_interval = 0.05
+    manager._reconnect_max_interval = 0.05
+    manager.connect_device = AsyncMock(return_value=False)
+    await manager.schedule_reconnect(candidate)
+    assert "SWAP_PLC" in manager._reconnect_tasks
+    await manager.remove_device("SWAP_PLC")
+
+
+@pytest.mark.asyncio
+async def test_stale_reconnect_loop_stops_even_if_cancel_is_missed():
+    """竞态注入：取消没赶上时，旧任务仍须因"不再是当前设备对象"而停止。"""
+    manager = _empty_manager()
+    dev_cfg = DeviceConfig("STALE_PLC", "QC", "s7", "192.168.1.72", port=102, slot=1)
+    var_cfgs = [VariableConfig("v1", "STALE_PLC", "DB100.DBW0", "INT", 1, True, 1)]
+    old = manager.add_device(dev_cfg, var_cfgs)
+
+    old.driver = AsyncMock()
+    old.status = DeviceStatus.ERROR
+    manager._sleep = AsyncMock()
+    connect = AsyncMock(return_value=True)
+    manager.connect_device = connect
+    await manager.schedule_reconnect(old)
+    stale_task = manager._reconnect_tasks["STALE_PLC"]
+
+    manager._cancel_reconnect_task = AsyncMock()  # 模拟"取消没赶上"
+    candidate = _candidate_like(old)
+    await manager.swap_device("STALE_PLC", candidate)
+
+    await asyncio.wait_for(stale_task, timeout=3)
+    connect.assert_not_awaited(), "旧代不得再发起连接"
+    assert manager.devices["STALE_PLC"] is candidate

@@ -333,6 +333,8 @@ async def test_replace_keeps_old_when_scheduler_install_fails(monkeypatch):
     app.device_manager._driver_registry = None
     app.device_manager._resolve_driver_registry = MagicMock(return_value=None)
     app.device_manager._safe_disconnect_driver = AsyncMock()
+    # B3：swap_device 现在会收尾旧代重连任务，替身需提供该属性。
+    app.device_manager._reconnect_tasks = {}
     from tests.package_support import source_registry
     app.device_manager._attach_external_hooks = lambda device: setattr(device, "external_driver_hooks", source_registry().get(device.protocol))
 
@@ -393,6 +395,8 @@ async def test_replace_rollback_reconnect_false_schedules_retry(monkeypatch):
     app.device_manager._driver_registry = None
     app.device_manager._resolve_driver_registry = MagicMock(return_value=None)
     app.device_manager._safe_disconnect_driver = AsyncMock()
+    # B3：swap_device 现在会收尾旧代重连任务，替身需提供该属性。
+    app.device_manager._reconnect_tasks = {}
     from tests.package_support import source_registry
     app.device_manager._attach_external_hooks = lambda device: setattr(device, "external_driver_hooks", source_registry().get(device.protocol))
     app.device_manager.schedule_reconnect = AsyncMock()

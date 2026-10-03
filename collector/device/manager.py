@@ -667,7 +667,13 @@ class DeviceManager:
         )
 
     async def swap_device(self, device_id: str, candidate: Device) -> Optional[Device]:
-        """原子替换 devices 表中的设备；返回被替换的旧 Device（可能为 None）。"""
+        """原子替换 devices 表中的设备；返回被替换的旧 Device（可能为 None）。
+
+        B3：热替换必须**一并收尾旧代的重连任务**。否则旧任务会继续按旧对象重连旧地址，
+        而且因为 ``_reconnect_tasks[device_id]`` 仍被它占用，新代连
+        ``schedule_reconnect`` 都会在"已有任务"处早退跳过——表现为新设备不再重连。
+        等待旧任务在代际锁**之外**进行，避免持锁阻塞其它设备。
+        """
         lock = self._generation_lock_for(device_id)
         with lock:
             old = self.devices.get(device_id)
@@ -680,6 +686,9 @@ class DeviceManager:
                 old.generation = generation
             self.devices[device_id] = candidate
 
+        # 代际已提升：先在锁外取消/收尾旧重连任务，再断开旧驱动。
+        await self._cancel_reconnect_task(device_id)
+
         if old is not None:
             driver = old.driver
             old.driver = None
@@ -687,6 +696,17 @@ class DeviceManager:
                 driver, device_id=device_id, reason="swap_device_old"
             )
         return old
+
+    async def _cancel_reconnect_task(self, device_id: str) -> None:
+        """取消并收尾该设备的重连任务（幂等）。调用方须在代际锁之外 await。"""
+        task = self._reconnect_tasks.pop(device_id, None)
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     def add_device(
         self, dev_cfg: DeviceConfig, var_cfgs: List[VariableConfig]
@@ -771,13 +791,7 @@ class DeviceManager:
         self.invalidate_device(device_id)
 
         # 1) 取消重连任务，避免刚下线又被拉起
-        reconnect_task = self._reconnect_tasks.pop(device_id, None)
-        if reconnect_task is not None and not reconnect_task.done():
-            reconnect_task.cancel()
-            try:
-                await reconnect_task
-            except asyncio.CancelledError:
-                pass
+        await self._cancel_reconnect_task(device_id)
 
         # 2) 断开 driver（不回写 DB 状态，仅日志；超时/失败幂等）
         driver = device.driver
@@ -1184,6 +1198,15 @@ class DeviceManager:
             try:
                 while device.status != DeviceStatus.ONLINE:
                     await self._sleep(self._next_reconnect_delay(attempt))
+                    # B3：提交前再验证当前代。热替换或下线之后，这个闭包捕获的 device
+                    # 已不再代表该 device_id，必须停止——否则它会继续连旧地址，并把状态
+                    # 写回一个已作废的对象。
+                    if self.devices.get(device.device_id) is not device:
+                        logger.info(
+                            "Reconnect for device %s stopped: no longer the current device object",
+                            device.device_id,
+                        )
+                        break
                     try:
                         self._metrics.increment("reconnect_attempt_count")
                         logger.info("Attempting reconnect for device %s", device.device_id)
