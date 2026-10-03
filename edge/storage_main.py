@@ -83,11 +83,38 @@ def _bind_error_message(host: str, port: int, exc: OSError) -> str:
     )
 
 
+def _resolve_data_root(explicit: str | None) -> Path:
+    """Resolve the Edge data root without silently targeting a real installation.
+
+    ``DATAWATCH_DATA_ROOT`` is injected by the installer (NSSM ``AppEnvironmentExtra``)
+    for the managed edge processes. When it is missing we must not guess: falling back
+    to the installed root would let a source-tree / bare run read or modify a **real**
+    installation. A packaged (frozen) build keeps the historical default.
+    """
+    for candidate in (explicit, os.environ.get("DATAWATCH_DATA_ROOT")):
+        if candidate and candidate.strip():
+            return Path(candidate)
+    if getattr(sys, "frozen", False):
+        return Path(r"C:\ProgramData\DataWatch Edge")
+    raise ValueError(
+        "DATAWATCH_DATA_ROOT is not set and this is not a packaged build. Refusing to fall "
+        r"back to the installed data root (C:\ProgramData\DataWatch Edge), because a source "
+        "run would then read or modify a real installation. Set DATAWATCH_DATA_ROOT or pass "
+        "--data-root <dir>."
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DataWatch Edge Storage")
     parser.add_argument("--host", default=os.environ.get("DATAWATCH_EDGE_STORAGE_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("DATAWATCH_EDGE_STORAGE_PORT", "7073")))
     parser.add_argument("--queue-capacity", type=int, default=int(os.environ.get("DATAWATCH_EDGE_STORAGE_QUEUE_CAPACITY", "2048")))
+    # 数据根的解析必须显式：源码裸跑不得退回真实安装目录（见 _resolve_data_root）。
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="Edge data root. Overrides DATAWATCH_DATA_ROOT; required when not a packaged build.",
+    )
     parser.add_argument(
         "--shutdown-timeout-seconds",
         type=float,
@@ -119,6 +146,11 @@ def main() -> int:
             args.host,
         )
         return 2
+    try:
+        data_root = _resolve_data_root(args.data_root)
+    except ValueError as exc:
+        logging.getLogger("edge.storage").error("%s", exc)
+        return 2
     engine = StorageEngine(
         edge_database_path(),
         max_queue=args.queue_capacity,
@@ -149,7 +181,6 @@ def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, stop)
 
-    data_root = Path(os.environ.get("DATAWATCH_DATA_ROOT") or r"C:\ProgramData\DataWatch Edge")
     runtime_dir = Path(os.environ.get("DATAWATCH_RUNTIME_DIR") or data_root / "runtime")
     shutdown_flag = runtime_dir / "storage.shutdown_flag"
     shutdown_flag.unlink(missing_ok=True)
