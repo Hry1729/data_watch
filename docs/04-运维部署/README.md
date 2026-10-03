@@ -299,6 +299,7 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 - 若 Redis/TDengine 在 Docker 宿主机运行，Docker Desktop 下可使用 `host.docker.internal`；若在另一台服务器，使用 Backend 容器实际可达的 DNS/IP，不要沿用 `redis`/`tdengine` 服务名。MySQL 同理；`host.docker.internal` 不是远端数据库地址。
 - Compose `infra` 模式下 Redis 只发布到宿主机 `127.0.0.1:6379`，Backend 应通过 Docker 内网的 `redis:6379` 访问；Redis 与 Backend 必须使用同一个 `REDIS_PASSWORD`。
 - `AUTH_SECRET_KEY` 生产必须强随机，不能使用模板值；`AUTH_BOOTSTRAP_SUPER_PASSWORD` 不得提交到仓库或写成示例弱密码。
+- **`AUTH_TRUSTED_PROXIES`（来源 IP 可信边界）**：逗号分隔的 IP/CIDR。**默认留空**——此时 Backend **完全忽略** `X-Forwarded-For` / `X-Real-IP`，来源 IP 取连接对端，因此**无法被伪造**。仅当 Backend 确实位于你自己的网关之后时才填写网关地址（例如 `127.0.0.1,::1` 或 nginx 容器所在网段）；填写后来源从转发链**从右往左**取第一个**不可信**地址，而不是最左项（nginx 的 `$proxy_add_x_forwarded_for` 会把对端追加在最右，客户端自带的伪造项留在最左）。来源 IP 参与登录/日志限流与审计，配置错误会让限流被绕过或误伤合法用户。
 - 生产/非开发环境首次启动且数据库中不存在 `Super` 时，`AUTH_AUTO_BOOTSTRAP=true` 必须同时提供 `AUTH_BOOTSTRAP_SUPER_PASSWORD`：至少 16 个字符，含大小写字母、数字和符号，且不得含空白。首次登录会要求改密，改密后从运行环境移除该变量；已有 disabled/deleted 的 `Super` 不会被复活。
 - `TDENGINE_LOG_DIR=/tdengine-logs` 只有 compose 托管 TDengine 并挂载日志卷时可用；外部 TDengine 会优雅降级。
 - **`DATAWATCH_AGENT_SERVICE_TOKEN`**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` **完全一致**。
