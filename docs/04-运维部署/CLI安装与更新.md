@@ -25,7 +25,7 @@ data-watch auth capabilities
 
 安装脚本会复制程序、验证版本、设置 Backend URL、把 `current` 加入当前用户 PATH，并执行健康检查。PATH 变更在新开的 PowerShell 窗口生效。生产推荐填写 frontend/nginx 的统一入口；`8000` Backend 直连只用于开发或受控排障。
 
-安装目录采用 `current` / `previous` 双版本结构。新版目录切换失败时安装脚本立即恢复旧 `current`。配置和凭据位于安装目录之外，因此重装程序不会覆盖它们。
+安装目录采用 `current` / `previous` 双版本结构。新版目录切换失败时安装脚本立即恢复旧 `current`。自动更新（`update apply` / `update rollback`）的切换把已完成的每一步写入 `<InstallRoot>\swap-state.txt`（阶段值形如 `update:backed-up` / `update:swapped` / `update:verified`）：失败时**只撤销已完成的步骤**，**不再无条件删除仍有效的 `current`**，因此任何失败路径下都至少留有一份可运行的旧版本；若切换进程中途崩溃，下一次运行会先按该状态文件把完整旧版本搬回 `current` 再继续。配置和凭据位于安装目录之外，因此重装程序不会覆盖它们。
 
 卸载：
 
@@ -48,7 +48,7 @@ data-watch update rollback --yes
 
 `update check/download/apply` 不依赖登录态，安全性由内置受信任公钥和签名校验保证；网络仍应限制在内网发布服务。只有签名、文件大小和 SHA-256 全部通过才进入切换阶段。
 
-`apply` 启动独立更新进程，等待当前 CLI 退出后切换 `current` 与 `previous`。新版本自检失败时自动恢复旧版本。源码运行方式可检查和下载版本，但只有 Windows 安装脚本部署的 `current/data-watch.exe` 支持自动应用与回滚。
+`apply` 启动独立更新进程，等待当前 CLI 退出后切换 `current` 与 `previous`。新版本自检失败时自动恢复旧版本。因为 updater 必须等当前 CLI 退出后才真正交换目录，`update apply` 只报「已提交待验证」：返回 `updateStarted=true`，同时返回 `updateVerified=false`、`verificationRequired=true`、`reason=restart_required` 与 `statePath=<InstallRoot>\swap-state.txt`；升级是否真正成功要在重启后由该文件的 `…:verified` 阶段值（或 `UpdateManager.swap_state()`）独立确认。源码运行方式可检查和下载版本，但只有 Windows 安装脚本部署的 `current/data-watch.exe` 支持自动应用与回滚。
 
 ### 3.1 离线更新
 

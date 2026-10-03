@@ -24,7 +24,7 @@
 | 模式 | 容器 | 作用 |
 | --- | --- | --- |
 | `plan` / `prep` | 宿主 / pipeline-runner | 生成计划（设备、点位、时序基线）；建 MySQL 映射与范围表、TD 库、Writer 运行目录 |
-| `collector` | data-watch-collector-test（3.14t、GIL 关闭） | 用**生产 `DurableRedisWriter` + SQLite Outbox** 按目标速率喂入，并采样一条时间线 |
+| `collector` | data-watch-collector-test（3.14t、GIL 关闭） | 用**（当时的）`DurableRedisWriter` + SQLite Outbox** 按目标速率喂入，并采样一条时间线 〔⚠️ **适用路径：已撤销的中心 Durable 方案**。该方案现非生产实现：中心默认分支已是 `RedisWriter` 直写、不构造 SQLite Outbox、不逐批 `WAITAOF`（`collector/main.py:181-192`）。原文「**生产**」措辞不成立；本行及本报告结论**仅适用于该旧路径**。现行口径见 `docs/03-数据与契约/DW-01-确认语义与持久化边界.md` §1/§4。〕 |
 | `reconcile` | pipeline-runner（有 pymysql/taosws） | 读 TDengine 对账 + 核对 Stream/PEL/DLQ |
 
 隔离环境：自建网络 + `redis:7.4`（`everysec`、`maxmemory 4gb`、`noeviction`）+ `mysql:8.4` + `tdengine 3.4.0.9`；
@@ -52,9 +52,9 @@ Writer 用**生产入口** `writer/main.py`（配置发现、consumer group、TD
 ## 4. 第 2 轮（有效轮）的完整结果
 
 采集侧（`joint-collector.json`）：提交 24,000 帧 = 200 帧/秒 × 120 s；
-`durable_frames_accepted` 24,000；`history_frames_confirmed` 24,000（窗口内全部确认）；
+`durable_frames_accepted` 24,000；`history_frames_confirmed` 24,000（窗口内全部确认；⚠️ 这两个 `durable_*` 指标仅适用于**已撤销的中心 Durable 路径**，非现行中心式）；
 `latest_fastlane_sent_groups` 21,017（快车道按组合并，少发约 12%）；
-Outbox 峰值 500 帧、最老积压峰值 2,446 ms；结束时 Outbox 0、排空 2.0 s。
+Outbox 峰值 500 帧、最老积压峰值 2,446 ms；结束时 Outbox 0、排空 2.0 s。〔⚠️ 本段 `Outbox` / `durable_*` / `accepted_frames` 均为**已撤销的中心 Durable 方案**（`DurableRedisWriter` + SQLite Outbox）的指标：现行中心式由 `RedisWriter` 直写、**无本地队列**、**不逐批 `WAITAOF`**（`collector/main.py:181-192`），故本报告的吞吐/延迟结论**仅适用于该旧路径**，不得当作现行中心式结论。〕
 
 Redis 侧（同一窗口，`INFO cpu` 主线程差值）：**89.15 CPU 秒 / 120.004 秒 = 0.7429**（未饱和）；
 进程忙碌比 0.7442（单线程执行，二者一致）。
@@ -86,10 +86,10 @@ Writer 侧压力只能这样**粗略**看：463 次 flush、`flush_ms` 平均 70
 | --- | --- | --- |
 | 计划帧 `planned_frames` | `tier.devices × ticks` | 该档"打算发多少帧"（用于判断驱动是否达速） |
 | 实际尝试帧 `attempted_frames` | 驱动侧自计 | 真正调用写入的帧（未达速时 < 计划帧） |
-| 本地持久接收帧 `accepted_frames` | `durable_frames_accepted` | SQLite 事务提交成功、责任已落到本地队列 |
+| 本地持久接收帧 `accepted_frames` | `durable_frames_accepted` | SQLite 事务提交成功、责任已落到本地队列 〔适用路径：已撤销的中心 Durable 方案；现行中心式无本地队列〕 |
 | Redis 交付确认帧 `redis_confirmed_frames` | `history_frames_confirmed` | 交付 Redis 且**本地清理已提交**（与删除同事务） |
 | TD 完整确认帧 `td_confirmed_rows` | 对账阶段读 TDengine | 值表行数（一帧一行）；质量行按 **tick 逐帧**统计 |
-| 拒收帧 `outbox_rejected_frames` | 采集侧指标 | 本地队列满等原因被拒（**不为 0 就是数据缺口**，必须报出） |
+| 拒收帧 `outbox_rejected_frames` | 采集侧指标 | 本地队列满等原因被拒（**不为 0 就是数据缺口**，必须报出）〔适用路径：已撤销的中心 Durable 方案；现行中心式无本地队列，不存在该拒收口径〕 |
 
 **时间边界**：以上计数都要分两个时刻报——`_at_feed_end`（生产窗口结束那一刻）与
 `_after_drain`（排空结束）。`after_drain` 的确认量包含排空窗口内完成的帧，**不得**计入生产窗口吞吐。

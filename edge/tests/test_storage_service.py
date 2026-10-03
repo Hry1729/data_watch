@@ -49,18 +49,27 @@ def _snapshot() -> dict:
 def test_storage_http_uses_keepalive_protocol() -> None:
     assert StorageRequestHandler.protocol_version == "HTTP/1.1"
 
-def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> None:
+def test_storage_serializes_concurrent_frames_and_batch_ack(
+    tmp_path: Path, monkeypatch
+) -> None:
+    # S3: the IPC endpoint requires a per-role token now, and the token file must
+    # stay inside tmp_path. Each client declares its identity explicitly instead
+    # of relying on an implicit role.
+    monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_TOKEN_FILE", str(tmp_path / "ipc-tokens.json"))
     engine = StorageEngine(tmp_path / "edge.db", max_queue=256)
     engine.start()
     server = StorageHttpServer(("127.0.0.1", 0), engine)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    client = EdgeStorageClient(f"http://127.0.0.1:{server.server_port}")
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    agent = EdgeStorageClient(base_url, role="agent")
+    collector = EdgeStorageClient(base_url, role="collector")
+    uploader = EdgeStorageClient(base_url, role="uploader")
     try:
-        assert client.apply(_snapshot()) == 1
+        assert agent.apply(_snapshot()) == 1
 
         def commit(index: int):
-            return client.commit_frame(
+            return collector.commit_frame(
                 batch_id=f"frame-{index}",
                 device_code="QC100",
                 device_type="qc",
@@ -79,15 +88,15 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
             records = list(executor.map(commit, range(100)))
 
         assert sorted(record.local_seq for record in records) == list(range(1, 101))
-        target = client.snapshot_target_seq()
-        claimed = client.claim_batch(
+        target = uploader.snapshot_target_seq()
+        claimed = uploader.claim_batch(
             target_seq=target,
             lease_owner="test-uploader",
             lease_ms=5000,
             max_items=100,
             max_bytes=1024 * 1024,
         )
-        claimed_again = client.claim_batch(
+        claimed_again = uploader.claim_batch(
             target_seq=target,
             lease_owner="test-uploader",
             lease_ms=5000,
@@ -95,22 +104,24 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
             max_bytes=1024 * 1024,
         )
         assert [row.local_seq for row in claimed_again] == [row.local_seq for row in claimed]
-        client.complete_batch(
+        uploader.complete_batch(
             [OutboxCompletion(record, "sent") for record in claimed],
             "test-uploader",
         )
-        client.complete_batch(
+        uploader.complete_batch(
             [OutboxCompletion(record, "sent") for record in claimed],
             "test-uploader",
         )
-        client.maintenance(7, 24 * 60 * 60 * 1000)
-        status = client.status()
+        uploader.maintenance(7, 24 * 60 * 60 * 1000)
+        status = uploader.status()
         assert status["counts"] == {"sent": 100}
         assert status["sent_records_total"] == 100
         assert status["errors_total"] == 0
         assert status["writer_queue_depth"] == 0
     finally:
-        client.close()
+        agent.close()
+        collector.close()
+        uploader.close()
         server.shutdown()
         server.server_close()
         engine.close()

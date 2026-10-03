@@ -246,6 +246,21 @@ def _print_status(path: Path, batch_ids: list[str], points: int) -> Counter[str]
     return counts
 
 
+def read_upload_interval_ms() -> int | None:
+    """Uploader 已配置的上传间隔（仅用于批次大小提示）。
+
+    P1-B：``outbox.upload_interval`` 属 **uploader** 角色。真实 Collector
+    （``edge/collector_main.py`` 的 ``EdgeOutboxWriter`` / ``EdgeConfigManager``）从不调用
+    该动作，唯一调用者是本仿真脚本；为脚本的方便去放宽 collector 白名单会削弱最小权限
+    模型，因此这里只用一次**显式 uploader 角色**的只读客户端。凭据失败照常抛出，不吞异常。
+    """
+    client = EdgeStorageClient(role="uploader")
+    try:
+        return client.upload_interval_ms()
+    finally:
+        client.close()
+
+
 def run_simulation(args: argparse.Namespace) -> int:
     path = resolve_database(args.db)
     device_codes = [value for part in args.devices for value in part.split(",")]
@@ -268,7 +283,7 @@ def run_simulation(args: argparse.Namespace) -> int:
         return 0
 
     store = EdgeStorageClient()
-    upload_interval_ms = store.upload_interval_ms()
+    upload_interval_ms = read_upload_interval_ms()
     fastest_group_ms = min(group.scan_rate_ms for group in groups)
     if upload_interval_ms and upload_interval_ms > fastest_group_ms:
         print(

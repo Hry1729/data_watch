@@ -18,6 +18,22 @@ from .schemas import UploadItem
 
 _CENTER_TIMEZONE = timezone(timedelta(hours=8))
 _TOUCH_INTERVAL_SECONDS = 5.0
+# 这几类驳回可能只是控制面已提交、而本进程控制缓存落后的结果：
+# 永久化（rejected_consumed）之前必须对决定该判定的那个缓存命名空间做一次受控权威重读。
+_UNKNOWN_VAR_ID = "malformed_envelope:unknown_var_id"
+_UNKNOWN_CONFIG_VERSION = "unknown_config_version"
+_UNKNOWN_DEVICE = "unknown_device"
+_DEVICE_TYPE_MISMATCH = "malformed_envelope:device_type_mismatch"
+# 按命名空间精确归因（决定该判定的缓存只有一个）：
+# - `unknown_var_id` ← `_mapping_cache`（`point_storage_mapping` 行缺失）；
+# - `unknown_device` ← `_assignment_cache` 的否定缓存 `(expiry, None)`（assignment 行缺失）；
+# - `device_type_mismatch` ← `_assignment_cache` 行里的 `device.device_type`；
+# - `unknown_config_version` ← `_assignment_cache` 行里的 `device_point_group.config_version`。
+_MAPPING_REREADABLE_REASONS = frozenset({_UNKNOWN_VAR_ID})
+_ASSIGNMENT_REREADABLE_REASONS = frozenset(
+    {_UNKNOWN_DEVICE, _DEVICE_TYPE_MISMATCH, _UNKNOWN_CONFIG_VERSION}
+)
+_REREADABLE_REASONS = _MAPPING_REREADABLE_REASONS | _ASSIGNMENT_REREADABLE_REASONS
 logger = logging.getLogger("ingest.repository")
 
 
@@ -68,6 +84,7 @@ class MySQLIngestRepository:
         self._mapping_cache: dict[
             tuple[str, str], tuple[float, frozenset[int]]
         ] = {}
+        self._reread_at: dict[object, float] = {}
 
     @classmethod
     async def create(
@@ -214,8 +231,8 @@ class MySQLIngestRepository:
                     (item.device_code, item.group_code), set()
                 ).update(point_ids)
 
-        assignments = await self._assignment_rows(assignment_keys)
-        mapped = await self._mapping_point_sets(set(mapping_points))
+        assignments, fetched_assignments = await self._assignment_rows(assignment_keys)
+        mapped, fetched_mappings = await self._mapping_point_sets(set(mapping_points))
 
         for index, item, point_ids in valid:
             row = assignments.get(
@@ -229,20 +246,172 @@ class MySQLIngestRepository:
                 point_ids,
             )
 
+        suspects = [
+            (index, item, point_ids)
+            for index, item, point_ids in valid
+            if decisions[index] is not None
+            and decisions[index].reason in _REREADABLE_REASONS
+        ]
+        if suspects:
+            await self._reread_and_revalidate(
+                node_uuid,
+                valid,
+                decisions,
+                assignments,
+                fetched_assignments,
+                mapped,
+                fetched_mappings,
+            )
+
         return [
             decision or ValidationDecision.reject("malformed_envelope")
             for decision in decisions
         ]
 
-    async def _assignment_rows(
-        self, keys: set[tuple[str, str, int]]
-    ) -> dict[tuple[str, str, int], dict | None]:
+    async def _reread_and_revalidate(
+        self,
+        node_uuid: str,
+        valid: list[tuple[int, UploadItem, set[int]]],
+        decisions: list[ValidationDecision | None],
+        assignments: dict[tuple[str, str, int], dict | None],
+        fetched_assignments: set[tuple[str, str, int]],
+        mapped: dict[tuple[str, str], set[int]],
+        fetched_mappings: set[tuple[str, str]],
+    ) -> None:
+        """永久驳回前的受控权威重读，按缓存命名空间分轮。
+
+        - `unknown_var_id` 只可能由 mapping 缓存落后造成；`unknown_device`（assignment
+          行的否定缓存 `(expiry, None)`）、`device_type_mismatch`、`unknown_config_version`
+          只可能由 assignment 缓存落后造成，因此每轮只重读决定该判定的那一个命名空间。
+        - 每轮顺序固定为 mapping → assignment：新点位帧会先撞 mapping 缺失，权威补上映射
+          后才暴露版本落后（`repository.py` 的映射校验在版本校验之前）；assignment 轮修好后
+          还可能暴露 mapping 落后，故最多两轮收口。
+        - 只重读「本次由缓存命中」的 key（并发 miss 时本次读到的就是权威值）；
+          同一 key 在一个 TTL 窗口内至多重读一次，真正的非法帧不会造成无界查询。
+        """
+        for _ in range(2):
+            reread = await self._reread_mappings(
+                node_uuid, valid, decisions, assignments, mapped, fetched_mappings
+            )
+            if await self._reread_assignments(
+                node_uuid, valid, decisions, assignments, mapped, fetched_assignments
+            ):
+                reread = True
+            if not reread:
+                break
+
+    async def _reread_mappings(
+        self,
+        node_uuid: str,
+        valid: list[tuple[int, UploadItem, set[int]]],
+        decisions: list[ValidationDecision | None],
+        assignments: dict[tuple[str, str, int], dict | None],
+        mapped: dict[tuple[str, str], set[int]],
+        fetched_mappings: set[tuple[str, str]],
+    ) -> bool:
+        """重读 mapping 命名空间；返回是否真的发起了一次权威重读。"""
+        mapping_keys: set[tuple[str, str]] = set()
+        for index, item, _ in valid:
+            if not self._matches_reason(decisions, index, _MAPPING_REREADABLE_REASONS):
+                continue
+            key = (item.device_code, item.group_code)
+            if key not in fetched_mappings and self._claim_reread(("mapping", *key)):
+                mapping_keys.add(key)
+        if not mapping_keys:
+            return False
+        refreshed_mappings, _ = await self._mapping_point_sets(
+            mapping_keys, force_keys=mapping_keys
+        )
+        mapped.update(refreshed_mappings)
+        self._revalidate_reasons(
+            node_uuid, valid, decisions, assignments, mapped, _MAPPING_REREADABLE_REASONS
+        )
+        return True
+
+    async def _reread_assignments(
+        self,
+        node_uuid: str,
+        valid: list[tuple[int, UploadItem, set[int]]],
+        decisions: list[ValidationDecision | None],
+        assignments: dict[tuple[str, str, int], dict | None],
+        mapped: dict[tuple[str, str], set[int]],
+        fetched_assignments: set[tuple[str, str, int]],
+    ) -> bool:
+        """重读 assignment 命名空间；返回是否真的发起了一次权威重读。"""
+        assignment_keys: set[tuple[str, str, int]] = set()
+        for index, item, _ in valid:
+            if not self._matches_reason(
+                decisions, index, _ASSIGNMENT_REREADABLE_REASONS
+            ):
+                continue
+            key = (item.device_code, item.group_code, item.assignment_epoch)
+            if key not in fetched_assignments and self._claim_reread(
+                ("assignment", *key)
+            ):
+                assignment_keys.add(key)
+        if not assignment_keys:
+            return False
+        refreshed_assignments, _ = await self._assignment_rows(
+            assignment_keys, force_keys=assignment_keys
+        )
+        assignments.update(refreshed_assignments)
+        self._revalidate_reasons(
+            node_uuid, valid, decisions, assignments, mapped, _ASSIGNMENT_REREADABLE_REASONS
+        )
+        return True
+
+    @staticmethod
+    def _matches_reason(
+        decisions: list[ValidationDecision | None],
+        index: int,
+        reasons: frozenset[str],
+    ) -> bool:
+        decision = decisions[index]
+        return decision is not None and decision.reason in reasons
+
+    def _revalidate_reasons(
+        self,
+        node_uuid: str,
+        valid: list[tuple[int, UploadItem, set[int]]],
+        decisions: list[ValidationDecision | None],
+        assignments: dict[tuple[str, str, int], dict | None],
+        mapped: dict[tuple[str, str], set[int]],
+        reasons: frozenset[str],
+    ) -> None:
+        for index, item, point_ids in valid:
+            if not self._matches_reason(decisions, index, reasons):
+                continue
+            decisions[index] = self._validate_item_row(
+                node_uuid,
+                item,
+                assignments.get(
+                    (item.device_code, item.group_code, item.assignment_epoch)
+                ),
+                mapped.get((item.device_code, item.group_code), set()),
+                point_ids,
+            )
+
+    def _claim_reread(self, key: object) -> bool:
         now = monotonic()
+        last = self._reread_at.get(key)
+        if last is not None and now - last < self._control_cache_ttl_seconds:
+            return False
+        self._reread_at[key] = now
+        return True
+
+    async def _assignment_rows(
+        self,
+        keys: set[tuple[str, str, int]],
+        *,
+        force_keys: set[tuple[str, str, int]] | None = None,
+    ) -> tuple[dict[tuple[str, str, int], dict | None], set[tuple[str, str, int]]]:
+        now = monotonic()
+        forced = force_keys or set()
         result: dict[tuple[str, str, int], dict | None] = {}
         missing: set[tuple[str, str, int]] = set()
         for key in keys:
             cached = self._assignment_cache.get(key)
-            if cached is not None and cached[0] > now:
+            if key not in forced and cached is not None and cached[0] > now:
                 result[key] = cached[1]
             else:
                 missing.add(key)
@@ -264,17 +433,21 @@ class MySQLIngestRepository:
                     value,
                 )
                 result[key] = value
-        return result
+        return result, set(missing)
 
     async def _mapping_point_sets(
-        self, keys: set[tuple[str, str]]
-    ) -> dict[tuple[str, str], set[int]]:
+        self,
+        keys: set[tuple[str, str]],
+        *,
+        force_keys: set[tuple[str, str]] | None = None,
+    ) -> tuple[dict[tuple[str, str], set[int]], set[tuple[str, str]]]:
         now = monotonic()
+        forced = force_keys or set()
         result: dict[tuple[str, str], set[int]] = {}
         missing: set[tuple[str, str]] = set()
         for key in keys:
             cached = self._mapping_cache.get(key)
-            if cached is not None and cached[0] > now:
+            if key not in forced and cached is not None and cached[0] > now:
                 result[key] = set(cached[1])
             else:
                 missing.add(key)
@@ -298,7 +471,7 @@ class MySQLIngestRepository:
                     value,
                 )
                 result[key] = set(value)
-        return result
+        return result, set(missing)
 
     def _cache_expiry(self, namespace: str, key: object) -> float:
         checksum = zlib.crc32(f"{namespace}:{key!r}".encode("utf-8"))

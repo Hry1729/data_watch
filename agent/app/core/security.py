@@ -87,6 +87,36 @@ def verify_password(password: str, encoded: str) -> bool:
 JWT_ISSUER = "datawatch-agent"
 JWT_AUDIENCE = "datawatch-agent"
 
+# 空密钥可让任何本地进程伪造管理员令牌（HS256 用空串照签照验）。32 字符下限与
+# config.toml.example 声明的「32 字节 hex」一致。
+JWT_SECRET_MIN_LENGTH = 32
+
+
+def validate_jwt_secret(secret: object, min_length: int = JWT_SECRET_MIN_LENGTH) -> str:
+    """校验 JWT 密钥非空且达到最小长度；不合格抛 ValueError。
+
+    默认下限 32 由配置加载（app.core.config）使用；签发/校验路径只要求非空，
+    见 _require_jwt_secret 的说明。
+    """
+    if not isinstance(secret, str):
+        raise ValueError("jwt_secret must be a string")
+    if len(secret.strip()) < min_length:
+        raise ValueError(f"jwt_secret must be at least {min_length} characters")
+    return secret
+
+
+def _require_jwt_secret(secret: object) -> str:
+    """签发/校验前的硬闸门：空密钥即拒绝，绝不降级为「无签名校验」。
+
+    这里只拦空值（P0：空密钥可伪造任意令牌）。长度下限属配置策略，由
+    app.core.config._ensure_jwt_secret_unlocked 在加载既有配置时强制执行。
+    """
+    try:
+        return validate_jwt_secret(secret, min_length=1)
+    except ValueError as exc:
+        raise JWTError(str(exc)) from exc
+
+
 class InsufficientRoleError(JWTError):
     pass
 
@@ -97,6 +127,7 @@ def create_access_token(
     expire_hours: int,
     roles: list[str] | None = None,
 ) -> str:
+    secret = _require_jwt_secret(secret)
     expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)
     payload = {
         "sub": subject,
@@ -119,6 +150,7 @@ def verify_token(
     required_roles: set[str] | None = None,
 ) -> str:
     """返回 subject；签名无效/过期/缺字段均抛出 JWTError"""
+    secret = _require_jwt_secret(secret)
     payload = jwt.decode(
         token,
         secret,

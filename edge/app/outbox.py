@@ -18,6 +18,18 @@ from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
 SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploader 传入 24h 参数
 logger = logging.getLogger("edge.outbox")
 
+# B6：坏数据隔离预算（``reject_count``）只由「中心给出了协议级裁决」的失败消耗。
+# 传输类失败（无 http_status、429/5xx/断网）只累积 ``attempt_count``（退避用），
+# 绝不消耗隔离预算 —— 否则长时间断网的历史网络次数会让一次序列异常把好数据判死。
+# 取值与 ``edge/app/uploader.py`` 中 ``quarantine_after_max=True`` 的两个调用点严格一致。
+PROTOCOL_REJECT_ERRORS = frozenset(
+    {
+        "http_400_contract_rejected",  # uploader.py: HTTP 400 契约拒绝
+        "seq_reject",  # uploader.py: ACK 状态 seq_reject
+        "commit_unknown",  # uploader.py: ACK 状态 commit_unknown
+    }
+)
+
 OUTBOX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS outbox (
     batch_id TEXT PRIMARY KEY,
@@ -31,6 +43,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     payload BLOB NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending',
     attempt_count INTEGER NOT NULL DEFAULT 0,
+    reject_count INTEGER NOT NULL DEFAULT 0,
     next_retry_at INTEGER,
     last_error TEXT,
     http_status INTEGER,
@@ -89,6 +102,10 @@ class OutboxRecord:
     assignment_epoch: int
     payload: bytes
     attempt_count: int
+    # B6：坏数据隔离预算（只由中心给出的协议级裁决消耗，见 PROTOCOL_REJECT_ERRORS）。
+    # ``None`` 表示当前 Edge Storage **未回传**该字段（旧版存储）——调用方必须显式降级，
+    # 不得静默当成 0，否则真正非法的载荷将永远不被隔离（见 docs/整改记录/B6.md）。
+    reject_count: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +119,9 @@ class OutboxCompletion:
     record: OutboxRecord
     state: str
     error: str | None = None
+    # B6：终结为 ``dead`` 时可带上「致命那次裁决」的协议状态码，覆盖该行上一次
+    # 传输失败留下的 http_status，避免取证指向错误的原因；为 None 时保持原值。
+    http_status: int | None = None
 
 
 
@@ -131,6 +151,7 @@ class OutboxStore:
             self._connection.execute("PRAGMA synchronous=FULL")
             self._connection.execute("PRAGMA busy_timeout=5000")
             self._connection.executescript(OUTBOX_SCHEMA)
+            self._migrate_outbox_columns(self._connection)
             self._connection.executescript(CONFIG_SNAPSHOT_SCHEMA)
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES('upload_session_id', ?)",
@@ -144,6 +165,21 @@ class OutboxStore:
             )
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES('sent_records_total', '0')"
+            )
+
+    @staticmethod
+    def _migrate_outbox_columns(connection: sqlite3.Connection) -> None:
+        """为已存在的 edge.db 补列。
+
+        ``CREATE TABLE IF NOT EXISTS`` 不会修改已有表，部署时升级的现场库
+        必须显式补列，否则 ``reject_count`` 写入会报 no such column。
+        """
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(outbox)")
+        }
+        if "reject_count" not in columns:
+            connection.execute(
+                "ALTER TABLE outbox ADD COLUMN reject_count INTEGER NOT NULL DEFAULT 0"
             )
 
     def configure_assignment(
@@ -359,8 +395,8 @@ class OutboxStore:
             rows = connection.execute(
                 """
                 SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
-                       payload, attempt_count, state, next_retry_at, lease_until,
-                       lease_owner
+                       payload, attempt_count, reject_count, state, next_retry_at,
+                       lease_until, lease_owner
                 FROM outbox
                 WHERE upload_session_id = ?
                   AND local_seq <= ?
@@ -410,6 +446,7 @@ class OutboxStore:
                     assignment_epoch=int(row["assignment_epoch"]),
                     payload=bytes(row["payload"]),
                     attempt_count=int(row["attempt_count"]),
+                    reject_count=int(row["reject_count"]),
                 )
                 for row in selected
             ]
@@ -444,6 +481,7 @@ class OutboxStore:
                     f"""
                     UPDATE outbox
                     SET state=?, {timestamp_column}=?, last_error=?,
+                        http_status=COALESCE(?, http_status),
                         lease_owner=NULL, inflight_at=NULL, lease_until=NULL
                     WHERE batch_id=? AND upload_session_id=? AND local_seq=?
                       AND state='inflight' AND lease_owner=?
@@ -452,6 +490,7 @@ class OutboxStore:
                         completion.state,
                         now,
                         completion.error,
+                        completion.http_status,
                         record.batch_id,
                         record.upload_session_id,
                         record.local_seq,
@@ -504,6 +543,12 @@ class OutboxStore:
         if not records:
             return
         now = self._clock_ms()
+        # B6：失败分类（批次级判定，调用方每次只传一种失败原因）。
+        #   协议拒绝（200/400 且原因是中心给出的协议级裁决）→ 消耗坏数据隔离预算；
+        #   传输失败（无状态码 / 429 / 5xx / 断网）→ 只累加退避计数。
+        counts_toward_quarantine = (
+            http_status in (200, 400) and error in PROTOCOL_REJECT_ERRORS
+        )
         with self._transaction() as connection:
             for record, delay_ms in records:
                 cursor = connection.execute(
@@ -511,6 +556,7 @@ class OutboxStore:
                     UPDATE outbox
                     SET state='retry_wait',
                         attempt_count=attempt_count + 1,
+                        reject_count=reject_count + ?,
                         next_retry_at=?,
                         last_error=?,
                         http_status=?,
@@ -521,6 +567,7 @@ class OutboxStore:
                       AND state='inflight' AND lease_owner=?
                     """,
                     (
+                        int(counts_toward_quarantine),
                         now + delay_ms,
                         error[:1000],
                         http_status,
@@ -578,6 +625,12 @@ class OutboxStore:
             # A session switch is a protocol recovery operation, not an
             # acknowledgement. Preserve every unconfirmed row and replay it
             # under the new session with a contiguous sequence.
+            #
+            # B6：``reject_count`` 是坏数据隔离预算，**必须跨切换保留**（不在此重排里
+            # 触碰），否则每次 session 切换都会重置预算、真正非法的帧永不判 dead。
+            # ``last_error``/``http_status`` 同样保留：它们是「该帧为何进入新会话」的
+            # 行级取证字段（协议裁决证据），按 B6「真正非法项有独立证据」的要求不得
+            # 在恢复路径上被抹掉；下一次尝试会由 mark_retry_batch/complete_batch 覆盖。
             for local_seq, row in enumerate(pending_rows, start=1):
                 connection.execute(
                     """
@@ -586,8 +639,6 @@ class OutboxStore:
                         local_seq=?,
                         state='pending',
                         next_retry_at=NULL,
-                        last_error=NULL,
-                        http_status=NULL,
                         lease_owner=NULL,
                         inflight_at=NULL,
                         lease_until=NULL
@@ -806,7 +857,7 @@ class OutboxStore:
         existing = connection.execute(
             """
             SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
-                   payload, attempt_count
+                   payload, attempt_count, reject_count
             FROM outbox WHERE batch_id=?
             """,
             (batch_id,),
@@ -819,6 +870,7 @@ class OutboxStore:
                 assignment_epoch=int(existing["assignment_epoch"]),
                 payload=bytes(existing["payload"]),
                 attempt_count=int(existing["attempt_count"]),
+                reject_count=int(existing["reject_count"]),
             )
 
         assignment = connection.execute(
@@ -886,6 +938,7 @@ class OutboxStore:
             local_seq,
             int(assignment["assignment_epoch"]),
             encoded,
+            0,
             0,
         )
 

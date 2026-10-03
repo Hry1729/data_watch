@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import ipaddress
 import logging
 import os
 import signal
+import socket
 import sys
 from pathlib import Path
 import threading
@@ -16,7 +19,68 @@ for source_root in (REPO_ROOT, COLLECTOR_ROOT):
         sys.path.insert(0, str(source_root))
 
 from edge.app.paths import edge_database_path
-from edge.app.storage_service import StorageEngine, StorageHttpServer
+from edge.app.storage_service import (
+    IpcAuthenticator,
+    StorageEngine,
+    StorageHttpServer,
+    default_token_file,
+)
+
+
+def _is_loopback(host: str) -> bool:
+    candidate = host.strip().lower()
+    if not candidate:
+        # ``socket.bind(("", port))`` means INADDR_ANY, i.e. every interface, so an
+        # empty (or whitespace-only) host is the opposite of loopback. Anything that
+        # is not provably loopback must pass the explicit --allow-non-loopback gate.
+        return False
+    try:
+        if ipaddress.ip_address(candidate).is_loopback:
+            return True
+    except ValueError:
+        pass
+    # A single trailing dot is the DNS root form, so ``localhost.`` names the same
+    # host as ``localhost``. It is spelled out separately because, unlike a name,
+    # an IP literal with a trailing dot (``127.0.0.1.``) is *not* resolvable and
+    # must stay rejected rather than be accepted and then fail at bind time.
+    if candidate.removesuffix(".") != "localhost":
+        return False
+    # A name proves nothing on its own: resolve it the way the bind will (AF_INET,
+    # the address family of StorageHttpServer) and accept only when every answer is
+    # loopback, so a hosts file pointing "localhost" at another interface is refused.
+    try:
+        infos = socket.getaddrinfo("localhost", None, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return False
+    addresses = [info[4][0] for info in infos]
+    return bool(addresses) and all(
+        ipaddress.ip_address(address).is_loopback for address in addresses
+    )
+
+
+def _bind_error_message(host: str, port: int, exc: OSError) -> str:
+    """Classify a failed IPC bind so the operator knows what to change.
+
+    The classes are the ones this endpoint can actually hit: a host that cannot be
+    resolved (which is how every IPv6 literal fails on an AF_INET endpoint), an address
+    that is not on this host, and a port that is taken or not permitted.
+    """
+    if isinstance(exc, socket.gaierror):
+        reason = (
+            "this IPC endpoint is IPv4-only (ThreadingHTTPServer / AF_INET), so this host "
+            "cannot be bound here; IPv6 (e.g. ::1) is not supported, use an IPv4 address "
+            "such as 127.0.0.1"
+        )
+    elif exc.errno == errno.EADDRNOTAVAIL:
+        reason = "that address does not belong to this host"
+    elif exc.errno in (errno.EADDRINUSE, errno.EACCES):
+        reason = "the port is already in use, or this process is not permitted to bind it"
+    else:
+        reason = "the socket could not be bound"
+    return (
+        f"Cannot bind Edge Storage IPC to {host}:{port}: {reason} "
+        f"[{type(exc).__name__}: {exc}]"
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -29,6 +93,15 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=float(os.environ.get("DATAWATCH_EDGE_STORAGE_SHUTDOWN_TIMEOUT_SECONDS", "30")),
     )
+    # The IPC endpoint has no transport encryption and authenticates callers only
+    # with a local token file, so exposing it beyond loopback must be deliberate.
+    parser.add_argument(
+        "--allow-non-loopback",
+        action="store_true",
+        default=os.environ.get("DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK", "").strip().lower()
+        in {"1", "true", "yes", "on"},
+        help="Explicitly permit binding the Edge Storage IPC endpoint to a non-loopback address.",
+    )
     return parser
 
 
@@ -38,13 +111,35 @@ def main() -> int:
         level=os.environ.get("DATAWATCH_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
+    if not _is_loopback(args.host) and not args.allow_non_loopback:
+        logging.getLogger("edge.storage").error(
+            "Refusing to bind Edge Storage IPC to non-loopback address %s: the endpoint has no "
+            "transport encryption and would be reachable from the network. Pass "
+            "--allow-non-loopback (or DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1) to override.",
+            args.host,
+        )
+        return 2
     engine = StorageEngine(
         edge_database_path(),
         max_queue=args.queue_capacity,
         shutdown_timeout_seconds=args.shutdown_timeout_seconds,
     )
+    # Resolve the IPC credential *outside* the try below, so that try covers the bind
+    # only: an unreadable token file must surface as itself, never as a bind failure.
+    authenticator = IpcAuthenticator.from_file()
+    # Bind before ``engine.start()``: binding is the step that can fail for reasons
+    # outside our control (``::1`` on this IPv4-only endpoint, an address that is not on
+    # this host, a port already in use). ``start()`` spawns a non-daemon writer thread,
+    # so an unhandled bind error afterwards would leave the process hung with no listener
+    # at all; failing here also means no database file is created.
+    try:
+        server = StorageHttpServer((args.host, args.port), engine, authenticator)
+    except OSError as exc:
+        logging.getLogger("edge.storage").error(
+            "%s", _bind_error_message(args.host, args.port, exc)
+        )
+        return 2
     engine.start()
-    server = StorageHttpServer((args.host, args.port), engine)
     server.timeout = 0.5
     stopped = threading.Event()
 
@@ -60,10 +155,11 @@ def main() -> int:
     shutdown_flag.unlink(missing_ok=True)
 
     logging.getLogger("edge.storage").info(
-        "Edge Storage listening on http://%s:%s database=%s",
+        "Edge Storage listening on http://%s:%s database=%s ipc_token_file=%s",
         args.host,
         args.port,
         edge_database_path(),
+        default_token_file(),
     )
     try:
         while not stopped.is_set() and not shutdown_flag.exists():

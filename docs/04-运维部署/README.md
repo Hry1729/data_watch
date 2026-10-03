@@ -579,10 +579,14 @@ Collector 和 Uploader 不直接执行 SQLite 写事务。Collector 将采集帧
 本机检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:7073/healthz
-Invoke-RestMethod http://127.0.0.1:7073/v1/status
+Invoke-RestMethod http://127.0.0.1:7073/healthz   # 免凭据，仅作存活探针
+# /v1/status 需带 IPC 令牌（无/错令牌 401，角色越权 403）；/v1/status 属 agent 与 uploader 角色
+$token = (Get-Content 'C:\ProgramData\DataWatch Edge\edge\storage-ipc-tokens.json' | ConvertFrom-Json).tokens.agent
+Invoke-RestMethod http://127.0.0.1:7073/v1/status -Headers @{ 'X-DataWatch-Storage-Token' = $token }
 Get-NetTCPConnection -LocalPort 7071,7073 -State Listen
 ```
+
+Edge Storage IPC 的信任边界：`POST /v1/command` 与 `GET /v1/status` **默认拒绝**任何调用方 —— 无令牌或令牌错误返回 `401`，带有效令牌但动作超出该角色白名单返回 `403`；只有 `GET /healthz` 免凭据。令牌按角色（`collector` / `uploader` / `agent`）存放在 `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json`，由 Storage 首次启动时以随机值生成，并尽力用 ACL 收紧到「属主 + SYSTEM + Administrators」；可用 `DATAWATCH_EDGE_STORAGE_TOKEN_FILE` 改路径，或用 `DATAWATCH_EDGE_STORAGE_TOKEN` 直接注入令牌。Collector、Uploader、Agent 的边进程各自从同一文件读取自己角色的令牌，不需要人工配置。Storage 若绑定到非回环地址，必须显式传 `--allow-non-loopback`（或设 `DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1`），否则启动即被拒绝并返回退出码 2。判定只承认**可证明为回环**的地址：`127.0.0.0/8` 全段、`::1` 及其等价写法，以及 `localhost`（含 DNS 根形式 `localhost.` 与任意大小写，且必须在本机 `AF_INET` 下解析为回环地址才算通过）；**空串、纯空白、`0.0.0.0`、`::`、非回环地址与不可解析的 host 一律按非回环处理并拒绝**（`socket.bind(("", port))` 的语义是 `INADDR_ANY`，即监听全部网卡），因此 `--host ""` 或 `DATAWATCH_EDGE_STORAGE_HOST=`（空值）同样会被 exit 2 拒绝，需要显式授权才放行。反向也成立：**看着像回环、但本机解析不了的写法不会被放行** —— `127.1`、`127.0.0.1.`（IP 字面量带尾点）、`[::1]` 都按非回环拒绝并 exit 2，因为放行只会把清晰的拒绝换成绑定期崩溃。绑定失败一律**快速失败**（退出码 2，不残留进程、不创建数据库文件）并按原因分类：**地址族不支持**（如 `--host ::1` —— 该 IPC 端点仅 IPv4，`ThreadingHTTPServer` 固定 `AF_INET`，日志为 `... this IPC endpoint is IPv4-only ... IPv6 (e.g. ::1) is not supported ...`）、**地址不属于本机**（如 `--host 192.168.1.99`，日志为 `... that address does not belong to this host`）、**端口已被占用或无绑定权限**（日志为 `... the port is already in use ...`）。
 
 ---
 

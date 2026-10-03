@@ -119,7 +119,15 @@ class Uploader:
         self._summary_records = 0
         self._summary_payload_bytes = 0
         self._summary_batch_ms: list[float] = []
-        self._store.recover_inflight(self._lease_owner)
+        self._reject_count_missing_warned = False
+
+    async def recover_inflight(self) -> int:
+        """恢复上一实例崩溃遗留的 inflight 租约。
+
+        B25：该方法会改写共享 outbox 状态（经 Edge Storage），因此**只能**在
+        持有单实例锁之后调用（见 `edge/uploader_main.py`）。构造器不做任何存储写入。
+        """
+        return await self._store_call(self._store.recover_inflight, self._lease_owner)
 
     async def close(self) -> None:
         if self._owns_client:
@@ -305,7 +313,7 @@ class Uploader:
             return False
 
         completions: list[OutboxCompletion] = []
-        for record in records:
+        for index, record in enumerate(records):
             key = (record.batch_id, record.upload_session_id, record.local_seq)
             result = result_map.get(key)
             if result is None:
@@ -315,12 +323,14 @@ class Uploader:
                     record.local_seq,
                     len(records),
                 )
-                await self._retry_records(records, "missing_ack", 200)
+                await self._persist_confirmed(completions)
+                await self._retry_records(records[index:], "missing_ack", 200)
                 return False
             status = str(result.get("status") or "")
             if status in {"ack", "duplicate", "stale_config_warning"}:
                 if result.get("durability") != "redis-aof":
-                    await self._retry_records(records, "center has not confirmed durable acceptance; upgrade center first", 200)
+                    await self._persist_confirmed(completions)
+                    await self._retry_records(records[index:], "center has not confirmed durable acceptance; upgrade center first", 200)
                     return False
                 completions.append(OutboxCompletion(record, "sent"))
             elif status == "rejected_consumed":
@@ -344,8 +354,11 @@ class Uploader:
                     status,
                     record.local_seq,
                 )
+                # B5：先持久提交已明确确认的项，再做不确定项的迁移/隔离。
+                await self._persist_confirmed(completions)
+                unconfirmed = records[index:]
                 quarantined = await self._retry_records(
-                    records,
+                    unconfirmed,
                     status,
                     200,
                     quarantine_after_max=True,
@@ -354,7 +367,7 @@ class Uploader:
                     logger.error(
                         "Quarantined %d unresolvable upload records after max attempts; "
                         "payloads remain in local dead state for replay/reconciliation",
-                        len(records),
+                        len(unconfirmed),
                     )
                 await self._abandon_and_switch()
                 return False
@@ -364,6 +377,7 @@ class Uploader:
                     record.upload_session_id,
                     record.local_seq,
                 )
+                await self._persist_confirmed(completions)
                 current_session_id = await self._store_call(
                     self._store.current_session_id
                 )
@@ -371,7 +385,7 @@ class Uploader:
                     return False
                 switched = await self._reconcile_obsolete_session()
                 if not switched:
-                    await self._retry_records(records, "session_obsolete", 200)
+                    await self._retry_records(records[index:], "session_obsolete", 200)
                 return False
             else:
                 logger.error(
@@ -379,7 +393,8 @@ class Uploader:
                     status or "<empty>",
                     record.local_seq,
                 )
-                await self._retry_records(records, f"unknown_ack:{status}", 200)
+                await self._persist_confirmed(completions)
+                await self._retry_records(records[index:], f"unknown_ack:{status}", 200)
                 return False
         await self._store_call(
             self._store.complete_batch,
@@ -457,6 +472,25 @@ class Uploader:
         ).hexdigest()
         return f"edge-{digest}"
 
+    async def _persist_confirmed(
+        self,
+        completions: list[OutboxCompletion],
+    ) -> None:
+        """B5：先持久提交已明确确认（sent/dead）的项。
+
+        只有落库之后才允许处理未确认/未知项，否则后续的 session 异常
+        （``seq_reject``/``commit_unknown``/ACK 缺失/未知状态）会把本批已 ACK
+        的帧一起重排进新会话并重传。未知结果一律保留原帧身份，
+        由 ``_retry_records``/``_abandon_and_switch`` 按至少一次语义重放。
+        """
+        if not completions:
+            return
+        await self._store_call(
+            self._store.complete_batch,
+            completions,
+            self._lease_owner,
+        )
+
     async def _retry_records(
         self,
         records: list[OutboxRecord],
@@ -468,9 +502,7 @@ class Uploader:
         retries = []
         quarantined = []
         for record in records:
-            if quarantine_after_max and (
-                record.attempt_count + 1 >= self._settings.max_attempts
-            ):
+            if quarantine_after_max and self._quarantine_budget_exhausted(record):
                 quarantined.append(record)
             else:
                 retries.append(
@@ -494,12 +526,39 @@ class Uploader:
             await self._store_call(
                 self._store.complete_batch,
                 [
-                    OutboxCompletion(record, "dead", error)
+                    # B6：把「致命那次裁决」的协议状态码一起写入，避免 dead 行残留
+                    # 上一次传输失败的 http_status（取证会指向错误原因）。
+                    OutboxCompletion(record, "dead", error, http_status=http_status)
                     for record in quarantined
                 ],
                 self._lease_owner,
             )
         return bool(quarantined)
+
+    def _quarantine_budget_exhausted(self, record: OutboxRecord) -> bool:
+        """B6：坏数据隔离预算**只看** ``reject_count``（协议级裁决计数）。
+
+        - ``reject_count`` 由 Edge Storage 的 ``mark_retry_batch`` 权威累加，且
+          **只**由中心给出的协议级裁决（400 契约拒绝 / ``seq_reject`` /
+          ``commit_unknown``）消耗；429/5xx/断网/ACK 缺失等传输类与中心侧问题只累加
+          ``attempt_count``（退避用）。因此长时间断网的历史网络次数不会再让一次
+          序列异常把好数据判死。
+        - ``reject_count is None`` 表示对端 Edge Storage **没有回传**该字段（旧版
+          存储进程，混合升级窗口）。此时**显式**降级为旧的 ``attempt_count`` 语义并
+          告警一次 —— 不得静默当成 0：那会让真正非法的载荷永远不被隔离
+          （见 docs/整改记录/B6.md「兼容策略」）。
+        """
+        reject_count = record.reject_count
+        if reject_count is None:
+            if not self._reject_count_missing_warned:
+                self._reject_count_missing_warned = True
+                logger.warning(
+                    "Edge Storage did not report reject_count for claimed records; "
+                    "falling back to attempt_count for quarantine decisions. "
+                    "Upgrade edge-storage and the uploader together (legacy peer detected)."
+                )
+            reject_count = record.attempt_count
+        return reject_count + 1 >= self._settings.max_attempts
 
     async def _abandon_and_switch(self) -> None:
         state = await self._store_call(self._store.prepare_session_switch)
@@ -578,13 +637,17 @@ class SingleInstanceLock(AbstractContextManager):
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._file = self._path.open("a+b")
         try:
+            # 与 collector 的 ``_acquire_owner`` 同一做法：文件已有内容时**不再**写入。
+            # 文件以 "a+b" 打开，write 总是落在末尾，而无条件写一字节发生在加锁
+            # （可能失败）之前，会让锁文件每次争锁失败都 +1 字节。
+            self._file.seek(0, 2)
+            if self._file.tell() == 0:
+                self._file.write(b"0")
+                self._file.flush()
+            self._file.seek(0)
             if os.name == "nt":
                 import msvcrt
 
-                self._file.seek(0)
-                self._file.write(b"0")
-                self._file.flush()
-                self._file.seek(0)
                 msvcrt.locking(self._file.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl

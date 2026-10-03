@@ -355,6 +355,22 @@ async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_cu
     return {}
 
 
+# B11：凭据与这些目标标识绑定。任一项被请求体改写，都不得沿用已存储的凭据。
+_CREDENTIAL_BOUND_FIELDS = ("host", "port", "user", "database")
+
+
+def _has_stored_credential(section: dict) -> bool:
+    """B11：**任何形态**的存储凭据都算（DPAPI 密文 `password_enc`，或手改配置留下的明文 `password`）。
+
+    只看 `password_enc` 会漏掉明文形态：`_decrypt_password` 同样支持明文 `password`，
+    否则改目标即可让明文口令跟随新目标（R1）。
+    """
+    if section.get("password_enc"):
+        return True
+    stored_password = section.get("password")
+    return stored_password is not None and str(stored_password) != ""
+
+
 @router.post("/health/check", response_model=HealthCheckResponse)
 async def health_check(
     request: HealthCheckRequest,
@@ -366,10 +382,37 @@ async def health_check(
         raise HTTPException(status_code=400, detail="Bootstrap must be completed first")
 
     target_cfg = dict(cfg.get(request.target) or {})
-    if request.config is not None:
-        for key, value in request.config.model_dump(exclude_unset=True).items():
-            if value is not None:
-                target_cfg[key] = value
+    overrides = (
+        request.config.model_dump(exclude_unset=True) if request.config is not None else {}
+    )
+
+    changed = sorted(
+        key
+        for key in _CREDENTIAL_BOUND_FIELDS
+        if overrides.get(key) is not None and target_cfg.get(key) != overrides.get(key)
+    )
+    if changed:
+        if _has_stored_credential(target_cfg) and overrides.get("password") is None:
+            # 审计只记字段名，不记值，避免把口令写进日志
+            logger.warning(
+                "health check denied: target=%s changed_fields=%s",
+                request.target,
+                changed,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "目标已变更（" + "/".join(changed) + "），不得沿用已存储的凭据；"
+                    "请在 config.password 显式提供该目标的临时口令"
+                ),
+            )
+        # 明确的新目标：丢弃存储凭据（密文与明文两形态），只用本次显式提供的凭据
+        target_cfg.pop("password_enc", None)
+        target_cfg.pop("password", None)
+
+    for key, value in overrides.items():
+        if value is not None:
+            target_cfg[key] = value
 
     checkers = {
         "redis": check_redis,

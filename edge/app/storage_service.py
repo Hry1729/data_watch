@@ -5,9 +5,14 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hmac
+import json
 import logging
+import os
 from pathlib import Path
 from queue import Empty, Full, Queue
+import secrets
+import subprocess
 import threading
 import time
 from typing import Any
@@ -21,9 +26,131 @@ from edge.app.outbox import (
     OutboxStore,
     SessionSwitchState,
 )
+from edge.app.storage_client import (
+    IPC_TOKEN_HEADER,
+    default_token_file,
+    read_role_tokens,
+)
 
 
 logger = logging.getLogger("edge.storage")
+
+
+# --- Edge Storage IPC trust boundary -------------------------------------
+#
+# The IPC endpoint is reachable by every process on the host, so a loopback-only
+# bind address is not caller authentication. Callers present a per-role token
+# read from a deployment-local file kept readable only by the edge accounts.
+#
+# Least-privilege command surface per role, derived from the actual call sites:
+#   collector - edge/collector_main.py (EdgeOutboxWriter + the EdgeConfigManager
+#               in edge/app/config_snapshot.py)
+#   uploader  - edge/uploader_main.py (edge/app/uploader.py)
+#   agent     - the Agent edge-sync client (agent/app/services/edge_storage_client.py)
+IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
+    "collector": frozenset(
+        {
+            "frame.commit",
+            "latest.write",
+            "outbox.snapshot",
+            "config.refresh_schedule",
+            "device.status",
+        }
+    ),
+    "uploader": frozenset(
+        {
+            "outbox.recover",
+            "outbox.upload_interval",
+            "outbox.snapshot",
+            "outbox.claim",
+            "outbox.complete",
+            "outbox.retry",
+            "session.pending",
+            "session.prepare",
+            "session.complete",
+            "session.current",
+            "maintenance",
+            "status",
+        }
+    ),
+    "agent": frozenset(
+        {
+            "status",
+            "config.revision",
+            "config.apply",
+            "config.refresh_schedule",
+        }
+    ),
+}
+# No catch-all role exists on purpose: a caller that cannot be identified gets no
+# token and is rejected, rather than being handed an implicit super-role.
+
+
+def _restrict_token_file_acl(path: Path) -> None:
+    """Best-effort ACL tightening: owner + SYSTEM + Administrators only."""
+    if os.name != "nt":
+        return
+    grants = ["*S-1-5-18:F", "*S-1-5-32-544:F"]
+    owner = os.environ.get("USERNAME")
+    if owner:
+        grants.append(f"{owner}:F")
+    try:
+        subprocess.run(
+            ["icacls", str(path), "/inheritance:r", "/grant:r", *grants],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "Could not restrict permissions on Edge Storage IPC token file %s: %s", path, exc
+        )
+
+
+def ensure_token_file(path: Path | None = None) -> Path:
+    """Return the IPC token file, creating it with fresh per-role tokens on first use."""
+    target = Path(path) if path is not None else default_token_file()
+    if target.exists():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(
+        {"version": 1, "tokens": {role: secrets.token_hex(32) for role in IPC_ROLE_ACTIONS}},
+        indent=2,
+    ).encode("utf-8")
+    try:
+        descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        # Another edge process won the race; its file is just as good.
+        return target
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(payload)
+    _restrict_token_file_acl(target)
+    return target
+
+
+class IpcAuthenticator:
+    """Resolves the caller role from a token and enforces the role allowlist."""
+
+    def __init__(self, tokens: dict[str, str]) -> None:
+        if not tokens:
+            raise ValueError("Edge Storage IPC token file contains no tokens")
+        self._tokens = tokens
+
+    @classmethod
+    def from_file(cls, path: Path | None = None) -> IpcAuthenticator:
+        return cls(read_role_tokens(ensure_token_file(path)))
+
+    def role_for(self, token: str | None) -> str | None:
+        if not token:
+            return None
+        for role, expected in self._tokens.items():
+            if hmac.compare_digest(token, expected):
+                return role
+        return None
+
+    def permits(self, role: str, action: str) -> bool:
+        return action in IPC_ROLE_ACTIONS.get(role, frozenset())
 
 
 @dataclass(slots=True)
@@ -227,6 +354,11 @@ class StorageEngine:
                     _record(item["record"]),
                     str(item["state"]),
                     item.get("error"),
+                    http_status=(
+                        int(item["http_status"])
+                        if item.get("http_status") is not None
+                        else None
+                    ),
                 )
                 for item in payload.get("completions") or []
             ]
@@ -309,8 +441,16 @@ class StorageEngine:
 class StorageHttpServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address: tuple[str, int], engine: StorageEngine) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        engine: StorageEngine,
+        authenticator: IpcAuthenticator | None = None,
+    ) -> None:
         self.engine = engine
+        # Default to the deployment token file so an endpoint cannot be started
+        # without authentication by omitting an argument.
+        self.authenticator = authenticator or IpcAuthenticator.from_file()
         super().__init__(address, StorageRequestHandler)
 
 
@@ -320,10 +460,11 @@ class StorageRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/healthz":
+            # Liveness only: no storage state is read or written.
             self._write_json(HTTPStatus.OK, {"status": "ok"})
             return
         if self.path == "/v1/status":
-            self._execute("status", {})
+            self._authorized_execute("status", {})
             return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
 
@@ -338,9 +479,25 @@ class StorageRequestHandler(BaseHTTPRequestHandler):
             body = msgspec.json.decode(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise ValueError("request body must be an object")
-            self._execute(str(body.get("action") or ""), dict(body.get("payload") or {}))
+            self._authorized_execute(str(body.get("action") or ""), dict(body.get("payload") or {}))
         except (ValueError, TypeError, msgspec.DecodeError) as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+
+    def _authorized_execute(self, action: str, payload: dict[str, Any]) -> None:
+        role = self.server.authenticator.role_for(self.headers.get(IPC_TOKEN_HEADER))
+        if role is None:
+            self._write_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"ok": False, "error": "missing or invalid Edge Storage IPC token"},
+            )
+            return
+        if not self.server.authenticator.permits(role, action):
+            self._write_json(
+                HTTPStatus.FORBIDDEN,
+                {"ok": False, "error": f"role {role!r} is not permitted to run action {action!r}"},
+            )
+            return
+        self._execute(action, payload)
 
     def _execute(self, action: str, payload: dict[str, Any]) -> None:
         try:
@@ -374,10 +531,13 @@ def _record_payload(record: OutboxRecord) -> dict[str, Any]:
         "assignment_epoch": record.assignment_epoch,
         "payload_b64": base64.b64encode(record.payload).decode("ascii"),
         "attempt_count": record.attempt_count,
+        "reject_count": record.reject_count,
     }
 
 
 def _record(data: dict[str, Any]) -> OutboxRecord:
+    # B6：``reject_count`` 由 claim 回传给 Uploader 作为隔离判定依据；字段缺失
+    # （旧版客户端）按存在性判成 ``None``，绝不静默当成 0。
     return OutboxRecord(
         batch_id=str(data["batch_id"]),
         upload_session_id=str(data["upload_session_id"]),
@@ -385,6 +545,9 @@ def _record(data: dict[str, Any]) -> OutboxRecord:
         assignment_epoch=int(data["assignment_epoch"]),
         payload=base64.b64decode(str(data["payload_b64"])),
         attempt_count=int(data.get("attempt_count") or 0),
+        reject_count=(
+            int(data["reject_count"]) if data.get("reject_count") is not None else None
+        ),
     )
 
 

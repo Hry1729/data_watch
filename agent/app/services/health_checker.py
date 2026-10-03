@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import re
+import urllib.error
 import urllib.request
 from typing import Any, Mapping
 
@@ -12,6 +14,49 @@ from app.core.security import dpapi_decrypt
 from app.schemas.models import HealthCheckResponse
 
 TIMEOUT_SECONDS = 3
+
+# B11：限定目标地址/端口。只接受主机名、IPv4 字面量或方括号 IPv6 字面量，
+# 从而排除 scheme（http://）、userinfo（user:pw@）、path/query/fragment（/@#?）。
+# 用 \Z 而非 $：$ 允许尾随换行（"127.0.0.1\n" 会被接受），\Z 才是字符串真正结尾。
+_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._-]+\Z")
+_IPV6_PATTERN = re.compile(r"^\[[0-9A-Fa-f:.]+\]\Z")
+
+
+def _target_address(config: Mapping[str, Any]) -> tuple[str, int]:
+    """校验并返回 (host, port)；不合格抛 ValueError（调用方统一转为检查失败）。"""
+    host = str(config.get("host") or "")
+    if not (_HOST_PATTERN.match(host) or _IPV6_PATTERN.match(host)):
+        raise ValueError("invalid target host")
+    try:
+        port = int(config.get("port"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid target port") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("invalid target port")
+    return host, port
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """B11：TDengine 凭据不得随重定向离开原目标 origin（urllib 会转发 Authorization）。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url, code, "redirect not allowed", headers, fp
+        )
+
+
+class _NoProxyHandler(urllib.request.ProxyHandler):
+    """B11-R3：健康检查不得把凭据交给 `HTTP_PROXY` 等环境变量指定的代理。
+
+    `urllib` 默认按 `getproxies()` 决定是否经代理发送请求（含 `Authorization`）。
+    这里显式声明空代理表：只影响本 opener，不改动进程的代理环境变量。
+    """
+
+    def __init__(self) -> None:
+        super().__init__({})
+
+
+_TDENGINE_OPENER = urllib.request.build_opener(_NoRedirectHandler, _NoProxyHandler())
 
 
 def _decrypt_password(config: Mapping[str, Any]) -> str:
@@ -38,9 +83,10 @@ def check_backend(base_url: str) -> HealthCheckResponse:
 def check_redis(config: Mapping[str, Any]) -> HealthCheckResponse:
     client = None
     try:
+        host, port = _target_address(config)
         client = redis.Redis(
-            host=config.get("host"),
-            port=int(config.get("port")),
+            host=host,
+            port=port,
             password=_decrypt_password(config) or None,
             socket_connect_timeout=TIMEOUT_SECONDS,
             socket_timeout=TIMEOUT_SECONDS,
@@ -60,9 +106,10 @@ def check_redis(config: Mapping[str, Any]) -> HealthCheckResponse:
 def check_mysql(config: Mapping[str, Any]) -> HealthCheckResponse:
     connection = None
     try:
+        host, port = _target_address(config)
         connection = pymysql.connect(
-            host=config.get("host"),
-            port=int(config.get("port")),
+            host=host,
+            port=port,
             user=config.get("user"),
             password=_decrypt_password(config),
             database=config.get("database"),
@@ -87,8 +134,7 @@ def check_mysql(config: Mapping[str, Any]) -> HealthCheckResponse:
 
 def check_tdengine(config: Mapping[str, Any]) -> HealthCheckResponse:
     try:
-        host = config.get("host")
-        port = int(config.get("port"))
+        host, port = _target_address(config)
         user = str(config.get("user") or "")
         password = _decrypt_password(config)
 
@@ -105,7 +151,7 @@ def check_tdengine(config: Mapping[str, Any]) -> HealthCheckResponse:
             },
         )
 
-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
+        with _TDENGINE_OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
             if response.getcode() != 200:
                 return HealthCheckResponse(success=False, message="TDengine health check failed")
             body = response.read()

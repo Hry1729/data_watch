@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import sys
@@ -7,6 +8,8 @@ from pathlib import Path
 import toml
 
 from app.core.role import build_role
+
+logger = logging.getLogger(__name__)
 
 
 def data_root() -> Path:
@@ -94,7 +97,47 @@ def _load_config_unlocked() -> dict:
         cfg = _default_config()
         _save_config_unlocked(cfg)
         return cfg
-    return toml.load(CONFIG_PATH)
+    cfg = toml.load(CONFIG_PATH)
+    _ensure_jwt_secret_unlocked(cfg)
+    return cfg
+
+
+JWT_SECRET_INVALID_DETAIL = (
+    "config.toml 的 [agent].jwt_secret 为空或过弱（至少 32 字符）：空密钥会让任何本地进程"
+    "伪造管理员令牌，因此拒绝启动认证服务。请改为安全随机值"
+    "（例如 python -c \"import secrets;print(secrets.token_hex(32))\"）。"
+    "注意：变更该值会使所有已签发的令牌失效，需重新登录。"
+)
+AGENT_SECTION_INVALID_DETAIL = "config.toml 缺少合法的 [agent] 段，拒绝按空密钥继续运行"
+
+
+def _ensure_jwt_secret_unlocked(cfg: dict) -> None:
+    """既有配置的 jwt_secret 强制校验（B15）。
+
+    - 合格：原样保留，不轮换、不改写文件（合法存量配置保持稳定）。
+    - 不合格且 bootstrap 未完成（明确首装场景）：原子生成并落盘安全随机值，并显式告警。
+    - 不合格且 bootstrap 已完成：抛错，不得启动认证服务。
+    """
+    from app.core.security import validate_jwt_secret
+
+    agent_section = cfg.get("agent")
+    if not isinstance(agent_section, dict):
+        raise ValueError(AGENT_SECTION_INVALID_DETAIL)
+    try:
+        validate_jwt_secret(agent_section.get("jwt_secret"))
+        return
+    except ValueError:
+        pass
+
+    if agent_section.get("bootstrap_done", False):
+        raise ValueError(JWT_SECRET_INVALID_DETAIL)
+
+    agent_section["jwt_secret"] = secrets.token_hex(32)
+    _save_config_unlocked(cfg)
+    logger.warning(
+        "config.toml 已存在但 [agent].jwt_secret 为空或过弱；首装场景（bootstrap 未完成）"
+        "已生成并落盘新的随机密钥，此前用旧密钥签发的令牌全部失效。"
+    )
 
 
 def _save_config_unlocked(cfg: dict) -> None:

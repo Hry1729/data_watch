@@ -6,6 +6,7 @@ from turboapi import APIRouter, Depends, Response
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.api.permissions import require_permissions
+from app.api.routes.distributed_nodes import _publish_control_invalidation
 from app.core.audit import audit_log
 from app.core.exceptions import ApiError
 from app.core.responses import success_response
@@ -262,6 +263,7 @@ async def import_devices(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.import_devices_rows(payload.get("rows"), actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -288,6 +290,7 @@ async def create_device(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.create_device(payload, actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -302,6 +305,7 @@ async def update_device(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.update_device(device_id, payload, actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -322,6 +326,7 @@ async def update_device_status(
             enabled=payload["enabled"],
             actor=principal["user_name"],
         )
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -335,6 +340,7 @@ async def batch_delete_devices(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.batch_delete_devices(payload.get("ids"), actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -348,6 +354,7 @@ async def delete_device(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.delete_device(device_id, actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -483,6 +490,7 @@ async def import_points(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.import_points_rows(payload.get("rows"), actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -500,6 +508,7 @@ async def import_points_from_template(
             payload.get("deviceId"),
             actor=principal["user_name"],
         )
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -532,6 +541,7 @@ async def create_point(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.create_point(payload, actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -554,6 +564,7 @@ async def update_point(
             locator_device_id=locatorDeviceId,
             locator_var_seq=locatorVarSeq,
         )
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -578,6 +589,7 @@ async def update_point_status(
             locator_device_id=locatorDeviceId,
             locator_var_seq=locatorVarSeq,
         )
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -591,6 +603,7 @@ async def batch_delete_points(
     async with session_factory() as session:
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.batch_delete_points(payload.get("ids"), actor=principal["user_name"])
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -611,6 +624,7 @@ async def delete_point(
             locator_device_id=deviceId,
             locator_var_seq=varSeq,
         )
+        await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
@@ -639,6 +653,17 @@ async def device_variables_by_group(
         service = CatalogService(session=session, tdengine=get_tdengine_client())
         data = await service.get_device_variables_by_group(device_code, group_code or "g001")
         return success_response(data=data)
+
+
+async def _invalidate_ingest_control_caches() -> None:
+    """控制面成功提交后统一发布 Ingest 控制缓存失效。
+
+    点位/设备目录变更同时改变 `device_point_group.config_version`（Ingest 存在
+    assignment 缓存里）与 `point_storage_mapping`（mapping 缓存），两者同一事务提交，
+    因此两个 scope 一起发布。必须在服务层返回（事务已提交）之后调用，不可先通知后提交。
+    """
+    await _publish_control_invalidation({"scope": "assignments"})
+    await _publish_control_invalidation({"scope": "mappings"})
 
 
 def _compact_params(params: dict[str, Any]) -> dict[str, Any]:

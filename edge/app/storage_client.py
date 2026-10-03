@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
+from pathlib import Path
+import sys
 import threading
 from typing import Any
 from uuid import uuid4
@@ -14,14 +17,96 @@ from edge.app.outbox import (
     OutboxRecord,
     SessionSwitchState,
 )
+from edge.app.paths import edge_database_path
+
+
+# --- Edge Storage IPC credential contract ---------------------------------
+#
+# Shared by the server (edge.app.storage_service) and every client. The IPC
+# endpoint is reachable by every process on the host, so a loopback bind address
+# is not caller authentication: callers present a per-role token from a
+# deployment-local file that is kept readable only by the edge accounts.
+IPC_TOKEN_HEADER = "X-DataWatch-Storage-Token"
+IPC_TOKEN_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN"
+IPC_TOKEN_FILE_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN_FILE"
+IPC_TOKEN_FILE_NAME = "storage-ipc-tokens.json"
+IPC_ROLE_ENV = "DATAWATCH_EDGE_STORAGE_ROLE"
 
 
 class StorageUnavailable(RuntimeError):
     pass
 
 
+class StorageUnauthorized(StorageUnavailable):
+    """The IPC credential was rejected (HTTP 401/403).
+
+    P2-D：401/403 说明「服务在跑，但凭据错了/该角色无权调用」，与「服务不可达」是
+    两类完全不同的排障方向。它是 ``StorageUnavailable`` 的子类，因此只关心「本次调用
+    没有被服务端执行」的既有调用方无需改动。
+    """
+
+
 def storage_base_url() -> str:
     return os.environ.get("DATAWATCH_EDGE_STORAGE_URL", "http://127.0.0.1:7073").rstrip("/")
+
+
+def default_token_file() -> Path:
+    configured = os.environ.get(IPC_TOKEN_FILE_ENV)
+    if configured:
+        return Path(configured)
+    return edge_database_path().parent / IPC_TOKEN_FILE_NAME
+
+
+def read_role_tokens(path: Path) -> dict[str, str]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    tokens = data.get("tokens") if isinstance(data, dict) else None
+    if not isinstance(tokens, dict) or not tokens:
+        raise ValueError(f"invalid Edge Storage IPC token file: {path}")
+    return {str(role): str(value) for role, value in tokens.items()}
+
+
+def resolve_client_role() -> str | None:
+    """Least-privilege IPC role for this process.
+
+    ``DATAWATCH_EDGE_STORAGE_ROLE`` wins; otherwise the role is inferred from the
+    running entry point so the documented launches (``edge/collector_main.py``,
+    ``edge/uploader_main.py`` and the packaged ``data-watch-edge-collector.exe``
+    / ``data-watch-uploader.exe``) need no call-site changes.
+
+    Returns ``None`` when the caller cannot be identified. That is deliberate:
+    there is no privileged fallback, so an unidentified process sends no token
+    and the server rejects it instead of being silently trusted.
+    """
+    configured = os.environ.get(IPC_ROLE_ENV)
+    if configured:
+        return configured.strip().lower()
+    names = [Path(sys.executable).name]
+    if sys.argv and sys.argv[0]:
+        names.append(Path(sys.argv[0]).name)
+    main_file = getattr(sys.modules.get("__main__"), "__file__", None)
+    if main_file:
+        names.append(Path(main_file).name)
+    for name in names:
+        lowered = name.lower()
+        if "uploader" in lowered:
+            return "uploader"
+        if "collector" in lowered:
+            return "collector"
+    return None
+
+
+def load_client_token(role: str | None) -> str | None:
+    """Token for ``role`` from the environment or the deployment token file."""
+    if not role:
+        return None
+    configured = os.environ.get(IPC_TOKEN_ENV)
+    if configured:
+        return configured.strip()
+    try:
+        tokens = read_role_tokens(default_token_file())
+    except (OSError, ValueError):
+        return None
+    return tokens.get(role)
 
 
 class EdgeStorageClient:
@@ -31,10 +116,14 @@ class EdgeStorageClient:
         self,
         base_url: str | None = None,
         *,
+        role: str | None = None,
+        token: str | None = None,
         timeout_seconds: float = 35.0,
         client: httpx.Client | None = None,
     ) -> None:
         self.base_url = (base_url or storage_base_url()).rstrip("/")
+        self.role = role or resolve_client_role()
+        self._token = token if token is not None else load_client_token(self.role)
         self._client = client or httpx.Client(
             base_url=self.base_url,
             timeout=timeout_seconds,
@@ -144,6 +233,7 @@ class EdgeStorageClient:
                         "record": self._record_payload(item.record),
                         "state": item.state,
                         "error": item.error,
+                        "http_status": item.http_status,
                     }
                     for item in completions
                 ],
@@ -251,6 +341,9 @@ class EdgeStorageClient:
     def _command(self, action: str, payload: dict[str, Any] | None = None) -> Any:
         body = {"action": action, "payload": payload or {}}
         encoded = msgspec.json.encode(body)
+        headers = {"Content-Type": "application/json"}
+        if self._token:
+            headers[IPC_TOKEN_HEADER] = self._token
         last_error: Exception | None = None
         for _attempt in range(2):
             try:
@@ -258,7 +351,7 @@ class EdgeStorageClient:
                     response = self._client.post(
                         "/v1/command",
                         content=encoded,
-                        headers={"Content-Type": "application/json"},
+                        headers=headers,
                     )
                 response.raise_for_status()
                 envelope = msgspec.json.decode(response.content)
@@ -267,12 +360,25 @@ class EdgeStorageClient:
                 if not envelope.get("ok"):
                     raise StorageUnavailable(str(envelope.get("error") or "storage command failed"))
                 return envelope.get("data")
+            except httpx.HTTPStatusError as exc:
+                # P2-D：凭据被拒是可判定的确定性失败，既不重试，也不折叠成
+                # "unavailable"——运维据此区分「凭据/权限错」与「服务不可达」。
+                if exc.response.status_code in (401, 403):
+                    raise StorageUnauthorized(
+                        "Edge Storage rejected the IPC credential "
+                        f"(HTTP {exc.response.status_code}, role={self.role or 'unidentified'}): "
+                        "check the role token in the Edge Storage IPC token file"
+                    ) from exc
+                last_error = exc
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 last_error = exc
         raise StorageUnavailable(f"Edge Storage unavailable: {last_error}") from last_error
 
     @staticmethod
     def _record(data: dict[str, Any]) -> OutboxRecord:
+        # B6：``reject_count`` 是判断坏数据隔离预算的唯一依据。字段**缺失**表示对端
+        # 是尚未升级的 Edge Storage（旧版只回传 ``attempt_count``）——按存在性判定，
+        # 显式降级为 ``None`` 交调用方处理，绝不静默当成 0。
         return OutboxRecord(
             batch_id=str(data["batch_id"]),
             upload_session_id=str(data["upload_session_id"]),
@@ -280,6 +386,9 @@ class EdgeStorageClient:
             assignment_epoch=int(data["assignment_epoch"]),
             payload=base64.b64decode(str(data["payload_b64"])),
             attempt_count=int(data.get("attempt_count") or 0),
+            reject_count=(
+                int(data["reject_count"]) if data.get("reject_count") is not None else None
+            ),
         )
 
     @staticmethod
@@ -291,6 +400,7 @@ class EdgeStorageClient:
             "assignment_epoch": record.assignment_epoch,
             "payload_b64": base64.b64encode(record.payload).decode("ascii"),
             "attempt_count": record.attempt_count,
+            "reject_count": record.reject_count,
         }
 
     @staticmethod
