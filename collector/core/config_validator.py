@@ -91,6 +91,22 @@ class ConfigValidator:
             "global": self._validate_global_config,
         }
 
+    def validate_device_candidate(
+        self, device: DeviceConfig, variables: List[VariableConfig]
+    ) -> ValidationResult:
+        """校验热更新候选取代（B32）：与冷启动**共用** device + variable 两层规则。
+
+        只跑这两层，不重复全局/MySQL 校验——那些与单个候选无关，重复跑会把无关错误混进
+        候选失败原因。冷启动 ``validate_config`` 对同一设备/变量执行的正是这两个校验器，
+        所以规则完全一致，不会出现"冷启动拒绝、热更新放行"（如 ``%MW10`` + ``REAL``）。
+        """
+        result = ValidationResult(valid=True)
+        result._merge(self._rules["device"](device))
+        for variable in variables:
+            result._merge(self._validate_variable_config(variable, protocol=device.protocol))
+        result.valid = len(result.errors) == 0
+        return result
+
     def validate_config(self, config: CollectorConfig) -> ValidationResult:
         """验证完整配置"""
         result = ValidationResult(valid=True)

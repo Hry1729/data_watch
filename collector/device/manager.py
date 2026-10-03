@@ -10,6 +10,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
+from core.config_validator import ConfigValidator
 from core.exceptions import DeviceConnectionError
 from core.logger import get_logger
 from core.retry import with_retry, CircuitBreaker
@@ -650,6 +651,12 @@ class DeviceManager:
             device.add_variable(variable)
         if config_error is not None:
             self._mark_config_error(device, config_error)
+            return device
+        # B32：候选取代必须走与冷启动**同一套**变量校验（地址区/偏移/类型宽度组合），
+        # 否则 `%MW10` + `REAL` 这类错配在冷启动被拒、热更新却被接受，等于热更新放宽校验。
+        candidate_check = ConfigValidator().validate_device_candidate(dev_cfg, var_cfgs)
+        if not candidate_check.valid:
+            self._mark_config_error(device, "; ".join(candidate_check.errors))
             return device
         try:
             self._setup_scan_tasks(device)
