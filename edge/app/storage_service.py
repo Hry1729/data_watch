@@ -108,40 +108,106 @@ def _restrict_token_file_acl(path: Path) -> None:
         )
 
 
-def ensure_token_file(path: Path | None = None) -> Path:
-    """Return the IPC token file, creating it with fresh per-role tokens on first use."""
-    target = Path(path) if path is not None else default_token_file()
-    if target.exists():
-        return target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
+def _new_token_payload() -> bytes:
+    return json.dumps(
         {"version": 1, "tokens": {role: secrets.token_hex(32) for role in IPC_ROLE_ACTIONS}},
         indent=2,
     ).encode("utf-8")
+
+
+def ensure_token_file(path: Path | None = None, *, rotate: bool = False) -> Path:
+    """Return the IPC token file, creating it with fresh per-role tokens on first use.
+
+    ``rotate=True`` regenerates **all** role tokens atomically (temp file + ``os.replace``).
+    That is the supported revocation path: a leaked token stops matching as soon as the
+    running Storage reloads the file (see ``IpcAuthenticator``) — **no restart required**.
+    """
+    target = Path(path) if path is not None else default_token_file()
+    if target.exists() and not rotate:
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if rotate:
+        temporary = target.with_name(target.name + f".rotate-{os.getpid()}")
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(_new_token_payload())
+        os.replace(temporary, target)
+        _restrict_token_file_acl(target)
+        return target
     try:
         descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         # Another edge process won the race; its file is just as good.
         return target
     with os.fdopen(descriptor, "wb") as handle:
-        handle.write(payload)
+        handle.write(_new_token_payload())
     _restrict_token_file_acl(target)
     return target
 
 
 class IpcAuthenticator:
-    """Resolves the caller role from a token and enforces the role allowlist."""
+    """Resolves the caller role from a token and enforces the role allowlist.
 
-    def __init__(self, tokens: dict[str, str]) -> None:
+    The token file is **re-read when it changes**, so rotation/revocation takes effect
+    without restarting Edge Storage. The previous behaviour cached tokens for the whole
+    process lifetime, which made prompt revocation impossible. The stat check is
+    throttled to bound syscalls on the request path.
+    """
+
+    _RELOAD_INTERVAL_SECONDS = 1.0
+
+    def __init__(self, tokens: dict[str, str], *, path: Path | None = None) -> None:
         if not tokens:
             raise ValueError("Edge Storage IPC token file contains no tokens")
         self._tokens = tokens
+        self._path = Path(path) if path is not None else None
+        self._stamp = self._file_stamp()
+        self._next_check = 0.0
+        self._reload_lock = threading.Lock()
 
     @classmethod
     def from_file(cls, path: Path | None = None) -> IpcAuthenticator:
-        return cls(read_role_tokens(ensure_token_file(path)))
+        target = ensure_token_file(path)
+        return cls(read_role_tokens(target), path=target)
+
+    def _file_stamp(self) -> tuple[int, int] | None:
+        if self._path is None:
+            return None
+        try:
+            stat = self._path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _maybe_reload(self) -> None:
+        if self._path is None:
+            return
+        now = time.monotonic()
+        if now < self._next_check:
+            return
+        self._next_check = now + self._RELOAD_INTERVAL_SECONDS
+        stamp = self._file_stamp()
+        if stamp is None or stamp == self._stamp:
+            return
+        with self._reload_lock:
+            stamp = self._file_stamp()
+            if stamp is None or stamp == self._stamp:
+                return
+            try:
+                tokens = read_role_tokens(self._path)
+            except (OSError, ValueError) as exc:
+                # Keep the previous tokens rather than failing open or locking everyone out.
+                logger.warning("Could not reload Edge Storage IPC tokens from %s: %s", self._path, exc)
+                return
+            self._tokens = tokens
+            self._stamp = stamp
+            logger.warning(
+                "Edge Storage IPC tokens reloaded from %s; previously issued tokens are no longer accepted",
+                self._path,
+            )
 
     def role_for(self, token: str | None) -> str | None:
+        self._maybe_reload()
         if not token:
             return None
         for role, expected in self._tokens.items():

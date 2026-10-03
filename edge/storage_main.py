@@ -24,6 +24,7 @@ from edge.app.storage_service import (
     StorageEngine,
     StorageHttpServer,
     default_token_file,
+    ensure_token_file,
 )
 
 
@@ -120,6 +121,12 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=float(os.environ.get("DATAWATCH_EDGE_STORAGE_SHUTDOWN_TIMEOUT_SECONDS", "30")),
     )
+    parser.add_argument(
+        "--rotate-ipc-tokens",
+        action="store_true",
+        help="Regenerate all Edge Storage IPC role tokens atomically, then exit. "
+        "The running Storage picks the change up within ~1s (revocation without restart).",
+    )
     # The IPC endpoint has no transport encryption and authenticates callers only
     # with a local token file, so exposing it beyond loopback must be deliberate.
     parser.add_argument(
@@ -138,6 +145,22 @@ def main() -> int:
         level=os.environ.get("DATAWATCH_LOG_LEVEL", "INFO"),
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
+    if args.rotate_ipc_tokens:
+        # 轮换/吊销入口：只在解析数据根之后写盘，失败即退出，不启动服务。
+        try:
+            _resolve_data_root(args.data_root)
+        except ValueError as exc:
+            logging.getLogger("edge.storage").error("%s", exc)
+            return 2
+        target = ensure_token_file(rotate=True)
+        logging.getLogger("edge.storage").warning(
+            "Rotated Edge Storage IPC tokens in %s. The running Edge Storage reloads this file "
+            "within ~1s and stops accepting the previous tokens; Collector/Uploader/Agent reload "
+            "it automatically after a 401. Restart any component that injects its token through "
+            "DATAWATCH_EDGE_STORAGE_TOKEN.",
+            target,
+        )
+        return 0
     if not _is_loopback(args.host) and not args.allow_non_loopback:
         logging.getLogger("edge.storage").error(
             "Refusing to bind Edge Storage IPC to non-loopback address %s: the endpoint has no "

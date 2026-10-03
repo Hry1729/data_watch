@@ -124,6 +124,9 @@ class EdgeStorageClient:
         self.base_url = (base_url or storage_base_url()).rstrip("/")
         self.role = role or resolve_client_role()
         self._token = token if token is not None else load_client_token(self.role)
+        # Token was taken from the deployment file/env rather than injected by the caller:
+        # such a client may re-read it after a 401 so token rotation does not require a restart.
+        self._token_from_deployment = token is None
         self._client = client or httpx.Client(
             base_url=self.base_url,
             timeout=timeout_seconds,
@@ -364,6 +367,18 @@ class EdgeStorageClient:
                 # P2-D：凭据被拒是可判定的确定性失败，既不重试，也不折叠成
                 # "unavailable"——运维据此区分「凭据/权限错」与「服务不可达」。
                 if exc.response.status_code in (401, 403):
+                    # 401 且令牌来自部署文件时，重读一次以吸收轮换（吊销后旧令牌必然失败，
+                    # 这里拿到的是新令牌）；403 是角色越权，重读无意义，直接抛出。
+                    if (
+                        exc.response.status_code == 401
+                        and self._token_from_deployment
+                        and _attempt == 0
+                    ):
+                        refreshed = load_client_token(self.role)
+                        if refreshed and refreshed != self._token:
+                            self._token = refreshed
+                            headers[IPC_TOKEN_HEADER] = refreshed
+                            continue
                     raise StorageUnauthorized(
                         "Edge Storage rejected the IPC credential "
                         f"(HTTP {exc.response.status_code}, role={self.role or 'unidentified'}): "
