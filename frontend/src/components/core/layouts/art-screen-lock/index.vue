@@ -8,12 +8,14 @@
     >
       <div class="p-5 text-center select-none">
         <div class="mb-7.5 text-5xl">🔒</div>
-        <h1 class="m-0 mb-5 text-3xl font-semibold text-danger">系统已锁定</h1>
+        <h1 class="m-0 mb-5 text-3xl font-semibold text-danger">屏幕已遮挡</h1>
         <p class="max-w-125 m-0 text-lg leading-relaxed text-white">
           检测到开发者工具已打开<br />
-          为了系统安全，请关闭开发者工具后继续使用
+          锁屏仅用于离席遮挡与本地偏好，<b>不构成访问控制</b>，也不保护数据
         </p>
-        <div class="mt-7.5 text-sm text-gray-400">Security Lock Activated</div>
+        <div class="mt-7.5 text-sm text-gray-400">
+          Presence curtain only — not access control
+        </div>
       </div>
     </div>
 
@@ -110,15 +112,51 @@
   import { Lock, Unlock } from '@element-plus/icons-vue'
   import type { FormInstance, FormRules } from 'element-plus'
   import { useI18n } from 'vue-i18n'
-  import CryptoJS from 'crypto-js'
   import { useUserStore } from '@/store/modules/user'
   import { mittBus } from '@/utils/sys'
 
   // 国际化
   const { t } = useI18n()
 
-  // 环境变量
-  const ENCRYPT_KEY = import.meta.env.VITE_LOCK_ENCRYPT_KEY
+  // 锁屏口令只用于"离席遮挡"与本地偏好，**不是访问控制**（B49）：
+  // 原先用随包发布的固定 VITE_LOCK_ENCRYPT_KEY 做可逆 AES，既能把原文解回来、
+  // 又给人"已加密受保护"的假象。现在改为加盐 PBKDF2 摘要——原文既不落盘（本来也只
+  // 在内存），也不再存在于 store 中，无法被解回。
+  const LOCK_SALT_BYTES = 16
+  const LOCK_ITERATIONS = 120000
+
+  const toHex = (bytes: Uint8Array): string =>
+    Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+
+  const fromHex = (value: string): Uint8Array =>
+    new Uint8Array((value.match(/.{2}/g) ?? []).map((pair) => parseInt(pair, 16)))
+
+  const deriveLockHash = async (password: string, salt: Uint8Array): Promise<string> => {
+    const encoder = new TextEncoder()
+    const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, [
+      'deriveBits'
+    ])
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: LOCK_ITERATIONS, hash: 'SHA-256' },
+      key,
+      256
+    )
+    return toHex(new Uint8Array(bits))
+  }
+
+  const subtleAvailable = (): boolean =>
+    typeof crypto !== 'undefined' && typeof crypto.subtle !== 'undefined'
+
+  /** 生成锁屏凭据：优先加盐 PBKDF2 摘要；无 crypto.subtle（非安全上下文）时降级为
+   *  内存明文并显式标注 `plain:`，不再假装是加密。 */
+  const createLockCredential = async (password: string): Promise<string> => {
+    if (!subtleAvailable()) {
+      console.warn('[lock] crypto.subtle 不可用，锁屏凭据以内存明文保存（锁屏不是访问控制）')
+      return `plain:${password}`
+    }
+    const salt = crypto.getRandomValues(new Uint8Array(LOCK_SALT_BYTES))
+    return `${toHex(salt)}:${await deriveLockHash(password, salt)}`
+  }
 
   // Store
   const userStore = useUserStore()
@@ -322,16 +360,30 @@
   }
 
   // 工具函数
-  const verifyPassword = (inputPassword: string, storedPassword: string): boolean => {
-    try {
-      const decryptedPassword = CryptoJS.AES.decrypt(storedPassword, ENCRYPT_KEY).toString(
-        CryptoJS.enc.Utf8
-      )
-      return inputPassword === decryptedPassword
-    } catch (error) {
-      console.error('密码解密失败:', error)
+  const safeEqual = (left: string, right: string): boolean => {
+    if (left.length !== right.length) return false
+    let diff = 0
+    for (let index = 0; index < left.length; index += 1) {
+      diff |= left.charCodeAt(index) ^ right.charCodeAt(index)
+    }
+    return diff === 0
+  }
+
+  const verifyPassword = async (
+    inputPassword: string,
+    storedCredential: string
+  ): Promise<boolean> => {
+    const credential = String(storedCredential ?? '')
+    if (!credential) return false
+    // 降级形态：内存明文（锁屏不是访问控制，这里只做遮挡校验）。
+    if (credential.startsWith('plain:')) return safeEqual(inputPassword, credential.slice(6))
+    const [saltHex, expected] = credential.split(':')
+    if (!saltHex || !expected) return false
+    if (!subtleAvailable()) {
+      console.warn('[lock] crypto.subtle 不可用，无法校验加盐摘要；请重新设置锁屏口令')
       return false
     }
+    return safeEqual(await deriveLockHash(inputPassword, fromHex(saltHex)), expected)
   }
 
   // 事件处理函数
@@ -351,25 +403,25 @@
   const handleLock = async () => {
     if (!formRef.value) return
 
-    await formRef.value.validate((valid, fields) => {
-      if (valid) {
-        const encryptedPassword = CryptoJS.AES.encrypt(formData.password, ENCRYPT_KEY).toString()
-        userStore.setLockStatus(true)
-        userStore.setLockPassword(encryptedPassword)
-        visible.value = false
-        formData.password = ''
-      } else {
-        console.error('表单验证失败:', fields)
-      }
-    })
+    try {
+      await formRef.value.validate()
+    } catch (fields) {
+      console.error('表单验证失败:', fields)
+      return
+    }
+    const credential = await createLockCredential(formData.password)
+    userStore.setLockStatus(true)
+    userStore.setLockPassword(credential)
+    visible.value = false
+    formData.password = ''
   }
 
   const handleUnlock = async () => {
     if (!unlockFormRef.value) return
 
-    await unlockFormRef.value.validate((valid, fields) => {
+    await unlockFormRef.value.validate(async (valid, fields) => {
       if (valid) {
-        const isValid = verifyPassword(unlockForm.password, lockPassword.value)
+        const isValid = await verifyPassword(unlockForm.password, lockPassword.value)
 
         if (isValid) {
           try {
