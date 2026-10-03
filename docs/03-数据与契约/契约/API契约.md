@@ -184,6 +184,14 @@ pageNo=1&pageSize=20
 
 字段注意：角色编码字段为 `role_code`。
 
+**数据范围（`dataScopes`）当前语义——请勿据此以为权限已被收窄（B22）：**
+
+- `GET /api/role/{id}/grant` 会返回 `dataScopes`，`PUT /api/role/{id}/grant` 也接受该字段并持久化到 `sys_data_permission`，但**服务端目前不对任何读取路径（REST / WebSocket / 导出）执行数据范围过滤**。
+- 内置角色由首装种子写成 `{"scopeType": "all", "scopeValue": "*"}`，即"不受限"。
+- 因此 `PUT /api/role/{id}/grant` **只接受 `scopeType="all"`**；提交任何收窄形式（如按设备/分组）会返回**业务码 501** 并说明尚未实现，而不是静默忽略——避免管理员以为角色已被限制、实际没有。
+- **默认策略（显式声明）**：没有范围记录、或范围记录为 `all` 的角色**不受范围限制**。数据范围是"选择性收窄"能力，未配置即不收窄；这一点是明确约定，不是隐式默认。
+- 若产品确需按 用户×设备×分组 限制读取，需先确认需求，再统一在服务端落地（REST / WebSocket / 导出一致），并同步 UI 与本文档；**未实现前 UI 与文档不得声称已生效**。
+
 密码生命周期约定：
 
 - 创建用户与重置密码都返回 `data={id,userId,temporaryPassword,mustChangePassword:true,tokenVersion}`；`temporaryPassword` 只在本次响应中显示，客户端不得保存、回传或用固定默认值替代。

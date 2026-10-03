@@ -383,11 +383,24 @@ class SystemManageService:
         for permission_id in sorted(set(permission_ids)):
             self.session.add(SysRolePermission(role_id=role_id, permission_id=permission_id))
         for scope in payload.data_scopes:
+            # B22：数据范围目前**只有声明、没有服务端执行**（无 UI、无文档承诺，
+            # 内置角色一律种为 all/*）。若静默接受收窄范围，管理员会以为该角色已被
+            # 限制、实际却没有——这是把未实现写成已生效。因此只接受"不受限"形式，
+            # 收窄形式显式拒绝，避免形成虚假的权限印象。
+            scope_type = str(scope.get("scopeType") or scope.get("scope_type") or "all").strip()
+            scope_value = str(scope.get("scopeValue") or scope.get("scope_value") or "*").strip()
+            if scope_type != "all":
+                raise ApiError(
+                    501,
+                    "数据范围收窄尚未实现：当前版本不会据此限制实时/历史读取，"
+                    "因此拒绝接受非 all 的范围声明（以免误以为该角色已被限制）。"
+                    "如需限制范围，请先确认产品需求。",
+                )
             self.session.add(
                 SysDataPermission(
                     role_id=role_id,
-                    scope_type=str(scope.get("scopeType") or scope.get("scope_type") or "all"),
-                    scope_value=str(scope.get("scopeValue") or scope.get("scope_value") or "*"),
+                    scope_type=scope_type,
+                    scope_value=scope_value or "*",
                     enabled=bool(scope.get("enabled", True)),
                 )
             )
