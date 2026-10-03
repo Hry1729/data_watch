@@ -72,6 +72,15 @@ def _normalize_driver_sample(
             "converting quality to CONFIG_DECODE_ERROR"
         )
         return (raw, QUALITY_CONFIG_DECODE_ERROR, default_timestamp, None)
+    if raw is None:
+        # B34：裸 None **不是**"本轮无新样本"——后者有专用哨兵 MISSING_RESULT。
+        # 因此必须标为坏质量使其可见，而不是像修复前那样伪装成 QUALITY_GOOD、
+        # 随后被调用方静默丢弃（读取失败因而完全不可见）。
+        logger.warning(
+            "Driver returned a bare None; marking quality BAD "
+            "(return MISSING_RESULT to signal 'no new sample')"
+        )
+        return (None, QUALITY_BAD, default_timestamp, None)
     return (raw, QUALITY_GOOD, default_timestamp, None)
 
 
@@ -596,6 +605,19 @@ class TaskExecutor:
                         raw, now, native_quality
                     )
                     if value is None:
+                        # B34：区分"本轮无新样本"与"读取失败"。
+                        # quality=GOOD ⇒ 视为本轮无样本（契约：不进入历史），静默跳过；
+                        # 其余（BAD / STALE / NOT_CONNECTED / CONFIG_DECODE_ERROR）必须**可见**：
+                        # 既不能像修复前那样无条件 continue 把失败语义丢掉，也不得伪造为 0。
+                        if quality != QUALITY_GOOD:
+                            self._metrics.increment("missing_sample_quality_count")
+                            logger.warning(
+                                "Variable %s on device %s produced no value with quality %s; "
+                                "keeping previous latest and not fabricating a value",
+                                variable.variable_id,
+                                device_id,
+                                quality,
+                            )
                         continue
                     points.append(DataPoint(
                         device_id=device_id,
