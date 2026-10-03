@@ -1,8 +1,10 @@
 """配置验证器"""
 
+import importlib.util
 import ipaddress
 import re
 import socket
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 
@@ -11,6 +13,47 @@ from core.exceptions import ConfigError
 from core.logger import get_logger
 
 logger = get_logger("config_validator")
+
+# B4：Modbus 地址必须复用**驱动自身**的规则（packages/modbus_tcp/modbus_tcp/address.py），
+# 否则校验器与驱动支持范围会各写一套并漂移，导致 `HR10` / `holding:10` 这类合法地址在
+# 冷启动被误拒（旧实现在"未知协议"兜底里用 S7/GE 规则判断），或 `C5` 被误当成 S7 计数器而放行。
+#
+# 这里按**文件路径**加载而不是 `import modbus_tcp.address`：驱动包由 DriverRegistry 在
+# **激活时**才把路径插入 sys.path，冷启动校验阶段未必可导入；而该模块只依赖标准库，
+# 按路径加载与加载顺序无关。
+_MODBUS_PROTOCOLS = frozenset({"modbus_tcp", "modbus"})
+_MODBUS_ADDRESS_CANDIDATES = (
+    Path(__file__).resolve().parents[2] / "packages" / "modbus_tcp" / "modbus_tcp" / "address.py",
+)
+_modbus_address_module: Optional[Any] = None
+_modbus_address_module_resolved = False
+
+
+def _load_modbus_address_module() -> Optional[Any]:
+    """加载并缓存 modbus 地址规则模块；找不到/加载失败返回 None（调用方按不通过处理）。"""
+    global _modbus_address_module, _modbus_address_module_resolved
+    if _modbus_address_module_resolved:
+        return _modbus_address_module
+    _modbus_address_module_resolved = True
+    for candidate in _MODBUS_ADDRESS_CANDIDATES:
+        if not candidate.is_file():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("datawatch_modbus_address", candidate)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            _modbus_address_module = module
+        except Exception as exc:  # pragma: no cover - 取决于驱动文件可读性
+            logger.warning("Failed to load Modbus address rules from %s: %s", candidate, exc)
+        break
+    if _modbus_address_module is None:
+        logger.warning(
+            "Modbus address rules not found (looked in %s); Modbus addresses cannot be validated",
+            ", ".join(str(item) for item in _MODBUS_ADDRESS_CANDIDATES),
+        )
+    return _modbus_address_module
 
 
 def _is_loopback_bind_host(host: str) -> bool:
@@ -102,7 +145,7 @@ class ConfigValidator:
                 "Use a 32-bit sidecar service or an OPC UA gateway, then ingest via HTTP/OPC UA."
             )
         elif protocol not in ["s7", "ge_srtp", "opc", "opcua", "http_push",
-                              "opcda_sidecar", "opcda_center"]:
+                              "opcda_sidecar", "opcda_center", "modbus_tcp"]:
             result.warnings.append(f"Unknown protocol: {config.protocol}")
 
         # 验证IP地址
@@ -292,11 +335,28 @@ class ConfigValidator:
             return self._validate_ge_address(address)
         if normalized_protocol in {"opcda", "opcda_center", "opcda_sidecar"}:
             return self._validate_opcda_item_id(address)
+        if normalized_protocol in _MODBUS_PROTOCOLS:
+            return self._validate_modbus_address(address)
         if normalized_protocol in {"opc", "opcua", "opc_ua", "http_push"}:
             return bool(address and address.strip())
 
         # 未知协议：仅接受已知的读取地址族。
         return self._validate_s7_address(address) or self._validate_ge_address(address)
+
+    @staticmethod
+    def _validate_modbus_address(address: str) -> bool:
+        """按 modbus_tcp 驱动自身的规则校验地址（B4）。
+
+        驱动规则不可用时按**不通过**处理并记录告警——既不放行，也不跳过全部校验。
+        """
+        module = _load_modbus_address_module()
+        if module is None:
+            return False
+        try:
+            module.parse_address(address)
+        except Exception:
+            return False
+        return True
 
     @staticmethod
     def _validate_s7_address(address: str) -> bool:
