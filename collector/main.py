@@ -711,7 +711,9 @@ class CollectorApp:
 
     async def _remove_device(self, device_id: str) -> None:
         """运行期下线一台设备。约束2：先取消调度循环，再交由 device_manager 处理。"""
-        self.device_manager.invalidate_device(device_id)
+        # B35：generation 锁可能被做 Redis I/O 的 worker 线程长时间持有；从事件循环里
+        # 直接取锁会连带卡住所有设备的调度，因此把取锁放到工作线程。
+        await asyncio.to_thread(self.device_manager.invalidate_device, device_id)
         await self.scheduler.reload_device_tasks(device_id, [])
         await self.device_manager.remove_device(device_id)
         logger.info("Runtime removed device %s", device_id)
@@ -970,3 +972,4 @@ if __name__ == "__main__":
     exit_code = asyncio.run(main())
     if exit_code is not None and exit_code != 0:
         raise SystemExit(exit_code)
+

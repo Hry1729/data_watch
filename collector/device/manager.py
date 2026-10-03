@@ -673,13 +673,12 @@ class DeviceManager:
             driver, device_id=candidate.device_id, reason="discard_candidate"
         )
 
-    async def swap_device(self, device_id: str, candidate: Device) -> Optional[Device]:
-        """原子替换 devices 表中的设备；返回被替换的旧 Device（可能为 None）。
+    def _swap_device_locked(self, device_id: str, candidate: Device) -> Optional[Device]:
+        """代际锁内的原子替换（**不含任何 await / I/O**）。
 
-        B3：热替换必须**一并收尾旧代的重连任务**。否则旧任务会继续按旧对象重连旧地址，
-        而且因为 ``_reconnect_tasks[device_id]`` 仍被它占用，新代连
-        ``schedule_reconnect`` 都会在"已有任务"处早退跳过——表现为新设备不再重连。
-        等待旧任务在代际锁**之外**进行，避免持锁阻塞其它设备。
+        单独抽出来是为了让 `swap_device` 能把这个临界区放到**工作线程**执行（B35）：
+        该锁可能被做 Redis I/O 的 worker 线程长时间持有，从事件循环里直接取锁会把
+        所有设备的调度一起卡住。
         """
         lock = self._generation_lock_for(device_id)
         with lock:
@@ -692,6 +691,16 @@ class DeviceManager:
                 old.active = False
                 old.generation = generation
             self.devices[device_id] = candidate
+        return old
+
+    async def swap_device(self, device_id: str, candidate: Device) -> Optional[Device]:
+        """原子替换 devices 表中的设备；返回被替换的旧 Device（可能为 None）。
+
+        B3：热替换必须**一并收尾旧代的重连任务**。
+        B35：临界区在工作线程内取锁（``asyncio.to_thread``），事件循环不因等待
+        generation 锁而停摆——写侧的 check→write 原子性保持不变（写仍在锁内完成）。
+        """
+        old = await asyncio.to_thread(self._swap_device_locked, device_id, candidate)
 
         # 代际已提升：先在锁外取消/收尾旧重连任务，再断开旧驱动。
         await self._cancel_reconnect_task(device_id)
@@ -795,7 +804,9 @@ class DeviceManager:
         device = self.devices.get(device_id)
         if device is None:
             return
-        self.invalidate_device(device_id)
+        # B35：失效入口在事件循环上被调用，取锁必须放到工作线程，
+        # 否则 worker 线程持锁做 Redis I/O 期间，事件循环会同步等待该锁而全局停摆。
+        await asyncio.to_thread(self.invalidate_device, device_id)
 
         # 1) 取消重连任务，避免刚下线又被拉起
         await self._cancel_reconnect_task(device_id)
