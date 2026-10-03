@@ -214,15 +214,78 @@ begin
 #endif
 end;
 
+function SystemFunction036(var RandomBuffer: Byte; RandomBufferLength: Cardinal): Boolean;
+  external 'SystemFunction036@advapi32.dll stdcall';
+
 function GenerateToken: String;
 var
+  Buffer: array[0..31] of Byte;
+  HexDigits: String;
+  MinByte: Byte;
+  MaxByte: Byte;
   Index: Integer;
-  Alphabet: String;
 begin
-  Alphabet := 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  HexDigits := '0123456789abcdef';
+  { 服务令牌必须是密码学安全随机值。原先用 Inno 的 Random()（非 CSPRNG，
+    以时钟/计数器为种子，可预测）。RtlGenRandom(SystemFunction036) 自
+    Windows XP 起随系统提供，无外部依赖，取 256 位。}
+  if not SystemFunction036(Buffer[0], SizeOf(Buffer)) then
+    RaiseException('Unable to obtain cryptographically secure random bytes for the service token');
+  { 退化守卫：若缓冲区未被真正随机填充（例如按引用传参失败导致全零/常量），
+    宁可让安装失败，也不写入可预测的服务令牌。真实 CSPRNG 输出的极差几乎总是 255。}
+  MinByte := Buffer[0];
+  MaxByte := Buffer[0];
+  for Index := 1 to SizeOf(Buffer) - 1 do
+  begin
+    if Buffer[Index] < MinByte then MinByte := Buffer[Index];
+    if Buffer[Index] > MaxByte then MaxByte := Buffer[Index];
+  end;
+  if (MaxByte - MinByte) < 16 then
+    RaiseException('Refusing to use a degenerate service token (randomness check failed)');
   Result := '';
-  for Index := 1 to 64 do
-    Result := Result + Alphabet[Random(Length(Alphabet)) + 1];
+  for Index := 0 to SizeOf(Buffer) - 1 do
+    Result := Result
+      + HexDigits[(Buffer[Index] shr 4) + 1]
+      + HexDigits[(Buffer[Index] and $0F) + 1];
+end;
+
+procedure HardenDataPermissions(DataPath: String);
+var
+  ResultCode: Integer;
+begin
+  { 显式落实 ACL：ProgramData 下的目录默认允许 Users 创建/追加，
+    同一个用户还能对自己创建的对象拿到完全控制——对存放服务令牌与
+    点位/配置的数据根来说过宽。
+     做法：去掉继承并显式授予「管理员 + SYSTEM 完全控制」，另给 Users 只读执行
+    （保留合法的读取面），随后再把令牌文件单独收紧到只读管理员+SYSTEM。
+     不使用 [Dirs] Permissions 关键字是为了能显式关闭继承并覆盖存量目录。}
+  if not Exec(
+      'icacls.exe',
+      '"' + DataPath + '" /inheritance:r /grant:r'
+        + ' "*S-1-5-32-544:(OI)(CI)F"'
+        + ' "*S-1-5-18:(OI)(CI)F"'
+        + ' "*S-1-5-32-545:(OI)(CI)RX"'
+        + ' /T /C',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to run icacls for ' + DataPath);
+  if ResultCode <> 0 then
+    RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [DataPath, ResultCode]));
+end;
+
+procedure HardenTokenFile(TokenPath: String);
+var
+  ResultCode: Integer;
+begin
+  { 服务令牌是明文秘密：只允许 管理员 + SYSTEM 读取/修改，且不继承上级。}
+  if not Exec(
+      'icacls.exe',
+      '"' + TokenPath + '" /inheritance:r /grant:r'
+        + ' "*S-1-5-32-544:F"'
+        + ' "*S-1-5-18:F"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to run icacls for ' + TokenPath);
+  if ResultCode <> 0 then
+    RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [TokenPath, ResultCode]));
 end;
 
 procedure RegisterRoleService;
@@ -261,6 +324,11 @@ begin
       Lines.Free;
     end;
   end;
+
+  { 令牌写好后立刻落实 ACL：先收紧数据根（存量目录一并处理），再单独锁住令牌文件。}
+  HardenDataPermissions(DataPath);
+  if FileExists(TokenPath) then
+    HardenTokenFile(TokenPath);
 
 
   if not ServiceExists then
