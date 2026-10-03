@@ -33,7 +33,9 @@ import { agentClient, type BootstrapTarget } from "@/lib/agent-client";
 import { setBackendBaseUrl } from "@/lib/backend-client";
 import type { AppError } from "@/types";
 
-type DbTarget = "mysql" | "redis" | "tdengine";
+// B12：边缘角色不使用中心 Redis/TDengine（边缘本地 SQLite → Uploader → Ingest HTTP），
+// 因此边缘引导只要求 MySQL（中心配置库）。中心式/分布式中心的引导页仍各自要求所需的库。
+type DbTarget = "mysql";
 type StepKey = "node" | DbTarget;
 type TestStatus = "idle" | "testing" | "success" | "failed";
 
@@ -56,7 +58,7 @@ interface TestState {
   error: string | null;
 }
 
-const DB_TARGETS: DbTarget[] = ["mysql", "redis", "tdengine"];
+const DB_TARGETS: DbTarget[] = ["mysql"];
 const STEPS: Array<{
   key: StepKey;
   title: string;
@@ -65,20 +67,14 @@ const STEPS: Array<{
 }> = [
   { key: "node", title: "节点与中心", description: "中心地址与节点注册", icon: ServerCog },
   { key: "mysql", title: "MySQL", description: "中心配置与用户认证", icon: Database },
-  { key: "redis", title: "Redis", description: "实时数据与运行状态", icon: Database },
-  { key: "tdengine", title: "TDengine", description: "历史时序数据", icon: Database },
 ];
 
 const DEFAULT_DATABASES: Record<DbTarget, DbForm> = {
   mysql: { host: "127.0.0.1", port: "3306", user: "root", password: "", database: "device_watch" },
-  redis: { host: "127.0.0.1", port: "6379", user: "", password: "", database: "0" },
-  tdengine: { host: "127.0.0.1", port: "6041", user: "root", password: "", database: "device_data" },
 };
 
 const EMPTY_TESTS: Record<DbTarget, TestState> = {
   mysql: { status: "idle", error: null },
-  redis: { status: "idle", error: null },
-  tdengine: { status: "idle", error: null },
 };
 
 const EMPTY_FORM: FormState = {
@@ -237,9 +233,9 @@ export default function EdgeBootstrapPage() {
       target: target as BootstrapTarget,
       host: value.host.trim(),
       port: Number(value.port),
-      user: target === "redis" ? undefined : value.user.trim(),
+      user: value.user.trim(),
       password: value.password,
-      database: target === "redis" ? undefined : value.database.trim(),
+      database: value.database.trim(),
     };
   }
 
@@ -253,7 +249,7 @@ export default function EdgeBootstrapPage() {
       }));
       return;
     }
-    if (target !== "redis" && (!value.user.trim() || !value.database.trim())) {
+    if (!value.user.trim() || !value.database.trim()) {
       setTests((current) => ({
         ...current,
         [target]: { status: "failed", error: "用户和数据库不能为空" },
@@ -297,7 +293,7 @@ export default function EdgeBootstrapPage() {
     if (!centerHost(form.centerUrl)) return toast.error("请输入有效的中心 HTTP(S) 地址");
     if (!form.nodeName.trim()) return toast.error("请输入节点名称");
     if (!registered && !form.registrationCode.trim()) return toast.error("请输入中心生成的一次性注册码");
-    if (!allPassed) return toast.error("请先完成 MySQL、Redis 和 TDengine 三项连接测试");
+    if (!allPassed) return toast.error("请先完成 MySQL 连接测试");
 
     setSubmitting(true);
     try {
@@ -310,18 +306,6 @@ export default function EdgeBootstrapPage() {
           user: databases.mysql.user.trim(),
           password: databases.mysql.password,
           database: databases.mysql.database.trim(),
-        },
-        redis: {
-          host: databases.redis.host.trim(),
-          port: Number(databases.redis.port),
-          password: databases.redis.password,
-        },
-        tdengine: {
-          host: databases.tdengine.host.trim(),
-          port: Number(databases.tdengine.port),
-          user: databases.tdengine.user.trim(),
-          password: databases.tdengine.password,
-          database: databases.tdengine.database.trim(),
         },
       });
       if (!registered) {
@@ -499,14 +483,12 @@ export default function EdgeBootstrapPage() {
                         value={databases[selectedStep].port}
                         onChange={(event) => updateDatabase(selectedStep, "port", event.target.value)}
                       />
-                      {selectedStep !== "redis" ? (
-                        <ConfigField
-                          id={"edge-" + selectedStep + "-user"}
-                          label="用户"
-                          value={databases[selectedStep].user}
-                          onChange={(event) => updateDatabase(selectedStep, "user", event.target.value)}
-                        />
-                      ) : null}
+                      <ConfigField
+                        id={"edge-" + selectedStep + "-user"}
+                        label="用户"
+                        value={databases[selectedStep].user}
+                        onChange={(event) => updateDatabase(selectedStep, "user", event.target.value)}
+                      />
                       <ConfigField
                         id={"edge-" + selectedStep + "-password"}
                         label="密码"
@@ -518,14 +500,12 @@ export default function EdgeBootstrapPage() {
                         placeholder="••••••"
                       />
                     </div>
-                    {selectedStep !== "redis" ? (
-                      <ConfigField
-                        id={"edge-" + selectedStep + "-database"}
-                        label="数据库"
-                        value={databases[selectedStep].database}
-                        onChange={(event) => updateDatabase(selectedStep, "database", event.target.value)}
-                      />
-                    ) : null}
+                    <ConfigField
+                      id={"edge-" + selectedStep + "-database"}
+                      label="数据库"
+                      value={databases[selectedStep].database}
+                      onChange={(event) => updateDatabase(selectedStep, "database", event.target.value)}
+                    />
                   </FieldGroup>
                 ) : null}
               </CardContent>
@@ -540,7 +520,7 @@ export default function EdgeBootstrapPage() {
             {readyToFinish ? <CheckCircle2 className="size-4 text-success" /> : <CircleDashed className="size-4" />}
             <span>
               {readyToFinish
-                ? "节点信息与三项数据库连接均已就绪"
+                ? "节点信息与数据库连接均已就绪"
                 : "已完成 " + passedCount + " 项，还需完成 " + (STEPS.length - passedCount) + " 项"}
             </span>
           </div>

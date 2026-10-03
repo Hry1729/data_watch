@@ -158,6 +158,18 @@ async def bootstrap_config(body: BootstrapConfigRequest):
         cfg.setdefault("backend", {})["base_url"] = body.backend.base_url
     if body.mysql is not None:
         _apply_db_section(cfg, "mysql", body.mysql)
+    # B12：边缘角色**不使用**中心 Redis/TDengine（边缘本地 SQLite → Uploader → Ingest
+    # HTTP 上送），而本接口被中心式与边缘两个引导页共用。因此只对 edge 拒绝并**不接受、
+    # 不持久化**这两类中心凭据；显式报错而非静默忽略，避免操作者以为边缘已接入中心
+    # Redis/TD。中心式/分布式中心的引导流程不受影响。
+    if build_role() == "edge" and (body.redis is not None or body.tdengine is not None):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "边缘角色不使用中心 Redis/TDengine 凭据：边缘本地用 SQLite，经 Uploader 以 "
+                "Ingest HTTP 上送。请只提交 MySQL（中心配置库）。"
+            ),
+        )
     if body.redis is not None:
         _apply_db_section(cfg, "redis", body.redis)
     if body.tdengine is not None:
