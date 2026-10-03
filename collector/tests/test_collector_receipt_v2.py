@@ -275,6 +275,25 @@ def test_dedicated_redis_noscript_after_partial_pipeline_retries(tmp_path):
         writer.close()
 
 
+class _StderrDrain:
+    """持续排空子进程 stderr（daemon 线程），使失败时能拿到原文且不阻塞子进程。"""
+
+    def __init__(self, child) -> None:
+        self._lines: list[str] = []
+        self._thread = threading.Thread(target=self._run, args=(child,), daemon=True)
+        self._thread.start()
+
+    def _run(self, child) -> None:
+        try:
+            for line in child.stderr:
+                self._lines.append(line.rstrip())
+        except Exception:
+            pass
+
+    def tail(self, limit: int = 8) -> str:
+        return " | ".join(self._lines[-limit:]) or "<empty>"
+
+
 def _read_line_with_timeout(child, timeout: float = 30.0) -> str:
     """读取子进程一行，带超时。
 
@@ -340,10 +359,23 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, env=os.environ.copy(), cwd=str(collector_dir),
     )
+    drain = _StderrDrain(child)
     try:
-        assert _read_line_with_timeout(child).strip() == "ready"
-        with pytest.raises(RuntimeError, match="already owned"):
+        ready_line = _read_line_with_timeout(child)
+        assert ready_line.strip() == "ready", (
+            f"就绪行异常: {ready_line!r} returncode={child.returncode} stderr={drain.tail()}"
+        )
+        # 诊断强化：失败时要能区分"没抛"与"抛了别的错误/别的消息"。
+        try:
             CollectorRetryOutbox(path)
+        except RuntimeError as exc:
+            assert "already owned" in str(exc), (
+                f"抛出的是别的 RuntimeError: {exc!r} stderr={drain.tail()}"
+            )
+        else:
+            raise AssertionError(
+                f"第二个属主本应被拒但成功了；stderr={drain.tail()}"
+            )
     finally:
         _kill_process_tree(child)
         child.stdin.close()
@@ -352,12 +384,17 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
     assert path.with_name(path.name + ".owner.lock").exists()
     # 持锁进程（含其后代）已被回收，锁应当很快可再取得；仍用有界等待避免依赖"立即"。
     deadline = time.monotonic() + 15.0
+    attempts: list[str] = []
     while True:
         try:
             reopened = CollectorRetryOutbox(path)
-        except RuntimeError:
+        except Exception as exc:  # 记录每一次异常类型，供失败时定位根因
+            attempts.append(f"{type(exc).__name__}:{exc}")
             if time.monotonic() >= deadline:
-                raise
+                raise AssertionError(
+                    "锁在期限内未释放；尝试记录=" + " ; ".join(attempts[-10:])
+                    + f" ; child.returncode={child.returncode}"
+                )
             time.sleep(0.05)
             continue
         break
