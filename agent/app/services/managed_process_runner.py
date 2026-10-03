@@ -12,6 +12,37 @@ import toml
 
 logger = logging.getLogger(__name__)
 
+# 受管子进程**不得继承**的 Agent 自身凭据（B13）。
+# Agent 服务由安装器通过 NSSM AppEnvironmentExtra 注入服务令牌，若不剥离，每个受管
+# Collector/Writer/proxy 进程都会拿到 Agent 的服务身份——它本不需要，且一旦被驱动或
+# 插件代码读取就等于扩大了凭据传播面。受管进程各自的数据库连接等配置由调用方显式注入。
+_CHILD_ENV_DENY = frozenset(
+    {
+        # Agent 服务令牌（Backend 调 Agent 用），子进程无需。
+        "DATAWATCH_AGENT_SERVICE_TOKEN",
+        # 继承它会让子进程以 "agent" 角色调 Edge Storage，而不是各自角色文件里的角色。
+        "DATAWATCH_EDGE_STORAGE_TOKEN",
+        # Backend 侧密钥，出现在 Agent 环境里属于异常，不应继续向下传播。
+        "AUTH_SECRET_KEY",
+    }
+)
+
+
+def child_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """构造受管子进程的环境：必要项继承 + 剥离 Agent 凭据 + 叠加调用方显式注入项。
+
+    ``extra`` 里若试图重新注入被剥离的名字，**仍会被丢弃**——凭据必须由该进程自己的
+    数据文件（如按角色的 Edge Storage 令牌文件）提供，而不是靠继承。
+    """
+    run_env = {key: value for key, value in os.environ.items() if key not in _CHILD_ENV_DENY}
+    # 实时落盘 + 强制 UTF-8：子进程在 GBK 代码页的控制台下会因打印非 GBK 字符失败。
+    run_env.setdefault("PYTHONUNBUFFERED", "1")
+    run_env.setdefault("PYTHONUTF8", "1")
+    run_env.setdefault("PYTHONIOENCODING", "utf-8")
+    if extra:
+        run_env.update({key: value for key, value in extra.items() if key not in _CHILD_ENV_DENY})
+    return run_env
+
 
 class ManagedProcessError(Exception):
     pass
@@ -115,9 +146,7 @@ class ManagedProcessRunner:
         self.close_log(name)  # 防御：关掉可能残留的旧句柄
         log_fp = open(log_path, "wb")  # 二进制 sink，交给子进程直接写
 
-        run_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-        if env:
-            run_env.update(env)
+        run_env = child_environment(env)
 
         try:
             popen = subprocess.Popen(
