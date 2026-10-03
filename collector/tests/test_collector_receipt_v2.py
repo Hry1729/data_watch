@@ -1,8 +1,10 @@
 """Receipt protocol migration and replay invariants."""
 import os
+import queue
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -273,6 +275,56 @@ def test_dedicated_redis_noscript_after_partial_pipeline_retries(tmp_path):
         writer.close()
 
 
+def _read_line_with_timeout(child, timeout: float = 30.0) -> str:
+    """读取子进程一行，带超时。
+
+    原先直接 `child.stdout.readline()`：整跑（CPU 竞争）时可能久等，且子进程若因导入
+    失败而立即退出会读到空串，断言失败原因难以分辨。用线程 + 队列把"等待"变成有界的。
+    """
+    result: "queue.Queue[str]" = queue.Queue(maxsize=1)
+
+    def _reader() -> None:
+        try:
+            result.put(child.stdout.readline())
+        except Exception as exc:  # pragma: no cover - 管道异常
+            result.put(f"<read error: {exc}>")
+
+    threading.Thread(target=_reader, daemon=True).start()
+    try:
+        return result.get(timeout=timeout)
+    except queue.Empty:
+        raise AssertionError(f"child did not print a line within {timeout}s")
+
+
+def _kill_process_tree(child) -> None:
+    """杀掉子进程**及其后代**后等待回收。
+
+    关键：`sys.executable` 可能是 venv 转发器（启动器），真实解释器作为它的**子进程**运行。
+    只 kill 启动器并不保证持锁进程已退出，于是"锁何时释放"变成时序猜测（整跑时偶发失败）。
+    这里按进程树回收，使锁释放成为确定事件。
+    """
+    victims = []
+    try:
+        import psutil
+
+        parent = psutil.Process(child.pid)
+        victims = parent.children(recursive=True) + [parent]
+    except Exception:
+        victims = []
+    for proc in victims:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    if not victims:
+        child.kill()
+    try:
+        child.wait(timeout=10)
+    except subprocess.TimeoutExpired:  # pragma: no cover - 兜底
+        child.kill()
+        child.wait(timeout=10)
+
+
 def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
     path = tmp_path / "single-owner.db"
     child_code = (
@@ -289,20 +341,17 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
         text=True, env=os.environ.copy(), cwd=str(collector_dir),
     )
     try:
-        assert child.stdout.readline().strip() == "ready"
+        assert _read_line_with_timeout(child).strip() == "ready"
         with pytest.raises(RuntimeError, match="already owned"):
             CollectorRetryOutbox(path)
     finally:
-        child.kill()
-        child.wait(timeout=5)
+        _kill_process_tree(child)
         child.stdin.close()
         child.stdout.close()
         child.stderr.close()
     assert path.with_name(path.name + ".owner.lock").exists()
-    # 持有者进程结束后锁必须可再取得；用有界等待而不是假定"立即"释放：
-    # `sys.executable` 可能是 venv 转发器，真实解释器作为它的子进程运行，
-    # 因此 kill() 掉被启动的那个进程并不等于持锁进程已退出（要等管道拆完）。
-    deadline = time.monotonic() + 10.0
+    # 持锁进程（含其后代）已被回收，锁应当很快可再取得；仍用有界等待避免依赖"立即"。
+    deadline = time.monotonic() + 15.0
     while True:
         try:
             reopened = CollectorRetryOutbox(path)
@@ -312,7 +361,6 @@ def test_outbox_owner_lock_rejects_second_process_and_crash_releases(tmp_path):
             time.sleep(0.05)
             continue
         break
-    reopened.close()
     reopened.close()
 
 
