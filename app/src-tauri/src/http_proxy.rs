@@ -62,6 +62,37 @@ fn validate_backend_method(method: &str) -> Result<(), String> {
     }
 }
 
+/// 校验 Agent 代理路径，并把请求目标锚定在 127.0.0.1:<port>。
+///
+/// 仅做字符串前缀拼接是不够的：`path = "@evil.com/x"` 会让
+/// `format!("http://127.0.0.1:{}{}", port, path)` 解析为
+/// `http://127.0.0.1:7070@evil.com/x` —— 前者成为 URL 的 **userinfo**，真实 host 变成
+/// `evil.com`，随后注入的 Bearer 令牌就会被发往该主机。因此必须在拼好之后用 URL 解析
+/// 结果反向核对 host/port，并显式拒绝 userinfo 与协议相对路径。
+fn build_local_agent_url(port: u16, path: &str) -> Result<Url, String> {
+    const MAX_PATH_LEN: usize = 4096;
+    if path.is_empty() || path.len() > MAX_PATH_LEN || !path.starts_with('/') || path.starts_with("//") {
+        return Err("agent path must be a single in-site absolute path".to_string());
+    }
+    if path.contains('\\') || path.contains('\0') {
+        return Err("agent path is not allowed".to_string());
+    }
+    let path_only = path.split_once('?').map_or(path, |(value, _)| value);
+    if path_only.split('/').any(|segment| segment == "..") {
+        return Err("agent path is not allowed".to_string());
+    }
+
+    let candidate = Url::parse(&format!("http://127.0.0.1:{}{}", port, path))
+        .map_err(|_| "agent path is not a valid URL path".to_string())?;
+    if candidate.host_str() != Some("127.0.0.1") || candidate.port() != Some(port) {
+        return Err("agent path must not change the request target".to_string());
+    }
+    if !candidate.username().is_empty() || candidate.password().is_some() {
+        return Err("agent path must not contain userinfo".to_string());
+    }
+    Ok(candidate)
+}
+
 fn ensure_backend_origin(base_url: &str, state: &State<'_, BackendOriginState>) -> Result<String, String> {
     let origin = normalize_backend_origin(base_url)?;
     let configured = state.0.lock().map_err(|_| "backend origin state is unavailable".to_string())?;
@@ -128,15 +159,15 @@ pub async fn agent_request(
     token: Option<String>,
     timeout_secs: Option<u64>,
 ) -> Result<(u16, String), String> {
-    let url = format!("http://127.0.0.1:{}{}", port, path);
+    let url = build_local_agent_url(port, &path)?;
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
     let client = build_client(timeout)?;
 
     let mut req = match method.as_str() {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
+        "GET" => client.get(url),
+        "POST" => client.post(url),
+        "PUT" => client.put(url),
+        "DELETE" => client.delete(url),
         m => return Err(format!("unsupported method: {}", m)),
     };
 
@@ -238,8 +269,9 @@ pub async fn backend_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_backend_origin, validate_backend_method, validate_backend_path,
-        validate_request_body, MAX_BACKEND_REQUEST_BYTES, MAX_BACKEND_RESPONSE_BYTES,
+        build_local_agent_url, normalize_backend_origin, validate_backend_method,
+        validate_backend_path, validate_request_body, MAX_BACKEND_REQUEST_BYTES,
+        MAX_BACKEND_RESPONSE_BYTES,
     };
 
     #[test]
@@ -265,5 +297,54 @@ mod tests {
         assert!(validate_request_body(Some(&"x".repeat(MAX_BACKEND_REQUEST_BYTES))).is_ok());
         assert!(validate_request_body(Some(&"x".repeat(MAX_BACKEND_REQUEST_BYTES + 1))).is_err());
         assert_eq!(MAX_BACKEND_RESPONSE_BYTES, 50 * 1024 * 1024);
+    }
+
+    // --- B14：Agent 代理目标必须被锚定在 127.0.0.1:<port> -----------------------
+
+    #[test]
+    fn agent_url_rejects_userinfo_host_hijack() {
+        // 关键反例（原始问题）：字符串拼接会把它变成
+        // http://127.0.0.1:7070@evil.com/v1/status，真实 host 落到 evil.com ——
+        // Bearer 令牌会随之外泄。注意它**没有前导斜杠**。
+        assert!(build_local_agent_url(7070, "@evil.com/v1/status").is_err());
+        // 对照：带前导斜杠时 '@' 位于路径内部，不构成 userinfo —— 这是安全的，
+        // 必须放行且 host 不变（此前复核报告反驳的正是这一形式，它反驳不了上面的原例）。
+        let harmless = build_local_agent_url(7070, "/@evil.com/v1/status").expect("path-internal @");
+        assert_eq!(harmless.host_str(), Some("127.0.0.1"));
+        assert_eq!(harmless.port(), Some(7070));
+    }
+
+    #[test]
+    fn agent_url_rejects_scheme_relative_and_absolute_targets() {
+        assert!(build_local_agent_url(7070, "//evil.com/v1/status").is_err());
+        assert!(build_local_agent_url(7070, "http://evil.com/v1/status").is_err());
+        assert!(build_local_agent_url(7070, "v1/status").is_err());
+        assert!(build_local_agent_url(7070, "").is_err());
+    }
+
+    #[test]
+    fn agent_url_rejects_traversal_and_separators() {
+        assert!(build_local_agent_url(7070, "/v1/../admin").is_err());
+        assert!(build_local_agent_url(7070, "/v1\\..\\admin").is_err());
+        assert!(build_local_agent_url(7070, "/v1/status\0").is_err());
+        assert!(build_local_agent_url(7070, &format!("/{}", "a".repeat(5000))).is_err());
+    }
+
+    #[test]
+    fn agent_url_keeps_legitimate_paths_on_loopback() {
+        let url = build_local_agent_url(7070, "/v1/status?verbose=1").expect("valid path");
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+        assert_eq!(url.port(), Some(7070));
+        assert!(url.username().is_empty());
+        // 编码后的 @ 留在路径里，不构成 userinfo，也不改变 host。
+        let encoded = build_local_agent_url(7070, "/v1/%40evil.com").expect("valid path");
+        assert_eq!(encoded.host_str(), Some("127.0.0.1"));
+        assert_eq!(encoded.path(), "/v1/%40evil.com");
+    }
+
+    #[test]
+    fn agent_url_respects_requested_port() {
+        let url = build_local_agent_url(7072, "/v1/status").expect("valid path");
+        assert_eq!(url.port(), Some(7072));
     }
 }
