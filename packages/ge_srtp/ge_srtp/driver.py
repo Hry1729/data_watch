@@ -37,44 +37,6 @@ class GESRTPDriver(BaseDriver):
 
         self._metrics = metrics
 
-    async def _run_blocking(self, func, *args):
-        """在线程池执行阻塞 I/O；取消时**关闭并隔离该连接**（B33）。
-
-        executor 线程无法被取消。若只是让出 ``_read_lock``，新代会在**同一个 socket** 上并发
-        读写、协议帧交错（清单所述"不能以 await 已取消证明线程已停"）。
-
-        因此按清单允许的第二种做法处理：取消时**同步关闭底层 socket 并把连接标记为不可用**
-        （``_connected=False``）。后续读取会先走重连得到**新连接**，旧线程即使迟到也只能操作
-        已关闭的 socket，无法污染新代。
-
-        为什么不做"等底层读结束再让出锁"：任务被取消后，其取消状态会在下一个挂起点立刻再次
-        抛出 CancelledError，任何在 ``except CancelledError`` 里的 await 都会被短路，等待不
-        可靠；因此选择**关闭并隔离**这条可证明的路径。
-        """
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(self._read_executor, func, *args)
-        try:
-            return await future
-        except asyncio.CancelledError:
-            logger.warning(
-                "GE SRTP read cancelled; closing transport to isolate the in-flight read"
-            )
-            self._abort_transport()
-            raise
-
-    def _abort_transport(self) -> None:
-        """关闭底层 socket 并把连接标记为不可用（取消后的隔离，供重连替换）。"""
-        self._connected = False
-        channels = list(self._drivers or ([self._driver] if self._driver else []))
-        for channel in channels:
-            sock = getattr(channel, "sock", None)
-            if sock is None:
-                continue
-            try:
-                sock.close()
-            except Exception as exc:
-                logger.warning("GE SRTP socket close during abort failed: %s", exc)
-
     def _record_timing(self, name: str, value_ms: float) -> None:
         if self._metrics is not None:
             self._metrics.record_timing(name, value_ms)
@@ -168,25 +130,18 @@ class GESRTPDriver(BaseDriver):
             raise DeviceConnectionError(f"GE SRTP connect failed: {exc}") from exc
 
     async def disconnect(self) -> None:
-        """断开GE PLC的全部独立连接。
-
-        B33：本方法必须与**在途读串行**（取同一把 ``_read_lock``）。否则它能在阻塞读
-        进行中关闭/替换连接，形成"底层仍在旧 socket 上读、连接对象已被换掉"的窗口。
-        取消路径上 ``_run_blocking`` 会先等底层结束再让出该锁，因此这里等待的边界是
-        可证明的：拿到锁即代表没有在途的底层 I/O。
-        """
-        async with self._read_lock:
-            drivers = list(self._drivers or ([self._driver] if self._driver else []))
-            loop = asyncio.get_running_loop()
-            for driver in drivers:
-                try:
-                    await loop.run_in_executor(self._read_executor, driver.disconnect)
-                except Exception as exc:
-                    logger.warning("GE SRTP disconnect error: %s", exc)
-            self._connected = False
-            self._drivers = []
-            self._driver = None
-            self._set_gauge("ge_srtp_active_channel_count", 0)
+        """断开GE PLC的全部独立连接。"""
+        drivers = list(self._drivers or ([self._driver] if self._driver else []))
+        loop = asyncio.get_running_loop()
+        for driver in drivers:
+            try:
+                await loop.run_in_executor(self._read_executor, driver.disconnect)
+            except Exception as exc:
+                logger.warning("GE SRTP disconnect error: %s", exc)
+        self._connected = False
+        self._drivers = []
+        self._driver = None
+        self._set_gauge("ge_srtp_active_channel_count", 0)
         logger.info("GE SRTP disconnected")
 
     async def read(self, blocks: List[ReadBlock]) -> Dict[str, Any]:
@@ -246,7 +201,8 @@ class GESRTPDriver(BaseDriver):
                             break
                         block_started = time.perf_counter()
                         try:
-                            values = await self._run_blocking(
+                            values = await loop.run_in_executor(
+                                self._read_executor,
                                 self._read_block,
                                 block,
                                 channel,
@@ -331,7 +287,8 @@ class GESRTPDriver(BaseDriver):
                     break
                 block_started = time.perf_counter()
                 try:
-                    values = await self._run_blocking(
+                    values = await loop.run_in_executor(
+                        self._read_executor,
                         self._read_block,
                         block,
                         driver,
@@ -410,7 +367,8 @@ class GESRTPDriver(BaseDriver):
                     break
                 block_started = time.perf_counter()
                 try:
-                    values = await self._run_blocking(
+                    values = await loop.run_in_executor(
+                        self._read_executor,
                         self._read_block,
                         block,
                         survivor,
