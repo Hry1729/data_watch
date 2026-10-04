@@ -354,7 +354,20 @@ flowchart TD
 - **HTTP 接入**（external-push）：`InterfaceIngestServer` 暴露的接入端点（host/port/path/api_key 可配）。
 - **设备状态回写**：经 `status_reporter` 回写 MySQL 设备在线状态（注入自 `config_db_manager.update_device_status`）。
 - **停机 flag**：`runtime/collector.shutdown_flag` 文件（agent → collector 停机信号）。
-- **端口映射**：center 协议读取 agent 生成的权威 `port_mapping.json`（`--port-mapping` 或 `COLLECTOR_PORT_MAPPING`），权威模式只读、缺失即 fail-fast。
+- **端口映射（两种模式，勿混用）**：实现为 `collector/device/manager.py` 的 `EndpointPortMapper`。
+  - **动态分配模式**（未显式指定映射文件）：从 `base_port`（默认 9090）起向上分配到 `max_port`
+    （默认 9200），用真实 socket **探测端口可用性**并跳过被占用端口；若默认共享文件
+    `collector/port_mapping.json` 存在则先加载以**粘性复用**旧端口，分配后**写回**该文件。
+    此模式下映射文件的归属是 collector 自己。
+  - **权威只读模式**（显式传入 `--port-mapping` 或环境变量 `COLLECTOR_PORT_MAPPING`）：
+    **只读**该文件，**不探测、不分配、不写回**；`reload()` 也只重读该文件。
+    **fail-fast 边界**：文件缺失、无法解析、不是 JSON 对象、或任一条目的端口值非法
+    （非 int / bool / 越界 1..65535）都会抛 `PortMappingError` **并终止**——**绝不静默退化成
+    动态分配**（那会导致端口漂移）；请求的 endpoint 不在权威映射中同样抛错，而不是新分配一个。
+  - **生产环境归属**：由 **Agent** 的 `agent/app/services/sidecar_manager.py` 生成并保管
+    `runtime/opcda_proxy/port_mapping.json`（端口归属与分配是 Agent 的职责），collector 只读消费。
+    因此权威模式**不做可用性探测**是刻意的职责划分，不是缺口；端口值只做类型与范围校验。
+    动态模式仅用于没有 Agent 编排的场景（如单机调试）。
 
 ---
 
