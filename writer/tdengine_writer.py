@@ -584,9 +584,22 @@ class TDengineWriter:
                 except QualitySchemaError as exc:
                     logger.error("[tdengine] quality schema not ready: %s", exc)
                     unready_quality_stables.add(q_stable)
+            # B28：按**该行是否依赖缺失列**隔离，而不是把该 stable 在本批的全部行一起拦下。
+            # `_col_cache[stable]` 是**已知可用列**（`_ensure_columns` 每成功 ALTER 一列即写入缓存；
+            # 且它只在"具体某列仍缺失"时才抛 SchemaNotReadyError），因此"该行引用的列全在缓存里"
+            # 即可安全推进；只依赖既有列的合法行不应因为**别的行**需要新列而被一起扣住。
+            # 缓存整体缺失（stable 从未 DESCRIBE 成功）时 known 为空集 ⇒ 该 stable 的行仍全部拦下，
+            # 保守行为不变。
+            def _row_depends_on_missing_column(row: dict) -> bool:
+                stable = row["stable"]
+                if stable not in unready_stables:
+                    return False
+                known = self._col_cache.get(stable) or set()
+                return any(str(col).lower() not in known for col in row["columns"])
+
             self._last_local_retry_indices = {
                 index for index, row in enumerate(rows)
-                if row["stable"] in unready_stables
+                if _row_depends_on_missing_column(row)
                 or (
                     row.get("qualities")
                     and _quality_stable_from_value_stable(row["stable"])
