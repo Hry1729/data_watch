@@ -310,6 +310,44 @@ class TaskExecutor:
         self._record_read_summary(task, len(points), elapsed * 1000)
 
 
+    async def _execute_tasks_individually(self, tasks: List[CollectTask]) -> None:
+        """逐个任务独立执行（不做合并读取），并保持逐任务的错误计数语义。
+
+        B46.2：用于"同地址不同数据类型"等**不能安全合并**的情形——结果与未合并基线一致。
+        """
+        outcomes = await asyncio.gather(
+            *(self.execute(task) for task in tasks),
+            return_exceptions=True,
+        )
+        for task, outcome in zip(tasks, outcomes):
+            if isinstance(outcome, BaseException):
+                task.error_count += 1
+                logger.error(
+                    "Task %s failed (errors=%s): %s",
+                    task.task_name,
+                    task.error_count,
+                    outcome,
+                )
+            else:
+                task.error_count = 0
+
+    @staticmethod
+    def _conflicting_address_types(tasks: List[CollectTask]) -> set:
+        """返回"同地址出现多于一种 data_type"的地址集合（B46.2）。
+
+        data_type 就是协议解码语义（例如 S7 同一字区按 INT 与 TIMER_MS/COUNTER 解码），
+        因此同地址不同 data_type 的块**不可**合并。
+        """
+        seen: Dict[str, str] = {}
+        conflicts: set = set()
+        for task in tasks:
+            for block in task.scan_task.read_blocks:
+                normalized = str(getattr(block, "data_type", "") or "").upper()
+                known = seen.setdefault(block.address, normalized)
+                if known != normalized:
+                    conflicts.add(block.address)
+        return conflicts
+
     async def execute_many(self, tasks: List[CollectTask]) -> None:
         """Read coincident tasks for one device once, then preserve per-task outputs."""
         active_tasks = []
@@ -328,21 +366,7 @@ class TaskExecutor:
         if any(task.device.device_id != device.device_id for task in active_tasks):
             raise ValueError("execute_many requires tasks from one device")
         if not device.driver or not device.driver.is_connected:
-            outcomes = await asyncio.gather(
-                *(self.execute(task) for task in active_tasks),
-                return_exceptions=True,
-            )
-            for task, outcome in zip(active_tasks, outcomes):
-                if isinstance(outcome, BaseException):
-                    task.error_count += 1
-                    logger.error(
-                        "Task %s failed (errors=%s): %s",
-                        task.task_name,
-                        task.error_count,
-                        outcome,
-                    )
-                else:
-                    task.error_count = 0
+            await self._execute_tasks_individually(active_tasks)
             return
 
         blocks_by_address = {}
@@ -353,6 +377,25 @@ class TaskExecutor:
                 existing = blocks_by_address.get(block.address)
                 if existing is None or block.count > existing.count:
                     blocks_by_address[block.address] = block
+
+        conflicting = self._conflicting_address_types(active_tasks)
+        if conflicting:
+            # B46.2：同地址出现不同数据类型时**放弃合并**，退回逐任务独立读取。
+            # 原因：若把 data_type 并入合并键，会产生同地址的多个块，而驱动按地址返回结果
+            # （result[address]）⇒ 互相覆盖，谁覆盖谁取决于顺序（不确定性）；
+            # 若维持"按 count 大者取胜"，则丢掉另一套类型语义 ⇒ 用错误类型解码。
+            # 逐任务读取即"未合并基线"的语义与结果，正确性优先于合并收益。
+            self._metrics.increment("coalesced_read_type_conflict_count")
+            logger.warning(
+                "Device %s has %d address(es) with conflicting data_type semantics (%s); "
+                "skipping read coalescing so each task keeps its own decode semantics",
+                device.device_id,
+                len(conflicting),
+                ", ".join(sorted(conflicting)[:5]),
+            )
+            await self._execute_tasks_individually(active_tasks)
+            return
+
         merged_blocks = list(blocks_by_address.values())
 
         started = self._clock()
