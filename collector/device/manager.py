@@ -1095,6 +1095,20 @@ class DeviceManager:
                 f"proxy connect failed: {e}",
                 "connect",
             )
+            # D24：把驱动抛出的**内置** ConnectionError/OSError 归一化为平台 DeviceConnectionError。
+            # 依据：OPC DA center 驱动抛的是内置 ConnectionError（packages/opcda_center/opcda_center/
+            # driver.py），而中心采集熔断器的 expected_exception 是平台的 DeviceConnectionError
+            # （见 _connect_center_collection_device），两者**无继承关系** ⇒ 不归一化时熔断器
+            # `except expected_exception` 拦不到、该设备**永远不会 OPEN**（普通设备正常，故
+            # "整个熔断器不工作"的说法不成立）。
+            # 归一化只统一异常类型；重连路径仍以 use_circuit_breaker=False 调用、不接入熔断，
+            # 因此不会造成"设备无法恢复"。
+            if isinstance(e, (ConnectionError, OSError)) and not isinstance(
+                e, DeviceConnectionError
+            ):
+                raise DeviceConnectionError(
+                    f"center collection proxy connect failed for {device.device_id}: {e}"
+                ) from e
             raise
 
     async def connect_all(self) -> None:

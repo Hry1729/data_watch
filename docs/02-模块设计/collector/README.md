@@ -255,7 +255,21 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/storage/
 `collector/device/manager.py`。负责设备注册、驱动创建、连接、健康检查、重连、generation 管理、center 协议端口映射。
 
 - **驱动工厂** `_create_driver` (`collector/device/manager.py`)：按协议名映射到内置驱动（s7 / ge_srtp / opcua / opcda_center）。**新增协议在此注册。**
-- **连接保护**：每设备一个熔断器 `CircuitBreaker`（5 次失败 OPEN、60s 恢复）+ `with_retry`（3 次指数退避）+ 全局连接信号量（并发 10）。
+- **连接保护**：每设备一个熔断器 `CircuitBreaker`（`collector/core/retry.py`；`failure_threshold=5`、
+  `recovery_timeout=60s`，状态 `closed → open → half_open`；达到阈值即 OPEN，超时后进入 half_open
+  试探，成功即回 `closed`）+ `with_retry`（3 次指数退避）+ 全局连接信号量（并发 10）。
+  **适用阶段与计数类型（务必区分）**：
+  - **初次连接 / 默认路径启用**：`connect_device(device, use_circuit_breaker=True)`（默认值），
+    中心采集设备由 `_connect_center_collection_device` 建立熔断器并以其包裹连接实现；
+  - **重连路径显式关闭**：`schedule_reconnect` 以 `use_circuit_breaker=False` 调用，
+    **不创建也不驱动熔断器**——否则熔断 OPEN 期间重连会被直接拒绝、空转至 `recovery_timeout`，
+    设备无法按 `reconnect_interval` 真正重试（这正是"不能把所有重连接入熔断"的落点）；
+  - **计数异常类型**：熔断器的 `expected_exception=DeviceConnectionError`；
+    OPC DA center 驱动抛的是**内置** `ConnectionError`（与 `DeviceConnectionError` 无继承关系），
+    因此中心路径已把它**归一化**为 `DeviceConnectionError` 后再抛出，否则中心设备永远不会 OPEN。
+  - **已知不对称（已登记）**：`use_circuit_breaker=False` 时，中心路径会把异常**抛出**给调用方
+    （`connect_device` 的 try/except 位于其普通分支），而普通设备路径会捕获并返回 `False`；
+    两者共同点是均不接入熔断。该差异不影响熔断语义，但调用方需注意返回/抛出形式不同。
 - **重连**：`schedule_reconnect` (`collector/device/manager.py`) 启动每设备重连协程，延迟按 `_next_reconnect_delay` 指数退避（30s→上限 300s）叠加 0.2 抖动，避免重连风暴。
 - **generation 机制**：`_activate_device`/`_advance_device_generation`/`invalidate_device` 维护每设备单调代次，配 per-device `threading.RLock`。`is_current_generation` / `run_if_current_generation` 保证热重载后旧周期不写、且 invalidate 与写入不交错。
 
