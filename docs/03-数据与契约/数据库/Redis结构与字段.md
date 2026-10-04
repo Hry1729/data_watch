@@ -56,16 +56,39 @@ Hash 字段：
 
 ```text
 field = var_id
-value = {"v":"<值>","t":<时间戳ms>,"q":<质量>}
+value = {"v":"<值>","t":<时间戳ms>,"q":<质量>,"e":<assignment_epoch>}
 ```
 
-示例：
+**当前两种生产者都写 4 字段 `v/t/q/e`**（`data_watch_shared/stream_envelope.py::build_latest_updates`；
+分布式侧 `ingest/app/redis_store.py` 的 Lua 同形状），差异只在 `e` 的来源：
+
+| 生产者 | `e` 的来源 | 缺 `e` 时的兼容规则 |
+|---|---|---|
+| 中心式（collector `RedisWriter`）| 设备/分组的 `assignment_epoch` | — （总能给出，可能为 0）|
+| 分布式（Ingest Lua）| 逐项的 `assignment_epoch` | 读取端按 `tonumber(current.e or 0)` 视为 `0` |
+
+- `e` 用于**同时间戳下的防倒退**（`incoming.t == current.t and incoming.e > current_epoch` 才覆盖），
+  不是业务时间；
+- **缺 `e` 的历史帧按 `e=0` 兼容**，因此四字段与三字段都能被读取；
+- `q`：帧质量映射里**没有该 var_id** 时，**latest 会补 `q=0`（GOOD）**。注意这与"质量窄表"不同——
+  窄表按 `qualities` 条目数落行，缺 `qualities`（含 v1）**不落任何质量行**（见 §5 与 D2 说明）；
+  即"latest 兜底 GOOD" ≠ "历史质量有 GOOD 行"。
+
+示例（**四字段**，当前）：
 
 ```json
 HGETALL rt:latest:QC100:g001
 {
-  "900001": {"v":"23.4","t":1718000000000,"q":0},
-  "900002": {"v":"1","t":1718000000000,"q":0}
+  "900001": {"v":"23.4","t":1718000000000,"q":0,"e":7},
+  "900002": {"v":"1","t":1718000000000,"q":0,"e":7}
+}
+```
+
+示例（**三字段**，历史帧/未提供 epoch 的写入者）——读取端按 `e=0` 处理：
+
+```json
+{
+  "900001": {"v":"23.4","t":1718000000000,"q":0}
 }
 ```
 
@@ -75,6 +98,21 @@ HGETALL rt:latest:QC100:g001
 - 后端实时 WebSocket 首帧 `snapshot` 与后续 `diff` 均来自 latest。
 - latest 是“当前批次已完成 Redis 写入”的信号，因此必须最后写。
 - 设备删除、停用或运维清理时由管理逻辑显式处理，不能依赖 TTL 自然过期。
+
+### 3.3 控制状态键与通道（D5 补全）
+
+除业务数据键（latest / window / stream / dlq）外，系统还使用以下**控制状态**。清理时必须与业务
+容量分开处理——**删除这些键会破坏恢复能力**（幂等、session 围栏、可恢复性），因此：
+
+| 用途 | 名称形态 | TTL / 所有者 | 清理注意 |
+|---|---|---|---|
+| Nonce（批次幂等） | `ingest:nonce:{node_uuid}:{nonce}` | 由 `nonce_ttl_seconds`（`INGEST_NONCE_TTL_SECONDS`）设定 | 不得在 TTL 前删除，否则重复批会被再次接纳 |
+| 活跃 session 围栏 | `GET KEYS[2]` 读取的活跃 session id | 由 session 切换流程写入 | 不得视为业务数据清理对象 |
+| 旧 session 高水位 | session 切换 Lua 中 `EXPIRE KEYS[3]` 的那个键 | 由 `INGEST_MAX_OFFLINE_RETENTION_DAYS` 决定 | **不得把控制高水位当成"历史完整性证明"**：它只用于去重/围栏，不代表历史已齐备 |
+| 控制失效通道 | `ingest:control:invalidate`（Pub/Sub **通道**，非持久键）| 无（通道） | 不参与容量清理 |
+| 实时变更通道 | `rt:change`（Pub/Sub **通道**，非持久键）| 无（通道） | 不作为持久状态备份 |
+
+> 通道无 TTL、也不占用持久容量；把它们当作"键"去清理或统计会得出错误结论。
 
 ---
 
