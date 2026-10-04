@@ -160,7 +160,7 @@ XADD rt:stream:qc:g001:0 *
 }
 ```
 
-**兼容性**：writer 读取时若 `contract_version < 2` 或缺 `qualities` 字段，兼容填充质量码 `0`（GOOD）。
+- **v1 不产生质量行，也不会被补成 GOOD**：writer 的质量行数 = `qualities` 条目数（`writer/consumer.py` 的 `quality_rows_count += sum(len(row.qualities))`），因此缺 `qualities`（含 v1）时**不落任何质量行**。契约层 `data_watch_shared/stream_envelope.py::validate_envelope` 还规定：`contract_version=1` **不得**携带 `qualities`（带则报错）、`contract_version` 只接受 1/2（其它值报错）。
 
 ### 5.3 写入过滤
 
@@ -309,3 +309,4 @@ DLQ 是人工排查入口，不是自动重放机制。**它不按投递次数�
 - [入库 writer](../../02-模块设计/writer/README.md)
 - [writer 可靠入库与 TDengine 写入](../../02-模块设计/writer/可靠入库与TDengine写入.md)
 - [WebSocket 协议](../契约/WebSocket协议.md)
+

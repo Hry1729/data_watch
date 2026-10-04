@@ -209,7 +209,7 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/storage/
 
 - `values` 和 `qualities` 数组长度必须相等；
 - 若驱动返回的 sample 未设置 quality，默认为 `0`（GOOD）；
-- writer 读取 stream 时，若 `contract_version < 2` 或缺少 `qualities` 字段，兼容填充 `0`。
+- **v1 不产生质量行，也不会被补成 GOOD**：writer 的质量行数 = `qualities` 条目数（`writer/consumer.py` 的 `quality_rows_count += sum(len(row.qualities))`），因此缺 `qualities`（含 v1）时**不落任何质量行**。契约层 `data_watch_shared/stream_envelope.py::validate_envelope` 还规定：`contract_version=1` **不得**携带 `qualities`（带则报错）、`contract_version` 只接受 1/2（其它值报错）。
 
 ### 驱动实现指南
 
@@ -507,3 +507,4 @@ collector 内部**，因此**新增协议不需要改核心调度**。
 - [外置驱动包制作指南](外置驱动包制作指南.md)（ZIP 清单、打包、安装与 checklist）
 - [Redis 流与点位分组](../../03-数据与契约/数据库/Redis结构与字段.md)（Redis 结构完整契约）
 - [数据库设计](../../03-数据与契约/数据库/MySQL结构与字段.md)（设备/点位配置表)
+
