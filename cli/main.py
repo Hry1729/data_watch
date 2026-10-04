@@ -696,7 +696,7 @@ def main() -> None:
     _CURRENT_DEBUG = "--debug" in sys.argv[1:]
     pretty = "--pretty" in sys.argv[1:]
     try:
-        app(standalone_mode=False)
+        result = app(standalone_mode=False)
     except typer.Exit as exc:
         raise SystemExit(exc.exit_code) from exc
     except typer.Abort as exc:
@@ -715,6 +715,17 @@ def main() -> None:
             error=True,
         )
         raise SystemExit(error.exit_code) from exc
+
+    # B1：这是"显式失败退出码在生产入口丢失"的根因——**Click 在 `standalone_mode=False` 下
+    # 不重新抛出 `Exit`，而是把它的 `exit_code` 当作返回值交出**（`return e.exit_code`）。
+    # 因此命令内所有 `raise typer.Exit(code)`（认证/权限/网络/超时/API 等失败路径）的退出码
+    # 都会被丢掉，进程最终退出 0。这里必须**接收**该返回值。
+    #
+    # 但**不能**把任意业务返回值当退出码：成功命令返回的是业务 payload（dict 等），
+    # `SystemExit(payload)` 会被当作异常信息打印并退 1。只有 **int 退出状态**（且排除 bool）
+    # 才是 Click 交出的退出码，其余一律忽略。
+    if isinstance(result, int) and not isinstance(result, bool):
+        raise SystemExit(result)
 
 
 if __name__ == "__main__":
