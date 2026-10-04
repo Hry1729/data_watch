@@ -150,7 +150,7 @@
             <div class="point-card-address">{{ point.ioAddress }}</div>
             <div
               class="point-card-value"
-              :style="{ color: realtimeQuality.get(point.varSeq) === 0 ? '#d44f63' : getPointColor(point.varSeq) }"
+              :style="{ color: isQualityAbnormal(realtimeQuality.get(point.varSeq)) ? '#d44f63' : getPointColor(point.varSeq) }"
             >
               {{ formatPointValue(point) }}
             </div>
@@ -305,6 +305,7 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { expandRealtimeSamples, type RealtimeSample } from '@/utils/realtime-samples'
+import { isQualityAbnormal } from '@/utils/realtime-quality'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
@@ -381,7 +382,7 @@ const tdengineConnected = ref<boolean | null>(null)
 const perspectiveReady = ref(false)
 const perspectiveTheme = computed(() => (isDark.value ? 'Pro Dark' : 'Pro Light'))
 
-// 点位质量（q=0 表示数据无效，显示为红色）
+// 点位质量（q=0 为 GOOD；非 0 为异常，显示为红色）
 const realtimeQuality = ref<Map<number, number>>(new Map())
 
 // 数值与质量每100ms应用，图表按独立的用户设置刷新。
