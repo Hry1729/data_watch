@@ -54,9 +54,9 @@ services:
       - TAOS_QUERY_USE_MEMORY_POOL=0
       - TZ=Asia/Shanghai
     ports:
-      # 只发布 taosAdapter（所有客户端都走 6041 WebSocket/REST）。远程 Writer 等需要直连，
-      # 故不绑回环；对外访问由宿主机防火墙按来源 IP 白名单放行。6030/6043/6060 不发布。
-      - "6041:6041"
+      # 只发布 taosAdapter，且仅本机回环可达：两种部署形态下 TDengine 的客户端
+      # （Writer/Agent/backend）都在中心机，边缘只经 Ingest 上传。6030/6043/6060 不发布。
+      - "127.0.0.1:6041:6041"
     volumes:
       - tdengine_data:/var/lib/taos
       # 服务端配置：日志保留 + 磁盘安全阀 + 降同步日志噪声（其余项用默认）
