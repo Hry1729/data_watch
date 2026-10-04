@@ -138,46 +138,56 @@ collector 从 v0.1.0 起支持 **质量码（Quality Codes）** 端到端传递�
 
 ### 质量码定义
 
-质量码是 **13 个枚举常量**（定义在 `collector/drivers/base.py:10-23`），遵循 OPC UA 规范的三级分类（Good / Uncertain / Bad）：
+平台质量码是**冻结常量**，定义在 `collector/core/quality_codes.py`，并与 `writer/quality_codes.py`、
+`backend/app/core/quality_codes.py` **同值**（三处必须一致，改动需三处同步）：
 
 | 码值 | 常量名 | 含义 | 典型场景 |
 |------|--------|------|----------|
-| 0 | `Q_GOOD` | 正常数据 | 通信正常、设备正常、值有效 |
-| 64 | `Q_UNCERTAIN` | 不确定 | 传感器老化、信号飘移、配置不完整 |
-| 65 | `Q_UNCERTAIN_LAST_USABLE` | 使用上次值 | 当前通信失败，使用缓存的上一次有效值 |
-| 66 | `Q_UNCERTAIN_SENSOR_NOT_ACCURATE` | 传感器不准确 | 传感器超出校准范围 |
-| 67 | `Q_UNCERTAIN_SUB_NORMAL` | 低于正常工程单位 | 值在测量范围之外（低侧） |
-| 192 | `Q_BAD` | 通用坏值 | 无法获取有效数据 |
-| 193 | `Q_BAD_COMM_FAILURE` | 通信失败 | 网络断开、PLC 无响应、超时 |
-| 194 | `Q_BAD_DEVICE_FAILURE` | 设备故障 | 设备报错、硬件故障 |
-| 195 | `Q_BAD_SENSOR_FAILURE` | 传感器故障 | 传感器损坏、断线 |
-| 196 | `Q_BAD_OUT_OF_SERVICE` | 脱离服务 | 点位被禁用、设备维护中 |
-| 197 | `Q_BAD_CONFIGURATION_ERROR` | 配置错误 | 点位地址错误、数据类型不匹配 |
-| 198 | `Q_BAD_NOT_CONNECTED` | 未连接 | 驱动未建立连接 |
-| 199 | `Q_BAD_TIMEOUT` | 读取超时 | 单次请求超时 |
+| 0 | `QUALITY_GOOD` | 正常 | 值有效 |
+| 2 | `QUALITY_UNCERTAIN` | 不确定 | 值可用但可信度下降 |
+| 5 | `QUALITY_BAD` | 通用坏值 | 无法取得有效数据 |
+| 6 | `QUALITY_STALE` | 陈旧值 | 保留了上一有效值且已过期（展示须带 stale/age） |
+| 7 | `QUALITY_NOT_CONNECTED` | 未连接 | 驱动未建立连接 |
+| 8 | `QUALITY_CONFIG_DECODE_ERROR` | 配置/解码错误 | 地址与数据类型不匹配、协议帧解不出 |
+| 1 / 3 / 4 | （保留码 `RESERVED_QUALITY_CODES`） | 允许出现在接口中，但**不**擅自业务命名 | — |
+
+两个判定函数**语义不同**，不要混用：
+
+- `is_known_quality(code)`：是否属于上述**具名**业务码（不含保留码），且必须是**严格非 bool 的 int**；
+- `is_valid_quality(code)`：**存储契约**允许 `0..255`。
+
+> **协议原始质量码 ≠ 平台质量码**：协议原始码（如 OPC DA 的 quality bit field）放在
+> `DriverSample.protocol_quality`，**仅供诊断**，不参与平台质量判定、当前不写入 Redis Stream；
+> 平台质量码放在 `DriverSample.quality`。
 
 ### 数据结构
 
-驱动返回的采集样本由 `DriverSample` 表示（`collector/drivers/base.py:26-30`）：
+驱动返回的采集样本由 `DriverSample` 表示（`collector/drivers/base.py`，`@dataclass(frozen=True, slots=True)`）：
 
 ```python
-@dataclass
+@dataclass(frozen=True, slots=True)
 class DriverSample:
-    value: Any           # 采集值（数值/字符串/布尔）
-    quality: int = Q_GOOD  # 平台质量码（默认 0=GOOD）
-    source_timestamp: Optional[datetime] = None  # 协议源时间；缺失时回落采集时刻
-    protocol_quality: Optional[int] = None       # 原始协议质量，供诊断
+    value: Any                                    # 采集值（数值/字符串/布尔）
+    quality: int = QUALITY_GOOD                   # 平台质量码（默认 0=GOOD）
+    source_timestamp: Optional[datetime] = None   # 协议源时间；缺失时回落采集时刻
+    protocol_quality: Optional[int] = None        # 协议原始质量，仅供诊断
 ```
 
-驱动在读取失败时，应返回质量码 + `None` 值，而不是抛出异常。例如：
+**字段只有以上四个**：没有 `var_id`、也没有 `timestamp`（点位由调用方按 variable 关联，时间用
+`source_timestamp`）。写成 `DriverSample(var_id=..., timestamp=...)` 会直接抛
+`TypeError: unexpected keyword argument 'var_id'`。
 
-```python
-# 通信超时
-return DriverSample(var_id=123, value=None, timestamp=time.time(), quality=Q_BAD_TIMEOUT)
+`value=None` 的语义（与执行器 `collector/collector/executor.py` 一致）：
 
-# 正常采集
-return DriverSample(var_id=123, value=42.5, timestamp=time.time(), quality=Q_GOOD)
-```
+- **本轮无新样本**（例如增量型驱动本轮无变化）：返回 `MISSING_RESULT` 哨兵，**不要**用 `None`
+  表达；`MISSING_RESULT` 会发出一个显式的 `value=None + QUALITY_BAD` 标记点；
+- **读取失败**：返回 `DriverSample(value=None, quality=<坏质量>)`（`QUALITY_BAD` /
+  `QUALITY_STALE` / `QUALITY_NOT_CONNECTED` / `QUALITY_CONFIG_DECODE_ERROR`）。执行器会
+  **计数并告警**（可见），但**不伪造**点位值；
+- **裸 `None`**（未包 `DriverSample`）：会被归一化为 `QUALITY_BAD` 并告警——它**不等于**
+  "无新样本"，语义同上一条；
+- **合法零值**（`0` / `0.0` / `False` / `""`）与 `None` **互不相同**：零值保持 `QUALITY_GOOD`
+  并原样写入。
 
 ### Redis Stream 契约
 
@@ -202,14 +212,19 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/redis_wr
 ### 驱动实现指南
 
 **内置驱动** 已支持质量码：
-- **S7 驱动** (`s7_driver.py`)：通信失败返回 `Q_BAD_COMM_FAILURE`；
-- **GE SRTP 驱动** (`ge_srtp_driver.py`)：读取失败返回 `Q_BAD_TIMEOUT`；
-- **OPC UA/DA 驱动**：透传 OPC 质量状态码，映射到 13 个枚举。
+- **S7 驱动**：通信失败返回 `QUALITY_BAD` / 地址与类型不匹配返回 `QUALITY_CONFIG_DECODE_ERROR`；
+- **GE SRTP 驱动**：读取失败返回坏质量（按失败类型取 `QUALITY_BAD` / `QUALITY_NOT_CONNECTED`）；
+- **OPC UA/DA 驱动**：平台质量码写 `quality`，协议原始状态码放 `protocol_quality`（仅诊断）。
 
 **外置驱动** 若需支持质量码：
-1. 导入 `from collector.drivers.base import DriverSample, Q_GOOD, Q_BAD_COMM_FAILURE, ...`；
+1. 导入（模块路径以运行期 `sys.path` 为准，`collector/` 即包根）：
+   `from drivers.base import DriverSample` 与
+   `from core.quality_codes import QUALITY_GOOD, QUALITY_BAD, ...`；
+   ——**不存在** `collector.drivers.base`，也**不存在** `Q_GOOD` / `Q_BAD_*` 这类名称；
+   按旧写法会分别得到 `ModuleNotFoundError` / `ImportError`（已在项目环境实测）；
 2. `read()` 方法返回 `List[DriverSample]`，为每个样本设置 `quality` 字段；
-3. 通信失败时返回 `quality=Q_BAD_*` + `value=None`，而不是抛异常或返回空列表。
+3. 读取失败时返回 `quality=<坏质量常量>`（如 `QUALITY_BAD` / `QUALITY_NOT_CONNECTED`）+
+   `value=None`，而不是抛异常或返回空列表；"本轮无新样本"用 `MISSING_RESULT` 表达。
 
 详见：[外置驱动包制作指南](./外置驱动包制作指南.md) § 质量码支持。
 
