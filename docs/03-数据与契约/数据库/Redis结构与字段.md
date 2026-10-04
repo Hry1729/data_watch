@@ -253,11 +253,25 @@ Writer 默认只执行 `LPUSH`，不裁剪死信（`dlq_max_size=0`），并在
 }
 ```
 
-DLQ 是人工排查入口，不是自动重放机制。进入 DLQ 的常见原因：
+DLQ 是人工排查入口，不是自动重放机制。**它不按投递次数收集**——进入 DLQ 的原因只有"已确认的坏数据"：
 
-- 投递次数超过 `pending_max_retry`；
-- TDengine 确认坏数据错误，二分后定位到单行；
+- TDengine 确认坏数据错误，二分后定位到单行（`BAD_DATA`）；
 - 数据类型无法安全落入 DOUBLE。
+
+**与"次数"有关的是隔离区，不是 DLQ**（`writer/consumer.py`）：某行连续 `RETRY`（连接故障、结果
+未知、schema 未就绪等**可恢复**原因）达到 `max_row_retry`（默认 3）后，会被移入**有界隔离区**
+（容量 `max(64, max_buffer_rows // 4)`），按 `retry_backoff_base_s … retry_backoff_max_s`
+（默认 1–30s）退避，并以每轮 `retry_budget_per_cycle`（默认 64）行公平重入；**隔离区满时恢复
+背压，而不是丢弃或按次数 ACK**。被隔离的行**仍留在 Redis PEL 中**，因此未确认的原始帧始终可恢复。
+
+> **术语纠正**：**不存在 `pending_max_retry` 这个配置项**（旧文档遗留）。按行重试上限的真实键是
+> `max_row_retry`；待处理消息的回收由 `pending_min_idle_ms` / `pending_drain_interval_s` /
+> `pending_cycle_budget_ms` 控制。
+>
+> **终结策略（当前没有；新增属契约级变更）**：现实现**不会**因次数把行从隔离区终结删除。若将来
+> 确需"有界、公平、可持久恢复"的终结策略（例如把长期无法入库的行移出 PEL 并归档），必须**先写
+> 契约**，明确判定依据（**错误类别**而非单纯次数）、归档位置、可恢复方式、容量与告警，以及是否
+> ACK。**不得以"次数到了就 ACK/丢弃"实现。**
 
 ---
 

@@ -179,7 +179,15 @@ sequenceDiagram
 
 ### 6.3 待处理消息重认领（崩溃恢复）
 
-启动时与周期性地，对每个 stream key 用 `XAUTOCLAIM`（Redis ≥6.2，回退 `XPENDING`+`XCLAIM`）回收闲置超过 `pending_min_idle_ms` 的消息并重新处理。投递次数超 `pending_max_retry` 的消息进 DLQ。这保证了某实例崩溃后，其未 ACK 的消息会被本实例或其他实例接管。
+启动时与周期性地，对每个 stream key 用 `XAUTOCLAIM`（Redis ≥6.2，回退 `XPENDING`+`XCLAIM`）回收闲置超过 `pending_min_idle_ms` 的消息并重新处理。这保证了某实例崩溃后，其未 ACK 的消息会被本实例或其他实例接管。
+
+> **重要纠正**：**不存在 `pending_max_retry`**，也不存在"投递次数超限即进 DLQ"的规则。
+> 按**次数**触发的动作是**隔离**（`max_row_retry`，默认 3：连续 `RETRY` 的**可恢复**失败达到
+> 上限后移入**有界隔离区**，仍留在 PEL，按退避与每轮 `retry_budget_per_cycle` 公平重入；
+> 隔离区满时**恢复背压**而不是丢弃）。DLQ 只接收**已确认的坏数据**（`BAD_DATA` 二分定位后的
+> 单行、无法安全落入 DOUBLE 的类型）。终结策略当前**不存在**；新增属契约级变更，须先写契约
+> （判定依据为错误类别而非单纯次数、归档位置、可恢复方式、容量告警、是否 ACK），
+> **不得以"次数到了就 ACK/丢弃"实现**。详见 `03-数据与契约/数据库/Redis结构与字段.md` §8。
 
 ---
 
@@ -204,7 +212,7 @@ sequenceDiagram
 - `[redis]`：host/port/db/password、`stream_shard_count`、`group_name`、`consumer_name`；
 - `[mysql]`：host/port/user/password/database；
 - `[tdengine]`：host/port/user/password/database；
-- `[writer]`：`flush_interval_ms`（默认 200）、`batch_count`（默认 1000）、`max_buffer_rows`（默认 10000）、`consumer_workers`（默认 4）、`pending_min_idle_ms`、`pending_max_retry`。
+- `[writer]`：`flush_interval_ms`（默认 200）、`batch_count`（默认 1000）、`max_buffer_rows`（默认 10000）、`max_buffer_bytes`（默认 32 MiB）、`consumer_workers`（默认 4）、`pending_min_idle_ms`、`pending_drain_interval_s`（默认 5）、`pending_cycle_budget_ms`（默认 100）、`max_row_retry`（默认 3）、`retry_budget_per_cycle`（默认 64）、`retry_backoff_base_s`（默认 1.0）、`retry_backoff_max_s`（默认 30.0）、`dlq_max_size`、`dlq_alert_threshold`、`dlq_warn_entries`。（**没有 `pending_max_retry`**。）
 
 连接字段可被 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖（生产凭据由 agent 注入）。`stable_names` 与 stream 范围在启动时从 MySQL 自动发现，无需手配。
 
