@@ -56,6 +56,12 @@ class XAutoclaimUnsupported(RuntimeError):
 # B31：消费组拓扑查询的缓存 TTL。拓扑极少变化，避免每次终态删除都查 XINFO GROUPS。
 _GROUP_TOPOLOGY_TTL_S = 60.0
 
+# B8：按**错误类别**（不是次数）判定的永久性 RETRY 原因。命中即推 DLQ，DLQ 写入被接受后才 XACK。
+# 只收录"由该帧内容本身决定、重试不可能成功"的类别：
+#   size —— 单个逻辑帧的 SQL 超出语句上限（本地 ~3MB 预算放不下单行，或单行仍报 0x0219）。
+# connection / unknown / schema / bisect_depth 均可能自愈，保持重试、隔离与背压，绝不进 DLQ。
+_PERMANENT_RETRY_REASONS = frozenset({"size"})
+
 
 # ---------------------------------------------------------------------------
 # 内部缓冲行
@@ -1482,14 +1488,21 @@ class StreamConsumer:
                     for index, row in zip(indices, chunk_rows):
                         reason = retry_reasons.get(index, "unknown")
                         self._metrics.record_retry(reason)
+                        if reason in _PERMANENT_RETRY_REASONS:
+                            if await self._run_blocking(
+                                    self._push_permanent_retry_row, row, reason):
+                                to_ack.append(row)
+                            else:
+                                failed_rows.append(row)
+                            continue
                         row.retry_attempts += 1
-                        # schema/size 类重试（0x0219 过长、二分深度用尽）从来不是
-                        # "再试一次就好"：它们会一直失败，留在主缓冲只会占容量并拖住
+                        # schema 类本地重试从来不是
+                        # "再试一次就好"：在 schema 修好前会一直失败，留在主缓冲只会占容量并拖住
                         # 同 worker 其它 stream。按既有契约从第一次起就只留在 PEL，
                         # 走隔离区、按回收周期重试，不占主缓冲。
                         # `_last_local_retry_indices` 是 writer 标记"本次未执行的本地
                         # 重试行"的既有接口，单独看 retry_reasons 会漏掉它。
-                        if (reason == "size" or index in local_retry
+                        if (index in local_retry
                                 or row.retry_attempts >= self._max_row_retry):
                             isolated.append(row)
                         else:
@@ -1671,6 +1684,18 @@ class StreamConsumer:
                                  "另一分段确认不可恢复；整帧不完整，不计成功"),
                 log_type="incomplete")
         return self._push_row_to_dlq(row)
+
+    def _push_permanent_retry_row(self, row: _BufferedRow, reason: str) -> bool:
+        """永久性 RETRY 类别（见 `_PERMANENT_RETRY_REASONS`）的终结通路：推 DLQ，返回 True 才 ACK。
+
+        同一帧的其他分段可能已经落库，故与 FAILED_INCOMPLETE 一样附分段证据（单帧状态 unknown）。
+        """
+        row.segment_evidence = self._segment_evidence_for(row, f"permanent_{reason}")
+        return self._push_row_to_dlq(
+            row,
+            last_error=(f"permanent {reason}: 单个逻辑帧的 SQL 超出 TDengine 语句上限"
+                        "（本地字节预算或服务端 0x0219），重试不可能成功"),
+            log_type=f"permanent-{reason}")
 
     def _push_row_to_dlq(self, row: _BufferedRow, *,
                          last_error: str = "bad data isolated by binary-search degrade",

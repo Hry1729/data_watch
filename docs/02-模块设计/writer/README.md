@@ -128,7 +128,8 @@ flowchart TD
 
 | 状态 | 触发条件 | ACK / 载荷归属 | 恢复与终结 |
 |---|---|---|---|
-| `RETRY` | 任一分段为 RETRY（连接/未知错误、`0x0219` 过长、二分深度用尽）| **不 ACK**，原始帧保留在 Stream/PEL | **非终态**：普通重试；连续 RETRY 达 `max_row_retry`（默认 3）后进入**有界隔离区**（容量 `max(64, max_buffer_rows // 4)`），按 `retry_backoff_base_s … retry_backoff_max_s`（默认 1–30s）退避，每轮最多 `retry_budget_per_cycle`（默认 64）行重入；隔离区满时**恢复背压而非丢弃** |
+| `RETRY`（原因 `size`）| 单个逻辑帧的 SQL 超出语句上限（本地 ~3MB 预算放不下单行，或单行仍报 `0x0219`）| 推入 DLQ（附分段证据）**之后**才 XACK；DLQ 推送失败则不 ACK、留缓冲 | **终态（B8，按错误类别终结）**：帧内容决定、重试不可能成功；DLQ 保留原始帧供人工处理 |
+| `RETRY`（其余原因）| 任一分段为 RETRY（连接/未知错误、schema 未就绪、二分深度用尽）| **不 ACK**，原始帧保留在 Stream/PEL | **非终态**：普通重试；连续 RETRY 达 `max_row_retry`（默认 3）后进入**有界隔离区**（容量 `max(64, max_buffer_rows // 4)`），按 `retry_backoff_base_s … retry_backoff_max_s`（默认 1–30s）退避，每轮最多 `retry_budget_per_cycle`（默认 64）行重入；隔离区满时**恢复背压而非丢弃** |
 | `FAILED_INCOMPLETE` | 无 RETRY 分段，但**存在** `BAD_DATA` 分段 ⇒ 整帧不完整 | **不 ACK**；调用方**持久隔离**，记录原始帧与各分段状态，**不计成功** | 需人工/后续策略处理；当前实现**不按次数终结丢弃** |
 | `LANDED` | **全部分段**均 LANDED（值与质量分段**全部**成功）| XACK（随后 XDEL）| 终态 |
 | `BAD_DATA`（单行级）| 二分递归后**单行**仍失败 | 推入 DLQ **之后**才 XACK | 人工排查入口，非自动重放 |
@@ -209,9 +210,9 @@ sequenceDiagram
 
 - **LANDED** → 加入待确认集合，同一 Stream 最多 500 个 entry id 合并 XACK，ACK 成功后同批 XDEL；
 - **BAD_DATA** → 逐行 `push_dlq`，**推送成功才 XACK + XDEL**，失败留 buffer；
-- **RETRY** → 不 ACK、不进 DLQ，留 buffer 下轮重试。
+- **RETRY** → 不 ACK、不进 DLQ，留 buffer 下轮重试；**例外**：原因为 `size`（永久类别）的行逐行 `push_dlq`，推送成功才 XACK + XDEL。
 
-> **Writer 内的终态约束**：只有"已落库（LANDED）"或"已成功进 DLQ 的坏行"才 XACK，并只在 ACK 成功后 XDEL；任何 RETRY、ACK 失败或 DLQ 推送失败的行都不会删除。XDEL 失败进入独立清理重试，不重复写 TDengine。Redis Stream 的 MAXLEN 裁剪、Redis AOF/卷损坏，以及上游边缘 FIFO/session 切换造成的损失不属于 Writer 可恢复范围。
+> **Writer 内的终态约束**：只有"已落库（LANDED）"或"已成功进 DLQ 的坏行/永久类别行"才 XACK，并只在 ACK 成功后 XDEL；任何 RETRY、ACK 失败或 DLQ 推送失败的行都不会删除。XDEL 失败进入独立清理重试，不重复写 TDengine。Redis Stream 的 MAXLEN 裁剪、Redis AOF/卷损坏，以及上游边缘 FIFO/session 切换造成的损失不属于 Writer 可恢复范围。
 
 ### 6.3 待处理消息重认领（崩溃恢复）
 
@@ -221,9 +222,9 @@ sequenceDiagram
 > 按**次数**触发的动作是**隔离**（`max_row_retry`，默认 3：连续 `RETRY` 的**可恢复**失败达到
 > 上限后移入**有界隔离区**，仍留在 PEL，按退避与每轮 `retry_budget_per_cycle` 公平重入；
 > 隔离区满时**恢复背压**而不是丢弃）。DLQ 只接收**已确认的坏数据**（`BAD_DATA` 二分定位后的
-> 单行、无法安全落入 DOUBLE 的类型）。终结策略当前**不存在**；新增属契约级变更，须先写契约
-> （判定依据为错误类别而非单纯次数、归档位置、可恢复方式、容量告警、是否 ACK），
-> **不得以"次数到了就 ACK/丢弃"实现**。详见 `03-数据与契约/数据库/Redis结构与字段.md` §8。
+> 单行、无法安全落入 DOUBLE 的类型）以及**永久类别的 RETRY**（B8：目前仅 `size`）。终结策略
+> 按**错误类别**而非次数判定，契约见 `03-数据与契约/数据库/Redis结构与字段.md` §8；
+> **不得以"次数到了就 ACK/丢弃"实现**。
 
 ---
 

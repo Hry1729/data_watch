@@ -77,7 +77,8 @@ MAX_SQL_BYTES = 3 * 1024 * 1024
 # write_multi_table 的行级结果状态（§7.6 二分降级）：
 #   LANDED   已确认落库 → 调用方 XACK
 #   BAD_DATA 明确坏数据，二分到单行仍失败 → 调用方进 DLQ
-#   RETRY    连接错/未知错/二分超限 → 调用方留 buffer 重试（绝不进 DLQ）
+#   RETRY    连接错/未知错/二分超限 → 调用方留 buffer 重试（绝不进 DLQ）；
+#            唯一例外是原因 size（单帧 SQL 超上限，永久），由调用方按类别推 DLQ 后 ACK（B8）
 #   FAILED_INCOMPLETE
 #            一条逻辑帧被拆成多段 SQL 时，部分分段已成功、另一部分确认不可恢复。
 #            这不是"整帧成功"，也不能靠永久 RETRY 当作原子性保证：
