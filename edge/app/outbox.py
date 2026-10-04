@@ -833,6 +833,21 @@ class OutboxStore:
         dropped_records = 0
         session_switched = False
         with self._transaction() as connection:
+            # B6：清理**之前**先量化 dead 的"当前积压"与"即将被删"，让运维在载荷仍存在时
+            # 就得到可观测信号。恢复入口（dead_list/export/replay）存在之后，删除仍可能是
+            # 无声的——容量告警补上这一环。
+            dead_before = connection.execute(
+                "SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(payload)), 0) AS bytes "
+                "FROM outbox WHERE state='dead'"
+            ).fetchone()
+            dead_purged = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS value FROM outbox "
+                    "WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?",
+                    (retention_cutoff,),
+                ).fetchone()["value"]
+                or 0
+            )
             terminal = connection.execute(
                 """
                 DELETE FROM outbox
@@ -880,6 +895,9 @@ class OutboxStore:
             checkpoint = "busy"
 
         disk = self._disk_status()
+        dead_records = int(dead_before["records"] or 0)
+        dead_bytes = int(dead_before["bytes"] or 0)
+
         degraded_reasons: list[str] = []
         if disk["watermark"] == "overflow":
             degraded_reasons.append("disk_overflow")
@@ -894,12 +912,36 @@ class OutboxStore:
                 ",".join(degraded_reasons),
             )
 
+        # B6：dead 的容量告警单独成列，不改动上面 degraded 的语义（避免任何 dead 记录都把
+        # 整机状态拉成 degraded）。第一条在**载荷仍存在**时给出，运维据此导出或重放。
+        capacity_alerts: list[str] = []
+        if dead_records > 0:
+            capacity_alerts.append("dead_backlog_present_export_or_replay")
+            logger.error(
+                "Edge outbox holds %d dead record(s) / %d bytes; export or replay them "
+                "(outbox.dead_list / dead_export / dead_replay) before retention purges them",
+                dead_records,
+                dead_bytes,
+            )
+        if dead_purged > 0:
+            capacity_alerts.append("dead_records_purged_requires_export")
+            logger.error(
+                "Edge outbox purged %d dead record(s) under retention_days=%d; "
+                "if those payloads were still needed they must be exported beforehand",
+                dead_purged,
+                retention_days,
+            )
+
         return {
             "deleted_terminal": deleted_terminal,
             "dropped_records": dropped_records,
             "session_switched": session_switched,
             "degraded": degraded,
             "degraded_reasons": degraded_reasons,
+            "capacity_alerts": capacity_alerts,
+            "dead_records": dead_records,
+            "dead_bytes": dead_bytes,
+            "dead_purged": dead_purged,
             "backlog_expired": backlog_expired,
             "backlog_count": backlog_count,
             "checkpoint": checkpoint,

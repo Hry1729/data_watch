@@ -187,3 +187,57 @@ def test_dead_replay_not_exposed_to_collector_or_agent() -> None:
         "outbox.dead_replay",
     ]
 
+
+
+# ── 容量告警：必须在**载荷仍存在**时先给出 ────────────────────────────────────
+
+
+def _age_dead(store: OutboxStore, *, days: int) -> None:
+    """把 dead_at 改老，模拟"已超出保留窗口"（仅测试用，直接改库）。"""
+    with store._lock:
+        store._connection.execute(
+            "UPDATE outbox SET dead_at = dead_at - ? WHERE state='dead'",
+            (days * 24 * 60 * 60 * 1000,),
+        )
+        store._connection.commit()
+
+
+def test_pending_dead_backlog_is_alerted_before_purge(tmp_path) -> None:
+    """dead 仍在保留窗口内：必须**先**告警，且这次不得删除任何载荷。"""
+    store = _store(tmp_path)
+    _seed_dead(store)
+
+    result = store.maintenance(retention_days=7)
+
+    assert result["dead_records"] == 1
+    assert result["dead_bytes"] > 0
+    assert result["dead_purged"] == 0
+    assert "dead_backlog_present_export_or_replay" in result["capacity_alerts"]
+    # 载荷仍在：告警是可行动的，而不是事后通知
+    assert _states(store) == ["dead"]
+    assert store.dead_backlog()["records"] == 1
+
+
+def test_expired_dead_purge_is_reported(tmp_path) -> None:
+    store = _store(tmp_path)
+    _seed_dead(store)
+    _age_dead(store, days=30)
+
+    result = store.maintenance(retention_days=7)
+
+    assert result["dead_purged"] == 1
+    assert "dead_records_purged_requires_export" in result["capacity_alerts"]
+    assert _states(store) == []
+    assert store.dead_backlog()["records"] == 0
+
+
+def test_dead_alerts_do_not_hijack_the_degraded_flag(tmp_path) -> None:
+    """容量告警与 degraded 是两件事：仅存在 dead 记录不得把整机拉成 degraded。"""
+    store = _store(tmp_path)
+    _seed_dead(store)
+
+    result = store.maintenance(retention_days=7)
+
+    assert result["capacity_alerts"], "应有容量告警"
+    assert result["degraded"] is False
+    assert "disk_overflow" not in result["degraded_reasons"]
