@@ -35,6 +35,9 @@ _MODBUS_UNIT_ID_MAX = 247
 
 # 覆盖旧驱动前 disconnect 超时（秒）；超时后继续推进，避免重连永久卡住
 _DRIVER_DISCONNECT_TIMEOUT_SEC = 5.0
+# B36-B：清理遇"执行资源拥塞"时的退避重试预算（非拥塞失败不重试）。
+_DRIVER_DISCONNECT_SATURATION_RETRIES = 5
+_DRIVER_DISCONNECT_SATURATION_BACKOFF_SEC = 0.2
 
 # P0 修复：进程级锁保护注册表初始化，避免多线程并发初始化时重复扫描/导入
 _REGISTRY_INIT_LOCK = threading.Lock()
@@ -890,28 +893,56 @@ class DeviceManager:
         device_id: str,
         reason: str,
     ) -> None:
-        """带超时的幂等 disconnect：失败/超时/空实例均不抛，避免卡住重连。"""
+        """带超时的幂等 disconnect：失败/超时/空实例均不抛，避免卡住重连。
+
+        B36-B：**拥塞导致的拒绝必须重试**。池饱和时 driver.disconnect() 内部的提交会被
+        `ExecutorSaturatedError` 立即拒绝，而原实现用 `except Exception` 一并吞掉 ⇒ 清理被
+        永久丢弃、连接资源永不释放（"清理无期限被采集任务饿死"）。此时设备已被移出调度，
+        其自身读取停止后池会排空，因此退避重试可使其最终成功；重试预算耗尽则给出**可见**失败。
+        非拥塞类失败（真正的驱动/协议错误）**不做重试**，避免把确定性失败也放大。
+        """
         if driver is None:
             return
-        try:
-            await asyncio.wait_for(
-                driver.disconnect(),
-                timeout=_DRIVER_DISCONNECT_TIMEOUT_SEC,
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Device %s driver disconnect timed out (%.1fs) reason=%s",
-                device_id,
-                _DRIVER_DISCONNECT_TIMEOUT_SEC,
-                reason,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Device %s driver disconnect failed reason=%s: %s",
-                device_id,
-                reason,
-                exc,
-            )
+        # 函数内导入：manager → bounded_executor → monitor.health → manager 存在循环导入。
+        from collector.bounded_executor import ExecutorSaturatedError
+
+        for attempt in range(1, _DRIVER_DISCONNECT_SATURATION_RETRIES + 1):
+            try:
+                await asyncio.wait_for(
+                    driver.disconnect(),
+                    timeout=_DRIVER_DISCONNECT_TIMEOUT_SEC,
+                )
+                return
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Device %s driver disconnect timed out (%.1fs) reason=%s",
+                    device_id,
+                    _DRIVER_DISCONNECT_TIMEOUT_SEC,
+                    reason,
+                )
+                return
+            except ExecutorSaturatedError as exc:
+                if attempt >= _DRIVER_DISCONNECT_SATURATION_RETRIES:
+                    self._metrics.increment("driver_disconnect_congestion_giveup_count")
+                    logger.error(
+                        "Device %s driver disconnect still rejected after %d attempts "
+                        "(execution pool saturated) reason=%s: %s",
+                        device_id,
+                        attempt,
+                        reason,
+                        exc,
+                    )
+                    return
+                self._metrics.increment("driver_disconnect_congestion_retry_count")
+                await asyncio.sleep(_DRIVER_DISCONNECT_SATURATION_BACKOFF_SEC * attempt)
+            except Exception as exc:
+                logger.warning(
+                    "Device %s driver disconnect failed reason=%s: %s",
+                    device_id,
+                    reason,
+                    exc,
+                )
+                return
 
     @with_retry(max_retries=3, base_delay=1.0, backoff_factor=2.0)
     async def _connect_device_impl(self, device: Device) -> bool:
