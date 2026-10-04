@@ -232,9 +232,27 @@ sequenceDiagram
 - `[redis]`：host/port/db/password、`stream_shard_count`、`group_name`、`consumer_name`；
 - `[mysql]`：host/port/user/password/database；
 - `[tdengine]`：host/port/user/password/database；
-- `[writer]`：`flush_interval_ms`（默认 200）、`batch_count`（默认 1000）、`max_buffer_rows`（默认 10000）、`max_buffer_bytes`（默认 32 MiB）、`consumer_workers`（默认 4）、`pending_min_idle_ms`、`pending_drain_interval_s`（默认 5）、`pending_cycle_budget_ms`（默认 100）、`max_row_retry`（默认 3）、`retry_budget_per_cycle`（默认 64）、`retry_backoff_base_s`（默认 1.0）、`retry_backoff_max_s`（默认 30.0）、`dlq_max_size`、`dlq_alert_threshold`、`dlq_warn_entries`。（**没有 `pending_max_retry`**。）
+- `[writer]`：`flush_interval_ms`（默认 200）、`batch_count`（默认 1000）、`max_buffer_rows`（默认 10000）、`max_buffer_bytes`（默认 32 MiB）、`consumer_workers`（默认 4）、`pending_min_idle_ms`、`pending_drain_interval_s`（默认 5）、`pending_cycle_budget_ms`（默认 100）、`max_row_retry`（默认 3）、`retry_budget_per_cycle`（默认 64）、`retry_backoff_base_s`（默认 1.0）、`retry_backoff_max_s`（默认 30.0）、`scope_refresh_interval_s`（默认 60）、`dlq_max_size`、`dlq_alert_threshold`、`dlq_warn_entries`。（**没有 `pending_max_retry`**。）
 
-连接字段可被 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖（生产凭据由 agent 注入）。`stable_names` 与 stream 范围在启动时从 MySQL 自动发现，无需手配。
+连接字段可被 `DATAWATCH_<DB>_<FIELD>` 环境变量覆盖（生产凭据由 agent 注入）。
+
+#### scope 自动发现与"命名约定 vs 物理映射事实源"（D10 补全）
+
+- **发现范围**：启动时执行一次 `_refresh_stream_scopes_once`（`writer/main.py`），随后由
+  `scope_refresh_task` **周期刷新**，间隔为 `scope_refresh_interval_s`（**默认 60s**）；
+  新增的 `(device_type, group_code)` scope 会在该窗口内被接入并分配到一个 worker。
+- **只增不减（重启/续跑备用路径）**：刷新**不会移除已存在的 stream**（源码注释：
+  "发现并接入新流；已存在的流不移除，以保留消费连续性"）。因此**重启后**既有的
+  `known_stream_keys` 会重新按 MySQL 的当前 scope 建立，缺失的 scope **不会**导致已接入的流被
+  丢弃；新增 scope 则按同一路径补入。
+- **命名约定 ≠ 物理事实源**：`sd{device_type}` / `{device_code}` / `sq{device_type}`
+  / `{device_code}_q` 只是**命名约定**；**写入用的物理坐标必须取自永久映射**
+  `point_storage_mapping` 的 `stable_name` / `child_table`（`writer/mysql_mapper.py` 直接
+  `SELECT stable_name, child_table FROM point_storage_mapping WHERE device_code=%s AND group_code=%s`）。
+  按约定拼名字与按映射取名字在"设备被重命名/迁移"后可能不同——**以映射为准**。
+- **历史消息使用原永久坐标**：永久映射的用途正是"**解码历史配置版本**"，因此**编辑设备/点位时
+  不得随意重分配历史物理列**（改列名/换子表会让旧帧写到错误的位置）。若确需变更物理布局，
+  应作为独立迁移设计，而不是靠编辑配置"对齐"。
 
 ---
 
