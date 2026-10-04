@@ -634,7 +634,18 @@ def doctor(ctx: typer.Context) -> None:
             "checks": checks,
         }
 
-    _execute(ctx, "doctor", operation)
+    result = _execute(ctx, "doctor", operation)
+    # B1：`doctor` 用 payload 表达失败（`overallOk` / 各项 `ok`），而生产入口只认退出码——
+    # 若不在此转换，失败时 shell 仍看到 0，即"显式失败退出码在生产入口丢失"。
+    # 注意**不能**把 `_execute` 的返回值整体当作退出码：它是业务 payload（dict），
+    # `SystemExit(payload)` 会被当成异常信息打印并退 1。此处先由 `_execute` 输出 JSON 包络
+    # （保持"stdout 单一包络"），再**按失败项**抛出对应退出码。
+    # 真正不可达时 `client.health()` 已抛 `CliError` 并由 `_execute` 映射，不会走到这里。
+    checks = (result or {}).get("checks") or {}
+    if not (checks.get("authentication") or {}).get("ok"):
+        raise typer.Exit(EXIT_AUTH_REQUIRED)
+    if not (result or {}).get("overallOk"):
+        raise typer.Exit(EXIT_API)
 
 
 @app.command("version")
