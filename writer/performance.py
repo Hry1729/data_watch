@@ -106,6 +106,10 @@ class WriterPerformanceMetrics:
             "retry_size_rows": 0,
             "retry_unknown_rows": 0,
             "retry_bisect_depth_rows": 0,
+            # B31：终态 XDEL 的拓扑守卫必须**按原因分别可见**（否则会与其它未知重试混在一起，
+            # 无法回答"这台实例到底有没有因为多消费组而拒绝删除"）。
+            "retry_terminal_delete_multi_group_skipped_rows": 0,
+            "retry_terminal_delete_topology_unknown_rows": 0,
         }
         self._gauges: dict[str, int | None] = {
             "buffer_rows": 0,

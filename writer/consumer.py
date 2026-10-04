@@ -53,6 +53,10 @@ class XAutoclaimUnsupported(RuntimeError):
     """
 
 
+# B31：消费组拓扑查询的缓存 TTL。拓扑极少变化，避免每次终态删除都查 XINFO GROUPS。
+_GROUP_TOPOLOGY_TTL_S = 60.0
+
+
 # ---------------------------------------------------------------------------
 # 内部缓冲行
 # ---------------------------------------------------------------------------
@@ -269,6 +273,8 @@ class StreamConsumer:
         self._pending_stream_cursor = 0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
         self._delete_retry: dict[str, set[str]] = {}  # 已终态且已 ACK，待重试 XDEL 的 entry_id
+        # B31：stream_key → (是否只有一个消费组, 查询时刻)。只在**确实读到多个组**时拒绝终态删除。
+        self._single_group_cache: dict[str, tuple[bool, float]] = {}
         self._ack_retry_cursor = 0
         self._delete_retry_cursor = 0
         self._consecutive_flush_fail: int = 0  # M6：连续 flush 失败次数，用于退避与日志降噪
@@ -1727,21 +1733,73 @@ class StreamConsumer:
         for sk, ids in by_key.items():
             self._ack_ids(sk, ids)
 
+    def _may_delete_terminal(self, stream_key: str) -> bool:
+        """B31：终态删除是否安全——**只在确实观察到多个消费组时拒绝**。
+
+        `XDEL` 是**全局删除**，不区分消费组：同一 Stream 上若还有别的消费组尚未处理该条目，
+        删除就等于**毁掉那一组的数据**（清单："确认单/多消费组假设后…多组必须保护其他组的
+        未处理消息"）。
+
+        **调用位置约束**：本方法必须由 `_delete_ids` 的**调用方**使用，并把结果作为参数传下去。
+        `_delete_ids` 自身的 redis 交互必须保持**只有 `xdel`**——`_delete_ids` 是在 `_ack_ids`
+        的同一个 `try` 内紧跟 `xack` 之后调用的，任何就地插入的 redis 交互都会扰动既有用例
+        精确锁定的 xack→xdel 序列（曾导致 7~8 个既有用例失败）。
+
+        语义刻意收窄：**读到多个组** ⇒ 拒绝并可见计数；**查询失败或形态不可读** ⇒ 继续删除但
+        记录 `terminal_delete_topology_unknown`——否则任何瞬时查询故障都会让终态清理全面停摆。
+        """
+        now = time.monotonic()
+        cached = self._single_group_cache.get(stream_key)
+        if cached is not None and now - cached[1] < _GROUP_TOPOLOGY_TTL_S:
+            return cached[0]
+        try:
+            groups = self._r.xinfo_groups(stream_key)
+        except Exception as exc:
+            self._metrics.record_retry("terminal_delete_topology_unknown")
+            logger.warning(
+                "[consumer] cannot query consumer groups for %s (%s); proceeding with terminal XDEL",
+                stream_key, exc,
+            )
+            return True
+        if not isinstance(groups, (list, tuple)):
+            self._metrics.record_retry("terminal_delete_topology_unknown")
+            logger.warning(
+                "[consumer] consumer-group topology for %s is unreadable (%s); proceeding with "
+                "terminal XDEL without confirming the single-group assumption",
+                stream_key, type(groups).__name__,
+            )
+            return True
+        single = len(groups) == 1
+        self._single_group_cache[stream_key] = (single, now)
+        if not single:
+            self._metrics.record_retry("terminal_delete_multi_group_skipped")
+            logger.error(
+                "[consumer] %s has %d consumer groups; refusing terminal XDEL because it deletes "
+                "globally and would drop other groups' unprocessed entries. Keep one group per "
+                "stream, or clean up out of band (do NOT use XTRIM as a substitute).",
+                stream_key, len(groups),
+            )
+        return single
+
     def _ack_ids(self, stream_key: str, ids: list[str]) -> None:
         chunk_size = 500
+        # B31：判定在调用层做一次（在 xack→xdel 序列之外），结果以参数传给 _delete_ids。
+        allow_delete = self._may_delete_terminal(stream_key)
         for i in range(0, len(ids), chunk_size):
             chunk = ids[i : i + chunk_size]
             try:
                 self._r.xack(stream_key, self._group_name, *chunk)
-                self._delete_ids(stream_key, chunk)
+                self._delete_ids(stream_key, chunk, allow_delete=allow_delete)
             except Exception as exc:
                 logger.warning("[consumer] xack failed for %s: %s", stream_key, exc)
                 self._ack_retry.setdefault(stream_key, set()).update(chunk)
 
     def _ack_single(self, stream_key: str, entry_id: str) -> None:
+        # B31：与 `_ack_ids` 一致——判定放在 xack→xdel 序列**之外**，结果以参数传入。
+        allow_delete = self._may_delete_terminal(stream_key)
         try:
             self._r.xack(stream_key, self._group_name, entry_id)
-            self._delete_ids(stream_key, [entry_id])
+            self._delete_ids(stream_key, [entry_id], allow_delete=allow_delete)
         except Exception as exc:
             logger.warning("[consumer] xack single failed %s: %s", entry_id, exc)
             self._ack_retry.setdefault(stream_key, set()).add(entry_id)
@@ -1779,8 +1837,23 @@ class StreamConsumer:
                 del self._ack_retry[stream_key]
         self._ack_retry_cursor = (start + (visited or 1)) % len(keys)
 
-    def _delete_ids(self, stream_key: str, ids: list[str]) -> None:
-        """删除已经终态并完成 XACK 的 Stream 条目。"""
+    def _delete_ids(
+        self, stream_key: str, ids: list[str], *, allow_delete: bool = True
+    ) -> None:
+        """删除已经终态并完成 XACK 的 Stream 条目。
+
+        `allow_delete=False`（**确实存在多个消费组**）时**不做任何 redis 调用**，只把条目留在
+        `_delete_retry` 中保留证据与容量视图——多组下 XDEL 是全局删除，会毁掉其他组尚未处理的
+        条目。默认 `True` 保持原行为。
+
+        **约束**：本方法内的 redis 交互必须**只有 `xdel`**；拓扑判定由调用方通过 `allow_delete`
+        传入（见 `_may_delete_terminal` 的说明）。
+        """
+        if not ids:
+            return
+        if not allow_delete:
+            self._delete_retry.setdefault(stream_key, set()).update(ids)
+            return
         chunk_size = 500
         for i in range(0, len(ids), chunk_size):
             chunk = ids[i : i + chunk_size]
@@ -1807,6 +1880,10 @@ class StreamConsumer:
             visited += 1
             pending = self._delete_retry.get(stream_key)
             if not pending:
+                continue
+            # B31：确实存在多个消费组时不做全局 XDEL（条目留在 _delete_retry 中保留证据与容量视图）。
+            # 刻意**不改动** remaining/游标核算——直接跳过本 Stream，避免扰动既有用例锁定的额度行为。
+            if not self._may_delete_terminal(stream_key):
                 continue
             chunk = list(pending)[: min(500, remaining)]
             try:
