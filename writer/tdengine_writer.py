@@ -46,6 +46,23 @@ def _quote(name: str) -> str:
     return f"`{name.replace('`', '``')}`"
 
 
+def _tag_literal(value: object) -> str:
+    """把 tag 值编码为 TDengine 字符串字面量内部的转义文本（不含外层引号）。
+
+    S1：TDengine 3.x 在字符串**数据**中把**反斜线当转义符**（官方《转义字符》表列出
+    ``\\``、``\\'``、``\\n`` 等；本项目目标版本为 `tdengine/tsdb-amd64:3.4.0.9`）。
+    因此只把单引号加倍**并不安全**：值以 `\\` 结尾或含 `\\'` 时，`\\'` 会被解释为"转义后的
+    单引号"，从而吃掉（或逃出）结尾引号 —— 轻则整条 INSERT 报错，重则把后续 SQL 文本吸入
+    字面量里。同类缺陷已有公开公告（FUXA 的 TDengine 连接器经反斜线绕过转义导致注入）。
+
+    正确做法：**先转义反斜线、再转义单引号**，两者都用反斜线形式。顺序不可颠倒——反引号
+    优先是为了不把"为单引号新增的反斜线"再次加倍。转义后满足不变式
+    ``^([^'\\\\]|\\\\.)*$``：不存在未转义的引号，也不存在落单的反斜线。
+    """
+    text = "" if value is None else str(value)
+    return text.replace("\\", "\\\\").replace("'", "\\'")
+
+
 _CONNECTION_ERROR_KEYWORDS = (
     "closed", "connection", "timeout", "timed out",
     "broken pipe", "eof", "reset", "refused", "unavailable",
@@ -520,7 +537,7 @@ class TDengineWriter:
         db = _quote(self._database)
         tbl = _quote(q_child)
         stbl = _quote(q_stable)
-        tag_val = device_code.replace("'", "''")
+        tag_val = _tag_literal(device_code)
         header = (
             f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') "
             f"(`ts`, `var_id`, `quality`) VALUES "
@@ -796,7 +813,7 @@ class TDengineWriter:
         db = _quote(self._database)
         tbl = _quote(row["child_table"])
         stbl = _quote(row["stable"])
-        tag_val = str(row["device_code"]).replace("'", "''")
+        tag_val = _tag_literal(row["device_code"])
         col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
         return f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') ({col_list}) VALUES "
 
