@@ -4,6 +4,7 @@ import asyncio
 import logging
 import zlib
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from time import monotonic
@@ -18,6 +19,9 @@ from .schemas import UploadItem
 
 _CENTER_TIMEZONE = timezone(timedelta(hours=8))
 _TOUCH_INTERVAL_SECONDS = 5.0
+# B26：验签前公钥缓存的**容量上限**。未认证请求可以携带任意唯一 node_uuid，若不设上限，
+# 缓存会随唯一 UUID 数量无界增长（内存放大）。上限内按 LRU 淘汰，过期项在触及上限时清理。
+_PUBLIC_KEY_CACHE_MAX = 4096
 # 这几类驳回可能只是控制面已提交、而本进程控制缓存落后的结果：
 # 永久化（rejected_consumed）之前必须对决定该判定的那个缓存命名空间做一次受控权威重读。
 _UNKNOWN_VAR_ID = "malformed_envelope:unknown_var_id"
@@ -77,7 +81,8 @@ class MySQLIngestRepository:
         self._last_touch: dict[str, float] = {}
         self._touch_tasks: set[asyncio.Task[None]] = set()
         self._control_cache_ttl_seconds = control_cache_ttl_seconds
-        self._public_key_cache: dict[str, tuple[float, list[str]]] = {}
+        # B26：`OrderedDict` 以支持 LRU 提升与有界淘汰（正/负结果都缓存，但总量有上限）。
+        self._public_key_cache: OrderedDict[str, tuple[float, list[str]]] = OrderedDict()
         self._assignment_cache: dict[
             tuple[str, str, int], tuple[float, dict | None]
         ] = {}
@@ -141,10 +146,25 @@ class MySQLIngestRepository:
             return
         if scope == "mappings":
             self._mapping_cache.clear()
+    def _evict_public_key_cache(self, now: float) -> None:
+        """B26：把公钥缓存收敛到上限以内——先清过期项，再按 LRU 淘汰。
+
+        刻意**只在触及上限时**做清理：未认证请求可用唯一 UUID 洪泛，若每次写入都全表扫描，
+        清理本身就会变成 O(n²) 的放大面。TTL 与 LRU 都不削弱轮换/吊销语义——
+        `invalidate_control_cache()` 与单点 `pop()` 仍然立即失效。
+        """
+        if len(self._public_key_cache) <= _PUBLIC_KEY_CACHE_MAX:
+            return
+        for key in [k for k, (expiry, _keys) in self._public_key_cache.items() if expiry <= now]:
+            self._public_key_cache.pop(key, None)
+        while len(self._public_key_cache) > _PUBLIC_KEY_CACHE_MAX:
+            self._public_key_cache.popitem(last=False)  # 淘汰最久未使用
+
     async def get_approved_node_public_keys(self, node_uuid: str) -> list[str]:
         now = monotonic()
         cached = self._public_key_cache.get(node_uuid)
         if cached is not None and cached[0] > now:
+            self._public_key_cache.move_to_end(node_uuid)  # LRU：命中即提升
             return list(cached[1])
 
         row = await self._fetchone(
@@ -170,6 +190,8 @@ class MySQLIngestRepository:
             self._cache_expiry("node", node_uuid),
             keys,
         )
+        self._public_key_cache.move_to_end(node_uuid)
+        self._evict_public_key_cache(now)
         return list(keys)
     async def touch_node(self, node_uuid: str) -> None:
         now = monotonic()
