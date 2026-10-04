@@ -141,6 +141,21 @@ flowchart TD
 - **`RETRY` 不是终态**，也**不是所有 RETRY 都立即隔离**——隔离只发生在连续 RETRY 达到
   `max_row_retry` 之后。
 
+#### 两条与实现对齐的最终规则（D8 一致性复核：B28/B31 已落地）
+
+- **schema 未就绪时按"行是否依赖缺失列"隔离（B28）**：某 stable 补列失败时，**只扣住引用了
+  缺失列的行**，只依赖既有列的合法行照常推进；判定以 `_col_cache[stable]` 的已知可用列为准
+  （成功 ALTER 一列即入缓存；`_ensure_columns` 仅在"具体某列仍缺失"时抛
+  `SchemaNotReadyError`）。被扣住的行状态是 **`RETRY`（原因 `schema`）**——**不得**按次数判为
+  `BAD_DATA`。若该 stable 从未成功 `DESCRIBE`（缓存整体缺失），其**全部**行仍被扣住（保守不变）。
+- **多消费组下拒绝终态 XDEL（B31）**：`XDEL` 是**全局删除**、不区分消费组，因此只有在该 Stream
+  **确实只有一个消费组**时才执行终态删除。**确实读到多个组**时**拒绝**并把条目保留在待删集合中，
+  同时给出 `retry_terminal_delete_multi_group_skipped_rows` 计数与 error 日志（保护其他组尚未
+  处理的条目）；查询失败或形态不可读时**继续删除**并记
+  `retry_terminal_delete_topology_unknown_rows`（避免瞬时查询故障让终态清理全面停摆）。
+  **不得**用 XTRIM 清空历史来替代清理恢复。判定由**调用层**完成（`_delete_ids` 内不得新增
+  redis 交互，否则会扰动 xack→xdel 序列）。
+
 ### 5.4 MysqlMapper（永久映射缓存）
 
 `writer/mysql_mapper.py`。每个消费 worker 拥有独立 MySQL 连接和 MysqlMapper：
@@ -181,10 +196,11 @@ sequenceDiagram
         SC->>SC: 翻译+类型归一 → 缓冲
     end
     SC->>TW: write_multi_table(buffered)  [到时/到阈值]
-    TW-->>SC: 每块 (LANDED/BAD_DATA/RETRY)
-    SC->>R: XACK + XDEL (LANDED)
+    TW-->>SC: 每块 (LANDED / BAD_DATA / RETRY)
+    SC->>R: XACK + XDEL (LANDED；且该 Stream 只有单一消费组)
     SC->>DLQ: push (BAD_DATA)
-    SC->>SC: RETRY 留 buffer
+    SC->>SC: RETRY 留 buffer；连续 RETRY 达 max_row_retry → 有界隔离区（仍留在 PEL）
+    SC->>SC: 任一分段 BAD_DATA 且整帧未全成 → FAILED_INCOMPLETE（持久隔离，不 ACK、不计成功）
 ```
 
 ### 6.2 flush 行级状态分流
