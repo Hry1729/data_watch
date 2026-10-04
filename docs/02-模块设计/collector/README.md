@@ -199,16 +199,22 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/storage/
 
 ```json
 {
-  "contract_version": 2,
   "device_code": "PLC001",
-  "timestamp": 1722349200.123,
-  "values": [123, 456],
-  "qualities": [0, 193]  // 新增字段：与 values 一一对应
+  "device_type": "qc",
+  "group_code": "g001",
+  "scan_rate": "1000",
+  "ts": "1722349200123",
+  "config_version": "12",
+  "values": "{\"900001\":\"1.5\",\"900002\":\"0\"}",
+  "contract_version": "2",
+  "qualities": "{\"900001\":0,\"900002\":193}"
 }
 ```
 
-- `values` 和 `qualities` 数组长度必须相等；
-- 若驱动返回的 sample 未设置 quality，默认为 `0`（GOOD）；
+- `values` / `qualities` 是 **`var_id → 值` 的 JSON 对象**，并以 **JSON 字符串**写入 Stream（HTTP 请求体里才是 JSON 对象）；约束是**两者的 var_id 键集一致**，而不是"数组长度相等"。
+- 时间字段是 **`ts`**，单位**毫秒**（字符串）；**没有** `timestamp`，也不要写秒级浮点。
+- `contract_version` 与 `qualities` **仅 v2 存在**；v1 帧**没有** `contract_version` 字段（消费端缺省为 1）、且**不得**携带 `qualities`。
+- 驱动返回的 sample 未声明质量时，由**驱动侧**包装为 `QUALITY_GOOD`；而 Stream 帧**缺少 `qualities`**（含 v1）时**不落任何质量行**——不会被补成 `0`（见 D2 纠正）。
 - **v1 不产生质量行，也不会被补成 GOOD**：writer 的质量行数 = `qualities` 条目数（`writer/consumer.py` 的 `quality_rows_count += sum(len(row.qualities))`），因此缺 `qualities`（含 v1）时**不落任何质量行**。契约层 `data_watch_shared/stream_envelope.py::validate_envelope` 还规定：`contract_version=1` **不得**携带 `qualities`（带则报错）、`contract_version` 只接受 1/2（其它值报错）。
 
 ### 驱动实现指南
