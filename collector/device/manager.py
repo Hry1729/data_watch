@@ -1158,6 +1158,8 @@ class DeviceManager:
 
     async def check_device_health(self, device: Device) -> bool:
         """检查设备健康状态"""
+        # B36：在函数内导入以避免循环导入（manager → bounded_executor → monitor.health → manager）。
+        from collector.bounded_executor import ExecutorSaturatedError
         if device.status == DeviceStatus.CONFIG_ERROR:
             return False
         if device.status != DeviceStatus.ONLINE:
@@ -1176,6 +1178,11 @@ class DeviceManager:
                     device.status = DeviceStatus.ERROR
                     await self._report_device_status(device, 2, "proxy ping returned false", "timeout")
                     return False
+                return True
+            except ExecutorSaturatedError as exc:
+                # B36：执行资源拥塞 ≠ 设备故障。池满时 ping 会被**立即拒绝**，
+                # 若按故障处理就会误报并触发重连风暴；这里不裁决为故障，留给下一轮检查。
+                self._note_health_congestion(device, exc)
                 return True
             except Exception as e:
                 logger.warning("Device %s proxy health check failed: %s", device.device_id, e)
@@ -1196,11 +1203,28 @@ class DeviceManager:
                     await self._report_device_status(device, 2, "health ping returned false", "timeout")
                     return False
             return True
+        except ExecutorSaturatedError as exc:
+            # B36：同上的拥塞判定——池满不代表 PLC 故障，不得据此置 ERROR 或触发重连。
+            self._note_health_congestion(device, exc)
+            return True
         except Exception as e:
             logger.warning("Device %s health check failed: %s", device.device_id, e)
             device.status = DeviceStatus.ERROR
             await self._report_device_status(device, 2, f"health check failed: {e}", "timeout")
             return False
+
+    def _note_health_congestion(self, device: Device, exc: Exception) -> None:
+        """记录"健康检查因执行资源拥塞而无法裁决"（B36）。
+
+        与"设备故障"分开计数与日志，便于运维区分"线程池被打满"与"PLC 真的连不上"。
+        """
+        self._metrics.increment("health_check_saturated_count")
+        logger.warning(
+            "Device %s health check inconclusive: execution resources saturated (%s); "
+            "not counted as a device fault",
+            device.device_id,
+            exc,
+        )
 
     async def schedule_reconnect(self, device: Device) -> None:
         """调度设备重连"""
