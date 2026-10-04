@@ -1,0 +1,2863 @@
+diff --git a/agent/app/core/config.py b/agent/app/core/config.py
+index c6a6fa9..e803e02 100644
+--- a/agent/app/core/config.py
++++ b/agent/app/core/config.py
+@@ -1,3 +1,4 @@
++import logging
+ import os
+ import secrets
+ import sys
+@@ -8,6 +9,8 @@ import toml
+ 
+ from app.core.role import build_role
+ 
++logger = logging.getLogger(__name__)
++
+ 
+ def data_root() -> Path:
+     """可写数据根：环境变量 DATAWATCH_DATA_ROOT 优先；frozen 默认 C:\\ProgramData\\DataWatch；
+@@ -94,7 +97,47 @@ def _load_config_unlocked() -> dict:
+         cfg = _default_config()
+         _save_config_unlocked(cfg)
+         return cfg
+-    return toml.load(CONFIG_PATH)
++    cfg = toml.load(CONFIG_PATH)
++    _ensure_jwt_secret_unlocked(cfg)
++    return cfg
++
++
++JWT_SECRET_INVALID_DETAIL = (
++    "config.toml 的 [agent].jwt_secret 为空或过弱（至少 32 字符）：空密钥会让任何本地进程"
++    "伪造管理员令牌，因此拒绝启动认证服务。请改为安全随机值"
++    "（例如 python -c \"import secrets;print(secrets.token_hex(32))\"）。"
++    "注意：变更该值会使所有已签发的令牌失效，需重新登录。"
++)
++AGENT_SECTION_INVALID_DETAIL = "config.toml 缺少合法的 [agent] 段，拒绝按空密钥继续运行"
++
++
++def _ensure_jwt_secret_unlocked(cfg: dict) -> None:
++    """既有配置的 jwt_secret 强制校验（B15）。
++
++    - 合格：原样保留，不轮换、不改写文件（合法存量配置保持稳定）。
++    - 不合格且 bootstrap 未完成（明确首装场景）：原子生成并落盘安全随机值，并显式告警。
++    - 不合格且 bootstrap 已完成：抛错，不得启动认证服务。
++    """
++    from app.core.security import validate_jwt_secret
++
++    agent_section = cfg.get("agent")
++    if not isinstance(agent_section, dict):
++        raise ValueError(AGENT_SECTION_INVALID_DETAIL)
++    try:
++        validate_jwt_secret(agent_section.get("jwt_secret"))
++        return
++    except ValueError:
++        pass
++
++    if agent_section.get("bootstrap_done", False):
++        raise ValueError(JWT_SECRET_INVALID_DETAIL)
++
++    agent_section["jwt_secret"] = secrets.token_hex(32)
++    _save_config_unlocked(cfg)
++    logger.warning(
++        "config.toml 已存在但 [agent].jwt_secret 为空或过弱；首装场景（bootstrap 未完成）"
++        "已生成并落盘新的随机密钥，此前用旧密钥签发的令牌全部失效。"
++    )
+ 
+ 
+ def _save_config_unlocked(cfg: dict) -> None:
+diff --git a/agent/app/core/security.py b/agent/app/core/security.py
+index 088f9cf..a8156c1 100644
+--- a/agent/app/core/security.py
++++ b/agent/app/core/security.py
+@@ -87,6 +87,36 @@ def verify_password(password: str, encoded: str) -> bool:
+ JWT_ISSUER = "datawatch-agent"
+ JWT_AUDIENCE = "datawatch-agent"
+ 
++# 空密钥可让任何本地进程伪造管理员令牌（HS256 用空串照签照验）。32 字符下限与
++# config.toml.example 声明的「32 字节 hex」一致。
++JWT_SECRET_MIN_LENGTH = 32
++
++
++def validate_jwt_secret(secret: object, min_length: int = JWT_SECRET_MIN_LENGTH) -> str:
++    """校验 JWT 密钥非空且达到最小长度；不合格抛 ValueError。
++
++    默认下限 32 由配置加载（app.core.config）使用；签发/校验路径只要求非空，
++    见 _require_jwt_secret 的说明。
++    """
++    if not isinstance(secret, str):
++        raise ValueError("jwt_secret must be a string")
++    if len(secret.strip()) < min_length:
++        raise ValueError(f"jwt_secret must be at least {min_length} characters")
++    return secret
++
++
++def _require_jwt_secret(secret: object) -> str:
++    """签发/校验前的硬闸门：空密钥即拒绝，绝不降级为「无签名校验」。
++
++    这里只拦空值（P0：空密钥可伪造任意令牌）。长度下限属配置策略，由
++    app.core.config._ensure_jwt_secret_unlocked 在加载既有配置时强制执行。
++    """
++    try:
++        return validate_jwt_secret(secret, min_length=1)
++    except ValueError as exc:
++        raise JWTError(str(exc)) from exc
++
++
+ class InsufficientRoleError(JWTError):
+     pass
+ 
+@@ -97,6 +127,7 @@ def create_access_token(
+     expire_hours: int,
+     roles: list[str] | None = None,
+ ) -> str:
++    secret = _require_jwt_secret(secret)
+     expire = datetime.now(timezone.utc) + timedelta(hours=expire_hours)
+     payload = {
+         "sub": subject,
+@@ -119,6 +150,7 @@ def verify_token(
+     required_roles: set[str] | None = None,
+ ) -> str:
+     """返回 subject；签名无效/过期/缺字段均抛出 JWTError"""
++    secret = _require_jwt_secret(secret)
+     payload = jwt.decode(
+         token,
+         secret,
+diff --git a/agent/app/routers/admin.py b/agent/app/routers/admin.py
+index 1db589d..e8dfa2c 100644
+--- a/agent/app/routers/admin.py
++++ b/agent/app/routers/admin.py
+@@ -355,6 +355,22 @@ async def update_config(payload: ConnectionConfigIn, _user: str = Depends(get_cu
+     return {}
+ 
+ 
++# B11：凭据与这些目标标识绑定。任一项被请求体改写，都不得沿用已存储的凭据。
++_CREDENTIAL_BOUND_FIELDS = ("host", "port", "user", "database")
++
++
++def _has_stored_credential(section: dict) -> bool:
++    """B11：**任何形态**的存储凭据都算（DPAPI 密文 `password_enc`，或手改配置留下的明文 `password`）。
++
++    只看 `password_enc` 会漏掉明文形态：`_decrypt_password` 同样支持明文 `password`，
++    否则改目标即可让明文口令跟随新目标（R1）。
++    """
++    if section.get("password_enc"):
++        return True
++    stored_password = section.get("password")
++    return stored_password is not None and str(stored_password) != ""
++
++
+ @router.post("/health/check", response_model=HealthCheckResponse)
+ async def health_check(
+     request: HealthCheckRequest,
+@@ -366,10 +382,37 @@ async def health_check(
+         raise HTTPException(status_code=400, detail="Bootstrap must be completed first")
+ 
+     target_cfg = dict(cfg.get(request.target) or {})
+-    if request.config is not None:
+-        for key, value in request.config.model_dump(exclude_unset=True).items():
+-            if value is not None:
+-                target_cfg[key] = value
++    overrides = (
++        request.config.model_dump(exclude_unset=True) if request.config is not None else {}
++    )
++
++    changed = sorted(
++        key
++        for key in _CREDENTIAL_BOUND_FIELDS
++        if overrides.get(key) is not None and target_cfg.get(key) != overrides.get(key)
++    )
++    if changed:
++        if _has_stored_credential(target_cfg) and overrides.get("password") is None:
++            # 审计只记字段名，不记值，避免把口令写进日志
++            logger.warning(
++                "health check denied: target=%s changed_fields=%s",
++                request.target,
++                changed,
++            )
++            raise HTTPException(
++                status_code=400,
++                detail=(
++                    "目标已变更（" + "/".join(changed) + "），不得沿用已存储的凭据；"
++                    "请在 config.password 显式提供该目标的临时口令"
++                ),
++            )
++        # 明确的新目标：丢弃存储凭据（密文与明文两形态），只用本次显式提供的凭据
++        target_cfg.pop("password_enc", None)
++        target_cfg.pop("password", None)
++
++    for key, value in overrides.items():
++        if value is not None:
++            target_cfg[key] = value
+ 
+     checkers = {
+         "redis": check_redis,
+diff --git a/agent/app/services/edge_storage_client.py b/agent/app/services/edge_storage_client.py
+index 109549a..56e7c40 100644
+--- a/agent/app/services/edge_storage_client.py
++++ b/agent/app/services/edge_storage_client.py
+@@ -1,11 +1,65 @@
+ from __future__ import annotations
+ 
+ import json
++import os
++from pathlib import Path
+ import time
+ from typing import Any
+ import urllib.error
+ import urllib.request
+ 
++from app.core.config import data_root
++
++
++# S3: the Edge Storage IPC endpoint authenticates every caller, so the Agent uses
++# its own dedicated least-privilege "agent" token. This is a purpose-built IPC
++# credential and must never be the Agent management service token.
++IPC_TOKEN_HEADER = "X-DataWatch-Storage-Token"
++IPC_ROLE = "agent"
++IPC_TOKEN_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN"
++IPC_TOKEN_FILE_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN_FILE"
++IPC_TOKEN_FILE_NAME = "storage-ipc-tokens.json"
++
++
++class StorageUnavailable(RuntimeError):
++    """The Edge Storage IPC call did not execute (endpoint down, or rejected it)."""
++
++
++class StorageUnauthorized(StorageUnavailable):
++    """The IPC credential was rejected (HTTP 401/403).
++
++    401/403 说明「服务在跑，但凭据错了 / 该角色无权调用」，与「服务不可达」是两类完全不同的
++    排障方向。它是 ``StorageUnavailable``（进而 ``RuntimeError``）的子类，因此只关心「本次调用
++    没有被服务端执行」的既有调用方无需改动。
++    """
++
++
++def ipc_token_file() -> Path:
++    configured = os.environ.get(IPC_TOKEN_FILE_ENV)
++    if configured:
++        return Path(configured)
++    database = os.environ.get("DATAWATCH_EDGE_DB")
++    if database:
++        return Path(database).parent / IPC_TOKEN_FILE_NAME
++    # The Agent hands DATAWATCH_DATA_ROOT to the storage/collector/uploader
++    # children, so the edge side resolves the same file.
++    return data_root() / "edge" / IPC_TOKEN_FILE_NAME
++
++
++def ipc_token() -> str | None:
++    configured = os.environ.get(IPC_TOKEN_ENV)
++    if configured:
++        return configured.strip()
++    try:
++        payload = json.loads(ipc_token_file().read_text(encoding="utf-8"))
++    except (OSError, ValueError):
++        return None
++    tokens = payload.get("tokens") if isinstance(payload, dict) else None
++    if not isinstance(tokens, dict):
++        return None
++    token = tokens.get(IPC_ROLE)
++    return str(token) if token else None
++
+ 
+ class EdgeStorageClient:
+     """Agent-side client for the local Edge Storage command endpoint."""
+@@ -13,6 +67,7 @@ class EdgeStorageClient:
+     def __init__(self, base_url: str = "http://127.0.0.1:7073", *, timeout_seconds: float = 10.0) -> None:
+         self.base_url = base_url.rstrip("/")
+         self.timeout_seconds = timeout_seconds
++        self._token = ipc_token()
+ 
+     def status(self) -> dict[str, Any]:
+         return dict(self._command("status"))
+@@ -43,17 +98,31 @@ class EdgeStorageClient:
+             ensure_ascii=True,
+             separators=(",", ":"),
+         ).encode("utf-8")
++        headers = {"Content-Type": "application/json"}
++        if self._token:
++            headers[IPC_TOKEN_HEADER] = self._token
+         request = urllib.request.Request(
+             f"{self.base_url}/v1/command",
+             data=body,
+-            headers={"Content-Type": "application/json"},
++            headers=headers,
+             method="POST",
+         )
+         try:
+             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                 envelope = json.loads(response.read().decode("utf-8"))
++        except urllib.error.HTTPError as exc:
++            # 401/403 是可判定的确定性失败：服务活着，凭据/权限不对。它属于
++            # ``StorageUnauthorized``（``StorageUnavailable`` 的子类），既与「服务不可达」
++            # 分开，也不破坏只关心「本次调用没有被执行」的既有调用方。
++            if exc.code in (401, 403):
++                raise StorageUnauthorized(
++                    "Edge Storage rejected the IPC credential "
++                    f"(HTTP {exc.code}): check the '{IPC_ROLE}' role token in "
++                    f"{IPC_TOKEN_FILE_NAME}"
++                ) from exc
++            raise StorageUnavailable(f"Edge Storage unavailable: {exc}") from exc
+         except (urllib.error.URLError, OSError, ValueError) as exc:
+-            raise RuntimeError(f"Edge Storage unavailable: {exc}") from exc
++            raise StorageUnavailable(f"Edge Storage unavailable: {exc}") from exc
+         if not envelope.get("ok"):
+             raise RuntimeError(str(envelope.get("error") or "Edge Storage command failed"))
+         return envelope.get("data")
+diff --git a/agent/app/services/health_checker.py b/agent/app/services/health_checker.py
+index c265d0b..1512acc 100644
+--- a/agent/app/services/health_checker.py
++++ b/agent/app/services/health_checker.py
+@@ -2,6 +2,8 @@ from __future__ import annotations
+ 
+ import base64
+ import json
++import re
++import urllib.error
+ import urllib.request
+ from typing import Any, Mapping
+ 
+@@ -13,6 +15,49 @@ from app.schemas.models import HealthCheckResponse
+ 
+ TIMEOUT_SECONDS = 3
+ 
++# B11：限定目标地址/端口。只接受主机名、IPv4 字面量或方括号 IPv6 字面量，
++# 从而排除 scheme（http://）、userinfo（user:pw@）、path/query/fragment（/@#?）。
++# 用 \Z 而非 $：$ 允许尾随换行（"127.0.0.1\n" 会被接受），\Z 才是字符串真正结尾。
++_HOST_PATTERN = re.compile(r"^[A-Za-z0-9._-]+\Z")
++_IPV6_PATTERN = re.compile(r"^\[[0-9A-Fa-f:.]+\]\Z")
++
++
++def _target_address(config: Mapping[str, Any]) -> tuple[str, int]:
++    """校验并返回 (host, port)；不合格抛 ValueError（调用方统一转为检查失败）。"""
++    host = str(config.get("host") or "")
++    if not (_HOST_PATTERN.match(host) or _IPV6_PATTERN.match(host)):
++        raise ValueError("invalid target host")
++    try:
++        port = int(config.get("port"))
++    except (TypeError, ValueError) as exc:
++        raise ValueError("invalid target port") from exc
++    if not 1 <= port <= 65535:
++        raise ValueError("invalid target port")
++    return host, port
++
++
++class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
++    """B11：TDengine 凭据不得随重定向离开原目标 origin（urllib 会转发 Authorization）。"""
++
++    def redirect_request(self, req, fp, code, msg, headers, newurl):
++        raise urllib.error.HTTPError(
++            req.full_url, code, "redirect not allowed", headers, fp
++        )
++
++
++class _NoProxyHandler(urllib.request.ProxyHandler):
++    """B11-R3：健康检查不得把凭据交给 `HTTP_PROXY` 等环境变量指定的代理。
++
++    `urllib` 默认按 `getproxies()` 决定是否经代理发送请求（含 `Authorization`）。
++    这里显式声明空代理表：只影响本 opener，不改动进程的代理环境变量。
++    """
++
++    def __init__(self) -> None:
++        super().__init__({})
++
++
++_TDENGINE_OPENER = urllib.request.build_opener(_NoRedirectHandler, _NoProxyHandler())
++
+ 
+ def _decrypt_password(config: Mapping[str, Any]) -> str:
+     if "password" in config and config.get("password") is not None:
+@@ -38,9 +83,10 @@ def check_backend(base_url: str) -> HealthCheckResponse:
+ def check_redis(config: Mapping[str, Any]) -> HealthCheckResponse:
+     client = None
+     try:
++        host, port = _target_address(config)
+         client = redis.Redis(
+-            host=config.get("host"),
+-            port=int(config.get("port")),
++            host=host,
++            port=port,
+             password=_decrypt_password(config) or None,
+             socket_connect_timeout=TIMEOUT_SECONDS,
+             socket_timeout=TIMEOUT_SECONDS,
+@@ -60,9 +106,10 @@ def check_redis(config: Mapping[str, Any]) -> HealthCheckResponse:
+ def check_mysql(config: Mapping[str, Any]) -> HealthCheckResponse:
+     connection = None
+     try:
++        host, port = _target_address(config)
+         connection = pymysql.connect(
+-            host=config.get("host"),
+-            port=int(config.get("port")),
++            host=host,
++            port=port,
+             user=config.get("user"),
+             password=_decrypt_password(config),
+             database=config.get("database"),
+@@ -87,8 +134,7 @@ def check_mysql(config: Mapping[str, Any]) -> HealthCheckResponse:
+ 
+ def check_tdengine(config: Mapping[str, Any]) -> HealthCheckResponse:
+     try:
+-        host = config.get("host")
+-        port = int(config.get("port"))
++        host, port = _target_address(config)
+         user = str(config.get("user") or "")
+         password = _decrypt_password(config)
+ 
+@@ -105,7 +151,7 @@ def check_tdengine(config: Mapping[str, Any]) -> HealthCheckResponse:
+             },
+         )
+ 
+-        with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS) as response:
++        with _TDENGINE_OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
+             if response.getcode() != 200:
+                 return HealthCheckResponse(success=False, message="TDengine health check failed")
+             body = response.read()
+diff --git a/agent/config.toml.example b/agent/config.toml.example
+index 943eeaa..3aa6459 100644
+--- a/agent/config.toml.example
++++ b/agent/config.toml.example
+@@ -6,7 +6,9 @@
+ [agent]
+ host               = "127.0.0.1"
+ port               = 7070
+-jwt_secret         = ""            # 首次启动时自动随机生成，32 字节 hex
++jwt_secret         = ""            # 留空仅限首装（bootstrap_done=false）：首次加载会原子生成 32 字节 hex 并写回本文件。
++                                   # bootstrap 完成后该值必须非空且 >=32 字符，否则 Agent 拒绝启动（空密钥可伪造管理员令牌）。
++                                   # 手工修改该值会使所有已签发令牌失效，需重新登录。
+ jwt_expire_hours   = 8
+ bootstrap_done     = false
+ log_level          = "INFO"
+diff --git a/backend/app/api/routes/catalog.py b/backend/app/api/routes/catalog.py
+index 26dec08..a2c6a72 100644
+--- a/backend/app/api/routes/catalog.py
++++ b/backend/app/api/routes/catalog.py
+@@ -6,6 +6,7 @@ from turboapi import APIRouter, Depends, Response
+ from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
+ 
+ from app.api.permissions import require_permissions
++from app.api.routes.distributed_nodes import _publish_control_invalidation
+ from app.core.audit import audit_log
+ from app.core.exceptions import ApiError
+ from app.core.responses import success_response
+@@ -262,6 +263,7 @@ async def import_devices(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.import_devices_rows(payload.get("rows"), actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -288,6 +290,7 @@ async def create_device(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.create_device(payload, actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -302,6 +305,7 @@ async def update_device(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.update_device(device_id, payload, actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -322,6 +326,7 @@ async def update_device_status(
+             enabled=payload["enabled"],
+             actor=principal["user_name"],
+         )
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -335,6 +340,7 @@ async def batch_delete_devices(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.batch_delete_devices(payload.get("ids"), actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -348,6 +354,7 @@ async def delete_device(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.delete_device(device_id, actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -483,6 +490,7 @@ async def import_points(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.import_points_rows(payload.get("rows"), actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -500,6 +508,7 @@ async def import_points_from_template(
+             payload.get("deviceId"),
+             actor=principal["user_name"],
+         )
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -532,6 +541,7 @@ async def create_point(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.create_point(payload, actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -554,6 +564,7 @@ async def update_point(
+             locator_device_id=locatorDeviceId,
+             locator_var_seq=locatorVarSeq,
+         )
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -578,6 +589,7 @@ async def update_point_status(
+             locator_device_id=locatorDeviceId,
+             locator_var_seq=locatorVarSeq,
+         )
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -591,6 +603,7 @@ async def batch_delete_points(
+     async with session_factory() as session:
+         service = CatalogService(session=session, tdengine=get_tdengine_client())
+         data = await service.batch_delete_points(payload.get("ids"), actor=principal["user_name"])
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -611,6 +624,7 @@ async def delete_point(
+             locator_device_id=deviceId,
+             locator_var_seq=varSeq,
+         )
++        await _invalidate_ingest_control_caches()
+         return success_response(data=data)
+ 
+ 
+@@ -641,6 +655,17 @@ async def device_variables_by_group(
+         return success_response(data=data)
+ 
+ 
++async def _invalidate_ingest_control_caches() -> None:
++    """控制面成功提交后统一发布 Ingest 控制缓存失效。
++
++    点位/设备目录变更同时改变 `device_point_group.config_version`（Ingest 存在
++    assignment 缓存里）与 `point_storage_mapping`（mapping 缓存），两者同一事务提交，
++    因此两个 scope 一起发布。必须在服务层返回（事务已提交）之后调用，不可先通知后提交。
++    """
++    await _publish_control_invalidation({"scope": "assignments"})
++    await _publish_control_invalidation({"scope": "mappings"})
++
++
+ def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
+     return {key: value for key, value in params.items() if value is not None}
+ 
+diff --git a/cli/update_manager.py b/cli/update_manager.py
+index 7f7d1ab..7b4dfb2 100644
+--- a/cli/update_manager.py
++++ b/cli/update_manager.py
+@@ -23,6 +23,10 @@ from cli.version import CLI_VERSION
+ 
+ 
+ PLATFORM = "windows-x64"
++_SWAP_STATE_FILENAME = "swap-state.txt"
++# 终态阶段：verified=新版本已通过自检；failed=失败恢复已完成；
++# recovered=中断的 swap 已由 reconcile 恢复（但本次没有校验通过任何新版本）。
++_TERMINAL_SWAP_PHASES = (":verified", ":failed", ":recovered")
+ 
+ 
+ class UpdateManager:
+@@ -70,6 +74,9 @@ class UpdateManager:
+         return {**result, "downloadPath": str(target), "downloaded": True}
+ 
+     def apply(self, *, channel: str = "stable") -> dict[str, Any]:
++        # 上一次 swap 被中断时 current 可能已经不存在（脚本刚把它搬成 previous），
++        # 而 current 正是 _require_windows_install 的前置条件：先恢复，再校验。
++        _recover_interrupted_swap(self.install_root)
+         _require_windows_install(self.install_root)
+         result = self.download(channel=channel)
+         if not result["updateAvailable"]:
+@@ -90,9 +97,36 @@ class UpdateManager:
+             expected_version=version,
+             rollback=False,
+         )
+-        return {**result, "updateStarted": True, "updaterProcessId": process_id}
++        # updater 会在本进程退出后才真正交换目录，此刻无法知道结果：
++        # 只报「已提交待验证」，是否成功必须由 swap_state() 独立确认。
++        return {
++            **result,
++            "updateStarted": True,
++            "updateVerified": False,
++            "verificationRequired": True,
++            "reason": "restart_required",
++            "statePath": str(self.install_root / _SWAP_STATE_FILENAME),
++            "updaterProcessId": process_id,
++        }
++
++    def swap_state(self) -> dict[str, Any]:
++        """读取 swap 脚本留下的显式阶段状态，作为独立的验证/取证入口。"""
++        path = self.install_root / _SWAP_STATE_FILENAME
++        if not path.is_file():
++            return {"state": None, "updateVerified": False, "statePath": str(path)}
++        try:
++            state = path.read_text(encoding="ascii").strip()
++        except (OSError, UnicodeDecodeError):
++            return {"state": "unreadable", "updateVerified": False, "statePath": str(path)}
++        return {
++            "state": state,
++            "updateVerified": state.endswith(":verified"),
++            "statePath": str(path),
++        }
+ 
+     def rollback(self) -> dict[str, Any]:
++        # 同 apply()：先让中断的 swap 恢复到可用状态，再重新做前置校验。
++        _recover_interrupted_swap(self.install_root)
+         _require_windows_install(self.install_root)
+         previous = self.install_root / "previous"
+         if not (previous / "data-watch.exe").is_file():
+@@ -185,6 +219,74 @@ def _require_windows_install(root: Path) -> None:
+         )
+ 
+ 
++def _pending_swap_phase(root: Path) -> str | None:
++    """返回未完成的 swap 阶段值；没有状态文件或已是终态时返回 None。
++
++    状态文件为空（写入被截断）或读不动（权限/损坏）时按「可能未完成」处理：
++    宁可多跑一次不删除任何版本的 reconcile，也不要让 current 缺失的安装被
++    前置校验直接拦死。
++    """
++    path = root / _SWAP_STATE_FILENAME
++    if not path.is_file():
++        return None
++    try:
++        state = path.read_text(encoding="ascii").strip()
++    except (OSError, UnicodeDecodeError):
++        return "unreadable"
++    if state and state.endswith(_TERMINAL_SWAP_PHASES):
++        return None
++    return state
++
++
++def _recover_interrupted_swap(install_root: Path) -> None:
++    """在 `_require_windows_install` 之前，把上一次未完成的 swap 恢复到可用状态。
++
++    swap 脚本顶部本来就有按 `swap-state.txt` 的 reconcile，但那只在脚本被启动后
++    才生效；而崩于第一次 `Move-Item`（current -> previous）之后时 `current` 缺失，
++    `_require_windows_install` 会在脚本启动之前就抛 `CliError`，使 reconcile 在
++    真实 CLI 入口上不可达。这里同步跑一次 `-ReconcileOnly`：只做恢复、不交换目录、
++    成功后把阶段记为 `<mode>:recovered`。恢复不了就什么都不假装，仍由
++    `_require_windows_install` 如实报错。
++    """
++    if os.name != "nt" or _pending_swap_phase(install_root) is None:
++        return
++    script_path = install_root / f"recover-{uuid4().hex}.ps1"
++    try:
++        script_path.write_text(_SWAP_SCRIPT, encoding="utf-8")
++    except OSError:
++        return
++    arguments = [
++        "powershell.exe",
++        "-NoProfile",
++        "-ExecutionPolicy",
++        "Bypass",
++        "-File",
++        str(script_path),
++        "-InstallRoot",
++        str(install_root),
++        "-StagedApp",
++        str(install_root),  # -ReconcileOnly 不读取该参数
++        "-ParentProcessId",
++        str(os.getpid()),  # -ReconcileOnly 不等待父进程
++        "-ReconcileOnly",
++    ]
++    try:
++        subprocess.run(
++            arguments,
++            stdin=subprocess.DEVNULL,
++            capture_output=True,
++            text=True,
++            timeout=120,
++            check=False,
++            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
++        )
++    except (OSError, subprocess.SubprocessError):
++        # 恢复进程本身跑不起来：不伪造成功，交给前置校验如实报错。
++        return
++    finally:
++        script_path.unlink(missing_ok=True)
++
++
+ def _launch_swap(
+     *,
+     install_root: Path,
+@@ -230,22 +332,96 @@ param(
+     [Parameter(Mandatory=$true)][string]$StagedApp,
+     [Parameter(Mandatory=$true)][int]$ParentProcessId,
+     [string]$ExpectedVersion = "",
+-    [switch]$Rollback
++    [switch]$Rollback,
++    [switch]$ReconcileOnly
+ )
+ $ErrorActionPreference = "Stop"
+-Wait-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
++if (-not $ReconcileOnly) { Wait-Process -Id $ParentProcessId -ErrorAction SilentlyContinue }
+ $current = Join-Path $InstallRoot "current"
+ $previous = Join-Path $InstallRoot "previous"
+ $failed = Join-Path $InstallRoot "failed"
+-if (Test-Path $failed) { Remove-Item -LiteralPath $failed -Recurse -Force }
++$statePath = Join-Path $InstallRoot "swap-state.txt"
++$mode = if ($Rollback) { "rollback" } else { "update" }
++
++function Set-SwapPhase {
++    param([Parameter(Mandatory=$true)][string]$Phase)
++    # 先写临时文件再原子替换：写入过程失败时状态文件保持上一个有效阶段值，
++    # 不会留下「空/半截」的阶段值把下一次恢复逻辑带偏。
++    $tempPath = "$statePath.tmp"
++    [System.IO.File]::WriteAllText($tempPath, $Phase, [System.Text.Encoding]::ASCII)
++    if (Test-Path -LiteralPath $statePath) {
++        $backupPath = "$statePath.bak"
++        [System.IO.File]::Replace($tempPath, $statePath, $backupPath)
++        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
++    } else {
++        [System.IO.File]::Move($tempPath, $statePath)
++    }
++}
++function Get-SwapPhase {
++    if (-not (Test-Path -LiteralPath $statePath)) { return "" }
++    return (Get-Content -LiteralPath $statePath -Raw).Trim()
++}
++function Test-CompleteVersion {
++    param([Parameter(Mandatory=$true)][string]$Path)
++    return (Test-Path -LiteralPath (Join-Path $Path "data-watch.exe") -PathType Leaf)
++}
++# 只撤销已完成的步骤：current 不见了才搬回来，绝不先删 current。
++function Restore-MissingCurrent {
++    if ((-not (Test-Path -LiteralPath $current)) -and (Test-CompleteVersion $previous)) {
++        Move-Item -LiteralPath $previous -Destination $current
++    }
++}
++# 新版本已搬入但未通过校验：先把它挪到 failed（保留取证），再把完整旧版本搬回 current。
++function Restore-UnverifiedSwap {
++    if (-not (Test-CompleteVersion $previous)) { return }
++    if (Test-Path -LiteralPath $current) {
++        if (-not (Test-CompleteVersion $current)) { return }
++        if (Test-Path -LiteralPath $failed) { Remove-Item -LiteralPath $failed -Recurse -Force }
++        Move-Item -LiteralPath $current -Destination $failed
++    }
++    Move-Item -LiteralPath $previous -Destination $current
++}
++
++$crashedPhase = Get-SwapPhase
++if ($crashedPhase -eq "update:backed-up" -or $crashedPhase -eq "update:swapped") {
++    Restore-UnverifiedSwap
++} else {
++    # 这里只做「把完整旧版本搬回 current」；failed 的回收必须等确认本次交换
++    # 真的能开始之后再做（见下面 try 内），否则可能在 previous 已被消耗时
++    # 先删掉目录里最后一份可运行版本。
++    Restore-MissingCurrent
++}
++
++# -ReconcileOnly：只做恢复，不交换目录；恢复不到可用 current 就如实非 0 退出。
++if ($ReconcileOnly) {
++    if (-not (Test-CompleteVersion $current)) { exit 1 }
++    $priorMode = if ($crashedPhase -like "rollback:*") { "rollback" } else { "update" }
++    # 只在阶段值没有被改动过时落 recovered，避免覆盖仍在运行的 updater 的进度。
++    if ((Get-SwapPhase) -eq $crashedPhase) { Set-SwapPhase "$priorMode`:recovered" }
++    exit 0
++}
++
++Set-SwapPhase "$mode`:prepare"
+ try {
++    # 本次要装进去的版本必须完整，否则在动任何目录之前中止：例如 previous 已被
++    # 上一次回滚消耗、以 rollback 重启时，只有中止才能保住 failed 里的被淘汰版本。
++    if (-not (Test-CompleteVersion $StagedApp)) { throw "Staged version is missing or incomplete" }
++    # 回收 failed 槽位必须发生在确认 current 完整之后（current 即另一个可运行版本）。
++    if ((Test-CompleteVersion $current) -and (Test-Path -LiteralPath $failed)) {
++        Remove-Item -LiteralPath $failed -Recurse -Force
++    }
+     if ($Rollback) {
+         Move-Item -LiteralPath $current -Destination $failed
++        Set-SwapPhase "$mode`:displaced"
+         Move-Item -LiteralPath $previous -Destination $current
++        Set-SwapPhase "$mode`:swapped"
+     } else {
+-        if (Test-Path $previous) { Remove-Item -LiteralPath $previous -Recurse -Force }
++        if (Test-Path -LiteralPath $previous) { Remove-Item -LiteralPath $previous -Recurse -Force }
++        if (Test-Path -LiteralPath $previous) { throw "Stale backup directory could not be removed" }
+         Move-Item -LiteralPath $current -Destination $previous
++        Set-SwapPhase "$mode`:backed-up"
+         Move-Item -LiteralPath $StagedApp -Destination $current
++        Set-SwapPhase "$mode`:swapped"
+     }
+     $result = & (Join-Path $current "data-watch.exe") version | ConvertFrom-Json
+     if (-not $result.ok) { throw "Updated CLI version check failed" }
+@@ -253,13 +429,19 @@ try {
+         throw "Updated CLI version does not match the signed manifest"
+     }
+     if ($Rollback -and (Test-Path $failed)) { Move-Item -LiteralPath $failed -Destination $previous }
++    Set-SwapPhase "$mode`:verified"
+ } catch {
+-    if (Test-Path $current) { Remove-Item -LiteralPath $current -Recurse -Force }
+-    if ($Rollback -and (Test-Path $failed)) {
+-        Move-Item -LiteralPath $failed -Destination $current
+-    } elseif (Test-Path $previous) {
+-        Move-Item -LiteralPath $previous -Destination $current
+-    }
++    # 阶段状态文件本身可能写失败（磁盘满/ACL/被占用）。除了阶段值，再用目录状态
++    # 交叉判定：update 模式下若 StagedApp 已被搬走而 current 又存在，说明 current
++    # 是那份从未通过自检的新版本，必须换回完整旧版本，而不是原样留着它。
++    $failedPhase = Get-SwapPhase
++    $unverifiedInPlace = (-not $Rollback) -and (
++        $failedPhase -eq "update:swapped" -or
++        ($failedPhase -eq "update:backed-up" -and (Test-Path -LiteralPath $current) -and
++            -not (Test-Path -LiteralPath $StagedApp))
++    )
++    if ($unverifiedInPlace) { Restore-UnverifiedSwap } else { Restore-MissingCurrent }
++    Set-SwapPhase "$mode`:failed"
+     exit 1
+ }
+ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+diff --git a/docs/01-总体设计/分布式部署架构方案.md b/docs/01-总体设计/分布式部署架构方案.md
+index d97e348..71f0bd5 100644
+--- a/docs/01-总体设计/分布式部署架构方案.md
++++ b/docs/01-总体设计/分布式部署架构方案.md
+@@ -12,13 +12,14 @@
+ > - 2026-07-25 v5 修订（四审 4×P0 + 3×P1）：①latest 用 {"v","t","q","e"} JSON 不破坏现有 Hash 契约；②epoch 裁决改为严格时间窗（不贯通 Stream/Writer/TDengine），补握手超时/强制切换/重新上线围栏；③dedupe 改为每节点 local_seq + 中心 high_watermark + gap/sliding window，不再一条一 key，阶段0 补容量公式+内存预算；④point_storage_mapping 冻结完整物理坐标(device_type_code+stable_name+child_table)、不可改约束、唯一约束、同事务插入、全量回填+校验、DDL 补长度；⑤错误码表细化 rejected；⑥租约改 lease_owner 回收+vacuum；⑦token 绑定改为 mTLS/签名+重放校验。
+ > - 2026-07-26 v6 修订（五审 3×新P0 + 3×P1补强）：①修复 high_watermark+gap Lua 算法（乱序重传去重/空洞连续消费），补状态机测试用例；②增加 incarnation+序列重置与跳过协议，处理 outbox 重建/FIFO丢弃永久空洞；③明确 StreamEnvelope v1/v2 两版本契约表；④冻结时钟偏差阈值+迁移时序+门禁规则；⑤Uploader 单例围栏（OS mutex/SQLite leader lock）；⑥回填差异非零阻断门禁。
+ > - 2026-07-26 v7 修订（六审 4×P0 + 3×P1）：①修正测试预期 off-by-one；②UploadItem 增加 incarnation；③incarnation 改为中心分配+DPAPI 持久化；④skip/rebase 改为中心主动 Lua。
+-> - 2026-07-26 v8 修订（简化协议）：**删除容灾复杂机制，聚焦分布式主链路**。①去重身份改为 `(node_uuid, upload_session_id, local_seq)`，upload_session_id 由边缘生成随机 UUID；②删除 incarnation 中心分配、DPAPI 持久化、dedupe_generation、rebase、skip 协议、gap ZSET；③上传规则改为严格按序+单批次在途，`seq > hw+1` 拒绝；④容灾策略：放弃旧数据+新 session_id+重新开始；⑤ACK 语义明确为"中心已接收"（Redis XADD 成功），不等 TDengine 落盘。
++> - 2026-07-26 v8 修订（简化协议）：**删除容灾复杂机制，聚焦分布式主链路**。①去重身份改为 `(node_uuid, upload_session_id, local_seq)`，upload_session_id 由边缘生成随机 UUID；②删除 incarnation 中心分配、DPAPI 持久化、dedupe_generation、rebase、skip 协议、gap ZSET；③上传规则改为严格按序+单批次在途，`seq > hw+1` 拒绝；④容灾策略：放弃旧数据+新 session_id+重新开始；⑤ACK 语义明确为"中心已接收"（Redis XADD 成功），不等 TDengine 落盘。**（⚠️ 该条对 ACK 的定义已被现行实现取代：现行 ACK 还需 `WAITAOF 1 0 2000` + `numlocal >= 1` 门禁，见下方 v15 修订；原文保留备查）**
+ > - 2026-07-31 v9 修订（部署与采集策略冻结）：①统一代码仓库生成中心式、分布式边缘、分布式中心三个固定角色安装包，删除运行时角色切换和分布式管理页面开关；②冻结边缘 SQLite-first + HTTP Ingest 上传；③Uploader 改为最快采集周期驱动的自适应实时节拍，离线积压使用连续追赶；④保留现有采集调度语义，增加全局可配置读取超时。
+ > - 2026-07-31 v10 修订（复审闭环）：①最小支持采集周期和上传节拍下限冻结为 100ms，增加 1000 QPS 稳态/2000 QPS 短时容量门禁；②read_timeout_ms 允许大于 scan_rate，默认 200ms，超过最快周期 2 倍时警告确认并展示预计跳过周期；③边缘 App 本机页面统一调用仅监听 localhost 的 Edge Agent API，断网时保持本机运维可用。
+ > - 2026-08-01 v11 修订（需求澄清）：撤销 v10 中未经确认的“100ms 平台下限”和“read_timeout_ms 默认 200ms”。点位 scan_rate 保持可配置，Uploader 取本节点最小有效周期；read_timeout_ms 改为可选，中心式按本机配置、分布式按边缘节点配置，未配置沿用协议驱动默认；容量门禁按实际节点周期求和计算。
+ > - 2026-08-02 v12 修订（实施与容量基线）：nonce 防重放并入上传主 Lua；Stream 改为批量事件发布和按每 Stream 累计条目周期近似裁剪；Ingest worker、控制缓存与 MySQL 连接池给出生产默认；Uploader 增加确定性启动相位；Writer 固化 4 分片独立连接和永久 mapping 快路径；记录 1000 QPS 稳态实测及 2000 QPS 独立压测机复核门禁。
+ > - 2026-08-05 v13 修订（边缘初始化、统一认证与监控兜底）：中心地址自动派生三项中心数据库主机并保留连接测试；边缘 App 不再维护本地账号，Edge Agent 统一校验中心 MySQL 用户与角色；新增本节点点位、实时和历史监控，中心优先，网络/5xx 时回退本机 SQLite。
+ > - 2026-08-10 v14 修订（边缘单写者与可观测性）：新增独立 Edge Storage 进程，Collector、Uploader、Agent 通过 `127.0.0.1:7073` 本机 IPC 访问 SQLite；所有写操作经有界队列和专用线程串行化，补齐 Storage 模块监控、三模块心跳、安装包组件及统一入口故障边界。
++> - 2026 修订 v15（**ACK durability 对齐现行实现**，D39 系统性清扫）：集中更正全文中「ACK = Redis XADD 成功即已确认」「不等持久化确认」这一类过时表述。现行实现：中心 Ingest 在**同一非事务 pipeline 连接**上先执行 Lua，再执行 `WAITAOF 1 0 2000`，**`numlocal >= 1` 才返回成功 ACK**，否则 `commit_unknown` 且**不降级为内存确认**（`ingest/app/redis_store.py:365-368`、`ingest/app/service.py:52-54`）。被替换的原文**逐字保留**在各处「已过时，保留备查」块中，一条未删（**例外与更正**：§0 冻结项第 10 行原系**就地改写**、当时未留逐字副本，该副本已由 D39 验收后的更正轮补留于该冻结表下方；详见 `docs/整改记录/D39.md` 的「更正记录（D39 后续 agent）」）。中心式直写路径**不**发起 `WAITAOF`（`collector/main.py:181-192`）。
+ 
+ ---
+ 
+@@ -37,7 +38,7 @@
+ | 7 | **latest 写入规则** | 一 var_id 一 JSON，Lua 用 cjson.decode 比较 t/e，incoming.ts>现值 或 (等值且高 epoch) 才更新 |
+ | 8 | **幂等去重：严格按序+单批次在途** | 去重身份 `(node_uuid, upload_session_id, local_seq)`；upload_session_id 由边缘生成随机 UUID；中心只记录 high_watermark；严格按序上传（seq==hw+1 接收，seq>hw+1 拒绝）；单批次在途（无并发，无 gap） |
+ | 9 | **迁移裁决：严格时间窗 + 时钟偏差冻结** | 旧 epoch 只接受 ts<cutover_at，新 epoch 只接受 ts>=cutover_at；不贯通 Stream/Writer/TDengine；**冻结 max_clock_skew 阈值（默认±30s）+ 迁移时序（B 提前启动、A 延后停止）+ 超偏差门禁规则** |
+-| 10 | **ACK durability 语义** | **"中心已接收"**：Redis XADD 成功即 ACK，不等 Writer/TDengine 落盘；Redis AOF everysec 可能丢失 ~1s 数据（可接受）；outbox 最大离线期参数；含容量公式+内存预算 |
++| 10 | **ACK durability 语义** | **"中心已接收"**：中心 Ingest 在**同一非事务 pipeline 连接**上先执行 Lua 再 `WAITAOF 1 0 2000`，**本地 AOF 确认 `numlocal >= 1` 才返回成功 ACK**（`ingest/app/redis_store.py:356-368`）；确认不足或不支持 `WAITAOF` 时返回 `commit_unknown`，边缘保留副本重试，**不降级为内存确认**。仍不等 Writer/TDengine 落盘（Redis 持久接收 ≠ TDengine 最终入库）。`appendfsync everysec` 只是 Redis 侧配置，成功 ACK 还额外等待实际 AOF fsync；outbox 最大离线期参数；含容量公式+内存预算 |
+ | 11 | **节点认证强度** | mTLS 或对 method/path/timestamp/nonce/body_hash 签名 + 重放校验 |
+ | 12 | **Uploader 单例围栏** | 每节点只能运行一个 Uploader，**Windows 用 OS mutex**（推荐），跨平台用文件锁 |
+ | 13 | **容灾策略：放弃+重新开始** | Redis 全丢/队列损坏/积压超限 → 放弃旧数据，生成新 upload_session_id，从最新采集重新开始；**不尝试补传历史**，不停止系统 |
+@@ -46,6 +47,16 @@
+ | 16 | **自适应上传节拍** | 点位 `scan_rate` 保持可配置；本节点 `min(scan_rate)` 决定实时节拍；混合频率共用一条严格有序链路；离线积压连续追赶 |
+ | 17 | **边缘初始化、账号与监控数据源** | 中心地址派生三项中心数据库主机并逐项测试；用户与角色只维护中心 MySQL；边缘只监控本节点设备，在线查中心，网络/5xx 时回退本机 SQLite，401/403 不回退 |
+ 
++> **已过时，保留备查，不得再作为当前实现引用**（§0 冻结项第 10 行**改动前**的原文，原 `:40`；该处系**就地改写**，故逐字副本由 D39 验收后的更正轮补留于此）
++>
++> - 「**"中心已接收"**：Redis XADD 成功即 ACK，不等 Writer/TDengine 落盘；Redis AOF everysec 可能丢失 ~1s 数据（可接受）；outbox 最大离线期参数；含容量公式+内存预算」
++>
++> **过时判定（代码为证）**：现行 ACK 判据不止 `XADD` 成功 —— `ingest/app/redis_store.py` 的 `process_batch()`
++> 在同一非事务 pipeline 连接上先 `eval` 再 `WAITAOF 1 0 2000`，并校验 `numlocal >= 1`，否则抛 `CommitUnknownError`
++> （对外状态 `commit_unknown`，`ingest/app/service.py:52-54`）。故原文中「Redis XADD 成功即 ACK」与
++> 「AOF everysec 可能丢失 ~1s 数据（可接受）」两条不再成立；「不等 Writer/TDengine 落盘」仍成立，
++> 已保留在上方第 10 行现行条目中。同类清理见 v15 修订说明与 §8.5。
++
+ 当前“中心 Ingest + 边缘 Storage/SQLite + Uploader”主链路已经落地。**中心 MySQL 做配置真源、边缘 SQLite 只存本机快照与离线数据、全局业务数据由中心提供**仍是现行边界。
+ 
+ **v8 简化协议（删除容灾复杂机制，聚焦分布式主链路）**：
+@@ -426,7 +437,7 @@ POST /ingest
+ | 200 | `seq_reject` | -> **放弃整个 session** | 否 | seq > hw+1（乱序），边缘生成新 session_id 重新开始 |
+ | 200 | `rejected_consumed` | -> **dead**（terminal） | **是（hw=seq）** | 身份/序号合法，但业务校验失败（stale_epoch/out_of_time_window/unknown_device/malformed_envelope），**推进 hw 避免空洞** |
+ | 200 | `stale_config_warning` | -> sent | **是（hw=seq）** | config_version 旧但可解码，**允许入 Stream**，Writer 用永久 point_storage_mapping 解码，边缘记录告警但继续 |
+-| 200 | `commit_unknown` | -> **放弃整个 session** | **未知（可能部分执行）** | Redis 脚本执行错误（XADD 成功但后续 HSET/SET 失败），边缘放弃 session 避免状态不一致 |
++| 200 | `commit_unknown` | -> **放弃整个 session** | **未知（可能部分执行）** | **两个成因**：①Redis 脚本执行错误（XADD 成功但后续 HSET/SET 失败）；②**AOF 持久确认未通过** —— 同连接 `WAITAOF 1 0 2000` 未在超时内达到 `numlocal >= 1`（`ingest/app/redis_store.py:365-368`）。两者都归为 `commit_unknown`，边缘放弃 session 避免状态不一致 |
+ | 200 | `session_obsolete` | 旧 session 响应→忽略；本地当前 session→暂停上传并对账 | 否 | active_session 已切换；不推进 hw，不写 Stream/latest |
+ | 400 | `bad_request` | -> **放弃整个 session** | 否 | 请求级错误（连 upload_session_id/local_seq 都无法解析） |
+ | 401 / 403 | `unauthorized` | 暂停节点 + 触发重新认证（不变状态） | 否 | 认证失败 |
+@@ -437,7 +448,7 @@ POST /ingest
+ **关键变化**：
+ - **stale_config 不再拒绝消费**：新增 `stale_config_warning` 状态，config_version 旧但可解码时**允许入 Stream**，Writer 用永久 `point_storage_mapping` 解码（§10 设计目标），边缘记录告警但标记 sent 继续上传
+ - **区分"旧版本"vs"非法 schema"**：`stale_config_warning` 支持断网期间旧版本采集的数据补传；`rejected_consumed` 只用于真正非法的 schema（unknown_device/malformed_envelope）
+-- 新增 `commit_unknown` 状态：Redis 脚本执行错误（XADD 成功但后续操作失败），**边缘放弃整个 session**，避免重传造成重复或状态不一致
++- 新增 `commit_unknown` 状态：Redis 脚本执行错误（XADD 成功但后续操作失败），或 AOF 持久确认未通过（`WAITAOF numlocal < 1`，见 §8.1 错误码表），**边缘放弃整个 session**，避免重传造成重复或状态不一致
+ - **5xx/网络失败 hw 状态未知**：可能发生在 Lua 执行中或响应失败，边缘用原 session 和原三元组重试，由 `duplicate` 实现收敛（不能假设"确定未执行"）
+ - **429 vs 5xx/网络失败区别**：429 是执行 Lua 前的限流（确定未执行）；5xx/网络失败可能部分执行，hw 状态未知
+ - 删除 `batch_stopped` 状态（Redis 脚本错误统一用 `commit_unknown` + 放弃 session，不再尝试批次内停止处理）
+@@ -498,6 +509,7 @@ for item in sorted(items, key=lambda x: x.local_seq):
+         )
+     except RedisScriptError as e:
+         # Redis 脚本执行错误（XADD 成功但后续操作失败，或其他执行错误）
++        # 亦包含 AOF 持久确认未通过：同连接 WAITAOF 未达 numlocal >= 1（ingest/app/redis_store.py:365-368）
+         # 状态未知（可能部分执行），放弃整个 session
+         item.status = "commit_unknown"
+         abandon_session_and_stop_batch()
+@@ -530,6 +542,7 @@ return results
+ - 动态键：每个 UploadItem 对应的 Stream key 和 latest key；第一阶段使用单实例 Redis，不承诺 Redis Cluster 跨槽执行。
+ - 参数：session_id、stream_maxlen、批量 items JSON、`trim_every_items=5000`、nonce TTL。
+ - `values` / `qualities` 在应用层预编码成 Writer 需要的 JSON 字符串，Lua 不再重复编码。
++- **提交边界（现行，易被本文 Lua 片段漏读 —— 补注）**：Lua 只负责 seq 裁决与 Redis 写入；**成功 ACK 还要求同一连接的客户端在 `EVAL` 之后立即执行 `WAITAOF 1 0 2000`，并确认 `numlocal >= 1`**（`ingest/app/redis_store.py:356-368`）。因此**Lua 返回 `ack` 本身不等于已持久确认**；确认不足即整批 `commit_unknown`。
+ 
+ ```lua
+ -- 1. 有效 UploadBatch 的 nonce 与业务提交在同一个 Lua 中占位。
+@@ -601,6 +614,7 @@ return results
+ **Redis 错误处理语义**：
+ - **执行 Lua 前的限流**（429）：确定未执行；5xx/网络失败的执行状态未知，边缘保留原 session 和原三元组重试
+ - **Redis 脚本执行错误**（`commit_unknown`）：可能部分执行（XADD 成功但后续 HSET/SET 失败），边缘**放弃整个 session**，避免重传造成重复或状态不一致
++- **AOF 持久确认未通过**（同属 `commit_unknown`）：同连接 `WAITAOF 1 0 2000` 未达 `numlocal >= 1`（`ingest/app/redis_store.py:365-368`）—— 与上一类不同，此时**Redis 侧写入可能已成功**，只是未获持久确认；边缘同样放弃 session，**不按内存确认继续**
+ - **第一阶段允许 Redis 故障时丢数据**：不在 Lua 中设计完整的 OOM 恢复状态机，简化为"放弃 session"
+ 
+ **状态机测试用例（严格按序）**：
+@@ -623,7 +637,7 @@ return results
+ - **严格按序保证 seq 连续**：hw 单调递增，无空洞
+ - **batch_id 保留作审计追踪**，不是去重主键
+ - **rejected_consumed 推进 hw**：业务校验失败但序号合法，推进 hw 避免空洞
+-- **commit_unknown 放弃 session**：Redis 脚本执行错误（可能部分执行），边缘放弃整个 session 避免状态不一致
++- **commit_unknown 放弃 session**：Redis 脚本执行错误或 AOF 持久确认未通过（`WAITAOF numlocal < 1`）都可能部分执行，边缘放弃整个 session 避免状态不一致
+ - **Lua 只负责 seq 裁决 + Redis 操作**：业务校验（归属/epoch/config_version/schema）在 Ingest 应用层完成（查 MySQL）
+ - **Latest 旧值兼容**：`cur.e or 0` 兼容旧 collector 写入的 `{v,t,q}`（无 e 字段），视为 epoch=0
+ - **使用 redis.pcall 正确判断错误**：`type(reply) == "table" and reply.err` 判断错误，而非 `not ok`
+@@ -705,13 +719,22 @@ return results
+ | SQLite 损坏 | 本地 outbox 积压（最多 max_offline_retention_days） | 一次性 | ✓ 可接受，工业采集场景 |
+ | 积压超限 FIFO | **当前 session 全部未发送积压**（最多接近 max_offline_retention_days） | 渐进式 | ✓ 可接受，优先保证新数据 |
+ | seq_reject | **整个离线积压**（session 切换清空所有 pending/retry_wait/inflight，最多接近 max_offline_retention_days） | 一次性 | ✓ 可接受，极少发生（中心状态重置或本地序号异常） |
+-| commit_unknown | **整个离线积压**（session 切换清空所有 pending/retry_wait/inflight，最多接近 max_offline_retention_days） | 一次性 | ✓ 可接受，极少发生（Redis 脚本执行错误） |
++| commit_unknown | **整个离线积压**（session 切换清空所有 pending/retry_wait/inflight，最多接近 max_offline_retention_days） | 一次性 | ✓ 可接受，极少发生（成因：Redis 脚本执行错误，或 AOF 持久确认未通过 `WAITAOF numlocal < 1`；后者在 Redis 退化时可连续发生，非"极少"） |
+ | Redis 全丢 | 所有节点在途数据（积压 + 最近 ~1 分钟） | 一次性 | ✓ 可接受，依靠 AOF 避免 |
+ 
+ **关键承诺**：
+ - **不停止系统**：Redis 全丢/SQLite 损坏后，系统自动恢复接收新数据
+ - **不尝试补传**：丢失的历史数据不可恢复，优先保证实时采集
+-- **明确边界**：ACK 代表"中心已接收"（Redis XADD 成功），不代表 TDengine 永久落盘
++- **明确边界**：ACK 代表"中心已接收"，其判据是中心 Ingest **在同一非事务 pipeline 连接上执行 Lua 后，`WAITAOF 1 0 2000` 确认 `numlocal >= 1`**（`ingest/app/redis_store.py:365-368`）；ACK 仍**不代表** TDengine 永久落盘。
++
++> **已过时，保留备查，不得再作为当前实现引用**（原 §8.3.5 第三条原文）
++>
++> - 「**明确边界**：ACK 代表"中心已接收"（Redis XADD 成功），不代表 TDengine 永久落盘」
++>
++> **过时判定（代码为证）**：现行 ACK 判据不止 `XADD` 成功 —— `ingest/app/redis_store.py:365` 在同一连接执行
++> `WAITAOF 1 0 2000`，`:367-368` 要求 `numlocal >= 1`，否则抛 `CommitUnknownError`（对外 `commit_unknown`）。
++> 原文把 ACK 等价于「Redis XADD 成功」，遗漏了 AOF 持久确认门禁；「不代表 TDengine 永久落盘」仍成立，
++> 已保留在上文现行条目中。同类清理见 v15 修订说明与 §8.5。
+ 
+ ### 8.4 容量公式与内存预算（阶段 0 必填）
+ 
+@@ -725,12 +748,37 @@ return results
+ 
+ ### 8.5 ACK durability 语义（明确"中心已接收"）
+ 
+-- **ACK 含义**：**"中心已接收"**，即 Redis XADD 成功，数据已进入中心 Redis Stream
++- **ACK 含义**：**"中心已接收"**，指中心 Ingest 在**同一非事务 pipeline 连接**上先执行 Lua 写入中心 Redis Stream，
++  再执行 `WAITAOF 1 0 2000`；**只有本地 AOF 确认 `numlocal >= 1` 才返回成功 ACK**（`ingest/app/redis_store.py:356-368`）。
++  ACK **不代表** TDengine 最终入库。
+ - **不等 TDengine 落盘**：Writer 异步消费 Redis Stream 写 TDengine，ACK 时尚未落盘
+-- **可能丢失**：Redis AOF `everysec` 模式下，中心掉电可能丢失已 ACK 的 ~1 秒数据
+-- **可接受性**：工业采集场景，丢失 ~1 秒数据 << 等待 TDengine 落盘的延迟增加
++- **确认不足即 `commit_unknown`**：`WAITAOF` 超时、`WAITAOF` 不可用（需 Redis 7.2+）或 `numlocal < 1` 时，
++  中心 Ingest 返回 `commit_unknown`（`ingest/app/service.py:52-54`）；
++  **边缘保留本地副本重试，不降级为内存确认**，上游积压保留。
++- **AOF 节奏的代价**：仓库 Redis 配置为 `appendfsync everysec`，`WAITAOF` 会阻塞到该次实际 AOF fsync 完成，
++  因此成功 ACK 的批次不会落入"已 ACK 但未 fsync"的窗口；代价是确认延迟受 fsync 周期约束
++  （2026-09 复核报告中该等待实测 p50 ≈ 1000 ms、p99 ≈ 2000 ms，见
++  `docs/06-验证记录/2026-09/performance-verification-recheck-20260926.md`）。
+ - **依靠 AOF 避免**：Redis 配置 AOF everysec + 定期备份，避免大规模数据丢失
+-- **不承诺强 ACK**：第一阶段不实现"等待副本/持久化确认"，后续有需求再实现
++- **部署前置**：Redis **7.2+**、开启 AOF、持久化目录位于可靠持久卷、ACL 允许 `WAITAOF`。
++- **适用形态**：以上为**分布式**链路（边缘 Uploader → 中心 Ingest）。**中心式直写路径不发起 `WAITAOF`、
++  不等待 AOF fsync**（`collector/main.py:181-192`），因此中心式**不需要** `WAITAOF` ACL 授权。
++  两形态完整口径见 `docs/03-数据与契约/DW-01-确认语义与持久化边界.md` §1。
++
++> **历史口径（已过时，保留备查，不得再作为当前实现引用）**
++>
++> 本节原文中被替换的条目：
++>
++> - 「**ACK 含义**：**"中心已接收"**，即 Redis XADD 成功，数据已进入中心 Redis Stream」
++> - 「**可能丢失**：Redis AOF `everysec` 模式下，中心掉电可能丢失已 ACK 的 ~1 秒数据」
++> - 「**可接受性**：工业采集场景，丢失 ~1 秒数据 << 等待 TDengine 落盘的延迟增加」
++> - 「**不承诺强 ACK**：第一阶段不实现"等待副本/持久化确认"，后续有需求再实现」
++>
++> **过时判定（代码为证）**：现行实现**已经实现** AOF 持久确认门禁 —— `ingest/app/redis_store.py:365`
++> 在同一连接上执行 `WAITAOF 1 0 2000`，`:367-368` 要求 `numlocal >= 1`，否则抛 `CommitUnknownError`
++> （对外状态 `commit_unknown`）。故「XADD 成功即 ACK」「不实现等待持久化确认」
++> 「可能丢失已 ACK 的 ~1 秒数据」**三条均不再成立**；「不等 TDengine 落盘」与「依靠 AOF 避免」
++> 两条仍然成立，已原样保留在上文现行条目中。
+ 
+ 
+ ---
+@@ -739,6 +787,8 @@ return results
+ 
+ **实现**：Ingest 在 ACK 的同一 Lua 成功路径发布 `rt:change`；`backend/app/services/ws_push.py` 使用一个共享 Pub/Sub 任务唤醒匹配订阅，并保留每键 1 秒 latest 轮询兜底：
+ 
++> **适用性补注（易读错，勿当作全平台承诺）**：`PUBLISH` 位于**Lua 内部**（`ingest/app/redis_store.py:171`；本文件 §8.2 那段 Lua 片段的末段同位置），即**发生在客户端 `WAITAOF` 持久确认之前**。因此当该批随后因 `numlocal < 1` 变为 `commit_unknown` 时，**`rt:change` 可能已经发出**：本节的实时性是"Lua 成功"级，**不是** ACK/持久确认级。实时页面看到的值仍以 `rt:latest` 的逐点时间戳比较为准（§8.2 关键点）。
++
+ ```
+ Ingest 接收成功
+   ├─ 用 StreamEnvelope v2 写中心 Redis Stream
+@@ -975,7 +1025,7 @@ pending ──领取(占租约,新lease_owner)──> inflight ──ack/duplica
+ - 中心返回 200 + `rejected_consumed` 状态（业务校验失败但序号合法，中心已推进 hw） → 边缘标记 dead，继续发送后续序号
+ 
+ **commit_unknown 处理**：
+-- 中心 Ingest 捕获 Redis 脚本执行异常（XADD 成功但后续 HSET/SET 失败，或其他执行错误）
++- 中心 Ingest 捕获 Redis 脚本执行异常（XADD 成功但后续 HSET/SET 失败，或其他执行错误），或 **AOF 持久确认未通过**（同连接 `WAITAOF 1 0 2000` 未达 `numlocal >= 1`，`ingest/app/redis_store.py:365-368`）
+ - 状态未知（可能部分执行），返回 200 + `commit_unknown` → Uploader **放弃整个 session**，避免重传造成重复或状态不一致
+ 
+ **session_obsolete 处理**：
+@@ -1191,8 +1241,8 @@ Uploader 不使用固定周期，也不为不同采集频率创建多条并发
+ 9. **幂等去重 = upload_session_id + local_seq + high_watermark + 严格按序**，边缘生成 UUID session；单批次在途；seq>hw+1 拒绝；无 gap。
+ 10. **边缘无本机 Redis/Backend**，以 Edge Storage 作为 SQLite 唯一写者，通过有界命令队列串行处理配置、latest 和 outbox；outbox 使用状态机 + 租约崩溃恢复（新 owner 回收为主、lease 过期兜底）+ checkpoint/vacuum 释放磁盘。边缘 App 只展示本节点设备，点位/实时/历史中心优先，网络或 5xx 时回退本机 SQLite。
+ 11. **统一 max_offline_retention_days**（不含映射保留）+ outbox 清理规则；容量按磁盘字节 + 三级水位。
+-12. **ACK = 中心 Redis 接纳成功**，非落盘；明确"已接收"语义。
+-13. **PUBLISH 实时链路已实现**：Ingest 每个已接纳 HTTP 批次原子发布一次 `rt:change` 数组，Backend 同时兼容旧单对象和新数组负载，并保留每键 1 秒轮询兜底。
++12. **ACK = 中心 Redis 持久接收**（同连接 Lua + `WAITAOF 1 0 2000`，`numlocal >= 1` 才成功；`ingest/app/redis_store.py:365-368`），**非 TDengine 落盘**；明确"已接收"语义。
++13. **PUBLISH 实时链路已实现**：Ingest 每个 Lua 成功的 HTTP 批次原子发布一次 `rt:change` 数组（**在 `WAITAOF` 持久确认之前**，见 §9 补注），Backend 同时兼容旧单对象和新数组负载，并保留每键 1 秒轮询兜底。
+ 14. **首次引导先生成 node_uuid/Ed25519 密钥，再用一次性 enrollment code 注册**；后续统一使用请求签名+timestamp/nonce 重放校验，不另发长期 Bearer token；私钥 DPAPI 加密，轮换采用 5 分钟双钥窗口。
+ 15. **错误码表细化**：terminal->dead，retryable->retry_wait，401/403->重认证，429/5xx->重试，**seq_reject->放弃 session**。
+ 16. **容灾策略：放弃+重新开始**：SQLite 损坏/积压超限/seq_reject/Redis 全丢 → 生成新 upload_session_id，从最新采集开始，不补历史。
+@@ -1202,6 +1252,15 @@ Uploader 不使用固定周期，也不为不同采集频率创建多条并发
+ 20. **容量结论分级**：1000 QPS 稳态基线已通过；2000 QPS 本机共享资源测试只证明吞吐和可靠性，P99 最终结论必须由独立压测机签署。
+ 21. **边缘初始化与统一账号**：先填中心地址并派生三项中心数据库主机，三项连接测试通过后注册；Edge Agent 直接校验中心 MySQL 用户、密码和角色，不创建本地用户。
+ 
++> **已过时，保留备查，不得再作为当前实现引用**（原第 12 条原文）
++>
++> - 「12. **ACK = 中心 Redis 接纳成功**，非落盘；明确"已接收"语义。」
++>
++> **过时判定（代码为证）**：现行判据是**持久**接收而非仅"接纳" —— `ingest/app/redis_store.py:365` 在同一连接执行
++> `WAITAOF 1 0 2000`，`:367-368` 要求 `numlocal >= 1`，否则抛 `CommitUnknownError`（对外 `commit_unknown`）。
++> 原文「非落盘」若读作"不做磁盘持久化确认"即不成立（ACK 前已等 AOF fsync）；若读作"未进 TDengine"则仍成立，
++> 已在现行第 12 条中改写为"非 TDengine 落盘"以免歧义。
++
+ ---
+ 
+ ## 附录：与现状代码的契约对照
+diff --git a/docs/01-总体设计/架构决策记录.md b/docs/01-总体设计/架构决策记录.md
+index 896f1b5..ccde482 100644
+--- a/docs/01-总体设计/架构决策记录.md
++++ b/docs/01-总体设计/架构决策记录.md
+@@ -170,6 +170,18 @@
+ 
+ ---
+ 
++## ADR-0015 Edge Storage 本机 IPC 的默认拒绝与按角色最小权限令牌
++
++- **状态**：Accepted
++- **背景**：ADR-0014 引入本机 HTTP IPC 后，`POST /v1/command` 与 `GET /v1/status` 不接受任何调用方身份校验。**回环地址不是身份证明**：任何本机进程都能调用。已实测的未授权影响包括无凭据 `config.apply`（`edge_config_meta.config_revision` 由 1 改为 999）、无凭据 `frame.commit`（凭空写入 outbox 行），以及三步链 `outbox.recover` → `outbox.claim` → `outbox.complete(state=sent|dead)` 把**未确认**的上传记录直接改成终态。注意单发 `outbox.complete` 会被 `complete_batch` 的 `lease_owner` 校验挡回（HTTP 500 lost lease），故真实攻击路径是三步链。
++- **决策**：`POST /v1/command` 与 `GET /v1/status` **默认拒绝**；仅 `GET /healthz` 免凭据。引入按角色的**专用最小权限令牌**（`collector` / `uploader` / `agent`），存放于 `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json`，由 Storage 首次启动时以 `secrets` 随机生成，并尽力用系统 `icacls` 将 ACL 收紧到「属主 + SYSTEM + Administrators」。客户端用 `X-DataWatch-Storage-Token` 头出示令牌；服务端**由令牌反查角色**（`hmac.compare_digest` 常量时间比较），**不接受客户端自报角色**；每个角色只放行由真实调用点推导出的动作白名单。令牌文件路径可用 `DATAWATCH_EDGE_STORAGE_TOKEN_FILE` 覆盖，或直接用 `DATAWATCH_EDGE_STORAGE_TOKEN` 注入。Storage 绑定非回环地址必须显式 `--allow-non-loopback`（或设 `DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1`），且该守卫**先于任何文件写入**，否则进程以退出码 2 结束。
++- **放弃方案**：(1) 复用拥有广泛管理权的 Agent service token —— 清单明确禁止，且权限过大；(2) 「无法识别调用方时回退到全量 edge 角色」 —— 等于取消本次隔离，**已彻底删除**，`resolve_client_role()` 现返回 `None` 并 fail-closed；(3) 把 Storage 绑定到全部网卡以便测试；(4) 命名管道 / DPAPI / 主机防火墙 —— 跨模块或部署层改动，列入后续评估。
++- **后果**：未确认的 outbox 记录不再能被任意本机进程改写为 `sent`/`dead`，配置状态也不能被未授权改写；未授权调用统一返回 `401`，角色越权返回 `403`。代价与遗留：新增「令牌文件」这一运维实体，**轮换与吊销流程尚未实现**；`/v1/status` 现在需要令牌，既有运维示例命令已同步更新；「普通本地账户不可读令牌文件」**依赖 ACL 实际生效**，本轮未做系统级多账户验证；`edge/storage_main.py` 的 `data_root` 默认值在「裸跑入口」场景会指向真实安装目录的 `runtime/`，属部署期潜在风险，已登记待决策。
++- **验证依据**：见 `docs/整改记录/S3.md`。改前 6 类未授权动作**全部成功**（含三步链把行改成 `sent`/`dead`），改后同 6 类**全部 401 且 outbox/config 零变化**；合法 `collector`/`uploader`/`agent` 三客户端各自正常；未确认行仍保持 `inflight(lease=owner-A)`；`--host 0.0.0.0` 实测 exit=2；`edge/tests` 43 → 56 passed，`agent` 305 passed/1 skipped。旁证：真实 `edge/uploader_main.py` 子进程日志出现 `POST /v1/command "HTTP/1.1 200 OK"` 与 `Recovered 3 inflight outbox records`。
++- **相关**：[ADR-0014](#adr-0014-edge-storage-作为边缘-sqlite-唯一写者)、[边缘运行时实现说明](../02-模块设计/edge/边缘运行时实现说明.md)、[运维部署 README](../04-运维部署/README.md)、[问题排查](../04-运维部署/问题排查.md)、[三角色安装包验收清单](../04-运维部署/三角色安装包验收清单.md)。
++
++---
++
+ ## 后续维护规则
+ 
+ 新决策按 `ADR-XXXX 标题` 追加，包含：
+diff --git a/docs/02-模块设计/cli/总体设计与架构.md b/docs/02-模块设计/cli/总体设计与架构.md
+index 9102ea4..6dbb0b2 100644
+--- a/docs/02-模块设计/cli/总体设计与架构.md
++++ b/docs/02-模块设计/cli/总体设计与架构.md
+@@ -161,7 +161,7 @@ CLI 连接不含 Token 的 WebSocket URL，连接成功后依次发送：
+ 
+ ## 9. 安装与更新
+ 
+-CLI 以 Windows x64 one-folder ZIP 交付，安装目录采用 `current` / `previous` 双版本结构。安装脚本和更新脚本都在切换失败时恢复旧版。
++CLI 以 Windows x64 one-folder ZIP 交付，安装目录采用 `current` / `previous` 双版本结构。安装脚本和更新脚本都在切换失败时恢复旧版。自动更新的切换过程把已完成阶段写入 `<InstallRoot>\swap-state.txt`，失败时只撤销已完成的步骤、不无条件删除仍有效的 `current`（任何失败路径下都至少留一份可运行旧版本），崩溃后下一次运行按该状态文件重建。
+ 
+ 更新信任链：
+ 
+@@ -173,7 +173,7 @@ flowchart LR
+     SIGN --> STORE
+     CLI["已安装 CLI"] -->|"latest manifest"| STORE
+     CLI --> VERIFY["公钥签名 + SHA-256 + size"]
+-    VERIFY --> SWAP["独立进程切换 current/previous"]
++    VERIFY --> SWAP["独立进程切换 current/previous<br/>阶段状态: swap-state.txt"]
+ ```
+ 
+ 私钥不进入仓库或安装包；客户端只内置受信任公钥。详细步骤见 [CLI 安装与更新](../../04-运维部署/CLI安装与更新.md)。
+diff --git a/docs/02-模块设计/edge/边缘运行时实现说明.md b/docs/02-模块设计/edge/边缘运行时实现说明.md
+index 7f4626f..2d47089 100644
+--- a/docs/02-模块设计/edge/边缘运行时实现说明.md
++++ b/docs/02-模块设计/edge/边缘运行时实现说明.md
+@@ -30,7 +30,7 @@ Collector、Uploader 和 Agent 不再各自打开 SQLite 执行写事务。写
+ 
+ 每个采集帧只对 `local_latest_frame` 执行一次 JSON 快照 UPSERT，并在同一事务内写入 outbox，不再按点位逐行更新最新值。Collector 与 Uploader 各自复用一条串行的 HTTP/1.1 本机连接访问 Storage；请求体使用 `msgspec` 编解码，既保留 Storage 单写者约束，也避免反复建连和多线程共享连接池的竞争。
+ 
+-Storage 状态接口为 `GET http://127.0.0.1:7073/v1/status`，健康接口为 `GET /healthz`。关键指标包括：
++Storage 状态接口为 `GET http://127.0.0.1:7073/v1/status`，健康接口为 `GET /healthz`。本机回环不是调用方身份：`POST /v1/command` 与 `GET /v1/status` 默认拒绝，无令牌或令牌错误返回 `401`，角色越权返回 `403`，只有 `/healthz` 免凭据。调用方用 `X-DataWatch-Storage-Token` 头出示令牌，服务端据此反查角色（`collector` / `uploader` / `agent`）并只放行该角色的动作白名单；令牌按角色存放在 `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json`（Storage 首次启动生成，ACL 收紧到属主 + SYSTEM + Administrators，可用 `DATAWATCH_EDGE_STORAGE_TOKEN_FILE` 改路径或 `DATAWATCH_EDGE_STORAGE_TOKEN` 注入）。Storage 绑定非回环地址必须显式 `--allow-non-loopback`。关键指标包括：
+ 
+ - `writer_queue_depth / writer_queue_capacity`；
+ - `commit_p99_ms`、`errors_total`；其中提交延迟包含命令在 Storage 队列中的等待时间；
+diff --git a/docs/03-数据与契约/DW-01-确认语义与持久化边界.md b/docs/03-数据与契约/DW-01-确认语义与持久化边界.md
+index a77481b..dd964e0 100644
+--- a/docs/03-数据与契约/DW-01-确认语义与持久化边界.md
++++ b/docs/03-数据与契约/DW-01-确认语义与持久化边界.md
+@@ -1,29 +1,130 @@
+ # DW-01 确认语义与持久化边界
+ 
+-## 当前实现
++> **适用形态（D39 拆分）**：确认语义按**部署形态**分别定义，两套口径**不可互换**。
++>
++> - **中心式（现行）**：PLC/OPC → 中心 Collector → **`RedisWriter` 直写 Redis** → Writer → TDengine。
++> - **分布式（现行）**：边缘 Edge Collector → 本地 SQLite Outbox → Uploader → 中心 Ingest → Redis → Writer → TDengine。
++>
++> 本文件此前把「集中式本地 SQLite 队列 + 逐批 `WAITAOF`」写在「当前实现」之下，那是**已撤销的中心 Durable 方案**。
++> 现行中心式**不构造 SQLite Outbox、不逐批 `WAITAOF`**；`WAITAOF` 门禁只存在于**分布式中心 Ingest**。
++> 被撤销方案的历史口径**保留**在 §4 并标记 `Superseded`，仅供迁移与遗留处置参考，**不得**再当作当前实现引用。
+ 
+-- 集中式 Collector 的轮询和 HTTP 采集先写本地 SQLite 队列，使用 WAL + synchronous=FULL。保存原始点值、质量、时间戳、配置版本；成功返回表示本地事务已提交。后台独立线程批量重放，因此重启后即使没有新采样也能排空积压。
+-- 中心接收确认选择 **Redis 持久接收**，不是 TDengine 最终入库确认。Ingest 在同一非事务 pipeline 连接上执行 Lua 与 `WAITAOF 1 0 2000`；只有本地 AOF 确认成功才返回成功结果。失败或不支持 WAITAOF 时返回 commit_unknown，边缘保留副本重试。
+-- 成功 ACK 带 `durability=redis-aof`。新边缘不接受缺少该标记的成功 ACK，避免旧中心只确认内存就触发边缘清理。必须先升级中心，再升级边缘。
+-- 集中式 Redis 出口也在同一连接中对批量帧执行 Lua + WAITAOF，全部成功后才删除本地队列记录。原帧 ID 用于 Redis 重放去重，去重记录保留 7 天；超过该期限允许重复投递，历史仍使用原采样时间戳。保证为至少一次，而非严格恰好一次。
+-- Collector 持久出口与 Ingest 不按 MAXLEN 裁剪历史 Stream。Writer 只有成功入库或明确隔离到 DLQ 后才确认，正常清理由 Writer 负责。Redis noeviction 拒写后，上游积压保留。
+-- 边缘本地 SQLite 也改为 FULL。已持久确认的 sent 记录默认额外保留 24 小时；该留存是运维缓冲，不是可靠性证明或自动对账机制。
++## 1. 现行确认矩阵（中心式 / 分布式）
+ 
+-## 容量与失败边界
++| 环节 | 中心式（现行） | 分布式（现行） |
++|---|---|---|
++| 生产入口 | `collector/main.py:181-192`（`writer_factory is None` 的默认分支） | `edge/collector_main.py:20`（经 `writer_factory` 注入 `EdgeOutboxWriter`） |
++| 采样 → 本地持久 | **不经本地队列**；解析/分组后直接批量写 Redis | 边缘先写**本地 SQLite Outbox**；成功返回 = 本地事务已提交 |
++| 持久回放 | **无** Durable 回放线程（`collector/tests/test_central_runtime_redis_only.py:187`） | 边缘 Uploader 单实例、严格有序领取、逐项 ACK；重启后继续排空积压 |
++| Redis 接受 | `RedisWriter` 直写（`collector/main.py:188`）；导入面仅 `RedisWriter`（`:52`） | 中心 Ingest 在**同一非事务 pipeline 连接**上先 Lua 后 `WAITAOF 1 0 2000`（`ingest/app/redis_store.py:356-365`） |
++| AOF 持久确认 | **不发起 `WAITAOF`、不等 AOF fsync**（`collector/tests/test_central_runtime_redis_only.py:192`） | `numlocal >= 1` 才返回成功；否则 `CommitUnknownError`，**不降级为内存确认**（`ingest/app/redis_store.py:367-368`） |
++| 成功 ACK 标记 | 无边缘 ACK 链路 | 成功 ACK 带 `durability=redis-aof`（`ingest/app/schemas.py:150`）；新边缘拒绝缺该标记的成功 ACK（`edge/app/uploader.py` 的 `_upload_records()` 中 `if result.get("durability") != "redis-aof":` 这一判断；该文件正被并行整改、行号不稳定，故只引函数名与语句，不引行号） |
++| Stream 清理 | **仅在生效的 `redis.stream_maxlen <= 0` 时**不按 MAXLEN 裁剪（**不是无条件**，见 §3 条件限定）；Writer 成功入库或明确隔离 DLQ 后才确认 | 同左（Ingest 侧另有其自身的 `stream_maxlen` 开关，见 §3） |
++| 交付 ≠ 入库 | Redis 持久接收 ≠ TDengine 最终入库 | 同左 |
+ 
+-集中式队列默认最多 50,000 条，数据库页面最多 1 GiB，并在磁盘可用空间低于 256 MiB 时拒绝新样本。满载不会删除既有未确认记录；新样本无法持久化会明确报错，因此不承诺无限断网期间零丢失。WAL、文件系统与其他进程仍有额外磁盘开销。
++> **易被误读的陷阱（必须写清）**：`collector/main.py:20` 确有 `import sqlite3`，
++> 但它**只**服务于 `:117` 的**只读**表结构探查（`mode=ro&immutable=1`），
++> 供 `_check_legacy_sampling_outbox()`（`:97-129`，在 `:142-143` 中心分支构造时调用）在**旧中心采样队列仍有未决数据时拒绝启动**。
++> **它不代表中心使用 SQLite Outbox。**
+ 
+-本地事务提交前的进程退出、硬件损坏、磁盘丢失、不遵守 fsync 的设备、人工删除数据、切换到未同步副本，均不在此保证内。Redis 持久接收也不等价于 TDengine 已最终入库；坏数据可能进入 DLQ，需要运维处理。
++## 2. 中心式（现行）
+ 
+-## 部署要求
++- 中心式采集（PLC/OPC 轮询与 HTTP 采集）在解析/分组后**直接批量写 Redis**（latest / window / Stream）：
++  不经本地 SQLite、不做持久回放、不维护采样 receipt/session/seq、**不逐批等 `WAITAOF`**
++  （`collector/main.py:182-192`）。该形态已被钉成防复发断言：`collector/tests/test_central_redis_only_default.py:78-96`。
++- **接收确认语义**：中心式没有独立的「Ingest 接收确认」环节，写入 Redis 即完成中心侧交付。
++  本文件**不对中心式承诺 AOF 级持久确认**——中心直写不等 AOF fsync
++  （`RedisWriter.storage_path == "redis_only"`，`collector/tests/test_central_redis_only_default.py:114`）。
++- 中心式没有本地采样队列，因此 §4 中「队列 50,000 条 / 页面 1 GiB / 磁盘低 256 MiB 拒收」等中心侧边界
++  **对现行中心式不适用**（那些参数属已撤销的 `CollectorRetryOutbox`）。
++- 与 TDengine 的边界：Redis 持久接收 ≠ TDengine 最终入库；坏数据可能进入 DLQ，需运维处理。
++- 迁移遗留：若旧中心遗留 `runtime/collector-retry.db` 仍有未决行，中心**拒绝启动**而不是静默切换
++  （`collector/main.py:97-129`）。这是遗留处置路径，不是现行写入路径。
+ 
+-1. Redis **7.2 或更新版本**，开启 AOF，持久化目录放在可靠持久卷中，ACL 允许 WAITAOF。仓库配置使用 everysec，但成功确认还额外等待实际 AOF fsync。
+-2. Redis 版本不足、AOF 关闭或落盘超时会保留上游积压，不降级成不可靠成功。不要在未迁移现有 RDB 数据的情况下直接重建 Redis 容器；按 Redis 官方 AOF 迁移流程验证并备份。
+-3. 升级现有系统前的内存 ACK 和此前已删除副本不能追溯修复。新保证从双方升级并成功收到新 ACK 后开始。
+-4. Collector 队列位于 DATAWATCH_DATA_ROOT（兼容 DATAWATCH_HOME）下 runtime/collector-retry.db；默认 C:\ProgramData\DataWatch。配置数据目录应使用独立可写目录。
++## 3. 分布式（现行）
+ 
+-## 验证边界
++- 链路：边缘 Edge Collector → Edge Storage(本地 SQLite Outbox) → Uploader → 中心 Ingest → Redis → Writer → TDengine。
++- 边缘本地 SQLite Outbox 使用 WAL + `synchronous=FULL`；成功返回表示本地事务已提交。
++  已持久确认的 sent 记录默认额外保留 24 小时；该留存是运维缓冲，不是可靠性证明或自动对账机制。
++- **中心接收确认选择 Redis 持久接收，不是 TDengine 最终入库确认。** 中心 Ingest 在**同一非事务 pipeline 连接**上
++  执行 Lua 与 `WAITAOF 1 0 2000`；只有本地 AOF 确认成功（`numlocal >= 1`）才返回成功结果。
++  失败或不支持 `WAITAOF` 时返回 `commit_unknown`，边缘保留副本重试（`ingest/app/redis_store.py:356-368`）。
++- 成功 ACK 带 `durability=redis-aof`。新边缘不接受缺少该标记的成功 ACK，避免旧中心只确认内存就触发边缘清理。
++  必须先升级中心（此处的「中心」指**分布式中心 Ingest**），再升级边缘。
++- 边缘本地容量与失败边界：磁盘水位按**使用率百分比**判定（`>= 70%` warning / `>= 85%` critical / `>= 95%` overflow，
++  `overflow` 时拒绝新的持久数据）。该逻辑位于 `edge/app/outbox.py` 的 `_disk_status()` 与 `_ensure_disk_writable()`；
++  **该模块正被并行整改、行号不稳定，故本文件只引函数名、不引行号**。本地事务提交前的进程退出、硬件损坏、磁盘丢失、不遵守 fsync 的设备、
++  人工删除数据、切换到未同步副本，均不在此保证内。
++- **「不按 MAXLEN 裁剪」是带条件的，不是无条件承诺**（`stream_maxlen = 0` 才成立）：
++  - **中心式直写（`RedisWriter`）**：仅当**生效值** `redis.stream_maxlen <= 0` 时不给 `XADD` 传裁剪参数 ——
++    `collector/storage/redis_writer.py` 的 `_stream_trim_kwargs()`：`<= 0` 返回 `{}`，`> 0` 返回
++    `{"maxlen": …, "approximate": True}`，由紧邻的 `pipe.xadd(...)` 使用。
++    生效值优先级为「中心 MySQL `collector_setting.stream_maxlen` **>** `settings.toml` **>** 代码默认」
++    （`collector/core/config_db.py` 的 `load_config()` → `_load_stream_maxlen()`）。
++    代码默认值确为 `0`（`collector/core/config.py:78`；`collector/config/settings.toml.example:50` 注「0=不主动裁剪」），
++    且 `collector/core/config_validator.py` 明确 `stream_maxlen > 0` 是**有损应急上限**；
++    **但安装包为中心式铺的 `settings.toml` 模板是 `50000`**（`installer/templates/collector-settings.toml.example:39`，
++    由 `installer/DataWatchRole.iss` 的 `ProvisionRoleConfig` 对 `centralized` 角色 `CopyIfAbsent` 到
++    `…\collector\config\settings.toml`），中心后台默认值也是 `50000`
++    （`backend/app/services/collector_config.py` 的 `DEFAULT_STREAM_MAXLEN`、`backend/app/models/collector.py` 的默认列值）。
++    ⇒ **「不裁剪」只在生效值为 `0` 时成立；装好的中心机器默认是裁剪的（近似上限 50000/shard）。**
++  - **分布式 Ingest**：Lua 内确有近似裁剪分支（`stream_maxlen > 0` 时 `XTRIM … MAXLEN ~`，
++    `ingest/app/redis_store.py` 的 `INGEST_BATCH_LUA`），但现行**唯一**提交调用点 `process_batch()` 把该参数
++    **硬编码为 `"0"`**（同行注释 `never trim unconsumed data`）；`INGEST_STREAM_MAXLEN` 虽被读取
++    （`ingest/app/config.py:48`，默认 `0`）却未传入脚本（清单条目 B27 跟踪该配置未生效）。
++    故**现行 Ingest 路径实际不发生裁剪**；B27 若落地，本句须同步更新。
++  - **行号易变处一律以函数名/语句为准。**
++- **确认与清理**：Writer 只有成功入库或明确隔离到 DLQ 后才确认，
++  正常清理由 Writer 负责。Redis noeviction 拒写后，上游积压保留。
+ 
+-单元回归覆盖 AOF 超时保留、重启原样重放、并发重放互斥、满载不逐出、实时历史分离和新旧 ACK 兼容。真实 Redis / TDengine 故障注入与磁盘断电测试须在隔离环境验收，不能将 mock 测试称为现场零丢失验收。
++## 4. 已撤销方案：中心 Durable（SQLite Outbox + 逐批 WAITAOF）—— Superseded
+ 
+-未采用之前的“最大已写入时间戳水位”提案：存在乱序、部分失败和多点位批次时，最大时间戳无法证明此前所有数据完整入库。
++> **状态：`Superseded`（已撤销）**，不再是任何生产路径。
++>
++> **撤销依据**：中心默认分支已改为 `RedisWriter` 直写（`collector/main.py:52`、`:181-192`）；
++> `collector/tests/test_central_runtime_redis_only.py:81-85` 把 `DurableRedisWriter.__init__` 与
++> `CollectorRetryOutbox.__init__` 替换成「调用即抛 `AssertionError`」后，真实 `CollectorApp`（**不传** `writer_factory`）
++> 仍能跑完一轮采集 → 解析 → 分组 → Redis 写入 → 关闭（同文件 `:100` 构造 `CollectorApp` 且不传 `writer_factory`）。
++> 相关组件保留在仓库内**仅供历史诊断与遗留处置**：`collector/storage/durable_redis_writer.py:190`
++> （`class DurableRedisWriter(RedisWriter)`）、同文件 `:467`（`pipe.execute_command("WAITAOF", 1, 0, 2000)`）。
++> 撤销记录见 `docs/06-验证记录/2026-09/central-runtime-fix-20260927.md:21`。
++
++以下为**被撤销方案当时的口径原文**（保留原文，勿再当作当前实现）：
++
++1. 原文：「集中式 Collector 的轮询和 HTTP 采集先写本地 SQLite 队列，使用 WAL + synchronous=FULL。保存原始点值、质量、时间戳、配置版本；成功返回表示本地事务已提交。后台独立线程批量重放，因此重启后即使没有新采样也能排空积压。」
++   - **现行差异**：中心式**不构造**任何采样 SQLite 队列，也**无**后台重放线程。
++2. 原文：「集中式 Redis 出口也在同一连接中对批量帧执行 Lua + WAITAOF，全部成功后才删除本地队列记录。原帧 ID 用于 Redis 重放去重，去重记录保留 7 天；超过该期限允许重复投递，历史仍使用原采样时间戳。保证为至少一次，而非严格恰好一次。」
++   - **现行差异**：中心式不发起 `WAITAOF`、没有「删除本地队列记录」这一步；该段描述的是 `DurableRedisWriter`（`:467`）。
++3. 原文：「集中式队列默认最多 50,000 条，数据库页面最多 1 GiB，并在磁盘可用空间低于 256 MiB 时拒绝新样本。满载不会删除既有未确认记录；新样本无法持久化会明确报错，因此不承诺无限断网期间零丢失。WAL、文件系统与其他进程仍有额外磁盘开销。」
++   - **现行差异**：这些参数属 `CollectorRetryOutbox`（`collector/storage/collector_outbox.py:112`、`:186`、`:334`），中心式已不构造该类。
++4. 原文：「Collector 队列位于 DATAWATCH_DATA_ROOT（兼容 DATAWATCH_HOME）下 runtime/collector-retry.db；默认 C:\ProgramData\DataWatch。」
++   - **现行差异**：中心式**不再创建**该库；该路径现仅出现在遗留启动检查与遗留诊断语境（`collector/main.py:97-101`）。
++
++## 5. 部署要求
++
++1. **分布式**：Redis **7.2 或更新版本**（`WAITAOF` 自 Redis 7.2 引入），开启 AOF，持久化目录放在可靠持久卷中，
++   ACL 允许 `WAITAOF`。仓库配置使用 `everysec`，但成功确认还额外等待实际 AOF fsync。
++2. **中心式**：**不需要** `WAITAOF` ACL 授权——中心直写不等待 AOF fsync。Redis 侧仍应按运维要求开启持久化，
++   但其丢失窗口**不由本文件承诺**为 AOF 级确认。
++3. Redis 版本不足、AOF 关闭或落盘超时会保留上游积压，不降级成不可靠成功。
++   不要在未迁移现有 RDB 数据的情况下直接重建 Redis 容器；按 Redis 官方 AOF 迁移流程验证并备份。
++4. 升级现有系统前的内存 ACK 和此前已删除副本不能追溯修复。新保证从双方升级并成功收到新 ACK 后开始。
++5. **分布式**：配置数据目录应使用独立可写目录。（原第 4 条「Collector 队列位于……runtime/collector-retry.db」
++   的中心式路径要求已随该方案撤销，见 §4。）
++
++## 6. 验证边界
++
++- **中心式（现行）**：`collector/tests/test_central_redis_only_default.py`（导入面、默认分支、无采样 Outbox、
++  `writer_factory` 边界、`storage_path` 语义）与 `collector/tests/test_central_runtime_redis_only.py`
++  （真实 `CollectorApp` 运行、`_durable_threads() == []`、`WAITAOF` 调用计数前后不变）。
++  二者在未配置隔离 Redis 时**跳过**，不触碰现场栈。
++- **分布式（现行）**：Ingest 的 AOF 门禁（`ingest/tests/test_redis_store.py:33` 断言 `("WAITAOF", 1, 0, 2000)`）、
++  边缘有序 ACK（`edge/tests/test_uploader.py:62`）与「仅内存 ACK 时保留本地积压」
++  （同文件 `:304` `test_memory_only_ack_retains_local_backlog`）。
++- **已撤销方案的回归项**（「AOF 超时保留 / 重启原样重放 / 并发重放互斥 / 满载不逐出」）属
++  `collector/tests/test_collector_outbox.py` 等中心 Outbox 测试，**对现行中心入口不再适用**，仅对遗留诊断有意义。
++- 真实 Redis / TDengine 故障注入与磁盘断电测试须在隔离环境验收，不能将 mock 测试称为现场零丢失验收。
++
++## 7. 未采用
++
++未采用之前的"最大已写入时间戳水位"提案：存在乱序、部分失败和多点位批次时，最大时间戳无法证明此前所有数据完整入库。
+diff --git a/docs/04-运维部署/CLI安装与更新.md b/docs/04-运维部署/CLI安装与更新.md
+index c1e6471..7cf173a 100644
+--- a/docs/04-运维部署/CLI安装与更新.md
++++ b/docs/04-运维部署/CLI安装与更新.md
+@@ -25,7 +25,7 @@ data-watch auth capabilities
+ 
+ 安装脚本会复制程序、验证版本、设置 Backend URL、把 `current` 加入当前用户 PATH，并执行健康检查。PATH 变更在新开的 PowerShell 窗口生效。生产推荐填写 frontend/nginx 的统一入口；`8000` Backend 直连只用于开发或受控排障。
+ 
+-安装目录采用 `current` / `previous` 双版本结构。新版目录切换失败时安装脚本立即恢复旧 `current`。配置和凭据位于安装目录之外，因此重装程序不会覆盖它们。
++安装目录采用 `current` / `previous` 双版本结构。新版目录切换失败时安装脚本立即恢复旧 `current`。自动更新（`update apply` / `update rollback`）的切换把已完成的每一步写入 `<InstallRoot>\swap-state.txt`（阶段值形如 `update:backed-up` / `update:swapped` / `update:verified`）：失败时**只撤销已完成的步骤**，**不再无条件删除仍有效的 `current`**，因此任何失败路径下都至少留有一份可运行的旧版本；若切换进程中途崩溃，下一次运行会先按该状态文件把完整旧版本搬回 `current` 再继续。配置和凭据位于安装目录之外，因此重装程序不会覆盖它们。
+ 
+ 卸载：
+ 
+@@ -48,7 +48,7 @@ data-watch update rollback --yes
+ 
+ `update check/download/apply` 不依赖登录态，安全性由内置受信任公钥和签名校验保证；网络仍应限制在内网发布服务。只有签名、文件大小和 SHA-256 全部通过才进入切换阶段。
+ 
+-`apply` 启动独立更新进程，等待当前 CLI 退出后切换 `current` 与 `previous`。新版本自检失败时自动恢复旧版本。源码运行方式可检查和下载版本，但只有 Windows 安装脚本部署的 `current/data-watch.exe` 支持自动应用与回滚。
++`apply` 启动独立更新进程，等待当前 CLI 退出后切换 `current` 与 `previous`。新版本自检失败时自动恢复旧版本。因为 updater 必须等当前 CLI 退出后才真正交换目录，`update apply` 只报「已提交待验证」：返回 `updateStarted=true`，同时返回 `updateVerified=false`、`verificationRequired=true`、`reason=restart_required` 与 `statePath=<InstallRoot>\swap-state.txt`；升级是否真正成功要在重启后由该文件的 `…:verified` 阶段值（或 `UpdateManager.swap_state()`）独立确认。源码运行方式可检查和下载版本，但只有 Windows 安装脚本部署的 `current/data-watch.exe` 支持自动应用与回滚。
+ 
+ ### 3.1 离线更新
+ 
+diff --git a/docs/04-运维部署/README.md b/docs/04-运维部署/README.md
+index 5b0ab89..25571ee 100644
+--- a/docs/04-运维部署/README.md
++++ b/docs/04-运维部署/README.md
+@@ -579,11 +579,15 @@ Collector 和 Uploader 不直接执行 SQLite 写事务。Collector 将采集帧
+ 本机检查：
+ 
+ ```powershell
+-Invoke-RestMethod http://127.0.0.1:7073/healthz
+-Invoke-RestMethod http://127.0.0.1:7073/v1/status
++Invoke-RestMethod http://127.0.0.1:7073/healthz   # 免凭据，仅作存活探针
++# /v1/status 需带 IPC 令牌（无/错令牌 401，角色越权 403）；/v1/status 属 agent 与 uploader 角色
++$token = (Get-Content 'C:\ProgramData\DataWatch Edge\edge\storage-ipc-tokens.json' | ConvertFrom-Json).tokens.agent
++Invoke-RestMethod http://127.0.0.1:7073/v1/status -Headers @{ 'X-DataWatch-Storage-Token' = $token }
+ Get-NetTCPConnection -LocalPort 7071,7073 -State Listen
+ ```
+ 
++Edge Storage IPC 的信任边界：`POST /v1/command` 与 `GET /v1/status` **默认拒绝**任何调用方 —— 无令牌或令牌错误返回 `401`，带有效令牌但动作超出该角色白名单返回 `403`；只有 `GET /healthz` 免凭据。令牌按角色（`collector` / `uploader` / `agent`）存放在 `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json`，由 Storage 首次启动时以随机值生成，并尽力用 ACL 收紧到「属主 + SYSTEM + Administrators」；可用 `DATAWATCH_EDGE_STORAGE_TOKEN_FILE` 改路径，或用 `DATAWATCH_EDGE_STORAGE_TOKEN` 直接注入令牌。Collector、Uploader、Agent 的边进程各自从同一文件读取自己角色的令牌，不需要人工配置。Storage 若绑定到非回环地址，必须显式传 `--allow-non-loopback`（或设 `DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1`），否则启动即被拒绝并返回退出码 2。判定只承认**可证明为回环**的地址：`127.0.0.0/8` 全段、`::1` 及其等价写法，以及 `localhost`（含 DNS 根形式 `localhost.` 与任意大小写，且必须在本机 `AF_INET` 下解析为回环地址才算通过）；**空串、纯空白、`0.0.0.0`、`::`、非回环地址与不可解析的 host 一律按非回环处理并拒绝**（`socket.bind(("", port))` 的语义是 `INADDR_ANY`，即监听全部网卡），因此 `--host ""` 或 `DATAWATCH_EDGE_STORAGE_HOST=`（空值）同样会被 exit 2 拒绝，需要显式授权才放行。反向也成立：**看着像回环、但本机解析不了的写法不会被放行** —— `127.1`、`127.0.0.1.`（IP 字面量带尾点）、`[::1]` 都按非回环拒绝并 exit 2，因为放行只会把清晰的拒绝换成绑定期崩溃。绑定失败一律**快速失败**（退出码 2，不残留进程、不创建数据库文件）并按原因分类：**地址族不支持**（如 `--host ::1` —— 该 IPC 端点仅 IPv4，`ThreadingHTTPServer` 固定 `AF_INET`，日志为 `... this IPC endpoint is IPv4-only ... IPv6 (e.g. ::1) is not supported ...`）、**地址不属于本机**（如 `--host 192.168.1.99`，日志为 `... that address does not belong to this host`）、**端口已被占用或无绑定权限**（日志为 `... the port is already in use ...`）。
++
+ ---
+ 
+ ## 8. 发版打包
+diff --git a/docs/04-运维部署/三角色安装包验收清单.md b/docs/04-运维部署/三角色安装包验收清单.md
+index f84da1e..397c9cb 100644
+--- a/docs/04-运维部署/三角色安装包验收清单.md
++++ b/docs/04-运维部署/三角色安装包验收清单.md
+@@ -83,7 +83,8 @@ Get-ChildItem 'C:\Program Files\DataWatch Centralized' -Force
+ - [ ] Windows 服务为 `DataWatchEdgeAgent`，仅监听 `127.0.0.1:7071`。
+ - [ ] 包含 Edge App、Edge Agent、Storage、Edge Collector、Uploader、SQLite outbox、OPC DA proxy。
+ - [ ] 不包含 Writer、Ingest、Backend、Redis、MySQL、TDengine、Compose 或 Docker tar。
+-- [ ] Storage 仅监听 `127.0.0.1:7073`，`/healthz` 和 `/v1/status` 可用。
++- [ ] Storage 仅监听 `127.0.0.1:7073`；`/healthz` 免凭据可用，`/v1/status` 带 IPC 令牌可用（无/错令牌必须返回 401，角色越权必须返回 403）。
++- [ ] `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json` 存在，且 ACL 仅限属主/SYSTEM/Administrators；`collector`/`uploader`/`agent` 三份令牌互不相同，且均不等于 Agent service token。
+ - [ ] 中心断网时 Edge App 仍能查看本机设备、采集状态、Storage 状态、SQLite 积压和日志。
+ 
+ ```powershell
+@@ -92,7 +93,8 @@ Get-NetTCPConnection -LocalPort 7071 -State Listen
+ Get-NetTCPConnection -LocalPort 7073 -State Listen
+ Invoke-RestMethod http://127.0.0.1:7071/bootstrap/status
+ Invoke-RestMethod http://127.0.0.1:7073/healthz
+-Invoke-RestMethod http://127.0.0.1:7073/v1/status
++$token = (Get-Content 'C:\ProgramData\DataWatch Edge\edge\storage-ipc-tokens.json' | ConvertFrom-Json).tokens.agent
++Invoke-RestMethod http://127.0.0.1:7073/v1/status -Headers @{ 'X-DataWatch-Storage-Token' = $token }
+ Get-ChildItem 'C:\Program Files\DataWatch Edge' -Force
+ Get-ChildItem 'C:\ProgramData\DataWatch Edge' -Force
+ ```
+diff --git a/docs/04-运维部署/问题排查.md b/docs/04-运维部署/问题排查.md
+index 07c4e6b..3803794 100644
+--- a/docs/04-运维部署/问题排查.md
++++ b/docs/04-运维部署/问题排查.md
+@@ -352,10 +352,14 @@ docker compose -f .\docker-compose.yml up -d frontend
+ ```powershell
+ Get-NetTCPConnection -LocalPort 7073 -State Listen
+ Invoke-RestMethod http://127.0.0.1:7073/healthz
+-Invoke-RestMethod http://127.0.0.1:7073/v1/status
++# /v1/status 需带 IPC 令牌（无/错令牌 401，角色越权 403）
++$token = (Get-Content 'C:\ProgramData\DataWatch Edge\edge\storage-ipc-tokens.json' | ConvertFrom-Json).tokens.agent
++Invoke-RestMethod http://127.0.0.1:7073/v1/status -Headers @{ 'X-DataWatch-Storage-Token' = $token }
+ Get-Service DataWatchEdgeAgent
+ ```
+ 
++`/healthz` 返回 200 但 `/v1/status` 返回 `401` 时，Storage 本身是活的，问题在 IPC 凭据：确认 `<DATAWATCH_DATA_ROOT>\edge\storage-ipc-tokens.json` 存在且当前账户可读（可用 `DATAWATCH_EDGE_STORAGE_TOKEN` 直接注入排查）。返回 `403` 表示令牌有效但角色白名单不含该动作 —— `/v1/status` 只允许 `agent` 与 `uploader` 角色，`collector` 令牌会被拒绝。若 Storage 日志出现 `Refusing to bind Edge Storage IPC to non-loopback address`，说明启动时 `--host` 指向了非回环地址且未加 `--allow-non-loopback`，进程会以退出码 2 结束。
++
+ Storage 是边缘 SQLite 唯一写者。先确认 `data-watch-storage.exe` 进程和 Storage 日志，再由 Edge App/Agent 重启 Storage；Agent 会按依赖恢复 Collector/Uploader。不要同时手工启动第二个 Storage，也不要让模拟脚本直接写生产 `edge.db`。若 P99 或队列持续升高，再检查磁盘空间、杀毒软件实时扫描和 `C:\ProgramData\DataWatch Edge\edge\edge.db` 所在卷的 I/O 延迟。
+ 
+ ---
+diff --git a/docs/06-验证记录/2026-09/reliability-review-delivery.md b/docs/06-验证记录/2026-09/reliability-review-delivery.md
+index 617e324..416bec6 100644
+--- a/docs/06-验证记录/2026-09/reliability-review-delivery.md
++++ b/docs/06-验证记录/2026-09/reliability-review-delivery.md
+@@ -30,7 +30,7 @@
+ 
+ ## 部署与未验收边界
+ 
+-必须使用 Redis 7.2+、AOF 和允许 WAITAOF 的 ACL，先升级中心再升级边缘。详细语义见 [DW-01 确认语义与持久化边界](../../03-数据与契约/DW-01-确认语义与持久化边界.md)。确认代表 Redis 持久接收，不代表 TDengine 最终入库；未实现最终入库水位及自动对账。拒绝 AOF 确认时保留上游积压，不降级为内存确认。
++必须使用 Redis 7.2+、AOF 和允许 WAITAOF 的 ACL，先升级中心再升级边缘。详细语义见 [DW-01 确认语义与持久化边界](../../03-数据与契约/DW-01-确认语义与持久化边界.md)。确认代表 Redis 持久接收，不代表 TDengine 最终入库；未实现最终入库水位及自动对账。拒绝 AOF 确认时保留上游积压，不降级为内存确认。〔⚠️ 适用路径：本条针对**分布式**链路（边缘 Uploader → 中心 Ingest）。**中心式直写路径不需要 `WAITAOF` ACL 授权**，也不等待 AOF fsync（`collector/main.py:181-192`）；不区分形态通读会被误当成全平台要求。〕
+ 
+ 本机 Docker daemon 未运行，未进行真实 Redis/TDengine 崩溃、断电、积压及现场 PLC 重放测试。需在隔离环境验证部署配置、实际吞吐及恢复。多进程统一登录限流未实现。本次未重新打包 EXE，已有 EXE 不包含这些源码修复。
+ 
+diff --git a/docs/joint-ladder-20260927.md b/docs/joint-ladder-20260927.md
+index 10b4288..2487758 100644
+--- a/docs/joint-ladder-20260927.md
++++ b/docs/joint-ladder-20260927.md
+@@ -40,7 +40,7 @@
+    唯一线性逼近 1.0 的资源是 Redis 主线程（0.743/0.840/0.923/0.930/0.945）；
+    Writer 侧在所有档位宽裕（CPU ≤0.38 核、0 失败、缓冲峰值 ≤225 行）；TD 确认延迟是**跟随**历史路径排队。
+    历史路径成本集中在：每帧 2 次回执 HSET、**每点两遍 latest 读/解码/比较（写入只有一遍）**、
+-   每档 AOF 写入量大（40 台档 423 MB/250s）、批大小偏小（均值 13.6–15.6 帧）且每批都要 `WAITAOF`。
++   每档 AOF 写入量大（40 台档 423 MB/250s）、批大小偏小（均值 13.6–15.6 帧）且每批都要 `WAITAOF`。〔⚠️ 适用路径：本条「每批都要 `WAITAOF`」指**已撤销的中心 Durable 方案**（`DurableRedisWriter`，`collector/storage/durable_redis_writer.py:467`）。现行中心式**不逐批 `WAITAOF`**；现行仅分布式 Ingest 保留同连接 `WAITAOF 1 0 2000` 门禁（`ingest/app/redis_store.py:365`）。本阶梯结论不得当作现行中心式性能结论。〕
+ 
+ ## 3. 未测 / 边界（不得当作已完成）
+ 
+@@ -61,7 +61,7 @@
+ 2. **`commandstats` 跨档累计**（`FLUSHDB` 不重置统计）→ 改为窗口内差值，否则每档数字不可比。
+ 3. **异常打断整条阶梯**：提交失败（本地队列满）与对账异常（缺失子表）原本会让整轮/整条阶梯崩掉 →
+    现在提交失败被**记录成边界**、对账缺失子表被**记录成 problem**，阶梯继续。
+-4. **我自己引入又撤回的**：为规避 40 台档 ENOSPC，把 outbox 改到**宿主 Windows 绑定挂载**，
++4. **我自己引入又撤回的**：〔适用路径：本条的 `outbox` 属**已撤销的中心 Durable 方案**；该条已自述「撤回」，仅作历史记录。〕为规避 40 台档 ENOSPC，把 outbox 改到**宿主 Windows 绑定挂载**，
+    结果 SQLite 在 virtiofs 上把驱动拖到 46 fps（Redis 仅 0.19 忙）→ 那次长测与基线**全部作废并重跑**。
+ 5. **对账期望基线取错字段**：原用"喂入结束"的确认数（525,069），应为"排空结束"（540,000），
+    导致全部档被判 fail。**数据本身正确**（值行 = 排空后确认数、质量行 = 逐 tick 期望值），
+diff --git a/docs/joint-measurement-20260927.md b/docs/joint-measurement-20260927.md
+index 405ee4e..6383c86 100644
+--- a/docs/joint-measurement-20260927.md
++++ b/docs/joint-measurement-20260927.md
+@@ -24,7 +24,7 @@
+ | 模式 | 容器 | 作用 |
+ | --- | --- | --- |
+ | `plan` / `prep` | 宿主 / pipeline-runner | 生成计划（设备、点位、时序基线）；建 MySQL 映射与范围表、TD 库、Writer 运行目录 |
+-| `collector` | data-watch-collector-test（3.14t、GIL 关闭） | 用**生产 `DurableRedisWriter` + SQLite Outbox** 按目标速率喂入，并采样一条时间线 |
++| `collector` | data-watch-collector-test（3.14t、GIL 关闭） | 用**（当时的）`DurableRedisWriter` + SQLite Outbox** 按目标速率喂入，并采样一条时间线 〔⚠️ **适用路径：已撤销的中心 Durable 方案**。该方案现非生产实现：中心默认分支已是 `RedisWriter` 直写、不构造 SQLite Outbox、不逐批 `WAITAOF`（`collector/main.py:181-192`）。原文「**生产**」措辞不成立；本行及本报告结论**仅适用于该旧路径**。现行口径见 `docs/03-数据与契约/DW-01-确认语义与持久化边界.md` §1/§4。〕 |
+ | `reconcile` | pipeline-runner（有 pymysql/taosws） | 读 TDengine 对账 + 核对 Stream/PEL/DLQ |
+ 
+ 隔离环境：自建网络 + `redis:7.4`（`everysec`、`maxmemory 4gb`、`noeviction`）+ `mysql:8.4` + `tdengine 3.4.0.9`；
+@@ -52,9 +52,9 @@ Writer 用**生产入口** `writer/main.py`（配置发现、consumer group、TD
+ ## 4. 第 2 轮（有效轮）的完整结果
+ 
+ 采集侧（`joint-collector.json`）：提交 24,000 帧 = 200 帧/秒 × 120 s；
+-`durable_frames_accepted` 24,000；`history_frames_confirmed` 24,000（窗口内全部确认）；
++`durable_frames_accepted` 24,000；`history_frames_confirmed` 24,000（窗口内全部确认；⚠️ 这两个 `durable_*` 指标仅适用于**已撤销的中心 Durable 路径**，非现行中心式）；
+ `latest_fastlane_sent_groups` 21,017（快车道按组合并，少发约 12%）；
+-Outbox 峰值 500 帧、最老积压峰值 2,446 ms；结束时 Outbox 0、排空 2.0 s。
++Outbox 峰值 500 帧、最老积压峰值 2,446 ms；结束时 Outbox 0、排空 2.0 s。〔⚠️ 本段 `Outbox` / `durable_*` / `accepted_frames` 均为**已撤销的中心 Durable 方案**（`DurableRedisWriter` + SQLite Outbox）的指标：现行中心式由 `RedisWriter` 直写、**无本地队列**、**不逐批 `WAITAOF`**（`collector/main.py:181-192`），故本报告的吞吐/延迟结论**仅适用于该旧路径**，不得当作现行中心式结论。〕
+ 
+ Redis 侧（同一窗口，`INFO cpu` 主线程差值）：**89.15 CPU 秒 / 120.004 秒 = 0.7429**（未饱和）；
+ 进程忙碌比 0.7442（单线程执行，二者一致）。
+@@ -86,10 +86,10 @@ Writer 侧压力只能这样**粗略**看：463 次 flush、`flush_ms` 平均 70
+ | --- | --- | --- |
+ | 计划帧 `planned_frames` | `tier.devices × ticks` | 该档"打算发多少帧"（用于判断驱动是否达速） |
+ | 实际尝试帧 `attempted_frames` | 驱动侧自计 | 真正调用写入的帧（未达速时 < 计划帧） |
+-| 本地持久接收帧 `accepted_frames` | `durable_frames_accepted` | SQLite 事务提交成功、责任已落到本地队列 |
++| 本地持久接收帧 `accepted_frames` | `durable_frames_accepted` | SQLite 事务提交成功、责任已落到本地队列 〔适用路径：已撤销的中心 Durable 方案；现行中心式无本地队列〕 |
+ | Redis 交付确认帧 `redis_confirmed_frames` | `history_frames_confirmed` | 交付 Redis 且**本地清理已提交**（与删除同事务） |
+ | TD 完整确认帧 `td_confirmed_rows` | 对账阶段读 TDengine | 值表行数（一帧一行）；质量行按 **tick 逐帧**统计 |
+-| 拒收帧 `outbox_rejected_frames` | 采集侧指标 | 本地队列满等原因被拒（**不为 0 就是数据缺口**，必须报出） |
++| 拒收帧 `outbox_rejected_frames` | 采集侧指标 | 本地队列满等原因被拒（**不为 0 就是数据缺口**，必须报出）〔适用路径：已撤销的中心 Durable 方案；现行中心式无本地队列，不存在该拒收口径〕 |
+ 
+ **时间边界**：以上计数都要分两个时刻报——`_at_feed_end`（生产窗口结束那一刻）与
+ `_after_drain`（排空结束）。`after_drain` 的确认量包含排空窗口内完成的帧，**不得**计入生产窗口吞吐。
+diff --git a/edge/app/outbox.py b/edge/app/outbox.py
+index fd00b69..42fcb14 100644
+--- a/edge/app/outbox.py
++++ b/edge/app/outbox.py
+@@ -18,6 +18,18 @@ from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
+ SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploader 传入 24h 参数
+ logger = logging.getLogger("edge.outbox")
+ 
++# B6：坏数据隔离预算（``reject_count``）只由「中心给出了协议级裁决」的失败消耗。
++# 传输类失败（无 http_status、429/5xx/断网）只累积 ``attempt_count``（退避用），
++# 绝不消耗隔离预算 —— 否则长时间断网的历史网络次数会让一次序列异常把好数据判死。
++# 取值与 ``edge/app/uploader.py`` 中 ``quarantine_after_max=True`` 的两个调用点严格一致。
++PROTOCOL_REJECT_ERRORS = frozenset(
++    {
++        "http_400_contract_rejected",  # uploader.py: HTTP 400 契约拒绝
++        "seq_reject",  # uploader.py: ACK 状态 seq_reject
++        "commit_unknown",  # uploader.py: ACK 状态 commit_unknown
++    }
++)
++
+ OUTBOX_SCHEMA = """
+ CREATE TABLE IF NOT EXISTS outbox (
+     batch_id TEXT PRIMARY KEY,
+@@ -31,6 +43,7 @@ CREATE TABLE IF NOT EXISTS outbox (
+     payload BLOB NOT NULL,
+     state TEXT NOT NULL DEFAULT 'pending',
+     attempt_count INTEGER NOT NULL DEFAULT 0,
++    reject_count INTEGER NOT NULL DEFAULT 0,
+     next_retry_at INTEGER,
+     last_error TEXT,
+     http_status INTEGER,
+@@ -89,6 +102,10 @@ class OutboxRecord:
+     assignment_epoch: int
+     payload: bytes
+     attempt_count: int
++    # B6：坏数据隔离预算（只由中心给出的协议级裁决消耗，见 PROTOCOL_REJECT_ERRORS）。
++    # ``None`` 表示当前 Edge Storage **未回传**该字段（旧版存储）——调用方必须显式降级，
++    # 不得静默当成 0，否则真正非法的载荷将永远不被隔离（见 docs/整改记录/B6.md）。
++    reject_count: int | None = None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -102,6 +119,9 @@ class OutboxCompletion:
+     record: OutboxRecord
+     state: str
+     error: str | None = None
++    # B6：终结为 ``dead`` 时可带上「致命那次裁决」的协议状态码，覆盖该行上一次
++    # 传输失败留下的 http_status，避免取证指向错误的原因；为 None 时保持原值。
++    http_status: int | None = None
+ 
+ 
+ 
+@@ -131,6 +151,7 @@ class OutboxStore:
+             self._connection.execute("PRAGMA synchronous=FULL")
+             self._connection.execute("PRAGMA busy_timeout=5000")
+             self._connection.executescript(OUTBOX_SCHEMA)
++            self._migrate_outbox_columns(self._connection)
+             self._connection.executescript(CONFIG_SNAPSHOT_SCHEMA)
+             self._connection.execute(
+                 "INSERT OR IGNORE INTO metadata(key, value) VALUES('upload_session_id', ?)",
+@@ -146,6 +167,21 @@ class OutboxStore:
+                 "INSERT OR IGNORE INTO metadata(key, value) VALUES('sent_records_total', '0')"
+             )
+ 
++    @staticmethod
++    def _migrate_outbox_columns(connection: sqlite3.Connection) -> None:
++        """为已存在的 edge.db 补列。
++
++        ``CREATE TABLE IF NOT EXISTS`` 不会修改已有表，部署时升级的现场库
++        必须显式补列，否则 ``reject_count`` 写入会报 no such column。
++        """
++        columns = {
++            str(row[1]) for row in connection.execute("PRAGMA table_info(outbox)")
++        }
++        if "reject_count" not in columns:
++            connection.execute(
++                "ALTER TABLE outbox ADD COLUMN reject_count INTEGER NOT NULL DEFAULT 0"
++            )
++
+     def configure_assignment(
+         self,
+         device_code: str,
+@@ -359,8 +395,8 @@ class OutboxStore:
+             rows = connection.execute(
+                 """
+                 SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
+-                       payload, attempt_count, state, next_retry_at, lease_until,
+-                       lease_owner
++                       payload, attempt_count, reject_count, state, next_retry_at,
++                       lease_until, lease_owner
+                 FROM outbox
+                 WHERE upload_session_id = ?
+                   AND local_seq <= ?
+@@ -410,6 +446,7 @@ class OutboxStore:
+                     assignment_epoch=int(row["assignment_epoch"]),
+                     payload=bytes(row["payload"]),
+                     attempt_count=int(row["attempt_count"]),
++                    reject_count=int(row["reject_count"]),
+                 )
+                 for row in selected
+             ]
+@@ -444,6 +481,7 @@ class OutboxStore:
+                     f"""
+                     UPDATE outbox
+                     SET state=?, {timestamp_column}=?, last_error=?,
++                        http_status=COALESCE(?, http_status),
+                         lease_owner=NULL, inflight_at=NULL, lease_until=NULL
+                     WHERE batch_id=? AND upload_session_id=? AND local_seq=?
+                       AND state='inflight' AND lease_owner=?
+@@ -452,6 +490,7 @@ class OutboxStore:
+                         completion.state,
+                         now,
+                         completion.error,
++                        completion.http_status,
+                         record.batch_id,
+                         record.upload_session_id,
+                         record.local_seq,
+@@ -504,6 +543,12 @@ class OutboxStore:
+         if not records:
+             return
+         now = self._clock_ms()
++        # B6：失败分类（批次级判定，调用方每次只传一种失败原因）。
++        #   协议拒绝（200/400 且原因是中心给出的协议级裁决）→ 消耗坏数据隔离预算；
++        #   传输失败（无状态码 / 429 / 5xx / 断网）→ 只累加退避计数。
++        counts_toward_quarantine = (
++            http_status in (200, 400) and error in PROTOCOL_REJECT_ERRORS
++        )
+         with self._transaction() as connection:
+             for record, delay_ms in records:
+                 cursor = connection.execute(
+@@ -511,6 +556,7 @@ class OutboxStore:
+                     UPDATE outbox
+                     SET state='retry_wait',
+                         attempt_count=attempt_count + 1,
++                        reject_count=reject_count + ?,
+                         next_retry_at=?,
+                         last_error=?,
+                         http_status=?,
+@@ -521,6 +567,7 @@ class OutboxStore:
+                       AND state='inflight' AND lease_owner=?
+                     """,
+                     (
++                        int(counts_toward_quarantine),
+                         now + delay_ms,
+                         error[:1000],
+                         http_status,
+@@ -578,6 +625,12 @@ class OutboxStore:
+             # A session switch is a protocol recovery operation, not an
+             # acknowledgement. Preserve every unconfirmed row and replay it
+             # under the new session with a contiguous sequence.
++            #
++            # B6：``reject_count`` 是坏数据隔离预算，**必须跨切换保留**（不在此重排里
++            # 触碰），否则每次 session 切换都会重置预算、真正非法的帧永不判 dead。
++            # ``last_error``/``http_status`` 同样保留：它们是「该帧为何进入新会话」的
++            # 行级取证字段（协议裁决证据），按 B6「真正非法项有独立证据」的要求不得
++            # 在恢复路径上被抹掉；下一次尝试会由 mark_retry_batch/complete_batch 覆盖。
+             for local_seq, row in enumerate(pending_rows, start=1):
+                 connection.execute(
+                     """
+@@ -586,8 +639,6 @@ class OutboxStore:
+                         local_seq=?,
+                         state='pending',
+                         next_retry_at=NULL,
+-                        last_error=NULL,
+-                        http_status=NULL,
+                         lease_owner=NULL,
+                         inflight_at=NULL,
+                         lease_until=NULL
+@@ -806,7 +857,7 @@ class OutboxStore:
+         existing = connection.execute(
+             """
+             SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
+-                   payload, attempt_count
++                   payload, attempt_count, reject_count
+             FROM outbox WHERE batch_id=?
+             """,
+             (batch_id,),
+@@ -819,6 +870,7 @@ class OutboxStore:
+                 assignment_epoch=int(existing["assignment_epoch"]),
+                 payload=bytes(existing["payload"]),
+                 attempt_count=int(existing["attempt_count"]),
++                reject_count=int(existing["reject_count"]),
+             )
+ 
+         assignment = connection.execute(
+@@ -887,6 +939,7 @@ class OutboxStore:
+             int(assignment["assignment_epoch"]),
+             encoded,
+             0,
++            0,
+         )
+ 
+     def _transaction(self):
+diff --git a/edge/app/storage_client.py b/edge/app/storage_client.py
+index c835765..91ed767 100644
+--- a/edge/app/storage_client.py
++++ b/edge/app/storage_client.py
+@@ -1,7 +1,10 @@
+ from __future__ import annotations
+ 
+ import base64
++import json
+ import os
++from pathlib import Path
++import sys
+ import threading
+ from typing import Any
+ from uuid import uuid4
+@@ -14,16 +17,98 @@ from edge.app.outbox import (
+     OutboxRecord,
+     SessionSwitchState,
+ )
++from edge.app.paths import edge_database_path
++
++
++# --- Edge Storage IPC credential contract ---------------------------------
++#
++# Shared by the server (edge.app.storage_service) and every client. The IPC
++# endpoint is reachable by every process on the host, so a loopback bind address
++# is not caller authentication: callers present a per-role token from a
++# deployment-local file that is kept readable only by the edge accounts.
++IPC_TOKEN_HEADER = "X-DataWatch-Storage-Token"
++IPC_TOKEN_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN"
++IPC_TOKEN_FILE_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN_FILE"
++IPC_TOKEN_FILE_NAME = "storage-ipc-tokens.json"
++IPC_ROLE_ENV = "DATAWATCH_EDGE_STORAGE_ROLE"
+ 
+ 
+ class StorageUnavailable(RuntimeError):
+     pass
+ 
+ 
++class StorageUnauthorized(StorageUnavailable):
++    """The IPC credential was rejected (HTTP 401/403).
++
++    P2-D：401/403 说明「服务在跑，但凭据错了/该角色无权调用」，与「服务不可达」是
++    两类完全不同的排障方向。它是 ``StorageUnavailable`` 的子类，因此只关心「本次调用
++    没有被服务端执行」的既有调用方无需改动。
++    """
++
++
+ def storage_base_url() -> str:
+     return os.environ.get("DATAWATCH_EDGE_STORAGE_URL", "http://127.0.0.1:7073").rstrip("/")
+ 
+ 
++def default_token_file() -> Path:
++    configured = os.environ.get(IPC_TOKEN_FILE_ENV)
++    if configured:
++        return Path(configured)
++    return edge_database_path().parent / IPC_TOKEN_FILE_NAME
++
++
++def read_role_tokens(path: Path) -> dict[str, str]:
++    data = json.loads(Path(path).read_text(encoding="utf-8"))
++    tokens = data.get("tokens") if isinstance(data, dict) else None
++    if not isinstance(tokens, dict) or not tokens:
++        raise ValueError(f"invalid Edge Storage IPC token file: {path}")
++    return {str(role): str(value) for role, value in tokens.items()}
++
++
++def resolve_client_role() -> str | None:
++    """Least-privilege IPC role for this process.
++
++    ``DATAWATCH_EDGE_STORAGE_ROLE`` wins; otherwise the role is inferred from the
++    running entry point so the documented launches (``edge/collector_main.py``,
++    ``edge/uploader_main.py`` and the packaged ``data-watch-edge-collector.exe``
++    / ``data-watch-uploader.exe``) need no call-site changes.
++
++    Returns ``None`` when the caller cannot be identified. That is deliberate:
++    there is no privileged fallback, so an unidentified process sends no token
++    and the server rejects it instead of being silently trusted.
++    """
++    configured = os.environ.get(IPC_ROLE_ENV)
++    if configured:
++        return configured.strip().lower()
++    names = [Path(sys.executable).name]
++    if sys.argv and sys.argv[0]:
++        names.append(Path(sys.argv[0]).name)
++    main_file = getattr(sys.modules.get("__main__"), "__file__", None)
++    if main_file:
++        names.append(Path(main_file).name)
++    for name in names:
++        lowered = name.lower()
++        if "uploader" in lowered:
++            return "uploader"
++        if "collector" in lowered:
++            return "collector"
++    return None
++
++
++def load_client_token(role: str | None) -> str | None:
++    """Token for ``role`` from the environment or the deployment token file."""
++    if not role:
++        return None
++    configured = os.environ.get(IPC_TOKEN_ENV)
++    if configured:
++        return configured.strip()
++    try:
++        tokens = read_role_tokens(default_token_file())
++    except (OSError, ValueError):
++        return None
++    return tokens.get(role)
++
++
+ class EdgeStorageClient:
+     """Synchronous local IPC client used by edge worker processes."""
+ 
+@@ -31,10 +116,14 @@ class EdgeStorageClient:
+         self,
+         base_url: str | None = None,
+         *,
++        role: str | None = None,
++        token: str | None = None,
+         timeout_seconds: float = 35.0,
+         client: httpx.Client | None = None,
+     ) -> None:
+         self.base_url = (base_url or storage_base_url()).rstrip("/")
++        self.role = role or resolve_client_role()
++        self._token = token if token is not None else load_client_token(self.role)
+         self._client = client or httpx.Client(
+             base_url=self.base_url,
+             timeout=timeout_seconds,
+@@ -144,6 +233,7 @@ class EdgeStorageClient:
+                         "record": self._record_payload(item.record),
+                         "state": item.state,
+                         "error": item.error,
++                        "http_status": item.http_status,
+                     }
+                     for item in completions
+                 ],
+@@ -251,6 +341,9 @@ class EdgeStorageClient:
+     def _command(self, action: str, payload: dict[str, Any] | None = None) -> Any:
+         body = {"action": action, "payload": payload or {}}
+         encoded = msgspec.json.encode(body)
++        headers = {"Content-Type": "application/json"}
++        if self._token:
++            headers[IPC_TOKEN_HEADER] = self._token
+         last_error: Exception | None = None
+         for _attempt in range(2):
+             try:
+@@ -258,7 +351,7 @@ class EdgeStorageClient:
+                     response = self._client.post(
+                         "/v1/command",
+                         content=encoded,
+-                        headers={"Content-Type": "application/json"},
++                        headers=headers,
+                     )
+                 response.raise_for_status()
+                 envelope = msgspec.json.decode(response.content)
+@@ -267,12 +360,25 @@ class EdgeStorageClient:
+                 if not envelope.get("ok"):
+                     raise StorageUnavailable(str(envelope.get("error") or "storage command failed"))
+                 return envelope.get("data")
++            except httpx.HTTPStatusError as exc:
++                # P2-D：凭据被拒是可判定的确定性失败，既不重试，也不折叠成
++                # "unavailable"——运维据此区分「凭据/权限错」与「服务不可达」。
++                if exc.response.status_code in (401, 403):
++                    raise StorageUnauthorized(
++                        "Edge Storage rejected the IPC credential "
++                        f"(HTTP {exc.response.status_code}, role={self.role or 'unidentified'}): "
++                        "check the role token in the Edge Storage IPC token file"
++                    ) from exc
++                last_error = exc
+             except (httpx.HTTPError, ValueError, KeyError) as exc:
+                 last_error = exc
+         raise StorageUnavailable(f"Edge Storage unavailable: {last_error}") from last_error
+ 
+     @staticmethod
+     def _record(data: dict[str, Any]) -> OutboxRecord:
++        # B6：``reject_count`` 是判断坏数据隔离预算的唯一依据。字段**缺失**表示对端
++        # 是尚未升级的 Edge Storage（旧版只回传 ``attempt_count``）——按存在性判定，
++        # 显式降级为 ``None`` 交调用方处理，绝不静默当成 0。
+         return OutboxRecord(
+             batch_id=str(data["batch_id"]),
+             upload_session_id=str(data["upload_session_id"]),
+@@ -280,6 +386,9 @@ class EdgeStorageClient:
+             assignment_epoch=int(data["assignment_epoch"]),
+             payload=base64.b64decode(str(data["payload_b64"])),
+             attempt_count=int(data.get("attempt_count") or 0),
++            reject_count=(
++                int(data["reject_count"]) if data.get("reject_count") is not None else None
++            ),
+         )
+ 
+     @staticmethod
+@@ -291,6 +400,7 @@ class EdgeStorageClient:
+             "assignment_epoch": record.assignment_epoch,
+             "payload_b64": base64.b64encode(record.payload).decode("ascii"),
+             "attempt_count": record.attempt_count,
++            "reject_count": record.reject_count,
+         }
+ 
+     @staticmethod
+diff --git a/edge/app/storage_service.py b/edge/app/storage_service.py
+index f29f07b..55a3827 100644
+--- a/edge/app/storage_service.py
++++ b/edge/app/storage_service.py
+@@ -5,9 +5,14 @@ from collections import Counter, deque
+ from dataclasses import dataclass, field
+ from http import HTTPStatus
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++import hmac
++import json
+ import logging
++import os
+ from pathlib import Path
+ from queue import Empty, Full, Queue
++import secrets
++import subprocess
+ import threading
+ import time
+ from typing import Any
+@@ -21,11 +26,133 @@ from edge.app.outbox import (
+     OutboxStore,
+     SessionSwitchState,
+ )
++from edge.app.storage_client import (
++    IPC_TOKEN_HEADER,
++    default_token_file,
++    read_role_tokens,
++)
+ 
+ 
+ logger = logging.getLogger("edge.storage")
+ 
+ 
++# --- Edge Storage IPC trust boundary -------------------------------------
++#
++# The IPC endpoint is reachable by every process on the host, so a loopback-only
++# bind address is not caller authentication. Callers present a per-role token
++# read from a deployment-local file kept readable only by the edge accounts.
++#
++# Least-privilege command surface per role, derived from the actual call sites:
++#   collector - edge/collector_main.py (EdgeOutboxWriter + the EdgeConfigManager
++#               in edge/app/config_snapshot.py)
++#   uploader  - edge/uploader_main.py (edge/app/uploader.py)
++#   agent     - the Agent edge-sync client (agent/app/services/edge_storage_client.py)
++IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
++    "collector": frozenset(
++        {
++            "frame.commit",
++            "latest.write",
++            "outbox.snapshot",
++            "config.refresh_schedule",
++            "device.status",
++        }
++    ),
++    "uploader": frozenset(
++        {
++            "outbox.recover",
++            "outbox.upload_interval",
++            "outbox.snapshot",
++            "outbox.claim",
++            "outbox.complete",
++            "outbox.retry",
++            "session.pending",
++            "session.prepare",
++            "session.complete",
++            "session.current",
++            "maintenance",
++            "status",
++        }
++    ),
++    "agent": frozenset(
++        {
++            "status",
++            "config.revision",
++            "config.apply",
++            "config.refresh_schedule",
++        }
++    ),
++}
++# No catch-all role exists on purpose: a caller that cannot be identified gets no
++# token and is rejected, rather than being handed an implicit super-role.
++
++
++def _restrict_token_file_acl(path: Path) -> None:
++    """Best-effort ACL tightening: owner + SYSTEM + Administrators only."""
++    if os.name != "nt":
++        return
++    grants = ["*S-1-5-18:F", "*S-1-5-32-544:F"]
++    owner = os.environ.get("USERNAME")
++    if owner:
++        grants.append(f"{owner}:F")
++    try:
++        subprocess.run(
++            ["icacls", str(path), "/inheritance:r", "/grant:r", *grants],
++            check=True,
++            stdout=subprocess.DEVNULL,
++            stderr=subprocess.DEVNULL,
++            timeout=15,
++        )
++    except (OSError, subprocess.SubprocessError) as exc:
++        logger.warning(
++            "Could not restrict permissions on Edge Storage IPC token file %s: %s", path, exc
++        )
++
++
++def ensure_token_file(path: Path | None = None) -> Path:
++    """Return the IPC token file, creating it with fresh per-role tokens on first use."""
++    target = Path(path) if path is not None else default_token_file()
++    if target.exists():
++        return target
++    target.parent.mkdir(parents=True, exist_ok=True)
++    payload = json.dumps(
++        {"version": 1, "tokens": {role: secrets.token_hex(32) for role in IPC_ROLE_ACTIONS}},
++        indent=2,
++    ).encode("utf-8")
++    try:
++        descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
++    except FileExistsError:
++        # Another edge process won the race; its file is just as good.
++        return target
++    with os.fdopen(descriptor, "wb") as handle:
++        handle.write(payload)
++    _restrict_token_file_acl(target)
++    return target
++
++
++class IpcAuthenticator:
++    """Resolves the caller role from a token and enforces the role allowlist."""
++
++    def __init__(self, tokens: dict[str, str]) -> None:
++        if not tokens:
++            raise ValueError("Edge Storage IPC token file contains no tokens")
++        self._tokens = tokens
++
++    @classmethod
++    def from_file(cls, path: Path | None = None) -> IpcAuthenticator:
++        return cls(read_role_tokens(ensure_token_file(path)))
++
++    def role_for(self, token: str | None) -> str | None:
++        if not token:
++            return None
++        for role, expected in self._tokens.items():
++            if hmac.compare_digest(token, expected):
++                return role
++        return None
++
++    def permits(self, role: str, action: str) -> bool:
++        return action in IPC_ROLE_ACTIONS.get(role, frozenset())
++
++
+ @dataclass(slots=True)
+ class _Command:
+     action: str
+@@ -227,6 +354,11 @@ class StorageEngine:
+                     _record(item["record"]),
+                     str(item["state"]),
+                     item.get("error"),
++                    http_status=(
++                        int(item["http_status"])
++                        if item.get("http_status") is not None
++                        else None
++                    ),
+                 )
+                 for item in payload.get("completions") or []
+             ]
+@@ -309,8 +441,16 @@ class StorageEngine:
+ class StorageHttpServer(ThreadingHTTPServer):
+     daemon_threads = True
+ 
+-    def __init__(self, address: tuple[str, int], engine: StorageEngine) -> None:
++    def __init__(
++        self,
++        address: tuple[str, int],
++        engine: StorageEngine,
++        authenticator: IpcAuthenticator | None = None,
++    ) -> None:
+         self.engine = engine
++        # Default to the deployment token file so an endpoint cannot be started
++        # without authentication by omitting an argument.
++        self.authenticator = authenticator or IpcAuthenticator.from_file()
+         super().__init__(address, StorageRequestHandler)
+ 
+ 
+@@ -320,10 +460,11 @@ class StorageRequestHandler(BaseHTTPRequestHandler):
+ 
+     def do_GET(self) -> None:
+         if self.path == "/healthz":
++            # Liveness only: no storage state is read or written.
+             self._write_json(HTTPStatus.OK, {"status": "ok"})
+             return
+         if self.path == "/v1/status":
+-            self._execute("status", {})
++            self._authorized_execute("status", {})
+             return
+         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
+ 
+@@ -338,10 +479,26 @@ class StorageRequestHandler(BaseHTTPRequestHandler):
+             body = msgspec.json.decode(self.rfile.read(length))
+             if not isinstance(body, dict):
+                 raise ValueError("request body must be an object")
+-            self._execute(str(body.get("action") or ""), dict(body.get("payload") or {}))
++            self._authorized_execute(str(body.get("action") or ""), dict(body.get("payload") or {}))
+         except (ValueError, TypeError, msgspec.DecodeError) as exc:
+             self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+ 
++    def _authorized_execute(self, action: str, payload: dict[str, Any]) -> None:
++        role = self.server.authenticator.role_for(self.headers.get(IPC_TOKEN_HEADER))
++        if role is None:
++            self._write_json(
++                HTTPStatus.UNAUTHORIZED,
++                {"ok": False, "error": "missing or invalid Edge Storage IPC token"},
++            )
++            return
++        if not self.server.authenticator.permits(role, action):
++            self._write_json(
++                HTTPStatus.FORBIDDEN,
++                {"ok": False, "error": f"role {role!r} is not permitted to run action {action!r}"},
++            )
++            return
++        self._execute(action, payload)
++
+     def _execute(self, action: str, payload: dict[str, Any]) -> None:
+         try:
+             result = self.server.engine.submit(action, payload)
+@@ -374,10 +531,13 @@ def _record_payload(record: OutboxRecord) -> dict[str, Any]:
+         "assignment_epoch": record.assignment_epoch,
+         "payload_b64": base64.b64encode(record.payload).decode("ascii"),
+         "attempt_count": record.attempt_count,
++        "reject_count": record.reject_count,
+     }
+ 
+ 
+ def _record(data: dict[str, Any]) -> OutboxRecord:
++    # B6：``reject_count`` 由 claim 回传给 Uploader 作为隔离判定依据；字段缺失
++    # （旧版客户端）按存在性判成 ``None``，绝不静默当成 0。
+     return OutboxRecord(
+         batch_id=str(data["batch_id"]),
+         upload_session_id=str(data["upload_session_id"]),
+@@ -385,6 +545,9 @@ def _record(data: dict[str, Any]) -> OutboxRecord:
+         assignment_epoch=int(data["assignment_epoch"]),
+         payload=base64.b64decode(str(data["payload_b64"])),
+         attempt_count=int(data.get("attempt_count") or 0),
++        reject_count=(
++            int(data["reject_count"]) if data.get("reject_count") is not None else None
++        ),
+     )
+ 
+ 
+diff --git a/edge/app/uploader.py b/edge/app/uploader.py
+index d137a1c..7e1231f 100644
+--- a/edge/app/uploader.py
++++ b/edge/app/uploader.py
+@@ -119,7 +119,15 @@ class Uploader:
+         self._summary_records = 0
+         self._summary_payload_bytes = 0
+         self._summary_batch_ms: list[float] = []
+-        self._store.recover_inflight(self._lease_owner)
++        self._reject_count_missing_warned = False
++
++    async def recover_inflight(self) -> int:
++        """恢复上一实例崩溃遗留的 inflight 租约。
++
++        B25：该方法会改写共享 outbox 状态（经 Edge Storage），因此**只能**在
++        持有单实例锁之后调用（见 `edge/uploader_main.py`）。构造器不做任何存储写入。
++        """
++        return await self._store_call(self._store.recover_inflight, self._lease_owner)
+ 
+     async def close(self) -> None:
+         if self._owns_client:
+@@ -305,7 +313,7 @@ class Uploader:
+             return False
+ 
+         completions: list[OutboxCompletion] = []
+-        for record in records:
++        for index, record in enumerate(records):
+             key = (record.batch_id, record.upload_session_id, record.local_seq)
+             result = result_map.get(key)
+             if result is None:
+@@ -315,12 +323,14 @@ class Uploader:
+                     record.local_seq,
+                     len(records),
+                 )
+-                await self._retry_records(records, "missing_ack", 200)
++                await self._persist_confirmed(completions)
++                await self._retry_records(records[index:], "missing_ack", 200)
+                 return False
+             status = str(result.get("status") or "")
+             if status in {"ack", "duplicate", "stale_config_warning"}:
+                 if result.get("durability") != "redis-aof":
+-                    await self._retry_records(records, "center has not confirmed durable acceptance; upgrade center first", 200)
++                    await self._persist_confirmed(completions)
++                    await self._retry_records(records[index:], "center has not confirmed durable acceptance; upgrade center first", 200)
+                     return False
+                 completions.append(OutboxCompletion(record, "sent"))
+             elif status == "rejected_consumed":
+@@ -344,8 +354,11 @@ class Uploader:
+                     status,
+                     record.local_seq,
+                 )
++                # B5：先持久提交已明确确认的项，再做不确定项的迁移/隔离。
++                await self._persist_confirmed(completions)
++                unconfirmed = records[index:]
+                 quarantined = await self._retry_records(
+-                    records,
++                    unconfirmed,
+                     status,
+                     200,
+                     quarantine_after_max=True,
+@@ -354,7 +367,7 @@ class Uploader:
+                     logger.error(
+                         "Quarantined %d unresolvable upload records after max attempts; "
+                         "payloads remain in local dead state for replay/reconciliation",
+-                        len(records),
++                        len(unconfirmed),
+                     )
+                 await self._abandon_and_switch()
+                 return False
+@@ -364,6 +377,7 @@ class Uploader:
+                     record.upload_session_id,
+                     record.local_seq,
+                 )
++                await self._persist_confirmed(completions)
+                 current_session_id = await self._store_call(
+                     self._store.current_session_id
+                 )
+@@ -371,7 +385,7 @@ class Uploader:
+                     return False
+                 switched = await self._reconcile_obsolete_session()
+                 if not switched:
+-                    await self._retry_records(records, "session_obsolete", 200)
++                    await self._retry_records(records[index:], "session_obsolete", 200)
+                 return False
+             else:
+                 logger.error(
+@@ -379,7 +393,8 @@ class Uploader:
+                     status or "<empty>",
+                     record.local_seq,
+                 )
+-                await self._retry_records(records, f"unknown_ack:{status}", 200)
++                await self._persist_confirmed(completions)
++                await self._retry_records(records[index:], f"unknown_ack:{status}", 200)
+                 return False
+         await self._store_call(
+             self._store.complete_batch,
+@@ -457,6 +472,25 @@ class Uploader:
+         ).hexdigest()
+         return f"edge-{digest}"
+ 
++    async def _persist_confirmed(
++        self,
++        completions: list[OutboxCompletion],
++    ) -> None:
++        """B5：先持久提交已明确确认（sent/dead）的项。
++
++        只有落库之后才允许处理未确认/未知项，否则后续的 session 异常
++        （``seq_reject``/``commit_unknown``/ACK 缺失/未知状态）会把本批已 ACK
++        的帧一起重排进新会话并重传。未知结果一律保留原帧身份，
++        由 ``_retry_records``/``_abandon_and_switch`` 按至少一次语义重放。
++        """
++        if not completions:
++            return
++        await self._store_call(
++            self._store.complete_batch,
++            completions,
++            self._lease_owner,
++        )
++
+     async def _retry_records(
+         self,
+         records: list[OutboxRecord],
+@@ -468,9 +502,7 @@ class Uploader:
+         retries = []
+         quarantined = []
+         for record in records:
+-            if quarantine_after_max and (
+-                record.attempt_count + 1 >= self._settings.max_attempts
+-            ):
++            if quarantine_after_max and self._quarantine_budget_exhausted(record):
+                 quarantined.append(record)
+             else:
+                 retries.append(
+@@ -494,13 +526,40 @@ class Uploader:
+             await self._store_call(
+                 self._store.complete_batch,
+                 [
+-                    OutboxCompletion(record, "dead", error)
++                    # B6：把「致命那次裁决」的协议状态码一起写入，避免 dead 行残留
++                    # 上一次传输失败的 http_status（取证会指向错误原因）。
++                    OutboxCompletion(record, "dead", error, http_status=http_status)
+                     for record in quarantined
+                 ],
+                 self._lease_owner,
+             )
+         return bool(quarantined)
+ 
++    def _quarantine_budget_exhausted(self, record: OutboxRecord) -> bool:
++        """B6：坏数据隔离预算**只看** ``reject_count``（协议级裁决计数）。
++
++        - ``reject_count`` 由 Edge Storage 的 ``mark_retry_batch`` 权威累加，且
++          **只**由中心给出的协议级裁决（400 契约拒绝 / ``seq_reject`` /
++          ``commit_unknown``）消耗；429/5xx/断网/ACK 缺失等传输类与中心侧问题只累加
++          ``attempt_count``（退避用）。因此长时间断网的历史网络次数不会再让一次
++          序列异常把好数据判死。
++        - ``reject_count is None`` 表示对端 Edge Storage **没有回传**该字段（旧版
++          存储进程，混合升级窗口）。此时**显式**降级为旧的 ``attempt_count`` 语义并
++          告警一次 —— 不得静默当成 0：那会让真正非法的载荷永远不被隔离
++          （见 docs/整改记录/B6.md「兼容策略」）。
++        """
++        reject_count = record.reject_count
++        if reject_count is None:
++            if not self._reject_count_missing_warned:
++                self._reject_count_missing_warned = True
++                logger.warning(
++                    "Edge Storage did not report reject_count for claimed records; "
++                    "falling back to attempt_count for quarantine decisions. "
++                    "Upgrade edge-storage and the uploader together (legacy peer detected)."
++                )
++            reject_count = record.attempt_count
++        return reject_count + 1 >= self._settings.max_attempts
++
+     async def _abandon_and_switch(self) -> None:
+         state = await self._store_call(self._store.prepare_session_switch)
+         await self._complete_session_switch(state)
+@@ -578,13 +637,17 @@ class SingleInstanceLock(AbstractContextManager):
+         self._path.parent.mkdir(parents=True, exist_ok=True)
+         self._file = self._path.open("a+b")
+         try:
++            # 与 collector 的 ``_acquire_owner`` 同一做法：文件已有内容时**不再**写入。
++            # 文件以 "a+b" 打开，write 总是落在末尾，而无条件写一字节发生在加锁
++            # （可能失败）之前，会让锁文件每次争锁失败都 +1 字节。
++            self._file.seek(0, 2)
++            if self._file.tell() == 0:
++                self._file.write(b"0")
++                self._file.flush()
++            self._file.seek(0)
+             if os.name == "nt":
+                 import msvcrt
+ 
+-                self._file.seek(0)
+-                self._file.write(b"0")
+-                self._file.flush()
+-                self._file.seek(0)
+                 msvcrt.locking(self._file.fileno(), msvcrt.LK_NBLCK, 1)
+             else:
+                 import fcntl
+diff --git a/edge/storage_main.py b/edge/storage_main.py
+index 0c30633..87943c1 100644
+--- a/edge/storage_main.py
++++ b/edge/storage_main.py
+@@ -1,9 +1,12 @@
+ from __future__ import annotations
+ 
+ import argparse
++import errno
++import ipaddress
+ import logging
+ import os
+ import signal
++import socket
+ import sys
+ from pathlib import Path
+ import threading
+@@ -16,7 +19,68 @@ for source_root in (REPO_ROOT, COLLECTOR_ROOT):
+         sys.path.insert(0, str(source_root))
+ 
+ from edge.app.paths import edge_database_path
+-from edge.app.storage_service import StorageEngine, StorageHttpServer
++from edge.app.storage_service import (
++    IpcAuthenticator,
++    StorageEngine,
++    StorageHttpServer,
++    default_token_file,
++)
++
++
++def _is_loopback(host: str) -> bool:
++    candidate = host.strip().lower()
++    if not candidate:
++        # ``socket.bind(("", port))`` means INADDR_ANY, i.e. every interface, so an
++        # empty (or whitespace-only) host is the opposite of loopback. Anything that
++        # is not provably loopback must pass the explicit --allow-non-loopback gate.
++        return False
++    try:
++        if ipaddress.ip_address(candidate).is_loopback:
++            return True
++    except ValueError:
++        pass
++    # A single trailing dot is the DNS root form, so ``localhost.`` names the same
++    # host as ``localhost``. It is spelled out separately because, unlike a name,
++    # an IP literal with a trailing dot (``127.0.0.1.``) is *not* resolvable and
++    # must stay rejected rather than be accepted and then fail at bind time.
++    if candidate.removesuffix(".") != "localhost":
++        return False
++    # A name proves nothing on its own: resolve it the way the bind will (AF_INET,
++    # the address family of StorageHttpServer) and accept only when every answer is
++    # loopback, so a hosts file pointing "localhost" at another interface is refused.
++    try:
++        infos = socket.getaddrinfo("localhost", None, socket.AF_INET, socket.SOCK_STREAM)
++    except OSError:
++        return False
++    addresses = [info[4][0] for info in infos]
++    return bool(addresses) and all(
++        ipaddress.ip_address(address).is_loopback for address in addresses
++    )
++
++
++def _bind_error_message(host: str, port: int, exc: OSError) -> str:
++    """Classify a failed IPC bind so the operator knows what to change.
++
++    The classes are the ones this endpoint can actually hit: a host that cannot be
++    resolved (which is how every IPv6 literal fails on an AF_INET endpoint), an address
++    that is not on this host, and a port that is taken or not permitted.
++    """
++    if isinstance(exc, socket.gaierror):
++        reason = (
++            "this IPC endpoint is IPv4-only (ThreadingHTTPServer / AF_INET), so this host "
++            "cannot be bound here; IPv6 (e.g. ::1) is not supported, use an IPv4 address "
++            "such as 127.0.0.1"
++        )
++    elif exc.errno == errno.EADDRNOTAVAIL:
++        reason = "that address does not belong to this host"
++    elif exc.errno in (errno.EADDRINUSE, errno.EACCES):
++        reason = "the port is already in use, or this process is not permitted to bind it"
++    else:
++        reason = "the socket could not be bound"
++    return (
++        f"Cannot bind Edge Storage IPC to {host}:{port}: {reason} "
++        f"[{type(exc).__name__}: {exc}]"
++    )
+ 
+ 
+ def _parser() -> argparse.ArgumentParser:
+@@ -29,6 +93,15 @@ def _parser() -> argparse.ArgumentParser:
+         type=float,
+         default=float(os.environ.get("DATAWATCH_EDGE_STORAGE_SHUTDOWN_TIMEOUT_SECONDS", "30")),
+     )
++    # The IPC endpoint has no transport encryption and authenticates callers only
++    # with a local token file, so exposing it beyond loopback must be deliberate.
++    parser.add_argument(
++        "--allow-non-loopback",
++        action="store_true",
++        default=os.environ.get("DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK", "").strip().lower()
++        in {"1", "true", "yes", "on"},
++        help="Explicitly permit binding the Edge Storage IPC endpoint to a non-loopback address.",
++    )
+     return parser
+ 
+ 
+@@ -38,13 +111,35 @@ def main() -> int:
+         level=os.environ.get("DATAWATCH_LOG_LEVEL", "INFO"),
+         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+     )
++    if not _is_loopback(args.host) and not args.allow_non_loopback:
++        logging.getLogger("edge.storage").error(
++            "Refusing to bind Edge Storage IPC to non-loopback address %s: the endpoint has no "
++            "transport encryption and would be reachable from the network. Pass "
++            "--allow-non-loopback (or DATAWATCH_EDGE_STORAGE_ALLOW_NON_LOOPBACK=1) to override.",
++            args.host,
++        )
++        return 2
+     engine = StorageEngine(
+         edge_database_path(),
+         max_queue=args.queue_capacity,
+         shutdown_timeout_seconds=args.shutdown_timeout_seconds,
+     )
++    # Resolve the IPC credential *outside* the try below, so that try covers the bind
++    # only: an unreadable token file must surface as itself, never as a bind failure.
++    authenticator = IpcAuthenticator.from_file()
++    # Bind before ``engine.start()``: binding is the step that can fail for reasons
++    # outside our control (``::1`` on this IPv4-only endpoint, an address that is not on
++    # this host, a port already in use). ``start()`` spawns a non-daemon writer thread,
++    # so an unhandled bind error afterwards would leave the process hung with no listener
++    # at all; failing here also means no database file is created.
++    try:
++        server = StorageHttpServer((args.host, args.port), engine, authenticator)
++    except OSError as exc:
++        logging.getLogger("edge.storage").error(
++            "%s", _bind_error_message(args.host, args.port, exc)
++        )
++        return 2
+     engine.start()
+-    server = StorageHttpServer((args.host, args.port), engine)
+     server.timeout = 0.5
+     stopped = threading.Event()
+ 
+@@ -60,10 +155,11 @@ def main() -> int:
+     shutdown_flag.unlink(missing_ok=True)
+ 
+     logging.getLogger("edge.storage").info(
+-        "Edge Storage listening on http://%s:%s database=%s",
++        "Edge Storage listening on http://%s:%s database=%s ipc_token_file=%s",
+         args.host,
+         args.port,
+         edge_database_path(),
++        default_token_file(),
+     )
+     try:
+         while not stopped.is_set() and not shutdown_flag.exists():
+diff --git a/edge/tests/test_storage_service.py b/edge/tests/test_storage_service.py
+index a36ed14..c8a398e 100644
+--- a/edge/tests/test_storage_service.py
++++ b/edge/tests/test_storage_service.py
+@@ -49,18 +49,27 @@ def _snapshot() -> dict:
+ def test_storage_http_uses_keepalive_protocol() -> None:
+     assert StorageRequestHandler.protocol_version == "HTTP/1.1"
+ 
+-def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> None:
++def test_storage_serializes_concurrent_frames_and_batch_ack(
++    tmp_path: Path, monkeypatch
++) -> None:
++    # S3: the IPC endpoint requires a per-role token now, and the token file must
++    # stay inside tmp_path. Each client declares its identity explicitly instead
++    # of relying on an implicit role.
++    monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_TOKEN_FILE", str(tmp_path / "ipc-tokens.json"))
+     engine = StorageEngine(tmp_path / "edge.db", max_queue=256)
+     engine.start()
+     server = StorageHttpServer(("127.0.0.1", 0), engine)
+     thread = threading.Thread(target=server.serve_forever, daemon=True)
+     thread.start()
+-    client = EdgeStorageClient(f"http://127.0.0.1:{server.server_port}")
++    base_url = f"http://127.0.0.1:{server.server_port}"
++    agent = EdgeStorageClient(base_url, role="agent")
++    collector = EdgeStorageClient(base_url, role="collector")
++    uploader = EdgeStorageClient(base_url, role="uploader")
+     try:
+-        assert client.apply(_snapshot()) == 1
++        assert agent.apply(_snapshot()) == 1
+ 
+         def commit(index: int):
+-            return client.commit_frame(
++            return collector.commit_frame(
+                 batch_id=f"frame-{index}",
+                 device_code="QC100",
+                 device_type="qc",
+@@ -79,15 +88,15 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
+             records = list(executor.map(commit, range(100)))
+ 
+         assert sorted(record.local_seq for record in records) == list(range(1, 101))
+-        target = client.snapshot_target_seq()
+-        claimed = client.claim_batch(
++        target = uploader.snapshot_target_seq()
++        claimed = uploader.claim_batch(
+             target_seq=target,
+             lease_owner="test-uploader",
+             lease_ms=5000,
+             max_items=100,
+             max_bytes=1024 * 1024,
+         )
+-        claimed_again = client.claim_batch(
++        claimed_again = uploader.claim_batch(
+             target_seq=target,
+             lease_owner="test-uploader",
+             lease_ms=5000,
+@@ -95,22 +104,24 @@ def test_storage_serializes_concurrent_frames_and_batch_ack(tmp_path: Path) -> N
+             max_bytes=1024 * 1024,
+         )
+         assert [row.local_seq for row in claimed_again] == [row.local_seq for row in claimed]
+-        client.complete_batch(
++        uploader.complete_batch(
+             [OutboxCompletion(record, "sent") for record in claimed],
+             "test-uploader",
+         )
+-        client.complete_batch(
++        uploader.complete_batch(
+             [OutboxCompletion(record, "sent") for record in claimed],
+             "test-uploader",
+         )
+-        client.maintenance(7, 24 * 60 * 60 * 1000)
+-        status = client.status()
++        uploader.maintenance(7, 24 * 60 * 60 * 1000)
++        status = uploader.status()
+         assert status["counts"] == {"sent": 100}
+         assert status["sent_records_total"] == 100
+         assert status["errors_total"] == 0
+         assert status["writer_queue_depth"] == 0
+     finally:
+-        client.close()
++        agent.close()
++        collector.close()
++        uploader.close()
+         server.shutdown()
+         server.server_close()
+         engine.close()
+diff --git a/edge/tests/test_uploader_main.py b/edge/tests/test_uploader_main.py
+index 9da07da..ce2704e 100644
+--- a/edge/tests/test_uploader_main.py
++++ b/edge/tests/test_uploader_main.py
+@@ -36,8 +36,13 @@ def test_uploader_settings_are_loaded_from_agent_environment(monkeypatch, tmp_pa
+ 
+     assert settings.center_url == "https://center.test/"
+     assert settings.node_uuid == "node-1"
+-    assert settings.lock_path == tmp_path / "edge" / "uploader.lock"
++    # P1-C：锁路径必须与 outbox 库**同源**。本用例刻意让 DATAWATCH_EDGE_DB 与
++    # DATAWATCH_DATA_ROOT 分指；原断言写成 `tmp_path / "edge" / "uploader.lock"`（即锁只由
++    # DATAWATCH_DATA_ROOT 派生），等于把「同库不同锁」这个缺陷固化成了期望——分指时两个实例
++    # 各持一把锁可同时运行，后启动者会重置前者未过期的 live 租约。现改为断言锁随库走。
+     assert edge_database_path() == tmp_path / "custom.db"
++    assert settings.lock_path == edge_database_path().parent / "uploader.lock"
++    assert settings.lock_path == tmp_path / "uploader.lock"
+     assert signer.headers("GET", "/ingest/session/node-1", {})[
+         "x-datawatch-signature"
+     ]
+diff --git a/edge/uploader_main.py b/edge/uploader_main.py
+index 91f88ca..786fec7 100644
+--- a/edge/uploader_main.py
++++ b/edge/uploader_main.py
+@@ -8,6 +8,7 @@ import signal
+ import sys
+ from pathlib import Path
+ 
++from edge.app.paths import edge_database_path
+ from edge.app.storage_client import EdgeStorageClient
+ from edge.app.uploader import (
+     RequestSigner,
+@@ -48,11 +49,17 @@ def settings_from_env() -> tuple[UploaderSettings, RequestSigner]:
+     data_root = Path(
+         os.environ.get("DATAWATCH_DATA_ROOT") or r"C:\ProgramData\DataWatch"
+     )
++    # B25 遗留 P1-C：唯一运行权必须与它保护的 outbox 同源。此前锁路径由
++    # DATAWATCH_DATA_ROOT 单独派生，而库路径由 edge_database_path()（优先
++    # DATAWATCH_EDGE_DB）决定；两者分指时会出现「同库不同锁」——两个实例各持一把锁
++    # 同时运行，后启动者的 recover_inflight 会把前者**未过期**的 live 租约重置。
++    # 默认部署两者本就指向同一 data_root\edge\，行为不变。
++    lock_path = edge_database_path().parent / "uploader.lock"
+     settings = UploaderSettings(
+         center_url=center_url,
+         node_uuid=node_uuid,
+         private_key_path=data_root / "edge" / "unused-private-key.pem",
+-        lock_path=data_root / "edge" / "uploader.lock",
++        lock_path=lock_path,
+         max_offline_retention_days=_positive_int_env(
+             "DATAWATCH_MAX_OFFLINE_RETENTION_DAYS", 7
+         ),
+@@ -86,19 +93,26 @@ async def main() -> int:
+         settings.max_batch_bytes,
+     )
+     store = EdgeStorageClient()
+-    uploader = Uploader(store, settings, signer=signer)
+-    loop = asyncio.get_running_loop()
+-    for sig in (signal.SIGINT, signal.SIGTERM):
+-        try:
+-            loop.add_signal_handler(sig, uploader.stop)
+-        except NotImplementedError:
+-            signal.signal(sig, lambda *_args: uploader.stop())
+-
+     try:
++        # B25：先取得唯一运行权，再做任何 outbox 状态恢复/维护。
++        # 抢锁失败时不得触碰存储状态（构造器已无副作用）。
+         with SingleInstanceLock(settings.lock_path):
+-            await uploader.run_forever()
++            uploader = Uploader(store, settings, signer=signer)
++            loop = asyncio.get_running_loop()
++            for sig in (signal.SIGINT, signal.SIGTERM):
++                try:
++                    loop.add_signal_handler(sig, uploader.stop)
++                except NotImplementedError:
++                    signal.signal(sig, lambda *_args: uploader.stop())
++
++            recovered = await uploader.recover_inflight()
++            if recovered:
++                logger.info("Recovered %d inflight outbox records", recovered)
++            try:
++                await uploader.run_forever()
++            finally:
++                await uploader.close()
+     finally:
+-        await uploader.close()
+         store.close()
+         logger.info("Uploader stopped")
+     return 0
+diff --git a/ingest/app/repository.py b/ingest/app/repository.py
+index 296513d..2201be5 100644
+--- a/ingest/app/repository.py
++++ b/ingest/app/repository.py
+@@ -18,6 +18,22 @@ from .schemas import UploadItem
+ 
+ _CENTER_TIMEZONE = timezone(timedelta(hours=8))
+ _TOUCH_INTERVAL_SECONDS = 5.0
++# 这几类驳回可能只是控制面已提交、而本进程控制缓存落后的结果：
++# 永久化（rejected_consumed）之前必须对决定该判定的那个缓存命名空间做一次受控权威重读。
++_UNKNOWN_VAR_ID = "malformed_envelope:unknown_var_id"
++_UNKNOWN_CONFIG_VERSION = "unknown_config_version"
++_UNKNOWN_DEVICE = "unknown_device"
++_DEVICE_TYPE_MISMATCH = "malformed_envelope:device_type_mismatch"
++# 按命名空间精确归因（决定该判定的缓存只有一个）：
++# - `unknown_var_id` ← `_mapping_cache`（`point_storage_mapping` 行缺失）；
++# - `unknown_device` ← `_assignment_cache` 的否定缓存 `(expiry, None)`（assignment 行缺失）；
++# - `device_type_mismatch` ← `_assignment_cache` 行里的 `device.device_type`；
++# - `unknown_config_version` ← `_assignment_cache` 行里的 `device_point_group.config_version`。
++_MAPPING_REREADABLE_REASONS = frozenset({_UNKNOWN_VAR_ID})
++_ASSIGNMENT_REREADABLE_REASONS = frozenset(
++    {_UNKNOWN_DEVICE, _DEVICE_TYPE_MISMATCH, _UNKNOWN_CONFIG_VERSION}
++)
++_REREADABLE_REASONS = _MAPPING_REREADABLE_REASONS | _ASSIGNMENT_REREADABLE_REASONS
+ logger = logging.getLogger("ingest.repository")
+ 
+ 
+@@ -68,6 +84,7 @@ class MySQLIngestRepository:
+         self._mapping_cache: dict[
+             tuple[str, str], tuple[float, frozenset[int]]
+         ] = {}
++        self._reread_at: dict[object, float] = {}
+ 
+     @classmethod
+     async def create(
+@@ -214,8 +231,8 @@ class MySQLIngestRepository:
+                     (item.device_code, item.group_code), set()
+                 ).update(point_ids)
+ 
+-        assignments = await self._assignment_rows(assignment_keys)
+-        mapped = await self._mapping_point_sets(set(mapping_points))
++        assignments, fetched_assignments = await self._assignment_rows(assignment_keys)
++        mapped, fetched_mappings = await self._mapping_point_sets(set(mapping_points))
+ 
+         for index, item, point_ids in valid:
+             row = assignments.get(
+@@ -229,20 +246,172 @@ class MySQLIngestRepository:
+                 point_ids,
+             )
+ 
++        suspects = [
++            (index, item, point_ids)
++            for index, item, point_ids in valid
++            if decisions[index] is not None
++            and decisions[index].reason in _REREADABLE_REASONS
++        ]
++        if suspects:
++            await self._reread_and_revalidate(
++                node_uuid,
++                valid,
++                decisions,
++                assignments,
++                fetched_assignments,
++                mapped,
++                fetched_mappings,
++            )
++
+         return [
+             decision or ValidationDecision.reject("malformed_envelope")
+             for decision in decisions
+         ]
+ 
++    async def _reread_and_revalidate(
++        self,
++        node_uuid: str,
++        valid: list[tuple[int, UploadItem, set[int]]],
++        decisions: list[ValidationDecision | None],
++        assignments: dict[tuple[str, str, int], dict | None],
++        fetched_assignments: set[tuple[str, str, int]],
++        mapped: dict[tuple[str, str], set[int]],
++        fetched_mappings: set[tuple[str, str]],
++    ) -> None:
++        """永久驳回前的受控权威重读，按缓存命名空间分轮。
++
++        - `unknown_var_id` 只可能由 mapping 缓存落后造成；`unknown_device`（assignment
++          行的否定缓存 `(expiry, None)`）、`device_type_mismatch`、`unknown_config_version`
++          只可能由 assignment 缓存落后造成，因此每轮只重读决定该判定的那一个命名空间。
++        - 每轮顺序固定为 mapping → assignment：新点位帧会先撞 mapping 缺失，权威补上映射
++          后才暴露版本落后（`repository.py` 的映射校验在版本校验之前）；assignment 轮修好后
++          还可能暴露 mapping 落后，故最多两轮收口。
++        - 只重读「本次由缓存命中」的 key（并发 miss 时本次读到的就是权威值）；
++          同一 key 在一个 TTL 窗口内至多重读一次，真正的非法帧不会造成无界查询。
++        """
++        for _ in range(2):
++            reread = await self._reread_mappings(
++                node_uuid, valid, decisions, assignments, mapped, fetched_mappings
++            )
++            if await self._reread_assignments(
++                node_uuid, valid, decisions, assignments, mapped, fetched_assignments
++            ):
++                reread = True
++            if not reread:
++                break
++
++    async def _reread_mappings(
++        self,
++        node_uuid: str,
++        valid: list[tuple[int, UploadItem, set[int]]],
++        decisions: list[ValidationDecision | None],
++        assignments: dict[tuple[str, str, int], dict | None],
++        mapped: dict[tuple[str, str], set[int]],
++        fetched_mappings: set[tuple[str, str]],
++    ) -> bool:
++        """重读 mapping 命名空间；返回是否真的发起了一次权威重读。"""
++        mapping_keys: set[tuple[str, str]] = set()
++        for index, item, _ in valid:
++            if not self._matches_reason(decisions, index, _MAPPING_REREADABLE_REASONS):
++                continue
++            key = (item.device_code, item.group_code)
++            if key not in fetched_mappings and self._claim_reread(("mapping", *key)):
++                mapping_keys.add(key)
++        if not mapping_keys:
++            return False
++        refreshed_mappings, _ = await self._mapping_point_sets(
++            mapping_keys, force_keys=mapping_keys
++        )
++        mapped.update(refreshed_mappings)
++        self._revalidate_reasons(
++            node_uuid, valid, decisions, assignments, mapped, _MAPPING_REREADABLE_REASONS
++        )
++        return True
++
++    async def _reread_assignments(
++        self,
++        node_uuid: str,
++        valid: list[tuple[int, UploadItem, set[int]]],
++        decisions: list[ValidationDecision | None],
++        assignments: dict[tuple[str, str, int], dict | None],
++        mapped: dict[tuple[str, str], set[int]],
++        fetched_assignments: set[tuple[str, str, int]],
++    ) -> bool:
++        """重读 assignment 命名空间；返回是否真的发起了一次权威重读。"""
++        assignment_keys: set[tuple[str, str, int]] = set()
++        for index, item, _ in valid:
++            if not self._matches_reason(
++                decisions, index, _ASSIGNMENT_REREADABLE_REASONS
++            ):
++                continue
++            key = (item.device_code, item.group_code, item.assignment_epoch)
++            if key not in fetched_assignments and self._claim_reread(
++                ("assignment", *key)
++            ):
++                assignment_keys.add(key)
++        if not assignment_keys:
++            return False
++        refreshed_assignments, _ = await self._assignment_rows(
++            assignment_keys, force_keys=assignment_keys
++        )
++        assignments.update(refreshed_assignments)
++        self._revalidate_reasons(
++            node_uuid, valid, decisions, assignments, mapped, _ASSIGNMENT_REREADABLE_REASONS
++        )
++        return True
++
++    @staticmethod
++    def _matches_reason(
++        decisions: list[ValidationDecision | None],
++        index: int,
++        reasons: frozenset[str],
++    ) -> bool:
++        decision = decisions[index]
++        return decision is not None and decision.reason in reasons
++
++    def _revalidate_reasons(
++        self,
++        node_uuid: str,
++        valid: list[tuple[int, UploadItem, set[int]]],
++        decisions: list[ValidationDecision | None],
++        assignments: dict[tuple[str, str, int], dict | None],
++        mapped: dict[tuple[str, str], set[int]],
++        reasons: frozenset[str],
++    ) -> None:
++        for index, item, point_ids in valid:
++            if not self._matches_reason(decisions, index, reasons):
++                continue
++            decisions[index] = self._validate_item_row(
++                node_uuid,
++                item,
++                assignments.get(
++                    (item.device_code, item.group_code, item.assignment_epoch)
++                ),
++                mapped.get((item.device_code, item.group_code), set()),
++                point_ids,
++            )
++
++    def _claim_reread(self, key: object) -> bool:
++        now = monotonic()
++        last = self._reread_at.get(key)
++        if last is not None and now - last < self._control_cache_ttl_seconds:
++            return False
++        self._reread_at[key] = now
++        return True
++
+     async def _assignment_rows(
+-        self, keys: set[tuple[str, str, int]]
+-    ) -> dict[tuple[str, str, int], dict | None]:
++        self,
++        keys: set[tuple[str, str, int]],
++        *,
++        force_keys: set[tuple[str, str, int]] | None = None,
++    ) -> tuple[dict[tuple[str, str, int], dict | None], set[tuple[str, str, int]]]:
+         now = monotonic()
++        forced = force_keys or set()
+         result: dict[tuple[str, str, int], dict | None] = {}
+         missing: set[tuple[str, str, int]] = set()
+         for key in keys:
+             cached = self._assignment_cache.get(key)
+-            if cached is not None and cached[0] > now:
++            if key not in forced and cached is not None and cached[0] > now:
+                 result[key] = cached[1]
+             else:
+                 missing.add(key)
+@@ -264,17 +433,21 @@ class MySQLIngestRepository:
+                     value,
+                 )
+                 result[key] = value
+-        return result
++        return result, set(missing)
+ 
+     async def _mapping_point_sets(
+-        self, keys: set[tuple[str, str]]
+-    ) -> dict[tuple[str, str], set[int]]:
++        self,
++        keys: set[tuple[str, str]],
++        *,
++        force_keys: set[tuple[str, str]] | None = None,
++    ) -> tuple[dict[tuple[str, str], set[int]], set[tuple[str, str]]]:
+         now = monotonic()
++        forced = force_keys or set()
+         result: dict[tuple[str, str], set[int]] = {}
+         missing: set[tuple[str, str]] = set()
+         for key in keys:
+             cached = self._mapping_cache.get(key)
+-            if cached is not None and cached[0] > now:
++            if key not in forced and cached is not None and cached[0] > now:
+                 result[key] = set(cached[1])
+             else:
+                 missing.add(key)
+@@ -298,7 +471,7 @@ class MySQLIngestRepository:
+                     value,
+                 )
+                 result[key] = set(value)
+-        return result
++        return result, set(missing)
+ 
+     def _cache_expiry(self, namespace: str, key: object) -> float:
+         checksum = zlib.crc32(f"{namespace}:{key!r}".encode("utf-8"))
+diff --git a/scripts/simulate_edge_collector.py b/scripts/simulate_edge_collector.py
+index f929002..9a3943d 100644
+--- a/scripts/simulate_edge_collector.py
++++ b/scripts/simulate_edge_collector.py
+@@ -246,6 +246,21 @@ def _print_status(path: Path, batch_ids: list[str], points: int) -> Counter[str]
+     return counts
+ 
+ 
++def read_upload_interval_ms() -> int | None:
++    """Uploader 已配置的上传间隔（仅用于批次大小提示）。
++
++    P1-B：``outbox.upload_interval`` 属 **uploader** 角色。真实 Collector
++    （``edge/collector_main.py`` 的 ``EdgeOutboxWriter`` / ``EdgeConfigManager``）从不调用
++    该动作，唯一调用者是本仿真脚本；为脚本的方便去放宽 collector 白名单会削弱最小权限
++    模型，因此这里只用一次**显式 uploader 角色**的只读客户端。凭据失败照常抛出，不吞异常。
++    """
++    client = EdgeStorageClient(role="uploader")
++    try:
++        return client.upload_interval_ms()
++    finally:
++        client.close()
++
++
+ def run_simulation(args: argparse.Namespace) -> int:
+     path = resolve_database(args.db)
+     device_codes = [value for part in args.devices for value in part.split(",")]
+@@ -268,7 +283,7 @@ def run_simulation(args: argparse.Namespace) -> int:
+         return 0
+ 
+     store = EdgeStorageClient()
+-    upload_interval_ms = store.upload_interval_ms()
++    upload_interval_ms = read_upload_interval_ms()
+     fastest_group_ms = min(group.scan_rate_ms for group in groups)
+     if upload_interval_ms and upload_interval_ms > fastest_group_ms:
+         print(
