@@ -77,10 +77,15 @@ def _run_cli(base_url: str, tmp_path: Path, *arguments: str) -> subprocess.Compl
         }
     )
     environment.pop("DATAWATCH_TOKEN", None)  # 明确"未登录"
+    # 必须显式指定 UTF-8：CLI 自身把标准流重配为 UTF-8（`_configure_standard_streams`），
+    # 输出含中文；而 `text=True` 在父进程按**区域默认编码**（中文 Windows 上是 GBK）解码，
+    # 会在读取线程里抛 UnicodeDecodeError 并破坏捕获结果——测试因此不能依赖环境区域设置。
     return subprocess.run(
         [sys.executable, "-m", "cli", *arguments],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
         cwd=str(REPO_ROOT),
         env=environment,
@@ -126,5 +131,6 @@ def test_stdout_is_a_single_envelope_on_success_path(tmp_path: Path) -> None:
     payload = _single_json_envelope(completed.stdout)
     assert completed.returncode == 0, completed.stderr
     assert payload.get("ok") is True, payload
+
 
 
