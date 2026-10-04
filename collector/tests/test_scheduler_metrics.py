@@ -39,7 +39,12 @@ async def test_scheduler_records_execution_period_lag_and_deadline_miss():
     assert snapshot["timings"]["execution_ms"]["count"] == 3
     assert snapshot["timings"]["start_to_start_ms"]["count"] == 2
     assert snapshot["timings"]["deadline_lag_ms"]["count"] == 2
-    assert snapshot["counters"]["deadline_miss_count"] == 1
+    # B46.1 纠正：这一次是"到期且**确实开始执行**、但迟到超阈值"，属**迟到开始**，
+    # 应计入独立的 deadline_late_start_count；原断言把它记在 deadline_miss_count 上，
+    # 与该计数器的"漏周期（因上一周期超时被跳过的完整周期数）"语义混淆。
+    assert snapshot["counters"]["deadline_late_start_count"] == 1
+    assert snapshot["counters"]["deadline_miss_count"] == 0
+    assert snapshot["counters"]["device_inflight_skip_count"] == 0
     assert snapshot["gauges"]["max_consecutive_deadline_misses"] == 1
     assert snapshot["gauges"]["inflight_jobs"] == 0
     assert snapshot["gauges"]["peak_inflight_jobs"] == 1
@@ -125,8 +130,12 @@ async def test_busy_device_cycle_is_skipped_without_execution():
 
     snapshot = metrics.snapshot()
     assert executions == 0
+    # B46.1 纠正：同一个被跳过的周期**只**属于"因设备在途未启动新执行"这一类事件。
+    # 原断言同时要求 deadline_miss_count == 1，等于把"同一事件被两个计数器重复登记"
+    # 写成了期望值；三者现在互斥：迟到开始 / 因在途跳过 / 漏周期。
     assert snapshot["counters"]["device_inflight_skip_count"] == 1
-    assert snapshot["counters"]["deadline_miss_count"] == 1
+    assert snapshot["counters"]["deadline_miss_count"] == 0
+    assert snapshot["counters"]["deadline_late_start_count"] == 0
 
 @pytest.mark.asyncio
 async def test_scheduler_dispatches_coincident_tasks_through_execute_many():

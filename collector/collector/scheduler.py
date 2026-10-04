@@ -51,6 +51,11 @@ class TaskScheduler:
         self._execute_func: Optional[Callable] = None
         self._metrics = metrics or PerformanceMetrics()
         self._metrics.increment("deadline_miss_count", 0)
+        # B46.1：把"迟到开始"从 deadline_miss_count 里独立出来，三个计数互斥可对账：
+        # - deadline_late_start_count：到期且**确实开始执行**、但滞后超阈值；
+        # - device_inflight_skip_count：到期但因**设备仍在执行上一周期**而未启动新执行；
+        # - deadline_miss_count：因上一周期超时而被跳过的**完整周期数**（漏周期）。
+        self._metrics.increment("deadline_late_start_count", 0)
         self._metrics.increment("device_inflight_skip_count", 0)
         self._metrics.increment("scheduler_coalesced_group_count", 0)
         self._metrics.increment("scheduler_coalesced_task_count", 0)
@@ -186,11 +191,20 @@ class TaskScheduler:
                 await self._sleep(max(0.0, min(next_due.values()) - now))
                 continue
 
+            if not self._try_begin_device_execution(lead_task):
+                # B46.1：本周期因设备仍在执行上一周期而**未启动新执行**，只计"跳过"。
+                # 原实现此前已把同一周期计入迟到（deadline_miss_count），且设备持续繁忙期间
+                # 每个循环迭代都会为同一个过期周期重复累加——既双计又无界放大。
+                self._metrics.increment("device_inflight_skip_count")
+                await self._sleep(min(task.scan_rate for task in due))
+                continue
+
+            # B46.1：只有**确实开始了执行**才裁定"迟到"，与"跳过"互斥，并使用独立计数器。
             for task in due:
                 lag_ms = max(0.0, (now - next_due[task.task_name]) * 1000)
                 self._metrics.record_timing("deadline_lag_ms", lag_ms)
                 if lag_ms > task.scan_rate * 1000 * self._deadline_miss_ratio:
-                    self._metrics.increment("deadline_miss_count")
+                    self._metrics.increment("deadline_late_start_count")
                     consecutive_misses[task.task_name] += 1
                     self._max_consecutive_deadline_misses = max(
                         self._max_consecutive_deadline_misses,
@@ -202,11 +216,6 @@ class TaskScheduler:
                     )
                 else:
                     consecutive_misses[task.task_name] = 0
-
-            if not self._try_begin_device_execution(lead_task):
-                self._metrics.increment("device_inflight_skip_count")
-                await self._sleep(min(task.scan_rate for task in due))
-                continue
 
             started = self._clock()
             self._active_executions += 1
@@ -236,6 +245,9 @@ class TaskScheduler:
                 deadline = next_due[task.task_name] + task.scan_rate
                 while deadline <= finished:
                     deadline += task.scan_rate
+                    # B46.1 语义定义：deadline_miss_count = 因上一周期超时而被跳过的**完整
+                    # 周期数**（漏周期），与 deadline_late_start_count（迟到开始）、
+                    # device_inflight_skip_count（因在途未启动）三者互不重叠、可对账。
                     self._metrics.increment("deadline_miss_count")
                 next_due[task.task_name] = deadline
 
@@ -293,30 +305,20 @@ class TaskScheduler:
 
         while self._running:
             start = self._clock()
+            lag_ms: Optional[float] = None
             if previous_start is not None and planned_start is not None:
                 start_to_start_ms = (start - previous_start) * 1000
-                deadline_lag_ms = max(0.0, (start - planned_start) * 1000)
+                lag_ms = max(0.0, (start - planned_start) * 1000)
                 self._metrics.record_timing("start_to_start_ms", start_to_start_ms)
-                self._metrics.record_timing("deadline_lag_ms", deadline_lag_ms)
-                if deadline_lag_ms > interval * 1000 * self._deadline_miss_ratio:
-                    self._metrics.increment("deadline_miss_count")
-                    consecutive_deadline_misses += 1
-                    self._max_consecutive_deadline_misses = max(
-                        self._max_consecutive_deadline_misses,
-                        consecutive_deadline_misses,
-                    )
-                    self._metrics.set_gauge(
-                        "max_consecutive_deadline_misses",
-                        self._max_consecutive_deadline_misses,
-                    )
-                else:
-                    consecutive_deadline_misses = 0
+                self._metrics.record_timing("deadline_lag_ms", lag_ms)
             previous_start = start
             planned_start = start + interval
 
             if not self._try_begin_device_execution(task):
+                # B46.1：设备仍在执行上一周期 ⇒ 本周期**未启动新执行**，只计"跳过"。
+                # 原实现在此处**又**计了一次 deadline_miss_count —— 同一事件被两个计数器
+                # 重复登记，两者相加必然高估漏周期。
                 self._metrics.increment("device_inflight_skip_count")
-                self._metrics.increment("deadline_miss_count")
                 consecutive_deadline_misses += 1
                 self._max_consecutive_deadline_misses = max(
                     self._max_consecutive_deadline_misses,
@@ -330,6 +332,23 @@ class TaskScheduler:
                 if elapsed < interval:
                     await self._sleep(interval - elapsed)
                 continue
+
+            # B46.1：只有**确实开始了执行**的周期才可能"迟到"，判定放在启动之后，与"跳过"
+            # 互斥；迟到使用独立计数器，不再与跳过/漏周期挤在 deadline_miss_count 里。
+            if lag_ms is not None:
+                if lag_ms > interval * 1000 * self._deadline_miss_ratio:
+                    self._metrics.increment("deadline_late_start_count")
+                    consecutive_deadline_misses += 1
+                    self._max_consecutive_deadline_misses = max(
+                        self._max_consecutive_deadline_misses,
+                        consecutive_deadline_misses,
+                    )
+                    self._metrics.set_gauge(
+                        "max_consecutive_deadline_misses",
+                        self._max_consecutive_deadline_misses,
+                    )
+                else:
+                    consecutive_deadline_misses = 0
 
             self._active_executions += 1
             self._peak_active_executions = max(
