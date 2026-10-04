@@ -261,11 +261,33 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/storage/
 
 ### 5.3 TaskScheduler（周期调度）
 
-`collector/collector/scheduler.py`。为每个 CollectTask 起一个独立 asyncio 循环。三个关键策略：
+`collector/collector/scheduler.py`。**当前模型是"每设备一个统一循环"，不是"每任务一个循环"**：
+`start()` 先按 `device.device_id` 把 `CollectTask` 分组，再对每台设备调用 `_run_device_loop(tasks, ...)`；
+只有该设备**仅有一个任务**时才走 `_run_phased_loop`。同一设备的多个扫描周期（不同 `scan_rate`）
+共存于**同一个**循环里。
 
-1. **相位错开**（`_initial_phase_seconds` `collector/collector/scheduler.py`）：初始相位 = `crc32(device_id) % 周期`，把同周期设备的首发时刻打散，避免齐发尖峰。
-2. **单设备 in-flight 串行**（`_try_begin_device_execution` `collector/collector/scheduler.py`）：同一设备同一时刻只允许一个采集在飞行，其余进等待队列或跳过（计 `device_inflight_skip_count`）。这与 PLC 单连接不可并发的约束一致。
-3. **周期补偿 + deadline 监控**（`_run_loop` `collector/collector/scheduler.py`）：执行耗时 < 周期则补足等待，≥ 周期则立即进入下一轮（不堆积）；deadline 滞后超阈值计入 `deadline_miss_count`。
+关键策略：
+
+1. **相位错开**（`_initial_phase_seconds`）：初始相位 = `crc32(device_id) % 周期`，把设备首发时刻打散，
+   避免齐发尖峰。
+2. **同设备单 in-flight**（`_try_begin_device_execution`）：同一设备同一时刻只允许一个采集在飞行，
+   与 PLC 单连接不可并发一致；被挡下的周期计入 `device_inflight_skip_count`，且设备门会**轮换**
+   被跳过的任务，避免高频任务长期抢占低频任务。
+3. **仅"同时到期"才合并**：每轮循环收集本轮到期的任务（`due`），经 `_execute_due_tasks` 交给
+   `TaskExecutor.execute_many`；**只有同时到期的同一设备任务**才可能合并成一次 PLC 读取。
+   并且合并还受语义约束——**同地址不同 `data_type` 时不合并**（各任务各自解码，见 §5.4 与 B46.2），
+   因为合并会丢失类型语义。
+4. **周期补偿 + 三类互斥计数**（`_run_device_loop` / `_run_loop`）：执行耗时 < 周期则补足等待，
+   否则立即进入下一轮（不堆积）。deadline 相关计数**互不重叠、可对账**：
+   - `deadline_late_start_count`：到期且**确实开始执行**、但滞后超阈值（迟到）；
+   - `device_inflight_skip_count`：到期但因**设备仍在执行上一周期**而未启动新执行（跳过）；
+   - `deadline_miss_count`：因上一周期超时而被跳过的**完整周期数**（漏周期）。
+5. **取消与停机**：`reload_device_tasks` 只取消**该设备**的循环并重装任务，不影响其他设备；
+   停机会有界关闭三个线程池并报告未完成任务数。
+
+线程模型：collector 是**单 OS 进程**，设备循环是 asyncio 协程（不占额外进程）；真正的并行只来自
+三个**显式有界线程池**（PLC 读 / parse / redis）。自由线程 Python 3.14t 的作用是让这些池**不再
+受 GIL 限制**，收益来自显式 executor 并行，**不存在"自动多核加速"**。
 
 热重载用 `reload_device_tasks` (`collector/collector/scheduler.py`)：取消该设备旧循环、清状态、注册新任务，不影响其他设备。
 
@@ -299,21 +321,29 @@ collector 写入 Redis Stream 时，使用 **contract v2**（`collector/storage/
 
 ### 6.1 单周期采集流水线
 
+同一设备本轮**同时到期**的多个任务会先合批（`_execute_due_tasks` → `execute_many`）；仅当读块可安全
+合并时共用**一次** PLC 读，然后**逐任务**解析与写入（各自的变量与分组身份保持不变）。不能合并时
+（例如同地址不同 `data_type`）退回逐任务独立读取。
+
 ```mermaid
 sequenceDiagram
-    participant SCH as TaskScheduler
-    participant EXE as TaskExecutor
+    participant SCH as TaskScheduler._run_device_loop
+    participant EXE as TaskExecutor.execute_many
     participant DRV as Driver
     participant RW as RedisWriter
-    SCH->>EXE: execute(task)
-    EXE->>EXE: generation 校验 / 连接检查
-    EXE->>DRV: read(read_blocks)  [PLC 读池]
+    SCH->>EXE: execute_many(同时到期的 tasks)
+    Note over EXE: generation 校验 / 设备在途门<br/>可按语义合并则合成一次读块
+    EXE->>DRV: read(merged_blocks)  [PLC 读池]
     DRV-->>EXE: {block_addr: 原始值}
-    EXE->>EXE: _parse_result  [parse 池, 块级缓存]
-    EXE->>RW: write_window_stream + write_latest  [redis 池]
+    loop 每个任务（身份与分组不变）
+        EXE->>EXE: _parse_result  [parse 池, 块级缓存]
+        EXE->>RW: write_window_stream + write_latest  [redis 池]
+    end
     RW-->>EXE: ok
-    EXE-->>SCH: 完成 / 异常计数
+    EXE-->>SCH: 完成 / 逐任务异常计数
 ```
+
+> 单任务设备走 `_run_phased_loop` + `execute(task)`，是同一条流水线的单任务分支。
 
 ### 6.2 配置热更新
 
