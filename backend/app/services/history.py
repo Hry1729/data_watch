@@ -187,7 +187,7 @@ class HistoryService:
         end_time: str,
         perspective_session_id: str | None = None,
         perspective_query_version: int = 0,
-        authorization: str | None = None,
+        owner_identity: str | None = None,
         max_records: int | None = None,
     ) -> dict[str, Any]:
         device = await self._fetch_device(device_id)
@@ -282,7 +282,7 @@ class HistoryService:
             await self._store_perspective_snapshot(
                 perspective_session_id=perspective_session_id,
                 query_version=perspective_query_version,
-                authorization=authorization,
+                owner_identity=owner_identity,
                 records=perspective_records,
             )
 
@@ -1483,11 +1483,12 @@ class HistoryService:
         self,
         perspective_session_id: str,
         query_version: int,
-        authorization: str | None,
+        owner_identity: str | None,
         records: list[dict[str, Any]],
     ) -> None:
         manager = get_perspective_session_manager()
-        owner_key = manager.build_owner_key(authorization)
+        # 必须与 Perspective WebSocket 路由使用同一身份（user_id），否则快照推不到该用户的会话。
+        owner_key = manager.build_owner_key(owner_identity)
         manager.ensure_session(owner_key, perspective_session_id)
         stored = manager.store_snapshot(
             owner_key=owner_key,

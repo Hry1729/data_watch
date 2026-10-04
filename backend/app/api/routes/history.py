@@ -69,7 +69,7 @@ async def history_query(
     endTime: str,
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "device_monitor:history:view")
+    principal = await require_permissions(credentials, "device_monitor:history:view")
     device_id = _require_positive_int(deviceId, "deviceId")
     var_seqs = _extract_var_seqs(request)
     perspective_query_version = _parse_query_version(
@@ -88,7 +88,7 @@ async def history_query(
                 request.headers.get("X-Perspective-Session-Id")
             ),
             perspective_query_version=perspective_query_version,
-            authorization=request.headers.get("Authorization"),
+            owner_identity=str(principal["user_id"]),
         )
         return success_response(data=data)
 
