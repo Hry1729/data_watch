@@ -209,7 +209,7 @@ rt:dlq:{device_type}:{group_code}
   "stream_key": "rt:stream:qc:g001:0",
   "retry_count": 5,
   "last_error": "TDengine bad data ...",
-  "failed_at": "2026-06-25T10:00:00+08:00",
+  "failed_at": 1782000000000,  // epoch 毫秒（生产构造器: int(time.time() * 1000)）
   "data": {
     "device_code": "QC100",
     "group_code": "g001",
@@ -245,3 +245,4 @@ rt:dlq:{device_type}:{group_code}
 - [collector 调用链与协议设计](../collector/调用链与协议设计.md)
 - [数据库设计](../../03-数据与契约/数据库/MySQL结构与字段.md)
 - [Redis 流与点位分组](../../03-数据与契约/数据库/Redis结构与字段.md)
+

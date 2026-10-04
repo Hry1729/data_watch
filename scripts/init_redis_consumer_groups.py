@@ -53,6 +53,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--my-database", default="device_watch")
     p.add_argument("--no-mysql",    action="store_true",
                    help="Skip MySQL lookup, use default type list (qc/asc/agv)")
+    # D6：首次建组的起读位置由**创建者**决定，会永久影响该组对既有积压的可见性。
+    # 默认 `0`（保护既有历史积压，与 Writer 的建组策略一致）；跳到最新（`$`）会**静默丢弃**
+    # 建组前已存在的消息，因此必须是**显式授权的专门操作**，不能是脚本的默认行为。
+    p.add_argument("--skip-to-latest", action="store_true",
+                   help="Create groups at '$' (skip all existing backlog). DESTRUCTIVE: messages "
+                        "published before group creation become invisible to the group. Use only "
+                        "when you explicitly intend to discard the existing backlog.")
     return p.parse_args()
 
 
@@ -98,13 +105,20 @@ def main() -> int:
         return 1
 
     created = skipped = errors = 0
+    # D6：默认保护既有积压；`--skip-to-latest` 才使用 `$`（并在下面显式提示其后果）。
+    group_id = "$" if args.skip_to_latest else "0"
+    if args.skip_to_latest:
+        print("WARNING: creating groups at '$' — existing backlog will NOT be consumed by them.")
+    else:
+        print("Creating groups at '0' (existing backlog is preserved and will be consumed).")
 
     for dtype in type_codes:
         for gc in GROUP_CODES:
             for shard in range(SHARD_COUNT):
                 key = f"rt:stream:{dtype}:{gc}:{shard}"
                 try:
-                    r.xgroup_create(key, CONSUMER_GROUP, id="$", mkstream=True)
+                    # 已存在的组会返回 BUSYGROUP → 记 skip，**不**销毁重建、**不** SETID。
+                    r.xgroup_create(key, CONSUMER_GROUP, id=group_id, mkstream=True)
                     print(f"  [created] {key} → {CONSUMER_GROUP}")
                     created += 1
                 except redis.exceptions.ResponseError as e:

@@ -281,7 +281,7 @@ Writer 默认只执行 `LPUSH`，不裁剪死信（`dlq_max_size=0`），并在
   "stream_key": "rt:stream:qc:g001:0",
   "retry_count": 5,
   "last_error": "TDengine bad data",
-  "failed_at": "2026-06-25T10:00:00+08:00",
+  "failed_at": 1782000000000,  // epoch 毫秒（生产构造器: int(time.time() * 1000)）
   "data": {
     "device_code": "QC100",
     "device_type": "qc",
@@ -347,4 +347,5 @@ DLQ 是人工排查入口，不是自动重放机制。**它不按投递次数�
 - [入库 writer](../../02-模块设计/writer/README.md)
 - [writer 可靠入库与 TDengine 写入](../../02-模块设计/writer/可靠入库与TDengine写入.md)
 - [WebSocket 协议](../契约/WebSocket协议.md)
+
 
