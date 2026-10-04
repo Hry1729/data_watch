@@ -43,6 +43,16 @@ from tdengine_writer import BAD_DATA, FAILED_INCOMPLETE, LANDED, RETRY, TDengine
 logger = logging.getLogger("writer.consumer")
 
 
+class XAutoclaimUnsupported(RuntimeError):
+    """XAUTOCLAIM 不可用或其响应形态不受支持。
+
+    B30：这类情况必须**回退到 XPENDING+XCLAIM**，而不是让 PEL 回收静默停止。Redis 6.2/6.x
+    的 XAUTOCLAIM 返回两元素 `[next_cursor, entries]`，7.0+ 才增加第三元素（被删除条目）；
+    旧实现硬性三元素解包会在 6.x 上抛 ValueError，而该异常不匹配"unknown command"回退条件
+    ⇒ 回收每轮都失败且只留一条 warning。
+    """
+
+
 # ---------------------------------------------------------------------------
 # 内部缓冲行
 # ---------------------------------------------------------------------------
@@ -733,6 +743,13 @@ class StreamConsumer:
             self._readmit_isolated()
         try:
             await self._drain_with_xautoclaim(stream_key, consumer_name, max_entries, deadline)
+        except XAutoclaimUnsupported as exc:
+            # B30：形态不可用同样要回退，不能静默停止回收（旧实现只认 unknown-command）。
+            logger.warning(
+                "[consumer] XAUTOCLAIM response unusable (%s); falling back to XPENDING+XCLAIM",
+                exc,
+            )
+            await self._drain_with_xpending_xclaim(stream_key, consumer_name, max_entries, deadline)
         except Exception as exc:
             if "unknown command" in str(exc).lower() or "xautoclaim" in str(exc).lower():
                 logger.info(
@@ -781,8 +798,14 @@ class StreamConsumer:
                     count=cnt,
                 ),
             )
-            # 结果为 (next_start_id, [(entry_id, data), ...], deleted_ids)
-            next_id, claimed_entries, _ = result
+            # 结果形态：Redis 6.2/6.x 为 (next_start_id, [(entry_id, data), ...])，
+            # 7.0+ 才有第三元素 (deleted_ids)。按实际长度解包，**不得**因元素个数不同而抛错。
+            if not isinstance(result, (list, tuple)) or len(result) < 2:
+                raise XAutoclaimUnsupported(
+                    f"unexpected XAUTOCLAIM reply for {stream_key}: {type(result).__name__}"
+                )
+            next_id = result[0]
+            claimed_entries = result[1]
             pages += 1
             processed += len(claimed_entries)
             delivery_counts = await self._run_blocking(

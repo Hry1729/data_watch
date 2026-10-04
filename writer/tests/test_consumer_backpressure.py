@@ -23,7 +23,7 @@ def _config(max_buffer_rows: int = 10) -> dict:
             "batch_count": 5,
             "max_buffer_rows": max_buffer_rows,
             "pending_min_idle_ms": 0,
-            "pending_max_retry": 3,
+            "max_row_retry": 3,
         },
         "redis": {"group_name": "writer", "consumer_name": "writer-1"},
     }
@@ -608,3 +608,4 @@ async def test_delete_outage_uses_same_identity_capacity_until_recovered():
     consumer._retry_pending_deletes(max_ids=2)
     assert consumer._delete_retry == {}
     assert consumer._next_read_scope(["s1"])[0] == {"s1": ">"}
+
