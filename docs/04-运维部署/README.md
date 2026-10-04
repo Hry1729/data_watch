@@ -119,7 +119,7 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 |------|------|------|------|
 | mysql | `mysql:8.4` | `127.0.0.1:3306:3306` | profile `infra`，可选由 compose 托管；数据在 `mysql_data` 命名卷，业务表仍需恢复 |
 | redis | `redis:7.4` | `127.0.0.1:6379:6379` | profile `infra`，可选由 compose 托管；要求 `REDIS_PASSWORD`，仅主机回环可达 |
-| tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6030`、`6041`、`6043`、`6062->6060` | profile `infra`，固定 `hostname`/`TAOS_FQDN=tdengine`（否则容器内解析不了自身 FQDN 会启动即崩），挂载 `taos.cfg` 与日志卷 |
+| tdengine | `tdengine/tsdb-amd64:3.4.0.9` | `6041:6041` | profile `infra`，仅发布 taosAdapter；对外访问须用宿主机防火墙按来源 IP 白名单放行（见 §10）；固定 `hostname`/`TAOS_FQDN=tdengine`（否则容器内解析不了自身 FQDN 会启动即崩），挂载 `taos.cfg` 与日志卷 |
 | backend | `data-watch-backend:latest` | `8000:8000` | 读取 `deploy/backend.env` |
 | frontend | `data-watch-frontend:latest` | `8080:80` | nginx 静态资源 + API/WS 代理 |
 
@@ -677,10 +677,19 @@ docker compose -f .\docker-compose.yml up -d --force-recreate backend
 | 5173 | frontend dev | Vite 开发服务 |
 | 1420 | app dev | Tauri dev WebView origin |
 | 6379 | Redis | 实时缓存/Stream；Compose 默认仅 `127.0.0.1` 发布 |
-| 6030 | TDengine native | TDengine 原生端口 |
-| 6041 | TDengine taosAdapter | backend/writer 常用 HTTP/WebSocket 端口 |
-| 6043 | TDengine | 组件端口 |
-| 6062->6060 | TDengine | compose 映射端口 |
+| 6041 | TDengine taosAdapter | backend/writer/agent 唯一使用的 HTTP/WebSocket 端口；Compose 只发布此端口 |
+| 6030 / 6043 / 6060 | TDengine native / taosKeeper / Explorer | Compose 不再发布，仅容器内可用 |
+
+TDengine 6041 需要被远程主机（如分布式 Writer）访问，因此 Compose 不绑回环，改由宿主机防火墙限定来源。
+在中心宿主机以管理员 PowerShell 执行（`<白名单IP>` 换成实际需要直连的主机，多个用逗号分隔）：
+
+```powershell
+New-NetFirewallRule -DisplayName "DataWatch TDengine 6041 allow" -Direction Inbound -Protocol TCP -LocalPort 6041 -RemoteAddress <白名单IP> -Action Allow
+New-NetFirewallRule -DisplayName "DataWatch TDengine 6041 block" -Direction Inbound -Protocol TCP -LocalPort 6041 -Action Block
+```
+
+注意：Docker Desktop 发布的端口可能绕过 Windows 防火墙规则，部署后须从非白名单主机实测 `Test-NetConnection <中心IP> -Port 6041` 应失败。
+TDengine 默认 `root/taosdata` 必须改掉：`ALTER USER root PASS '<新密码>';`，并同步 `deploy/backend.env` 与各 Writer/Agent 配置。
 
 ---
 
