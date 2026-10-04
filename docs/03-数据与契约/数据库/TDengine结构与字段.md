@@ -47,13 +47,24 @@ CREATE STABLE IF NOT EXISTS sdqc (
   ts TIMESTAMP,
   v0001 DOUBLE,
   v0002 DOUBLE
-) TAGS (device_code VARCHAR(64));
+) TAGS (device_code VARCHAR(32));   -- 当前 Writer 的定义：VARCHAR(32)（见 writer/tdengine_writer.py）
 
 CREATE TABLE IF NOT EXISTS qc100 USING sdqc TAGS ('QC100');
 
 INSERT INTO qc100 (ts, v0001, v0002)
 VALUES ('2026-06-25 10:00:00.100', 1.0, 23.4);
 ```
+
+> **TAG 长度/类型以当前 Writer 为准（D11）**：值超级表为 `sd{device_type}`、TAG 为
+> `device_code VARCHAR(32)`（`writer/tdengine_writer.py` 建表语句）。**`VARCHAR(64)` 与
+> `NCHAR(32)` 均不是当前定义**——前者是本文档旧版本的笔误，后者属 legacy 初始化脚本
+> （`scripts/init_tdengine_v2.py`，使用 `st_{type}_{group}` / `t_{device_code}_{group}`
+> 命名，**不是**当前 Writer 的自动建表路径）。**禁止**直接 ALTER 现场表或改物理名去"对齐示例"。
+>
+> **质量窄表命名规则（保留实际输入大小写行为）**：超级表名 `sq{device_type}`，其中
+> `device_type` 会**按小写规范化**（`quality_schema.py::quality_stable_name` →
+> `f"sq{str(device_type).lower()}"`）；子表名 `{device_code}_q`，其中 **`device_code` 保留
+> 原大小写**（`quality_child_table_name` 只做 `f"{code}_q"`，不做大小写折叠）。
 
 ### 2.2 质量窄表（与值表平行）
 

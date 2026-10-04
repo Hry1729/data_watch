@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """DB-5: 初始化 TDengine v0.6 宽表结构。
 
+**LEGACY（D11）——不是当前 Writer 的建表路径，请勿用它初始化现行结构。**
+本脚本为 `st_{type}_g001` / `t_{device_code}_g001` 命名、TAG 用 `NCHAR(32)`；
+当前 Writer（`writer/tdengine_writer.py`）自管 schema，使用 `sd{device_type}` 值超级表 +
+`{device_code}` 子表、TAG 为 `device_code VARCHAR(32)`，质量窄表为 `sq{device_type}` /
+`{device_code}_q`。误用本脚本会建出与现行模型不一致的结构。
+
 为每种设备类型创建超级表 st_{type}_g001，列名 v0001~v3072（全 DOUBLE），
 再为每台设备创建子表 t_{device_code}_g001。
 
