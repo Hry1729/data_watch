@@ -67,6 +67,17 @@ class IngestSettings:
         )
         if settings.stream_shard_count <= 0 or settings.stream_maxlen < 0:
             raise ValueError("stream shard count must be positive and maxlen non-negative")
+        # B27：`INGEST_STREAM_MAXLEN` 目前是**失效配置**——提交路径的 Lua 实参被硬编码为 0
+        # （ingest/app/redis_store.py 的 pipe.eval：`"0",  # never trim unconsumed data`），
+        # 因为**按长度裁剪会丢掉尚未被 Writer 消费的帧**（那不是稳定，而是丢数据）。
+        # 与其"静默忽略正值"，不如**显式拒绝**：配置正值绝不产生与说明相反的行为。
+        # 容量边界必须由显式背压/告警处理；已确认残留的清理属 B31，不走这里。
+        if settings.stream_maxlen > 0:
+            raise ValueError(
+                "INGEST_STREAM_MAXLEN must be 0: trimming the stream by length would drop "
+                "unconsumed frames (the commit path deliberately never trims unacked data). "
+                "Handle capacity with explicit backpressure/alerts instead."
+            )
         if settings.max_batch_items <= 0:
             raise ValueError("max batch items must be positive")
         if settings.max_body_bytes <= 0:

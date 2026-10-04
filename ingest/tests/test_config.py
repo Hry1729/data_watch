@@ -73,3 +73,16 @@ def test_negative_stream_maxlen_is_rejected(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="maxlen non-negative"):
         IngestSettings.from_env()
+
+
+def test_positive_stream_maxlen_is_rejected(monkeypatch) -> None:
+    """B27：`INGEST_STREAM_MAXLEN` 是失效配置——提交路径的 Lua 实参硬编码为 0。
+
+    正値若被"静默忽略"，运维会以为裁剪已生效；若真被生效，则会裁剪**尚未被 Writer 消费**的
+    帧（丢数据而不是稳定）。因此此处显式拒绝，容量边界交由显式背压/告警处理。
+    """
+    monkeypatch.setenv("INGEST_STREAM_MAXLEN", "1000")
+    with pytest.raises(ValueError) as excinfo:
+        IngestSettings.from_env()
+    assert "must be 0" in str(excinfo.value)
+    assert "unconsumed frames" in str(excinfo.value)

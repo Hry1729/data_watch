@@ -48,7 +48,11 @@ HTTP JSON 编解码使用 `msgspec`；兼容层缓存路由 handler 元数据，
 7. 每个接纳批次合并为一次 `PUBLISH rt:change` 数组；Backend 同时兼容旧单对象负载。
 8. 每个 Stream 在 Redis Hash `ingest:stream_trim_item_counts` 中独立累计接纳条目。达到 5000 时才执行一次 `XTRIM MAXLEN ~` 并保留余数，低频 Stream 不会因错过全局计数点而失去裁剪。
 
-`stream_maxlen` 是 Redis 近似裁剪目标，实际长度可在下一次本 Stream 裁剪前短暂高于目标。旧 session 的 high_watermark TTL 由 `INGEST_MAX_OFFLINE_RETENTION_DAYS` 决定，安装配置初始值 7 天，并与边缘 `max_offline_retention_days` 一致。第一阶段仅支持单实例 Redis；Redis Cluster 跨槽兼容另行设计。
+**关于 `INGEST_STREAM_MAXLEN`（B27 纠正）**：该配置目前**是失效配置，并且会被显式拒绝**——提交路径的 Lua 实参被**硬编码为 0**（`ingest/app/redis_store.py` 的 `pipe.eval`：`"0",  # never trim unconsumed data`），因为**按长度裁剪会丢掉尚未被 Writer 消费的帧**（那是丢数据，不是稳定）。因此 `INGEST_STREAM_MAXLEN` 现在**只接受 0**，正值会在启动校验时被拒绝并说明原因；容量边界必须用**显式背压/告警**处理，已确认残留的清理另见 B31。
+
+> 注意区分**同名但不同侧**的旋钮：collector/Writer 侧的 `redis.stream_maxlen`（`collector/config/settings.toml`）是**仍受支持**的有损应急上限，其条件性语义见《03-数据与契约/DW-01-确认语义与持久化边界》——不要与 Ingest 提交侧的 `INGEST_STREAM_MAXLEN` 混为一谈。
+
+旧 session 的 high_watermark TTL 由 `INGEST_MAX_OFFLINE_RETENTION_DAYS` 决定，安装配置初始值 7 天，并与边缘 `max_offline_retention_days` 一致。第一阶段仅支持单实例 Redis；Redis Cluster 跨槽兼容另行设计。
 
 ## 5. 进程与容量默认
 
