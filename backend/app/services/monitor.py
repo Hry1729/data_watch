@@ -367,21 +367,62 @@ class MonitorService:
     def _format_datetime(self, value: datetime | None) -> str:
         return value.strftime("%Y-%m-%d %H:%M:%S") if value else ""
 
+    _EMPTY_POINT_VALUE = "-"
+
+    @staticmethod
+    def _coerce_point_number(value: Any) -> float | None:
+        """B17：把 latest 里的原始值安全归一为**有限数字**；无法确定时返回 None。
+
+        空串/空白、非数字文本、`None`、`inf`/`nan`、以及损坏载荷（dict/list 等）一律返回 None，
+        由调用方转成"明确无值"。**刻意不补 0**——把坏点变成 0 会掩盖异常（清单硬要求）；
+        同时避免一处坏值让 realtime-init **整页 500**。
+        """
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, (str, bytes, bytearray)):
+            text = (
+                value.decode("utf-8", "replace")
+                if isinstance(value, (bytes, bytearray))
+                else value
+            ).strip()
+            if not text:
+                return None
+            try:
+                number = float(text)
+            except (TypeError, ValueError):
+                return None
+        else:
+            return None
+        if number != number or number in (float("inf"), float("-inf")):  # NaN / ±Inf
+            return None
+        return number
+
     def _normalize_point_value(self, var_type: str | None, value: Any) -> str | int | float | bool:
         if value is None:
-            return "-"
+            return self._EMPTY_POINT_VALUE
 
         normalized_type = (var_type or "").upper()
         if normalized_type == "BOOL":
             if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "yes", "on"}
-            return bool(int(float(value)))
+                text = value.strip().lower()
+                if not text:
+                    return self._EMPTY_POINT_VALUE
+                if text in {"1", "true", "yes", "on"}:
+                    return True
+                if text in {"0", "false", "no", "off"}:
+                    return False
+            number = self._coerce_point_number(value)
+            return self._EMPTY_POINT_VALUE if number is None else bool(number)
 
         if normalized_type in {"INT", "DINT", "WORD", "DWORD"}:
-            return int(float(value))
+            number = self._coerce_point_number(value)
+            return self._EMPTY_POINT_VALUE if number is None else int(number)
 
         if normalized_type == "REAL":
-            return float(value)
+            number = self._coerce_point_number(value)
+            return self._EMPTY_POINT_VALUE if number is None else number
 
         if isinstance(value, float) and value.is_integer():
             return int(value)
