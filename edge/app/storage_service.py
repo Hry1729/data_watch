@@ -70,6 +70,11 @@ IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
             "session.complete",
             "session.current",
             "maintenance",
+            # B6：dead 载荷的恢复入口（只给 uploader；agent/collector 不得取回或重放载荷）。
+            "outbox.dead_backlog",
+            "outbox.dead_list",
+            "outbox.dead_export",
+            "outbox.dead_replay",
             "status",
         }
     ),
@@ -462,6 +467,32 @@ class StorageEngine:
             return outbox.current_session_id()
         if action == "maintenance":
             return outbox.maintenance(int(payload["retention_days"]), payload.get("sent_retention_ms"))
+        # B6：dead 载荷的恢复入口（查看/导出/受控重放）。只授予 uploader 角色：
+        # 没有这些入口时，运维无法取回即将被 maintenance 删除的唯一载荷。
+        if action == "outbox.dead_backlog":
+            return outbox.dead_backlog()
+        if action == "outbox.dead_list":
+            return outbox.list_dead(
+                limit=int(payload.get("limit", 50)),
+                offset=int(payload.get("offset", 0)),
+                device_code=payload.get("device_code"),
+            )
+        if action == "outbox.dead_export":
+            record = outbox.export_dead(
+                str(payload["batch_id"]),
+                str(payload["upload_session_id"]),
+                int(payload["local_seq"]),
+            )
+            if record is None:
+                raise ValueError("no dead record matches the given identity")
+            return record
+        if action == "outbox.dead_replay":
+            return outbox.replay_dead(
+                str(payload["batch_id"]),
+                str(payload["upload_session_id"]),
+                int(payload["local_seq"]),
+                window_ms=payload.get("window_ms"),
+            )
         if action == "config.revision":
             return config.revision()
         if action == "config.apply":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import shutil
 import sqlite3
 import threading
@@ -682,6 +683,141 @@ class OutboxStore:
                 "SELECT state, COUNT(*) AS count FROM outbox GROUP BY state"
             ).fetchall()
         return {str(row["state"]): int(row["count"]) for row in rows}
+
+    # ── B6：dead 载荷的查看 / 导出 / 受控重放 ──────────────────────────────────
+    # 背景：maintenance() 会按 retention_days 删除 dead 行。在这些入口存在之前，运维
+    # **没有任何途径**查看或取回即将被删除的唯一载荷——即"没有恢复入口却自动删除"。
+    # 现在先可恢复（查看/导出）、再有条件地重放，删除权限不被自动放大。
+
+    # 重放时间窗：dead 超过该时长后只允许**导出**，不在原位重放
+    # （避免把久远的历史帧混入当前 session 的序列与幂等边界）。
+    DEAD_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+
+    def dead_backlog(self) -> dict[str, int]:
+        """dead 记录的条数与占用字节数（供容量告警与运维决策）。"""
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(payload)), 0) AS bytes "
+                "FROM outbox WHERE state='dead'"
+            ).fetchone()
+        return {"records": int(row["records"] or 0), "bytes": int(row["bytes"] or 0)}
+
+    def list_dead(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        device_code: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """列出 dead 记录（**不含载荷**），供运维决定导出或重放哪些批次。"""
+        if not 1 <= limit <= 500:
+            raise ValueError("limit must be within 1..500")
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        query = (
+            "SELECT batch_id, upload_session_id, local_seq, device_code, group_code, "
+            "assignment_epoch, attempt_count, reject_count, dead_at, http_status, last_error, "
+            "LENGTH(payload) AS payload_bytes FROM outbox WHERE state='dead'"
+        )
+        params: list[Any] = []
+        if device_code:
+            query += " AND device_code=?"
+            params.append(device_code)
+        query += " ORDER BY dead_at IS NULL, dead_at ASC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        with self._transaction() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [dict(row) for row in rows]
+
+    def export_dead(
+        self,
+        batch_id: str,
+        upload_session_id: str,
+        local_seq: int,
+    ) -> dict[str, Any] | None:
+        """导出单条 dead 记录的**完整载荷**（base64）；非 dead 或不存在返回 None。"""
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT batch_id, upload_session_id, local_seq, device_code, group_code, "
+                "assignment_epoch, attempt_count, reject_count, dead_at, http_status, last_error, "
+                "payload FROM outbox "
+                "WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'",
+                (batch_id, upload_session_id, local_seq),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = dict(row)
+        raw = payload.pop("payload")
+        payload["payload_b64"] = base64.b64encode(bytes(raw or b"")).decode("ascii")
+        return payload
+
+    def replay_dead(
+        self,
+        batch_id: str,
+        upload_session_id: str,
+        local_seq: int,
+        *,
+        window_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """把一条 dead 记录**受控地**放回待上传队列（B6 的恢复入口之一）。
+
+        约束（缺一不可）：
+        - **幂等**：只改动 ``state='dead'`` 的行；重复调用返回 ``replayed=False`` +
+          ``reason='not_dead'``，既不报错也不重复计数；
+        - **时间窗**：``dead_at`` 早于窗口的只允许导出、不原位重放（``outside_time_window``）；
+        - **重置隔离预算**：``reject_count`` 归零，使重放不继承历史协议拒绝计数（配合 B6 的
+          计数分离：网络重试不消耗坏数据预算）；
+        - **审计**：累计 ``dead_replay_count`` 并记录 ``last_dead_replayed_at``。
+        - **权限**：由 IPC 层保证——``outbox.dead_replay`` 只授予 uploader 角色。
+        """
+        window = window_ms if window_ms is not None else self.DEAD_REPLAY_WINDOW_MS
+        if window < 0:
+            raise ValueError("window_ms must be >= 0")
+        now = self._clock_ms()
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT state, dead_at FROM outbox "
+                "WHERE batch_id=? AND upload_session_id=? AND local_seq=?",
+                (batch_id, upload_session_id, local_seq),
+            ).fetchone()
+            if row is None:
+                return {"replayed": False, "reason": "not_found"}
+            if row["state"] != "dead":
+                return {"replayed": False, "reason": "not_dead", "state": row["state"]}
+            dead_at = row["dead_at"]
+            if dead_at is not None and now - int(dead_at) > window:
+                return {
+                    "replayed": False,
+                    "reason": "outside_time_window",
+                    "dead_at": int(dead_at),
+                    "window_ms": window,
+                }
+            cursor = connection.execute(
+                """
+                UPDATE outbox
+                SET state='retry_wait', attempt_count=0, reject_count=0, next_retry_at=?,
+                    lease_owner=NULL, inflight_at=NULL, lease_until=NULL,
+                    last_error=COALESCE(last_error, '') || ' [replayed by operator]'
+                WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'
+                """,
+                (now, batch_id, upload_session_id, local_seq),
+            )
+            if cursor.rowcount != 1:
+                return {"replayed": False, "reason": "not_dead"}
+            connection.execute(
+                """
+                INSERT INTO metadata(key, value) VALUES('dead_replay_count', '1')
+                ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO metadata(key, value) VALUES('last_dead_replayed_at', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (str(now),),
+            )
+        return {"replayed": True, "state": "retry_wait", "replayed_at": now}
 
     def maintenance(
         self,
