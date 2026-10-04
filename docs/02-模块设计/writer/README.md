@@ -100,7 +100,7 @@ flowchart TD
 
 1. **补偿失败的 XACK**（`_retry_pending_acks`）——必须早于 drain，避免已落库但 ACK 失败的条目被重新认领重写；
 2. **补偿失败的 XDEL**（`_retry_pending_deletes`）——只清理已终态且已 ACK 的条目，不触发 TDengine 重写；
-3. **周期重认领**（`drain_pending`，默认 60s）——回收本消费者或崩溃消费者遗留的闲置消息；
+3. **周期重认领**（`drain_pending`，间隔 `pending_drain_interval_s`，**默认 5s**；单轮预算受 `pending_cycle_budget_ms`，默认 100ms）——回收本消费者或崩溃消费者遗留的闲置消息（闲置判定 `pending_min_idle_ms`）。**注**：旧文档写的"默认 60s"与实现不符（D9）。
 4. **读新消息**（`xreadgroup`）——缓冲未满时读；满则跳过读、立即 flush（背压）；
 5. **flush**——达时间或缓冲阈值时批量落库；
 6. **连续失败退避**——flush 失败递增退避（上限 10s）并降噪日志。
@@ -120,6 +120,26 @@ flowchart TD
 - **断线重连**（`_try_reconnect`）：连接错触发，单点重连、`_reconnecting` 防递归。
 
 > **错误分类哲学**：只认具体错误码判坏数据，**故意不匹配** `invalid`/`out of range`/`syntax` 等英文词——这些也出现在配置越界、协议/版本等瞬时错误里，误判会把可重试数据错送进 DLQ。未知错一律 RETRY。
+
+#### 帧级状态机（D8 补全：四态 + 隔离/退避 + 各自的可恢复性）
+
+一条**逻辑帧**可能被拆成多个 SQL 分段（值宽表、质量窄表…），归并由
+`writer/tdengine_writer.py::_merge_part_status` 完成。**不是三态，而是四态**：
+
+| 状态 | 触发条件 | ACK / 载荷归属 | 恢复与终结 |
+|---|---|---|---|
+| `RETRY` | 任一分段为 RETRY（连接/未知错误、`0x0219` 过长、二分深度用尽）| **不 ACK**，原始帧保留在 Stream/PEL | **非终态**：普通重试；连续 RETRY 达 `max_row_retry`（默认 3）后进入**有界隔离区**（容量 `max(64, max_buffer_rows // 4)`），按 `retry_backoff_base_s … retry_backoff_max_s`（默认 1–30s）退避，每轮最多 `retry_budget_per_cycle`（默认 64）行重入；隔离区满时**恢复背压而非丢弃** |
+| `FAILED_INCOMPLETE` | 无 RETRY 分段，但**存在** `BAD_DATA` 分段 ⇒ 整帧不完整 | **不 ACK**；调用方**持久隔离**，记录原始帧与各分段状态，**不计成功** | 需人工/后续策略处理；当前实现**不按次数终结丢弃** |
+| `LANDED` | **全部分段**均 LANDED（值与质量分段**全部**成功）| XACK（随后 XDEL）| 终态 |
+| `BAD_DATA`（单行级）| 二分递归后**单行**仍失败 | 推入 DLQ **之后**才 XACK | 人工排查入口，非自动重放 |
+
+两条容易搞错的语义：
+
+- **`RETRY` 不会撤销已经执行成功的 SQL**：多段写入本来就可能留下"值已入库、部分质量未入库"的
+  中间态；把整帧标成 RETRY 不会让它变成原子操作，只会导致无限重试且永不补齐（该结论写在
+  `_merge_part_status` 的 docstring 里）。
+- **`RETRY` 不是终态**，也**不是所有 RETRY 都立即隔离**——隔离只发生在连续 RETRY 达到
+  `max_row_retry` 之后。
 
 ### 5.4 MysqlMapper（永久映射缓存）
 
