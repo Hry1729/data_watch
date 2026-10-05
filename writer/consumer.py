@@ -1174,6 +1174,7 @@ class StreamConsumer:
                 device_code,
                 group_code,
                 config_version,
+                True,  # bound repeated reloads for partially missing mappings
             )
             if mapping is None:
                 logger.warning(

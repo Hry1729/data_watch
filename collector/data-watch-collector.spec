@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 repo_root = str(Path(SPECPATH).resolve().parent)
 
-datas = []
+datas = [(str(Path(repo_root) / 'packages/modbus_tcp/modbus_tcp/address.py'), 'modbus-rules')]
 binaries = []
 hiddenimports = ['driver_preflight', 'data_watch_driver_manifest', 'data_watch_driver_catalog']
 hiddenimports += ['shelve', 'ctypes.wintypes', 'netrc', 'getpass']

@@ -29,6 +29,36 @@ class _Request:
         self.headers = headers or {}
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("peer,proxies,forwarded,expected", [
+    ("203.0.113.7", "", "198.51.100.1", "203.0.113.7"),
+    ("10.0.0.5", "10.0.0.0/8", "192.0.2.1, 198.51.100.9", "198.51.100.9"),
+    ("203.0.113.7", "10.0.0.0/8", "198.51.100.1", "203.0.113.7"),
+])
+async def test_actual_asgi_dispatch_preserves_peer(monkeypatch, peer, proxies, forwarded, expected):
+    from app.main import EnhancedASGITurboAPI
+    _use_proxies(monkeypatch, proxies)
+    app = EnhancedASGITurboAPI(title="isolated peer test")
+
+    @app.get("/peer")
+    async def peer_route(request):
+        return {"ip": auth_routes._resolve_client_ip(request)}
+
+    messages = []
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    async def send(message):
+        messages.append(message)
+    await app._dispatch_asgi({
+        "type": "http", "method": "GET", "path": "/peer", "query_string": b"",
+        "client": (peer, 12345), "headers": [(b"x-forwarded-for", forwarded.encode())],
+    }, receive, send)
+    import json
+    assert next(m["status"] for m in messages if m["type"] == "http.response.start") == 200
+    body = b"".join(m.get("body", b"") for m in messages if m["type"] == "http.response.body")
+    assert json.loads(body)["ip"] == expected
+
+
 def _use_proxies(monkeypatch, value: str) -> None:
     monkeypatch.setattr(
         auth_routes,

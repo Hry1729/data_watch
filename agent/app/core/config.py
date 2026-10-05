@@ -93,6 +93,9 @@ def mutate_config(mutator) -> dict:
 
 
 def _load_config_unlocked() -> dict:
+    for path in (CONFIG_PATH, CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")):
+        if path.exists() or path.is_symlink():
+            _restrict_config_acl(path)
     if not CONFIG_PATH.exists():
         cfg = _default_config()
         _save_config_unlocked(cfg)
@@ -143,11 +146,88 @@ def _ensure_jwt_secret_unlocked(cfg: dict) -> None:
 def _save_config_unlocked(cfg: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        toml.dump(cfg, f)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, CONFIG_PATH)
+    for path in (CONFIG_PATH, tmp_path):
+        if path.exists() or path.is_symlink():
+            _restrict_config_acl(path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8", opener=_open_config_temp) as f:
+            toml.dump(cfg, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CONFIG_PATH)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _config_security_descriptor():
+    import ntsecuritycon
+    import win32api
+    import win32con
+    import win32security
+
+    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+    try:
+        current_sid = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+    finally:
+        token.Close()
+    acl = win32security.ACL()
+    for sid in (current_sid, win32security.CreateWellKnownSid(win32security.WinLocalSystemSid),
+                win32security.CreateWellKnownSid(win32security.WinBuiltinAdministratorsSid)):
+        acl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, sid)
+    descriptor = win32security.SECURITY_DESCRIPTOR()
+    descriptor.SetSecurityDescriptorDacl(True, acl, False)
+    descriptor.SetSecurityDescriptorControl(win32security.SE_DACL_PROTECTED, win32security.SE_DACL_PROTECTED)
+    return descriptor
+
+
+def _restrict_config_acl(path: Path) -> None:
+    """JWT configuration is private to the service/admins and its actual developer owner."""
+    if path.is_symlink() or path.is_junction():
+        raise ValueError(f"Refusing linked Agent configuration: {path}")
+    if os.name != "nt":
+        path.chmod(0o600)
+        return
+    import win32security
+    win32security.SetNamedSecurityInfo(
+        str(path), win32security.SE_FILE_OBJECT,
+        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        None, None, _config_security_descriptor().GetSecurityDescriptorDacl(), None,
+    )
+
+
+def _open_config_temp(path, flags):
+    if os.name != "nt":
+        return os.open(path, flags, 0o600)
+    import msvcrt
+    import pywintypes
+    import win32con
+    import win32file
+    import win32security
+    attributes = pywintypes.SECURITY_ATTRIBUTES()
+    attributes.SECURITY_DESCRIPTOR = _config_security_descriptor()
+    handle = win32file.CreateFile(
+        str(path), win32con.GENERIC_WRITE | win32con.WRITE_DAC, 0, attributes,
+        win32con.CREATE_ALWAYS, win32con.FILE_ATTRIBUTE_NORMAL | win32file.FILE_FLAG_OPEN_REPARSE_POINT, None,
+    )
+    detached = False
+    try:
+        if win32file.GetFileInformationByHandle(handle)[0] & win32con.FILE_ATTRIBUTE_REPARSE_POINT:
+            raise ValueError("Refusing linked Agent temporary configuration")
+        win32security.SetSecurityInfo(
+            handle, win32security.SE_FILE_OBJECT,
+            win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+            None, None, attributes.SECURITY_DESCRIPTOR.GetSecurityDescriptorDacl(), None,
+        )
+        raw_handle = handle.Detach()
+        detached = True
+        try:
+            return msvcrt.open_osfhandle(raw_handle, os.O_WRONLY | os.O_BINARY)
+        except Exception:
+            win32file.CloseHandle(raw_handle)
+            raise
+    finally:
+        if not detached:
+            handle.Close()
 
 
 def apply_db_patch(cfg: dict, section: str, patch: dict) -> None:

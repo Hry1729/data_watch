@@ -12,6 +12,9 @@ binaries = []
 hiddenimports = [
     'win32crypt',
     'pywintypes',
+    'win32api',
+    'win32file',
+    'win32security',
     'app.routers.bootstrap',
     'app.routers.auth',
     'app.routers.viewer',

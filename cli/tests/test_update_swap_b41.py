@@ -130,7 +130,10 @@ def _is_runnable(target: Path) -> bool:
     exe = target / "data-watch.exe"
     if not exe.is_file():
         return False
-    completed = subprocess.run([str(exe), "version"], capture_output=True, text=True, timeout=60)
+    try:
+        completed = subprocess.run([str(exe), "version"], capture_output=True, text=True, timeout=60)
+    except OSError:
+        return False
     return completed.returncode == 0 and '"ok":true' in completed.stdout
 
 
@@ -473,7 +476,7 @@ def test_rollback_move_previous_into_current_failure_keeps_runnable_version(
 
     assert completed.returncode != 0
     runnable = _runnable_versions(root)
-    assert runnable.get("current") == "OLDER", f"应把回滚目标恢复到 current；实测 {runnable}"
+    assert runnable.get("current") == "OLD", f"应把原可用版本恢复到 current；实测 {runnable}"
 
 
 def test_rollback_verification_failure_keeps_runnable_version(
@@ -486,7 +489,8 @@ def test_rollback_verification_failure_keeps_runnable_version(
     )
 
     assert completed.returncode != 0
-    assert _runnable_versions(root), "回滚校验失败后仍必须存在可运行版本"
+    assert _runnable_versions(root).get("current") == "OLD"
+    assert _complete_version(root, "previous") == "OLDER"
 
 
 # --------------------------------------------------------------------------- #
@@ -833,9 +837,40 @@ def test_rollback_crash_restart_does_not_delete_displaced_version(
 
     restarted = _run_swap(_script(), root, previous, rollback=True, script_name="swap-restart.ps1")
 
-    assert restarted.returncode != 0, "previous 已被消耗，重启不可能完成回滚，也不得报成功"
-    assert _complete_version(root, "current") == "OLDER", "重启后 current 仍须是可运行的完整版本"
+    assert restarted.returncode == 0, restarted.stderr
+    assert _complete_version(root, "current") == "OLDER"
     markers = {m for name in _VERSION_DIRS if (m := _complete_version(root, name)) is not None}
     assert "OLD" in markers, f"被淘汰的旧版本不得被永久删除；实测 markers={markers}"
     assert _runnable_versions(root), "目录里必须仍有可运行版本"
 
+
+def test_failed_rollback_recovery_can_retry_after_interruption(tmp_path, fake_cli_exe):
+    root = tmp_path / "root"
+    _seed_rollback(root, fake_cli_exe)
+    previous = root / "previous"
+    interrupted = _run_swap(
+        _inject(_script(), _move_fail_into_current(2)), root, previous,
+        rollback=True, env={"DATAWATCH_FAKE_VERSION": "8.0.0"},
+    )
+    assert interrupted.returncode != 0
+    assert _state_path(root).read_text().strip() == "rollback:restoring"
+    script = root / "recover.ps1"
+    script.write_text(_script(), encoding="utf-8")
+    result = subprocess.run([
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script),
+        "-InstallRoot", str(root), "-StagedApp", str(previous),
+        "-ParentProcessId", "999999", "-ReconcileOnly",
+    ], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert _runnable_versions(root).get("current") == "OLD"
+
+
+def test_broken_rollback_executable_restores_working_current(tmp_path, fake_cli_exe):
+    root = tmp_path / "root"
+    _seed_rollback(root, fake_cli_exe)
+    previous = root / "previous"
+    (previous / "data-watch.exe").write_bytes(b"invalid executable")
+    result = _run_swap(_script(), root, previous, rollback=True)
+    assert result.returncode != 0
+    assert _runnable_versions(root).get("current") == "OLD"
+    assert _complete_version(root, "previous") == "OLDER"

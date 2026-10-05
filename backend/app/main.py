@@ -157,6 +157,7 @@ class CompatRequest:
         path_params: dict[str, str],
         query_params: CompatQueryParams,
         body: bytes,
+        client: tuple[str, int] | None = None,
     ):
         self.method = method
         self.path = path
@@ -165,7 +166,7 @@ class CompatRequest:
         self.path_params = path_params
         self.query_params = query_params
         self.body = body
-        self.client = None
+        self.client = types.SimpleNamespace(host=client[0], port=client[1]) if client else None
 
     def json(self) -> Any:
         if not self.body:
@@ -392,6 +393,7 @@ class EnhancedASGITurboAPI(TurboAPI):
             path_params=path_params,
             query_params=CompatQueryParams(query_pairs),
             body=body,
+            client=scope.get("client"),
         )
 
         try:

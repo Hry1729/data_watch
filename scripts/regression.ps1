@@ -85,15 +85,28 @@ foreach ($name in $Modules) {
     $logPath = Join-Path $runDir "$name.log"
 
     Write-Host "########## $name ##########"
-    Push-Location $spec.WorkDir
     $savedPythonPath = $env:PYTHONPATH
-    if ($spec.PyPath) { $env:PYTHONPATH = $spec.PyPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
     $started = Get-Date
-    $output = & $spec.Exe @($spec.Args) 2>&1
-    $exitCode = $LASTEXITCODE
+    $exitCode = 1
+    $output = @()
+    $locationPushed = $false
+    try {
+        $null = Get-Command $spec.Exe -ErrorAction Stop
+        Push-Location $spec.WorkDir -ErrorAction Stop
+        $locationPushed = $true
+        if ($spec.PyPath) { $env:PYTHONPATH = $spec.PyPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+        $global:LASTEXITCODE = $null
+        $output = & $spec.Exe @($spec.Args) 2>&1
+        if ($null -eq $global:LASTEXITCODE) { throw "Runner did not provide an exit code: $($spec.Exe)" }
+        $exitCode = $global:LASTEXITCODE
+    } catch {
+        $output += $_ | Out-String
+        $exitCode = 1
+    } finally {
+        if ($null -ne $savedPythonPath) { $env:PYTHONPATH = $savedPythonPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+        if ($locationPushed) { Pop-Location }
+    }
     $elapsed = ((Get-Date) - $started).TotalSeconds
-    if ($null -ne $savedPythonPath) { $env:PYTHONPATH = $savedPythonPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
-    Pop-Location
 
     $text = ($output | Out-String)
     $text | Out-File -FilePath $logPath -Encoding utf8

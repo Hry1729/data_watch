@@ -1,8 +1,7 @@
 """针对性测试：诊断脚本的连接配置统一、隔离闸门、子进程环境与退出码契约。
 
-不连任何数据库：被测的都是纯函数。能力脚本在导入期会 import taosws/psutil，
-而本机 taosws 与某些解释器 ABI 不兼容（混用会 ACCESS_VIOLATION），故在导入前注入轻量替身；
-被测函数都不调用真实 taosws。
+不连任何数据库：配置、模式入口和故障清理使用纯数据或连接替身。
+原生数据库依赖只在实际使用点导入；计划模式另以屏蔽依赖的子进程验证。
 """
 from __future__ import annotations
 
@@ -213,17 +212,232 @@ def test_round_resource_keys_covers_stream_latest_and_window():
 
 def test_cleanup_touches_only_round_objects(monkeypatch):
     sqls: list[str] = []
-    monkeypatch.setattr(cap.taosws, "connect", lambda **kw: _FakeConn(sqls), raising=False)
-    monkeypatch.setattr(cap.pymysql, "connect", lambda **kw: _FakeConn(sqls), raising=False)
+    import pymysql
+    monkeypatch.setattr(sys.modules["taosws"], "connect", lambda **kw: _FakeConn(sqls), raising=False)
+    monkeypatch.setattr(pymysql, "connect", lambda **kw: _FakeConn(sqls), raising=False)
     client = _FakeRedis()
     cfg = {"mysql": {"host": "127.0.0.1", "port": 13306, "user": "root", "password": "x"},
            "tdengine": {"host": "127.0.0.1", "port": 6041, "user": "root", "password": "x"}}
     dropped = cap.cleanup_round_resources(
         cfg, database="dwcap_abc", client=client,
-        keys=["rt:stream:cap:gcap:1", "rt:latest:cw1:gcap"])
+        keys=["rt:stream:cap:gcap:1", "rt:latest:cw1:gcap"], owned_databases={"mysql", "tdengine"})
     assert dropped == {"tdengine_database": "dwcap_abc", "mysql_database": "dwcap_abc",
                        "redis_keys": 2}
     assert client.deleted == ["rt:stream:cap:gcap:1", "rt:latest:cw1:gcap"]
     joined = " ".join(sqls).upper()
     assert "DROP DATABASE IF EXISTS DWCAP_ABC" in joined
     assert "FLUSHALL" not in joined and "FLUSHDB" not in joined
+
+
+@pytest.mark.parametrize("password", ['quote"here', r'back\slash', 'line\nbreak\t密码😀'])
+def test_runtime_toml_strings_round_trip(tmp_path, password):
+    cfg = cap.load_test_config(_cfg_file(tmp_path))
+    for section in ("mysql", "redis", "tdengine"):
+        cfg[section]["password"] = password
+        cfg[section]["user"] = 'user"\\name'
+    path = cap.write_runtime(tmp_path / "runtime", cfg, database="dwcap_strings",
+                             stable="sdtest", device_type="test", shard_count=1,
+                             group="gtest", consumer_workers=1)
+    parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+    for section in ("mysql", "redis", "tdengine"):
+        assert parsed[section]["password"] == password
+    assert parsed["mysql"]["user"] == cfg["mysql"]["user"]
+    assert parsed["tdengine"]["user"] == cfg["tdengine"]["user"]
+
+
+def test_plan_mode_runs_without_native_database_dependencies(tmp_path):
+    import os
+    import subprocess
+    config = _cfg_file(tmp_path)
+    plan = tmp_path / "plan.json"
+    code = '''
+import importlib.abc, os, sys
+class BlockNative(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'taosws', 'psutil', 'pymysql', 'redis', 'msgspec'}:
+            raise ModuleNotFoundError(fullname)
+sys.meta_path.insert(0, BlockNative())
+import diagnose_joint_pipeline as joint
+sys.argv = ['joint', '--mode', 'plan', '--plan', os.environ['DW_PLAN'],
+            '--test-config', os.environ['DW_CONFIG'], '--devices', '1', '--points', '2']
+assert joint.main() == 0
+assert joint._exit_code_for('fail') == 1
+'''
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                            env={**os.environ, "PYTHONPATH": str(ROOT / "scripts"),
+                                 "DW_PLAN": str(plan), "DW_CONFIG": str(config)})
+    assert result.returncode == 0, result.stderr
+    assert json.loads(plan.read_text())["redis_db"] == 7
+
+
+def test_collector_mode_loads_config_before_connection(tmp_path, monkeypatch):
+    import diagnose_joint_pipeline as joint
+    import redis
+    from types import SimpleNamespace
+    config = _cfg_file(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    joint.mode_plan(SimpleNamespace(test_config=str(config), plan=str(plan_path), devices=1,
+                                   points=2, period_ms=100, seconds=1, shard_count=1))
+    seen = []
+    def connect(**kwargs):
+        seen.append(kwargs)
+        raise RuntimeError("isolated connection reached")
+    monkeypatch.setattr(redis, "Redis", connect)
+    with pytest.raises(RuntimeError, match="isolated connection reached"):
+        joint.mode_collector(SimpleNamespace(plan=str(plan_path), test_config=str(config)))
+    assert seen[0]["port"] == 16379
+    assert seen[0]["db"] == 7
+
+
+def test_central_prep_mounts_and_passes_its_config(tmp_path):
+    import ast
+    source = (ROOT / "scripts/validate_central_pipeline.py").read_text(encoding="utf-8")
+    call = next(node.value for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "prepare" for target in node.targets))
+    seen = []
+    eval(compile(ast.Expression(call), "central-prep", "eval"), {
+        "docker": lambda *args: seen.extend(args), "base": [], "rel": "/evidence/round",
+        "test_config_path": tmp_path / "config.json", "RUNNER_IMAGE": "isolated-runner",
+    })
+    assert seen[seen.index("--test-config") + 1] == "/diagnose-test-config.json"
+    assert f"{tmp_path / 'config.json'}:/diagnose-test-config.json:ro" in seen
+
+
+def test_round_resources_include_only_owned_receipt_and_dlq():
+    keys = cap.round_resource_keys(stream_keys=["rt:stream:own:g:0"], devices=["own1"],
+                                   device_type="own", group="g", period_ms=100,
+                                   receipt_keys=["collector:receipt:v2:own-session"])
+    assert "collector:receipt:v2:own-session" in keys
+    assert "rt:dlq:own:g" in keys
+    assert "rt:dlq:foreign:g" not in keys
+    assert "collector:receipt:v2:foreign-session" not in keys
+
+
+def test_cleanup_failure_does_not_block_other_owned_resources(tmp_path, monkeypatch):
+    import pymysql
+    sqls = []
+    def unavailable(**kwargs):
+        raise ConnectionError("synthetic TD outage")
+    monkeypatch.setattr(sys.modules["taosws"], "connect", unavailable, raising=False)
+    monkeypatch.setattr(pymysql, "connect", lambda **kwargs: _FakeConn(sqls))
+    client = _FakeRedis()
+    cfg = cap.load_test_config(_cfg_file(tmp_path))
+    result = cap.cleanup_round_resources(cfg, database="dwcap_abc", client=client,
+                                         keys=["owned-key"], owned_databases={"mysql", "tdengine"})
+    assert result["tdengine_database"] is None
+    assert result["mysql_database"] == "dwcap_abc"
+    assert client.deleted == ["owned-key"]
+    assert "synthetic TD outage" in result["errors"][0]
+
+
+def test_preparation_failure_preserves_report_and_cleans_only_created_database(tmp_path, monkeypatch):
+    import pymysql
+    cfg_path = _cfg_file(tmp_path)
+    output = tmp_path / "failure.json"
+    sqls = []
+    monkeypatch.setitem(sys.modules, "psutil", types.ModuleType("psutil"))
+    monkeypatch.setattr(cap, "assert_tdengine_database_absent", lambda *args: None)
+    monkeypatch.setattr(pymysql, "connect", lambda **kwargs: _FakeConn(sqls))
+    def prepare(*args, **kwargs):
+        kwargs["owned_resources"].add("mysql")
+        raise RuntimeError("synthetic failure after MySQL create")
+    monkeypatch.setattr(cap, "prepare_mysql", prepare)
+    monkeypatch.setattr(sys, "argv", ["cap", "--devices", "1", "--points", "2", "--ticks", "2",
+                                      "--test-config", str(cfg_path), "--output", str(output)])
+    assert cap.main() == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["overall_status"] == "fail"
+    assert "synthetic failure" in report["error"]
+    assert report["cleanup"]["mysql_database"] == report["mysql_database"]
+    assert report["cleanup"]["tdengine_database"] is None
+    assert len(sqls) == 1
+
+
+def test_writer_cleanup_reaps_real_child(tmp_path):
+    import os
+    import subprocess
+    flag = tmp_path / "writer.shutdown_flag"
+    child = subprocess.Popen([sys.executable, "-c",
+        "import os,time; from pathlib import Path; p=Path(os.environ['DW_STOP_PATH']); "
+        "\nwhile not p.exists(): time.sleep(.02)"],
+        env={**os.environ, "DW_STOP_PATH": str(flag)})
+    try:
+        cap.stop_writer_process(child, tmp_path)
+        assert child.poll() == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+
+
+def test_reconcile_preserves_verdict_when_cleanup_fails(tmp_path, monkeypatch):
+    import diagnose_joint_pipeline as joint
+    import pymysql
+    import redis
+    from types import SimpleNamespace
+    config_path = _cfg_file(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    joint.mode_plan(SimpleNamespace(test_config=str(config_path), plan=str(plan_path), devices=1,
+                                   points=2, period_ms=100, seconds=1, shard_count=1))
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["owned_databases"] = ["mysql", "tdengine"]
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    collector_path = tmp_path / "collector.json"
+    collector_path.write_text(json.dumps({
+        "submitted_frames": 1, "confirmed_frames": 1, "redis_confirmed_after_drain": 1,
+        "stream_keys": [f"rt:stream:{plan['device_type']}:{plan['group']}:0"],
+        "receipt_keys": ["collector:receipt:v2:own-session"], "window_seconds": 1,
+    }), encoding="utf-8")
+    class Client(_FakeRedis):
+        def xlen(self, key): return 0
+        def xinfo_groups(self, key): return []
+        def hlen(self, key): return 2
+        def llen(self, key):
+            assert key == f"rt:dlq:{plan['device_type']}:{plan['group']}"
+            return 0
+        def scan_iter(self, **kwargs):
+            raise AssertionError("Must not inspect foreign DLQ keys")
+        def close(self): self.closed = True
+    client = Client()
+    sqls = []
+    monkeypatch.setattr(redis, "Redis", lambda **kwargs: client)
+    monkeypatch.setattr(cap, "read_counts", lambda *args, **kwargs: {
+        "value_rows": 1, "quality_rows": 1, "expected_value_rows": 1, "expected_quality_rows": 1})
+    monkeypatch.setattr(cap, "read_sample_fields", lambda *args, **kwargs: {"problem_count": 0})
+    def unavailable(**kwargs): raise ConnectionError("synthetic cleanup outage")
+    monkeypatch.setattr(sys.modules["taosws"], "connect", unavailable, raising=False)
+    monkeypatch.setattr(pymysql, "connect", lambda **kwargs: _FakeConn(sqls))
+    output = tmp_path / "reconcile.json"
+    assert joint.mode_reconcile(SimpleNamespace(
+        test_config=str(config_path), plan=str(plan_path), collector_output=str(collector_path),
+        sample_ticks=1, writer_cpu_seconds=None, keep_resources=False, output=str(output))) == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["rows"]["value_rows"] == 1 and report["problems"] == []
+    assert report["status"] == "fail"
+    assert "synthetic cleanup outage" in report["cleanup"]["errors"][0]
+    assert "collector:receipt:v2:own-session" in client.deleted
+    assert f"rt:dlq:{plan['device_type']}:{plan['group']}" in client.deleted
+    assert client.closed and len(sqls) == 1
+
+
+def test_prep_failure_keeps_uncleaned_database_manifest(tmp_path, monkeypatch):
+    import diagnose_joint_pipeline as joint
+    import pymysql
+    from types import SimpleNamespace
+    config_path = _cfg_file(tmp_path)
+    plan_path = tmp_path / "plan.json"
+    joint.mode_plan(SimpleNamespace(test_config=str(config_path), plan=str(plan_path), devices=1,
+                                   points=2, period_ms=100, seconds=1, shard_count=1))
+    monkeypatch.setattr(cap, "assert_tdengine_database_absent", lambda *args: None)
+    def prepare(*args, **kwargs):
+        kwargs["owned_resources"].add("mysql")
+        raise RuntimeError("synthetic prep failure")
+    def unavailable(**kwargs): raise ConnectionError("synthetic cleanup outage")
+    monkeypatch.setattr(cap, "prepare_mysql", prepare)
+    monkeypatch.setattr(pymysql, "connect", unavailable)
+    assert joint.mode_prep(SimpleNamespace(test_config=str(config_path), plan=str(plan_path))) == 1
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["owned_databases"] == ["mysql"]
+    assert "synthetic prep failure" in plan["prep_error"]
+    assert "synthetic cleanup outage" in plan["cleanup"]["errors"][0]

@@ -331,3 +331,38 @@ async def test_stale_reconnect_loop_stops_even_if_cancel_is_missed():
     await asyncio.wait_for(stale_task, timeout=3)
     connect.assert_not_awaited(), "旧代不得再发起连接"
     assert manager.devices["STALE_PLC"] is candidate
+
+
+@pytest.mark.asyncio
+async def test_old_reconnect_finally_cannot_remove_new_task():
+    manager = _empty_manager()
+    old = manager.add_device(DeviceConfig("RACE", "QC", "s7", "127.0.0.1"), [])
+    old.status = DeviceStatus.ERROR
+    started, cancelling, release, parked = (asyncio.Event() for _ in range(4))
+
+    async def sleep(_delay):
+        started.set()
+        try:
+            await parked.wait()
+        except asyncio.CancelledError:
+            if asyncio.current_task() is old_task:
+                cancelling.set()
+                await release.wait()
+            raise
+
+    manager._sleep = sleep
+    await manager.schedule_reconnect(old)
+    old_task = manager._reconnect_tasks[old.device_id]
+    await started.wait()
+    candidate = _candidate_like(old)
+    swapping = asyncio.create_task(manager.swap_device(old.device_id, candidate))
+    await asyncio.wait_for(cancelling.wait(), timeout=3)
+    await manager.schedule_reconnect(candidate)
+    new_task = manager._reconnect_tasks[old.device_id]
+    release.set()
+    await asyncio.wait_for(swapping, timeout=3)
+    try:
+        assert manager._reconnect_tasks[old.device_id] is new_task
+        assert not new_task.done()
+    finally:
+        await manager._cancel_reconnect_task(old.device_id)

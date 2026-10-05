@@ -80,3 +80,26 @@ def test_one_bad_modbus_address_is_reported_as_variable_error() -> None:
 
     assert result.valid is False
     assert any("Invalid variable address" in item for item in result.errors), result.errors
+
+
+def test_frozen_rules_work_without_source_packages(tmp_path, monkeypatch):
+    import core.config_validator as module
+    target = tmp_path / "_internal" / "modbus-rules" / "address.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes((REPO_ROOT / "packages/modbus_tcp/modbus_tcp/address.py").read_bytes())
+    monkeypatch.setattr(module, "_MODBUS_ADDRESS_CANDIDATES", (target,))
+    monkeypatch.setattr(module, "_modbus_address_module", None)
+    monkeypatch.setattr(module, "_modbus_address_module_resolved", False)
+    assert validator._validate_address("HR10", "modbus_tcp")
+    assert not validator._validate_address("DB100.DBW0", "modbus_tcp")
+
+
+def test_missing_rules_can_be_loaded_after_becoming_available(tmp_path, monkeypatch):
+    import core.config_validator as module
+    target = tmp_path / "address.py"
+    monkeypatch.setattr(module, "_MODBUS_ADDRESS_CANDIDATES", (target,))
+    monkeypatch.setattr(module, "_modbus_address_module", None)
+    monkeypatch.setattr(module, "_modbus_address_module_resolved", False)
+    assert not validator._validate_address("HR10", "modbus_tcp")
+    target.write_bytes((REPO_ROOT / "packages/modbus_tcp/modbus_tcp/address.py").read_bytes())
+    assert validator._validate_address("HR10", "modbus_tcp")

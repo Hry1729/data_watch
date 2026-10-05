@@ -249,29 +249,6 @@ begin
       + HexDigits[(Buffer[Index] and $0F) + 1];
 end;
 
-procedure HardenDataPermissions(DataPath: String);
-var
-  ResultCode: Integer;
-begin
-  { 显式落实 ACL：ProgramData 下的目录默认允许 Users 创建/追加，
-    同一个用户还能对自己创建的对象拿到完全控制——对存放服务令牌与
-    点位/配置的数据根来说过宽。
-     做法：去掉继承并显式授予「管理员 + SYSTEM 完全控制」，另给 Users 只读执行
-    （保留合法的读取面），随后再把令牌文件单独收紧到只读管理员+SYSTEM。
-     不使用 [Dirs] Permissions 关键字是为了能显式关闭继承并覆盖存量目录。}
-  if not Exec(
-      'icacls.exe',
-      '"' + DataPath + '" /inheritance:r /grant:r'
-        + ' "*S-1-5-32-544:(OI)(CI)F"'
-        + ' "*S-1-5-18:(OI)(CI)F"'
-        + ' "*S-1-5-32-545:(OI)(CI)RX"'
-        + ' /T /C',
-      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Unable to run icacls for ' + DataPath);
-  if ResultCode <> 0 then
-    RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [DataPath, ResultCode]));
-end;
-
 procedure HardenTokenFile(TokenPath: String);
 var
   ResultCode: Integer;
@@ -292,6 +269,74 @@ begin
     RaiseException('Unable to run icacls for ' + TokenPath);
   if ResultCode <> 0 then
     RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [TokenPath, ResultCode]));
+end;
+
+procedure RestoreInheritedDataPermissions(DataPath: String);
+var
+  FindRec: TFindRec;
+  EntryPath: String;
+  ResultCode: Integer;
+begin
+  if FindFirst(DataPath + '\*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        begin
+          EntryPath := DataPath + '\' + FindRec.Name;
+          { Never re-enable inheritance on protected secret representations. }
+          if (CompareText(FindRec.Name, 'config.toml') <> 0) and
+             (CompareText(FindRec.Name, '.config.toml.tmp') <> 0) and
+             (CompareText(FindRec.Name, 'agent_service_token.txt') <> 0) and
+             (CompareText(FindRec.Name, 'storage-ipc-tokens.json') <> 0) then
+          begin
+            if (FindRec.Attributes and $400) <> 0 then
+              RaiseException('Refusing linked data entry ' + EntryPath);
+            if not Exec('icacls.exe', '"' + EntryPath + '" /inheritance:e /C',
+                '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+              RaiseException('Unable to restore inherited permissions for ' + EntryPath);
+            if ResultCode <> 0 then
+              RaiseException(Format('Unable to restore permissions on %s (icacls exit %d)', [EntryPath, ResultCode]));
+            if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+              RestoreInheritedDataPermissions(EntryPath);
+          end;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+procedure HardenDataPermissions(DataPath: String);
+var
+  ResultCode: Integer;
+begin
+  { Protect management secrets before changing parent inheritance. }
+  if FileExists(DataPath + '\config.toml') then HardenTokenFile(DataPath + '\config.toml');
+  if FileExists(DataPath + '\.config.toml.tmp') then HardenTokenFile(DataPath + '\.config.toml.tmp');
+  if FileExists(DataPath + '\agent_service_token.txt') then HardenTokenFile(DataPath + '\agent_service_token.txt');
+  if FileExists(DataPath + '\edge\storage-ipc-tokens.json') then HardenTokenFile(DataPath + '\edge\storage-ipc-tokens.json');
+  { 显式落实 ACL：ProgramData 下的目录默认允许 Users 创建/追加，
+    同一个用户还能对自己创建的对象拿到完全控制——对存放服务令牌与
+    点位/配置的数据根来说过宽。
+     做法：去掉继承并显式授予「管理员 + SYSTEM 完全控制」，另给 Users 只读执行
+    （保留合法的读取面）；管理秘密先单独收紧，递归恢复继承时跳过它们。
+     不使用 [Dirs] Permissions 关键字是为了能显式关闭继承并覆盖存量目录。}
+  if not Exec(
+      'icacls.exe',
+      '"' + DataPath + '" /inheritance:r /grant:r'
+        + ' "*S-1-5-32-544:(OI)(CI)F"'
+        + ' "*S-1-5-18:(OI)(CI)F"'
+        + ' "*S-1-5-32-545:(OI)(CI)RX"'
+        + ' /C',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('Unable to run icacls for ' + DataPath);
+  if ResultCode <> 0 then
+    RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [DataPath, ResultCode]));
+  { 根目录关闭继承；子项继承根目录的有效授权。不能递归 /inheritance:r：
+    (OI)(CI) 授权在普通文件上不生效，会把仅有继承权限的配置清为空 DACL。 }
+  RestoreInheritedDataPermissions(DataPath);
 end;
 
 procedure RegisterRoleService;

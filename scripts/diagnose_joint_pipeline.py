@@ -58,6 +58,7 @@ def mode_prep(args) -> int:
     from diagnose_writer_tdengine_capability import (  # noqa: PLC0415
         assert_test_targets,
         assert_tdengine_database_absent,
+        cleanup_round_resources,
         load_test_config,
         prepare_mysql,
         write_runtime,
@@ -67,26 +68,42 @@ def mode_prep(args) -> int:
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     assert_test_targets(cfg, prefix="dwjnt_", database=plan["mysql_database"])
     assert_tdengine_database_absent(cfg, plan["mysql_database"])
-    prepare_mysql(cfg["mysql"], plan["mysql_database"], devices=plan["devices"],
-                  device_type=plan["device_type"], group=plan["group"],
-                  points=plan["points"], stable=plan["stable"])
-    admin = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
-             "user": cfg["tdengine"].get("user", "root"),
-             "password": cfg["tdengine"].get("password", "")}
-    conn = taosws.connect(**admin)
-    conn.execute(f"CREATE DATABASE IF NOT EXISTS {plan['mysql_database']}")
-    conn.close()
-    settings = write_runtime(Path(args.runtime), cfg, database=plan["mysql_database"],
-                             stable=plan["stable"], device_type=plan["device_type"],
-                             shard_count=plan["shard_count"], group=plan["group"],
-                             consumer_workers=args.consumer_workers)
-    plan["test_config"] = cfg["_source"]
-    plan["runtime_settings"] = str(settings)
-    plan["prep_provenance"] = provenance()
-    Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"mode": "prep", "plan": args.plan, "settings": str(settings)},
-                     ensure_ascii=False))
-    return 0
+    owned = set()
+    try:
+        prepare_mysql(cfg["mysql"], plan["mysql_database"], devices=plan["devices"],
+                      device_type=plan["device_type"], group=plan["group"],
+                      points=plan["points"], stable=plan["stable"], owned_resources=owned)
+        admin = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+                 "user": cfg["tdengine"].get("user", "root"),
+                 "password": cfg["tdengine"].get("password", "")}
+        conn = taosws.connect(**admin)
+        try:
+            conn.execute(f"CREATE DATABASE {plan['mysql_database']}")
+            owned.add("tdengine")
+        finally:
+            conn.close()
+        settings = write_runtime(Path(args.runtime), cfg, database=plan["mysql_database"],
+                                 stable=plan["stable"], device_type=plan["device_type"],
+                                 shard_count=plan["shard_count"], group=plan["group"],
+                                 consumer_workers=args.consumer_workers)
+        plan["owned_databases"] = sorted(owned)
+        plan["test_config"] = cfg["_source"]
+        plan["runtime_settings"] = str(settings)
+        plan["prep_provenance"] = provenance()
+        Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"mode": "prep", "plan": args.plan, "settings": str(settings)},
+                         ensure_ascii=False))
+        return 0
+    except (Exception, SystemExit, KeyboardInterrupt) as exc:
+        plan["prep_error"] = f"{type(exc).__name__}: {exc}"
+        plan["cleanup"] = cleanup_round_resources(
+            cfg, database=plan["mysql_database"], client=None, keys=[], owned_databases=owned)
+        plan["owned_databases"] = sorted(
+            section for section in owned if plan["cleanup"][f"{section}_database"] is None)
+        Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"mode": "prep", "status": "fail", "error": plan["prep_error"]}, ensure_ascii=False))
+        return 1
+
 
 
 def mode_plan(args) -> int:
@@ -286,6 +303,7 @@ def mode_collector(args) -> int:
     from data_watch_shared.acceptance import build_frame  # noqa: PLC0415
     from data_watch_shared.stream_envelope import stream_key  # noqa: PLC0415
     from storage.durable_redis_writer import DurableRedisWriter  # noqa: PLC0415
+    from diagnose_writer_tdengine_capability import load_test_config  # noqa: PLC0415
 
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
     devices, points = plan["devices"], plan["points"]
@@ -451,6 +469,7 @@ def mode_collector(args) -> int:
                 if any(key in name for key in ("evalsha", "hset", "hmget", "lindex", "xadd"))},
             "samples": samples, "samples_total": len(samples),
             "stream_keys": keys,
+            "receipt_keys": [f"collector:receipt:v2:{collector.outbox._session_id}"],
             "submit_failures": len(submit_failures),
             "submit_failure_samples": submit_failures,
             "feed_stop_reason": stop_reason["reason"],
@@ -497,94 +516,108 @@ def mode_reconcile(args) -> int:
     sys.path.insert(0, str(ROOT / "scripts"))
     from diagnose_writer_tdengine_capability import load_test_config  # noqa: PLC0415
     cfg = load_test_config(args.test_config or plan.get("test_config"))
-    td_config = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
-                 "user": cfg["tdengine"].get("user", "root"),
-                 "password": cfg["tdengine"].get("password", ""),
-                 "database": plan["mysql_database"]}
-    columns = sorted(tdengine_value_column(point) for point in range(1, plan["points"] + 1)
-                     if point not in (1, 6, 7))  # NULL/非存储/STRING 点不进历史，无列
-    # 质量行期望必须逐 tick 统计：时有时无 NULL 的点在某些 tick 不进历史，
-    # 用"帧数 × 列数"会系统性多算（实测差 4,800 行 = 0.04%）。
-    from data_watch_shared.acceptance import build_frame  # noqa: PLC0415
-    quality_rows_expected = 0
-    for tick in range(ticks):
-        quality_rows_expected += len(
-            build_frame(plan["devices"][0], plan["points"], tick,
-                        plan["period_ms"], base_ts_used)["stream_values"])
-    quality_rows_expected *= len(plan["devices"])
-    problems = []
-    missing_tables = []
+    client = None
+    result = {"mode": "reconcile", "status": "fail", "plan_token": plan["token"]}
     try:
-        counts = read_counts(td_config, plan["devices"], plan["points"], ticks,
-                             expected_quality_rows=quality_rows_expected)
-    except Exception as exc:                     # noqa: BLE001
-        # 拒收/提前停止会让个别设备没有子表；这属于"缺口"，要作为 problem 报出，
-        # 不能让对账整体崩掉（否则一档饱和就丢掉整条阶梯的收尾）。
-        missing_tables.append(f"read_counts: {type(exc).__name__}: {exc}")
-        counts = {"value_rows": None, "quality_rows": None,
-                  "expected_value_rows": collector_report.get("redis_confirmed_after_drain"),
-                  "expected_quality_rows": quality_rows_expected}
-    # 期望值必须用**排空结束**的确认数：喂入结束那一刻还有在途/未确认的帧，
-    # 用它会系统性少算（长测档因此被误判 fail：期望 525,069 vs 实际 540,000）。
-    counts["expected_value_rows"] = collector_report.get(
-        "redis_confirmed_after_drain", collector_report["confirmed_frames"])
-    samples = []
-    for device in plan["devices"][:2]:
+        td_config = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+                     "user": cfg["tdengine"].get("user", "root"),
+                     "password": cfg["tdengine"].get("password", ""),
+                     "database": plan["mysql_database"]}
+        columns = sorted(tdengine_value_column(point) for point in range(1, plan["points"] + 1)
+                         if point not in (1, 6, 7))  # NULL/非存储/STRING 点不进历史，无列
+        # 质量行期望必须逐 tick 统计：时有时无 NULL 的点在某些 tick 不进历史，
+        # 用"帧数 × 列数"会系统性多算（实测差 4,800 行 = 0.04%）。
+        from data_watch_shared.acceptance import build_frame  # noqa: PLC0415
+        quality_rows_expected = 0
+        for tick in range(ticks):
+            quality_rows_expected += len(
+                build_frame(plan["devices"][0], plan["points"], tick,
+                            plan["period_ms"], base_ts_used)["stream_values"])
+        quality_rows_expected *= len(plan["devices"])
+        problems = []
+        missing_tables = []
         try:
-            samples.append(read_sample_fields(td_config, device, columns, ticks, base_ts_used,
-                                              plan["period_ms"],
-                                              sample_ticks=args.sample_ticks))
-        except Exception as exc:                 # noqa: BLE001
-            missing_tables.append(f"read_sample_fields({device}): {type(exc).__name__}: {exc}")
-    client = redis.Redis(host=cfg["redis"]["host"], port=int(cfg["redis"]["port"]),
-                         db=int(cfg["redis"].get("db", 0)),
-                         password=cfg["redis"].get("password") or None,
-                         decode_responses=True, socket_timeout=30)
-    stream = _stream_state(client, collector_report["stream_keys"])
-    dlq = sum(client.llen(key) for key in client.scan_iter("rt:dlq:*"))
-    latest_ok = 0
-    for device in plan["devices"]:          # latest 末态检查覆盖全部设备
-        if client.hlen(f"rt:latest:{device}:{plan['group']}") == plan["points"]:
-            latest_ok += 1
-    problems = list(missing_tables)
-    if counts["value_rows"] is not None and counts["value_rows"] != counts["expected_value_rows"]:
-        problems.append(f"值行 {counts['value_rows']} != 期望 {counts['expected_value_rows']}")
-    if (counts["quality_rows"] is not None
-            and counts["quality_rows"] != counts["expected_quality_rows"]):
-        problems.append(f"质量行 {counts['quality_rows']} != 期望 {counts['expected_quality_rows']}")
-    for item in samples:
-        if item["problem_count"]:
-            problems.append(f"{item['device']} 抽样全字段不符 {item['problem_count']} 处")
-    if stream["pending_frames"]:
-        problems.append(f"仍有未确认(PEL) {stream['pending_frames']} 帧")
-    if dlq:
-        problems.append(f"DLQ 非空 {dlq}")
-    result = {"mode": "reconcile", "plan_token": plan["token"], "ticks": ticks,
-              "rows": counts, "stream_after_drain": stream, "dlq_entries": dlq,
-              "latest_hash_ok_devices": f"{latest_ok}/{len(plan['devices'])}",
-              # Writer 真实 CPU：由驱动从容器 cgroup cpu.stat 取增量后传入（不得由 flush 耗时推导）
-              "writer_process_cpu_seconds": args.writer_cpu_seconds,
-              "writer_cpu_busy_ratio": (
-                  None if args.writer_cpu_seconds is None else
-                  round(args.writer_cpu_seconds / max(collector_report["window_seconds"], 1e-9), 4)),
-              "latest_end_state": {device: client.hlen(f"rt:latest:{device}:{plan['group']}")
-                                   for device in plan["devices"]},
-              "full_field_sample": {"columns": len(columns), "results": samples,
-                                    "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"},
-              "problems": problems, "status": "pass" if not problems else "fail"}
-    # 成功或失败都按同一规则收尾：只清理本轮对象（库 + 按名键），不清空整个 Redis
-    if not args.keep_resources:
-        result["cleanup"] = cleanup_round_resources(
-            cfg, database=plan["mysql_database"], client=client,
-            keys=round_resource_keys(stream_keys=collector_report["stream_keys"],
-                                     devices=plan["devices"], group=plan["group"],
-                                     period_ms=plan["period_ms"]))
-    Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                                 encoding="utf-8")
-    print(json.dumps({k: v for k, v in result.items() if k != "full_field_sample"},
-                     ensure_ascii=False, indent=2))
-    # 对账结论为 fail 时返回非零（此前恒 return 0，把 fail 报成了成功）
+            counts = read_counts(td_config, plan["devices"], plan["points"], ticks,
+                                 expected_quality_rows=quality_rows_expected)
+        except Exception as exc:                     # noqa: BLE001
+            # 拒收/提前停止会让个别设备没有子表；这属于"缺口"，要作为 problem 报出，
+            # 不能让对账整体崩掉（否则一档饱和就丢掉整条阶梯的收尾）。
+            missing_tables.append(f"read_counts: {type(exc).__name__}: {exc}")
+            counts = {"value_rows": None, "quality_rows": None,
+                      "expected_value_rows": collector_report.get("redis_confirmed_after_drain"),
+                      "expected_quality_rows": quality_rows_expected}
+        # 期望值必须用**排空结束**的确认数：喂入结束那一刻还有在途/未确认的帧，
+        # 用它会系统性少算（长测档因此被误判 fail：期望 525,069 vs 实际 540,000）。
+        counts["expected_value_rows"] = collector_report.get(
+            "redis_confirmed_after_drain", collector_report["confirmed_frames"])
+        samples = []
+        for device in plan["devices"][:2]:
+            try:
+                samples.append(read_sample_fields(td_config, device, columns, ticks, base_ts_used,
+                                                  plan["period_ms"],
+                                                  sample_ticks=args.sample_ticks))
+            except Exception as exc:                 # noqa: BLE001
+                missing_tables.append(f"read_sample_fields({device}): {type(exc).__name__}: {exc}")
+        client = redis.Redis(host=cfg["redis"]["host"], port=int(cfg["redis"]["port"]),
+                             db=int(cfg["redis"].get("db", 0)),
+                             password=cfg["redis"].get("password") or None,
+                             decode_responses=True, socket_timeout=30)
+        stream = _stream_state(client, collector_report["stream_keys"])
+        dlq = client.llen(f"rt:dlq:{plan['device_type']}:{plan['group']}")
+        latest_ok = 0
+        for device in plan["devices"]:          # latest 末态检查覆盖全部设备
+            if client.hlen(f"rt:latest:{device}:{plan['group']}") == plan["points"]:
+                latest_ok += 1
+        problems = list(missing_tables)
+        if counts["value_rows"] is not None and counts["value_rows"] != counts["expected_value_rows"]:
+            problems.append(f"值行 {counts['value_rows']} != 期望 {counts['expected_value_rows']}")
+        if (counts["quality_rows"] is not None
+                and counts["quality_rows"] != counts["expected_quality_rows"]):
+            problems.append(f"质量行 {counts['quality_rows']} != 期望 {counts['expected_quality_rows']}")
+        for item in samples:
+            if item["problem_count"]:
+                problems.append(f"{item['device']} 抽样全字段不符 {item['problem_count']} 处")
+        if stream["pending_frames"]:
+            problems.append(f"仍有未确认(PEL) {stream['pending_frames']} 帧")
+        if dlq:
+            problems.append(f"DLQ 非空 {dlq}")
+        result = {"mode": "reconcile", "plan_token": plan["token"], "ticks": ticks,
+                  "rows": counts, "stream_after_drain": stream, "dlq_entries": dlq,
+                  "latest_hash_ok_devices": f"{latest_ok}/{len(plan['devices'])}",
+                  # Writer 真实 CPU：由驱动从容器 cgroup cpu.stat 取增量后传入（不得由 flush 耗时推导）
+                  "writer_process_cpu_seconds": args.writer_cpu_seconds,
+                  "writer_cpu_busy_ratio": (
+                      None if args.writer_cpu_seconds is None else
+                      round(args.writer_cpu_seconds / max(collector_report["window_seconds"], 1e-9), 4)),
+                  "latest_end_state": {device: client.hlen(f"rt:latest:{device}:{plan['group']}")
+                                       for device in plan["devices"]},
+                  "full_field_sample": {"columns": len(columns), "results": samples,
+                                        "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"},
+                  "problems": problems, "status": "pass" if not problems else "fail"}
+    except (Exception, SystemExit, KeyboardInterrupt) as exc:
+        result["status"] = "fail"
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        if not args.keep_resources:
+            result["cleanup"] = cleanup_round_resources(
+                cfg, database=plan["mysql_database"], client=client,
+                keys=round_resource_keys(stream_keys=collector_report["stream_keys"],
+                                         devices=plan["devices"], group=plan["group"],
+                                         period_ms=plan["period_ms"], device_type=plan["device_type"],
+                                         receipt_keys=collector_report.get("receipt_keys", [])) if client is not None else [],
+                owned_databases=plan.get("owned_databases", []))
+            if result["cleanup"].get("errors"):
+                result["status"] = "fail"
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                result["redis_close_error"] = f"{type(exc).__name__}: {exc}"
+                result["status"] = "fail"
+        Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps({k: v for k, v in result.items() if k != "full_field_sample"}, ensure_ascii=False, indent=2))
     return _exit_code_for(result["status"])
+
 
 
 def main() -> int:

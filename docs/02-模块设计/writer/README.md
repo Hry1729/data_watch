@@ -156,9 +156,9 @@ flowchart TD
 | 状态 | 触发条件 | ACK / 载荷归属 | 恢复与终结 |
 |---|---|---|---|
 | `RETRY`（原因 `size`）| 单个逻辑帧的 SQL 超出语句上限（本地 ~3MB 预算放不下单行，或单行仍报 `0x0219`）| 推入 DLQ（附分段证据）**之后**才 XACK；DLQ 推送失败则不 ACK、留缓冲 | **终态（B8，按错误类别终结）**：帧内容决定、重试不可能成功；DLQ 保留原始帧供人工处理 |
-| `RETRY`（其余原因）| 任一分段为 RETRY（连接/未知错误、schema 未就绪、二分深度用尽）| **不 ACK**，原始帧保留在 Stream/PEL | **非终态**：普通重试；连续 RETRY 达 `max_row_retry`（默认 3）后进入**有界隔离区**（容量 `max(64, max_buffer_rows // 4)`），按 `retry_backoff_base_s … retry_backoff_max_s`（默认 1–30s）退避，每轮最多 `retry_budget_per_cycle`（默认 64）行重入；隔离区满时**恢复背压而非丢弃** |
-| `FAILED_INCOMPLETE` | 无 RETRY 分段，但**存在** `BAD_DATA` 分段 ⇒ 整帧不完整 | **不 ACK**；调用方**持久隔离**，记录原始帧与各分段状态，**不计成功** | 需人工/后续策略处理；当前实现**不按次数终结丢弃** |
-| `LANDED` | **全部分段**均 LANDED（值与质量分段**全部**成功）| XACK（随后 XDEL）| 终态 |
+| `RETRY`（其余原因）| 任一分段为 RETRY（连接/未知错误、schema 未就绪、二分深度用尽）| **不 ACK**，原始帧保留在 Stream/PEL | **非终态**：被标记为本地重试的行（如 schema 缺列）立即进入**有界隔离区**；其余行连续 RETRY 达 `max_row_retry`（默认 3）后进入。容量 `max(64, max_buffer_rows // 4)`，按 `retry_backoff_base_s … retry_backoff_max_s`（默认 1–30s）退避，每轮最多 `retry_budget_per_cycle`（默认 64）行重入；隔离区满时**恢复背压而非丢弃** |
+| `FAILED_INCOMPLETE` | 无 RETRY 分段，但**存在** `BAD_DATA` 分段 ⇒ 整帧不完整 | DLQ 写入被 Redis 接受后才 XACK；DLQ 推送失败则不 ACK、保留待重试；**不计成功** | DLQ 留原始帧与分段证据供人工核对，部分分段可能已经落库；Redis 接受写入不等于已持久化，当前没有独立的持久移交保证 |
+| `LANDED` | **全部分段**均 LANDED（值与质量分段**全部**成功）| XACK；仅在确认该 Stream 为单消费组且 ACK 成功后 XDEL | 终态 |
 | `BAD_DATA`（单行级）| 二分递归后**单行**仍失败 | 推入 DLQ **之后**才 XACK | 人工排查入口，非自动重放 |
 
 两条容易搞错的语义：
@@ -166,8 +166,8 @@ flowchart TD
 - **`RETRY` 不会撤销已经执行成功的 SQL**：多段写入本来就可能留下"值已入库、部分质量未入库"的
   中间态；把整帧标成 RETRY 不会让它变成原子操作，只会导致无限重试且永不补齐（该结论写在
   `_merge_part_status` 的 docstring 里）。
-- **`RETRY` 不是终态**，也**不是所有 RETRY 都立即隔离**——隔离只发生在连续 RETRY 达到
-  `max_row_retry` 之后。
+- **`RETRY` 不是终态**：本地重试行（如 schema 缺列）立即隔离，其余可恢复失败在连续 RETRY 达到
+  `max_row_retry` 后隔离；两者都保留原始消息，不因次数进入 DLQ。
 
 #### 两条与实现对齐的最终规则（D8 一致性复核：B28/B31 已落地）
 
@@ -179,8 +179,9 @@ flowchart TD
 - **多消费组下拒绝终态 XDEL（B31）**：`XDEL` 是**全局删除**、不区分消费组，因此只有在该 Stream
   **确实只有一个消费组**时才执行终态删除。**确实读到多个组**时**拒绝**并把条目保留在待删集合中，
   同时给出 `retry_terminal_delete_multi_group_skipped_rows` 计数与 error 日志（保护其他组尚未
-  处理的条目）；查询失败或形态不可读时**继续删除**并记
-  `retry_terminal_delete_topology_unknown_rows`（避免瞬时查询故障让终态清理全面停摆）。
+  处理的条目）；查询失败或形态不可读时同样**拒绝删除、保留数据**并记
+  `retry_terminal_delete_topology_unknown_rows`，但正常执行 XACK。拓扑结果缓存 5 秒，仍有拓扑
+  变化的残差窗口；部署约束是每 Stream 单消费组，不能据此宣称任意多组拓扑下均安全。
   **不得**用 XTRIM 清空历史来替代清理恢复。判定由**调用层**完成（`_delete_ids` 内不得新增
   redis 交互，否则会扰动 xack→xdel 序列）。
 
@@ -191,7 +192,7 @@ flowchart TD
 - `get_cached(device_code, group_code)` 命中时直接在事件循环内返回，不进入 executor，也不访问 MySQL。
 - 首次缺失才经 executor 调用 `get_or_load`，从永久 `point_storage_mapping` 读取 stable、child table、列名和 var_type。
 - `stream_config_version` 仅保留作接口兼容和日志上下文，不再用当前可编辑配置拒绝历史数据；旧 config version 由永久 mapping 正确解码。
-- 热缓存遇到消息中的未知 `var_id` 时经 executor 调用 `reload`，重新读取同一设备/分组的永久 mapping；重载失败或仍无映射时保留消息待重试，不能 ACK 后静默漏写。
+- 热缓存遇到消息中的未知 `var_id` 时经 executor 调用 `reload`，重新读取同一设备/分组的永久 mapping；缺失点位触发的重载按设备/分组设置冷却期（默认 5 秒），期间保留已有映射，避免逐条查库。重载失败或仍无映射时保留消息待重试，不能 ACK 后静默漏写；显式 `invalidate` 会清除冷却期。
 - MySQL 断线时 `ping(reconnect=True)` 后重试加载；确实没有永久映射时返回 None，由消费可靠性流程处理。
 
 ### 5.5 DLQ / 系统日志 / 性能指标
@@ -227,19 +228,20 @@ sequenceDiagram
     TW-->>SC: 每块 (LANDED / BAD_DATA / RETRY)
     SC->>R: XACK + XDEL (LANDED；且该 Stream 只有单一消费组)
     SC->>DLQ: push (BAD_DATA)
-    SC->>SC: RETRY 留 buffer；连续 RETRY 达 max_row_retry → 有界隔离区（仍留在 PEL）
-    SC->>SC: 任一分段 BAD_DATA 且整帧未全成 → FAILED_INCOMPLETE（持久隔离，不 ACK、不计成功）
+    SC->>SC: RETRY 留 buffer；本地重试立即隔离，其余达 max_row_retry 后隔离（仍留在 PEL）
+    SC->>DLQ: FAILED_INCOMPLETE → 原始帧和分段证据（不计成功）
+    DLQ-->>SC: Redis 接受写入后才 XACK；推送失败不 ACK
 ```
 
 ### 6.2 flush 行级状态分流
 
 `_flush` (`consumer.py:505`) 拿到 `write_multi_table` 的逐块结果后按状态分流：
 
-- **LANDED** → 加入待确认集合，同一 Stream 最多 500 个 entry id 合并 XACK，ACK 成功后同批 XDEL；
-- **BAD_DATA** → 逐行 `push_dlq`，**推送成功才 XACK + XDEL**，失败留 buffer；
+- **LANDED** → 加入待确认集合，同一 Stream 最多 500 个 entry id 合并 XACK，ACK 成功且拓扑确认单组后同批 XDEL；
+- **BAD_DATA / FAILED_INCOMPLETE** → 逐行推入 DLQ（不完整帧附分段证据），**推送成功才 XACK**，失败留 buffer；XDEL 还需单组判定；
 - **RETRY** → 不 ACK、不进 DLQ，留 buffer 下轮重试；**例外**：原因为 `size`（永久类别）的行逐行 `push_dlq`，推送成功才 XACK + XDEL。
 
-> **Writer 内的终态约束**：只有"已落库（LANDED）"或"已成功进 DLQ 的坏行/永久类别行"才 XACK，并只在 ACK 成功后 XDEL；任何 RETRY、ACK 失败或 DLQ 推送失败的行都不会删除。XDEL 失败进入独立清理重试，不重复写 TDengine。Redis Stream 的 MAXLEN 裁剪、Redis AOF/卷损坏，以及上游边缘 FIFO/session 切换造成的损失不属于 Writer 可恢复范围。
+> **Writer 内的终态约束**：只有"已落库（LANDED）"或"已被 Redis 接受写入 DLQ 的坏行/不完整帧/永久类别行"才 XACK；只有 ACK 成功且拓扑确认单组后才 XDEL。其他 RETRY、ACK 失败或 DLQ 推送失败的行都不会删除。XDEL 失败进入内存中的独立清理重试，不重复写 TDengine；该清理状态尚不能跨崩溃恢复。Redis Stream 的 MAXLEN 裁剪、Redis AOF/卷损坏，以及上游边缘 FIFO/session 切换造成的损失不属于 Writer 可恢复范围。
 
 ### 6.3 待处理消息重认领（崩溃恢复）
 
@@ -285,10 +287,10 @@ sequenceDiagram
 - **发现范围**：启动时执行一次 `_refresh_stream_scopes_once`（`writer/main.py`），随后由
   `scope_refresh_task` **周期刷新**，间隔为 `scope_refresh_interval_s`（**默认 60s**）；
   新增的 `(device_type, group_code)` scope 会在该窗口内被接入并分配到一个 worker。
-- **只增不减（重启/续跑备用路径）**：刷新**不会移除已存在的 stream**（源码注释：
-  "发现并接入新流；已存在的流不移除，以保留消费连续性"）。因此**重启后**既有的
-  `known_stream_keys` 会重新按 MySQL 的当前 scope 建立，缺失的 scope **不会**导致已接入的流被
-  丢弃；新增 scope 则按同一路径补入。
+- **同一进程内只增不减**：刷新**不会移除已存在的 stream**（源码注释：
+  "发现并接入新流；已存在的流不移除，以保留消费连续性"）。`known_stream_keys` 是内存状态，
+  重启后按 MySQL 的当前 scope 重新建立；已从 MySQL 移除的旧 scope 不会自动恢复到发现范围，
+  其历史 Stream/PEL 因此可能未被接管。跨重启恢复旧 scope 尚未实现，不能把进程内保留当作恢复保证。
 - **命名约定 ≠ 物理事实源**：`sd{device_type}` / `{device_code}` / `sq{device_type}`
   / `{device_code}_q` 只是**命名约定**；**写入用的物理坐标必须取自永久映射**
   `point_storage_mapping` 的 `stable_name` / `child_table`（`writer/mysql_mapper.py` 直接

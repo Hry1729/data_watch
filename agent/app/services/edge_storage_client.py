@@ -93,6 +93,8 @@ class EdgeStorageClient:
         self._command("config.refresh_schedule", {"now_ms": now_ms})
 
     def _command(self, action: str, payload: dict[str, Any] | None = None) -> Any:
+        # Storage may create or rotate its token after this client is constructed.
+        self._token = ipc_token()
         body = json.dumps(
             {"action": action, "payload": payload or {}},
             ensure_ascii=True,

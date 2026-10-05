@@ -1313,7 +1313,8 @@ class DeviceManager:
                         logger.error("Device %s reconnect failed: %s", device.device_id, e)
                         await self._report_device_status(device, 2, f"reconnect failed: {e}", "timeout")
             finally:
-                self._reconnect_tasks.pop(device.device_id, None)
+                if self._reconnect_tasks.get(device.device_id) is asyncio.current_task():
+                    self._reconnect_tasks.pop(device.device_id, None)
                 self._metrics.set_gauge("reconnect_active", len(self._reconnect_tasks))
 
         # 启动重连任务

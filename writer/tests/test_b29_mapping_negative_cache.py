@@ -160,3 +160,21 @@ def test_discriminating_power_disabled_window_queries_every_time() -> None:
         assert mapper.reload(*_GROUP, 1) is None
 
     assert conn.query_count() == 50
+
+
+def test_partial_missing_mapping_reload_is_bounded_and_recovers(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    conn = FakeConnection([mapping_row()])
+    mapper = MysqlMapper(conn)
+    assert mapper.get_or_load(*_GROUP, 1).var_map == {"123": "p0001"}
+    for _ in range(100):
+        assert mapper.reload(*_GROUP, 1, True).var_map == {"123": "p0001"}
+    assert conn.query_count() == 2
+    conn.rows.append({**mapping_row(), "var_id": 999, "td_column_name": "p999"})
+    clock[0] += NEGATIVE_CACHE_TTL_S + 0.01
+    assert mapper.reload(*_GROUP, 2, True).var_map["999"] == "p999"
+    assert conn.query_count() == 3
+    mapper.invalidate(*_GROUP)
+    assert mapper.reload(*_GROUP, 2, True).var_map["999"] == "p999"
+    assert conn.query_count() == 4

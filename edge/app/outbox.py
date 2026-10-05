@@ -759,15 +759,15 @@ class OutboxStore:
         *,
         window_ms: int | None = None,
     ) -> dict[str, Any]:
-        """把一条 dead 记录**受控地**放回待上传队列（B6 的恢复入口之一）。
+        """检查 dead 恢复请求；无法证明身份仍可提交时保留载荷并明确拒绝。
 
         约束（缺一不可）：
         - **幂等**：只改动 ``state='dead'`` 的行；重复调用返回 ``replayed=False`` +
           ``reason='not_dead'``，既不报错也不重复计数；
         - **时间窗**：``dead_at`` 早于窗口的只允许导出、不原位重放（``outside_time_window``）；
-        - **重置隔离预算**：``reject_count`` 归零，使重放不继承历史协议拒绝计数（配合 B6 的
-          计数分离：网络重试不消耗坏数据预算）；
-        - **审计**：累计 ``dead_replay_count`` 并记录 ``last_dead_replayed_at``。
+        - **身份**：旧会话或已被中心消费的序号不能靠修改本地状态重放。当前没有中心
+          身份核对/新身份分配协议，故窗口内也返回 ``identity_requires_reconciliation``；
+          保持 dead、预算及审计不变，运维应导出载荷并人工核对。
         - **权限**：由 IPC 层保证——``outbox.dead_replay`` 只授予 uploader 角色。
         """
         window = window_ms if window_ms is not None else self.DEAD_REPLAY_WINDOW_MS
@@ -792,32 +792,8 @@ class OutboxStore:
                     "dead_at": int(dead_at),
                     "window_ms": window,
                 }
-            cursor = connection.execute(
-                """
-                UPDATE outbox
-                SET state='retry_wait', attempt_count=0, reject_count=0, next_retry_at=?,
-                    lease_owner=NULL, inflight_at=NULL, lease_until=NULL,
-                    last_error=COALESCE(last_error, '') || ' [replayed by operator]'
-                WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'
-                """,
-                (now, batch_id, upload_session_id, local_seq),
-            )
-            if cursor.rowcount != 1:
-                return {"replayed": False, "reason": "not_dead"}
-            connection.execute(
-                """
-                INSERT INTO metadata(key, value) VALUES('dead_replay_count', '1')
-                ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER) + 1 AS TEXT)
-                """
-            )
-            connection.execute(
-                """
-                INSERT INTO metadata(key, value) VALUES('last_dead_replayed_at', ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                """,
-                (str(now),),
-            )
-        return {"replayed": True, "state": "retry_wait", "replayed_at": now}
+            return {"replayed": False, "reason": "identity_requires_reconciliation",
+                    "state": "dead", "recovery": "export_and_reconcile"}
 
     def maintenance(
         self,

@@ -349,7 +349,7 @@ async def test_cached_mapping_reload_finds_new_var_without_silent_ack():
         1,
     )
 
-    mapper.reload.assert_called_once_with("qc100", "g001", 0)
+    mapper.reload.assert_called_once_with("qc100", "g001", 0, True)
     redis_client.xack.assert_not_called()
     assert len(consumer._buffer) == 1
     assert consumer._buffer[0].columns == {"qc1": 1.5, "qc2": 2.5}
@@ -370,6 +370,6 @@ async def test_unknown_var_after_cached_mapping_reload_stays_pending():
         1,
     )
 
-    mapper.reload.assert_called_once_with("qc100", "g001", 0)
+    mapper.reload.assert_called_once_with("qc100", "g001", 0, True)
     redis_client.xack.assert_not_called()
     assert consumer._buffer == []

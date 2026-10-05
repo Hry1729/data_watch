@@ -604,10 +604,20 @@ def run_host(args: argparse.Namespace) -> int:
         volume = ["-v", f"{repo}:/workspace:ro", "-v", f"{evidence}:/evidence"]
         base = ["--network", net, *volume, "-e", "PYTHONDONTWRITEBYTECODE=1"]
         rel = f"/evidence/{label}"
+        # These endpoints belong to containers created and owned by this run.
+        test_config_path = run_dir / "diagnose-test-config.json"
+        write_json(test_config_path, {
+            "mysql": {"host": "perf-mysql", "port": 3306, "user": "root", "password": ""},
+            "redis": {"host": "perf-redis", "port": 6379, "db": 0, "password": ""},
+            "tdengine": {"host": "perf-td", "port": 6041, "user": "root", "password": "taosdata"},
+            "allowed_hosts": ["perf-mysql", "perf-redis", "perf-td"],
+        })
         prepare = docker("run", "--rm", *base,
+                         "-v", f"{test_config_path}:/diagnose-test-config.json:ro",
                          "-e", "PYTHONPATH=/workspace:/workspace/collector:/workspace/writer",
                          RUNNER_IMAGE, "python", "/workspace/scripts/diagnose_joint_pipeline.py",
                          "--mode", "prep", "--plan", f"{rel}/plan.json",
+                         "--test-config", "/diagnose-test-config.json",
                          "--runtime", f"{rel}/runtime", "--consumer-workers", "1")
         print(prepare.stdout.strip(), flush=True)
         for kind in ("writer", "collector", "monitor"):

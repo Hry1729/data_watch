@@ -57,7 +57,7 @@ class _FakeMapper:
     def get_or_load(self, device_code, group_code, stream_config_version):
         return self.mapping
 
-    def reload(self, device_code, group_code, stream_config_version):
+    def reload(self, device_code, group_code, stream_config_version, missing_points=False):
         self.reload_calls += 1
         if self._reload_var_map is not None:
             self.mapping = self._make(self._reload_var_map)

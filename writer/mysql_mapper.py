@@ -61,6 +61,7 @@ class MysqlMapper:
         # B29：负缓存（key → 到期时刻，monotonic）。仅在**缺失/查询失败**时写入，
         # 成功加载即清除；窗口内不查库，避免持续缺映射时的请求放大。
         self._negative_until: dict[str, float] = {}
+        self._reload_until: dict[str, float] = {}
         self._negative_cache_ttl_s = NEGATIVE_CACHE_TTL_S
 
     def _negative_active(self, key: str) -> bool:
@@ -84,10 +85,12 @@ class MysqlMapper:
         if device_code is None or group_code is None:
             self._cache.clear()
             self._negative_until.clear()
+            self._reload_until.clear()
             return
         key = f"{device_code}:{group_code}"
         self._cache.pop(key, None)
         self._negative_until.pop(key, None)
+        self._reload_until.pop(key, None)
 
     def get_cached(self, device_code: str, group_code: str) -> GroupMapping | None:
         return self._cache.get(f"{device_code}:{group_code}")
@@ -120,9 +123,17 @@ class MysqlMapper:
         device_code: str,
         group_code: str,
         stream_config_version: int,
+        missing_points: bool = False,
     ) -> GroupMapping | None:
         """强制从永久 mapping 重载一个设备/分组。"""
         key = f"{device_code}:{group_code}"
+        if missing_points:
+            now = time.monotonic()
+            if self._reload_until.get(key, 0) > now:
+                return self.get_cached(device_code, group_code)
+            self._reload_until[key] = now + self._negative_cache_ttl_s
+        else:
+            self._reload_until.pop(key, None)
         # B29：这是**高频**路径（未知 var_id 每帧都会走到这里）。持续缺映射时若不设窗口，
         # 每一帧都会查一次库；窗口内直接返回 None，条目继续留在 PEL 等映射补齐。
         if self._negative_active(key):

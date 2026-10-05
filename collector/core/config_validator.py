@@ -23,6 +23,7 @@ logger = get_logger("config_validator")
 # 按路径加载与加载顺序无关。
 _MODBUS_PROTOCOLS = frozenset({"modbus_tcp", "modbus"})
 _MODBUS_ADDRESS_CANDIDATES = (
+    Path(__file__).resolve().parents[1] / "modbus-rules" / "address.py",
     Path(__file__).resolve().parents[2] / "packages" / "modbus_tcp" / "modbus_tcp" / "address.py",
 )
 _modbus_address_module: Optional[Any] = None
@@ -34,7 +35,6 @@ def _load_modbus_address_module() -> Optional[Any]:
     global _modbus_address_module, _modbus_address_module_resolved
     if _modbus_address_module_resolved:
         return _modbus_address_module
-    _modbus_address_module_resolved = True
     for candidate in _MODBUS_ADDRESS_CANDIDATES:
         if not candidate.is_file():
             continue
@@ -45,9 +45,11 @@ def _load_modbus_address_module() -> Optional[Any]:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             _modbus_address_module = module
+            _modbus_address_module_resolved = True
         except Exception as exc:  # pragma: no cover - 取决于驱动文件可读性
             logger.warning("Failed to load Modbus address rules from %s: %s", candidate, exc)
-        break
+        if _modbus_address_module is not None:
+            break
     if _modbus_address_module is None:
         logger.warning(
             "Modbus address rules not found (looked in %s); Modbus addresses cannot be validated",

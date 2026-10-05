@@ -191,3 +191,25 @@ def test_agent_client_separates_auth_failures_from_unreachable_endpoints(
 def test_agent_token_header_name_matches_the_server_contract(storage) -> None:
     assert IPC_TOKEN_HEADER == "X-DataWatch-Storage-Token"
     assert "agent" in read_role_tokens(ensure_token_file(storage["token_file"]))
+
+
+def test_client_recovers_when_token_file_appears_later(storage, monkeypatch):
+    missing = storage["token_file"].parent / "not-created.json"
+    monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_TOKEN_FILE", str(missing))
+    client = EdgeStorageClient(storage["url"], timeout_seconds=5.0)
+    assert client._token is None
+    ensure_token_file(storage["token_file"])
+    monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_TOKEN_FILE", str(storage["token_file"]))
+    assert client.status()["counts"] == {}
+    assert client._token == read_role_tokens(storage["token_file"])[IPC_ROLE]
+
+
+def test_client_uses_rotated_token_without_reconstruction(storage):
+    ensure_token_file(storage["token_file"])
+    client = EdgeStorageClient(storage["url"], timeout_seconds=5.0)
+    assert client.status()["counts"] == {}
+    old_token = client._token
+    ensure_token_file(storage["token_file"], rotate=True)
+    # Storage checks token-file changes on a bounded one-second interval.
+    assert client.wait_ready(timeout_seconds=3.0)["counts"] == {}
+    assert client._token != old_token

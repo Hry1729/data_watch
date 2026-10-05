@@ -381,10 +381,20 @@ function Restore-UnverifiedSwap {
     }
     Move-Item -LiteralPath $previous -Destination $current
 }
+function Restore-UnverifiedRollback {
+    if (-not (Test-CompleteVersion $failed)) { return }
+    if (Test-Path -LiteralPath $current) {
+        if (Test-Path -LiteralPath $previous) { throw "Rollback recovery target is occupied" }
+        Move-Item -LiteralPath $current -Destination $previous
+    }
+    Move-Item -LiteralPath $failed -Destination $current
+}
 
 $crashedPhase = Get-SwapPhase
 if ($crashedPhase -eq "update:backed-up" -or $crashedPhase -eq "update:swapped") {
     Restore-UnverifiedSwap
+} elseif ($crashedPhase -in @("rollback:displaced", "rollback:swapped", "rollback:restoring")) {
+    Restore-UnverifiedRollback
 } else {
     # 这里只做「把完整旧版本搬回 current」；failed 的回收必须等确认本次交换
     # 真的能开始之后再做（见下面 try 内），否则可能在 previous 已被消耗时
@@ -440,7 +450,10 @@ try {
         ($failedPhase -eq "update:backed-up" -and (Test-Path -LiteralPath $current) -and
             -not (Test-Path -LiteralPath $StagedApp))
     )
-    if ($unverifiedInPlace) { Restore-UnverifiedSwap } else { Restore-MissingCurrent }
+    if ($Rollback -and (Test-CompleteVersion $failed)) {
+        Set-SwapPhase "rollback:restoring"
+        Restore-UnverifiedRollback
+    } elseif ($unverifiedInPlace) { Restore-UnverifiedSwap } else { Restore-MissingCurrent }
     Set-SwapPhase "$mode`:failed"
     exit 1
 }

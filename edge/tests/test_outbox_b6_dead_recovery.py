@@ -1,4 +1,4 @@
-"""B6 剩余项的回归：dead 载荷必须**先可恢复**（查看/导出/受控重放），再谈清理。
+"""B6 剩余项的回归：dead 载荷必须先可查看和导出，再谈清理。
 
 背景（取证）：`maintenance()` 会按 `retention_days` 直接 `DELETE ... state='dead' AND
 dead_at < cutoff`，而此前**没有任何 IPC 动作**能查看或取回 dead 载荷 ⇒ 用户明确不接受的
@@ -6,9 +6,8 @@ dead_at < cutoff`，而此前**没有任何 IPC 动作**能查看或取回 dead 
 
 本回归锁定三件事：
 1. 运维能列出、导出 dead 载荷（导出含完整 base64 载荷；列表**不含**载荷）；
-2. 重放**幂等**（重复调用不改状态、不重复计数）、受**时间窗**限制、并**重置隔离预算**
-   （reject_count/attempt_count 归零，使重放不继承历史协议拒绝计数）；
-3. 审计留痕（dead_replay_count / last_dead_replayed_at）与容量视图（dead_backlog）。
+2. 未核对中心身份的原位重放必须明确拒绝，并保留状态、载荷与隔离预算；
+3. 拒绝不能记为成功重放，容量视图（dead_backlog）仍包含该载荷。
 """
 
 from __future__ import annotations
@@ -90,27 +89,33 @@ def test_export_dead_returns_full_payload_and_none_for_unknown(tmp_path) -> None
     assert store.export_dead("nope", record.upload_session_id, record.local_seq) is None
 
 
-def test_replay_dead_restores_row_and_resets_isolation_budget(tmp_path) -> None:
+def test_refused_replay_preserves_payload_and_isolation_budget(tmp_path) -> None:
     store = _store(tmp_path)
     records = _seed_dead(store)
     record = records[0]
     assert store.dead_backlog()["records"] == 1
+    with store._lock:
+        store._connection.execute(
+            "UPDATE outbox SET attempt_count=5, reject_count=3 WHERE local_seq=?",
+            (record.local_seq,),
+        )
 
     result = store.replay_dead(record.batch_id, record.upload_session_id, record.local_seq)
 
-    assert result["replayed"] is True
-    assert result["state"] == "retry_wait"
-    assert _states(store) == ["retry_wait"]
-    assert store.dead_backlog()["records"] == 0
+    assert result["replayed"] is False
+    assert result["reason"] == "identity_requires_reconciliation"
+    assert _states(store) == ["dead"]
+    assert store.dead_backlog()["records"] == 1
+    assert store.export_dead(record.batch_id, record.upload_session_id, record.local_seq) is not None
     with store._lock:
         row = store._connection.execute(
             "SELECT attempt_count, reject_count, next_retry_at, lease_owner "
             "FROM outbox WHERE local_seq=?",
             (record.local_seq,),
         ).fetchone()
-    assert int(row["reject_count"]) == 0, "重放必须重置坏数据隔离预算"
-    assert int(row["attempt_count"]) == 0
-    assert row["next_retry_at"] is not None
+    assert int(row["reject_count"]) == 3, "拒绝重放必须保留坏数据隔离预算"
+    assert int(row["attempt_count"]) == 5
+    assert row["next_retry_at"] is None
     assert row["lease_owner"] is None
 
 
@@ -123,12 +128,12 @@ def test_replay_dead_is_idempotent(tmp_path) -> None:
     again = store.replay_dead(record.batch_id, record.upload_session_id, record.local_seq)
 
     assert again["replayed"] is False
-    assert again["reason"] == "not_dead"
+    assert again["reason"] == "identity_requires_reconciliation"
     with store._lock:
         audit = store._connection.execute(
             "SELECT value FROM metadata WHERE key='dead_replay_count'"
         ).fetchone()
-    assert int(audit["value"]) == 1, "幂等重放不得重复计数"
+    assert audit is None, "拒绝恢复不能写入成功重放计数"
 
 
 def test_replay_dead_respects_time_window(tmp_path) -> None:
@@ -155,7 +160,7 @@ def test_replay_dead_reports_missing_identity(tmp_path) -> None:
     assert result["reason"] == "not_found"
 
 
-def test_successful_replay_is_audited(tmp_path) -> None:
+def test_refused_replay_does_not_record_success(tmp_path) -> None:
     store = _store(tmp_path)
     records = _seed_dead(store)
     record = records[0]
@@ -169,8 +174,21 @@ def test_successful_replay_is_audited(tmp_path) -> None:
                 "SELECT key, value FROM metadata WHERE key LIKE 'dead_replay%' OR key LIKE 'last_dead%'"
             ).fetchall()
         }
-    assert rows.get("dead_replay_count") == "1"
-    assert rows.get("last_dead_replayed_at") is not None
+    assert rows.get("dead_replay_count") is None
+    assert rows.get("last_dead_replayed_at") is None
+
+
+def test_old_session_dead_replay_is_refused_and_exportable(tmp_path):
+    store = _store(tmp_path)
+    record = _seed_dead(store)[0]
+    store.prepare_session_switch()
+    assert store.current_session_id() != record.upload_session_id
+    result = store.replay_dead(record.batch_id, record.upload_session_id, record.local_seq)
+    assert result["replayed"] is False
+    assert result["reason"] == "identity_requires_reconciliation"
+    assert _states(store) == ["dead"]
+    assert base64.b64decode(store.export_dead(record.batch_id, record.upload_session_id,
+                                            record.local_seq)["payload_b64"]) == record.payload
 
 
 def test_dead_replay_not_exposed_to_collector_or_agent() -> None:
