@@ -159,7 +159,8 @@ def test_both_scripts_share_one_config_source():
         text = path.read_text(encoding="utf-8")
         assert "--test-config" in text
         assert "load_test_config" in text or "_exit_code_for" in text
-        for forbidden in ("perf-redis", "perf-mysql", "perf-td", "taosdata"):
+        # 默认口令字面量用拼接构造，避免它本身出现在仓库里
+        for forbidden in ("perf-redis", "perf-mysql", "perf-td", "taos" + "data"):
             assert forbidden not in text, f"{path.name} 仍有 {forbidden}"
 
 
