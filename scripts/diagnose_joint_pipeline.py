@@ -178,7 +178,16 @@ def _lag_samples(client, keys, latest_key: str, latest_point: str) -> dict:
 
 
 def mode_tdlag(args) -> int:
-    """在 runner 容器并发采样"采样→TD 完整确认"延迟（读 TD 的 max(ts)）。
+    """在 runner 容器并发采样"采样→TD 完整确认"延迟（读 TD 主时间列 ts 的最新值）。
+
+    **时间边界取法（仅适用于时间列）**：本目标版本（服务端 `3.4.0.9.community`；容器内 `taos`/`taosdump`
+    `3.4.0.9`；驱动 `taos-ws-py 0.7.0`）对 `min(ts)`/`max(ts)` 报
+    `Invalid parameter data type : min|max`，故时间边界用 **`last(ts)`（上界）/ `first(ts)`（下界）**，
+    并与"相同过滤条件下 `ORDER BY ts ASC|DESC LIMIT 1`"的结果核对一致。
+
+    **不要把数值字段的 `min/max` 一并替换成 `first/last`**：两者语义不同——
+    数值列的 `min/max` 是**聚合极值**，`first/last` 是**按时间顺序的首/末值**，只在**时间列**上二者才等价。
+    该结论只适用于本轮实测的上述版本，不要泛化到所有 3.4.x。
 
     停止条件：出现停止文件，或达到 --seconds（与采集窗口同长再加余量）。
     """

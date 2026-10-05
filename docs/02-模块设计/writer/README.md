@@ -94,6 +94,33 @@ flowchart TD
 - **凭据注入**（`_apply_env_overrides` `main.py:106`）：mysql/redis/tdengine 的 host/port/user/database/password 均可由环境变量覆盖；settings.toml 仅作开发期回退与运行参数。
 - 默认 `consumer_workers=4`，实际 worker 数不超过 Stream key 数；多 worker 的 consumer name 自动追加 `-1`、`-2` 等后缀。
 
+#### 5.1.1 手工启动（**仅排障**；正常验收一律走 Agent）
+
+> 结论先行：**`config/settings.toml` 是按"当前工作目录"定位的**，`--runtime-dir` **不负责**定位配置文件；
+> 连接凭据由 **Agent 注入的环境变量**提供，`settings.toml` 里 password 为空是**预期**状态。
+
+- **启动契约（与实现一致）**：`writer/main.py` 启动序列为 加载 `config/settings.toml`（**相对 cwd**）→
+  用 `DATAWATCH_<DB>_<FIELD>` 覆盖连接字段 → 校验 → 连接 Redis/MySQL → 发现 Stream 范围 → 启动消费。
+  实测：cwd 错误时报 `FileNotFoundError: config/settings.toml`；缺 Agent 注入凭据时报
+  `Cannot connect to Redis: HELLO must be called with the client already authenticated`。
+  —— 两者都是**启动上下文缺失**，不是产品缺陷。
+- **角色 ↔ 工作目录**（数据根由各角色安装决定）：
+
+  | 角色 | 数据根 | 手工启动时的 cwd |
+  |---|---|---|
+  | 中心式 | `C:\ProgramData\DataWatch` | `C:\ProgramData\DataWatch\writer` |
+  | 分布式中心 | `C:\ProgramData\DataWatch Distributed Center` | `C:\ProgramData\DataWatch Distributed Center\writer` |
+  | 分布式边缘 | —— | **无 Writer**（边缘只经 Ingest 上传）|
+
+- **凭据来源**：连接凭据由 Agent 解密后**以环境变量传给子进程**（`_apply_env_overrides`）。
+  **解密后的凭据只允许传给目标子进程**，**不得**写回明文配置、也不得设为永久环境变量。
+- **禁止重复启动同一角色**：同一 `group_name` + consumer 下并发两个 Writer 会争抢同一 PEL，
+  造成重复认领与重复写入。手工启动前先确认 Agent 未在运行该进程（例如中心式角色的 managed process 状态）。
+- **停止方式**：优先由 Agent 停止；手工启动的进程用其自身控制台正常终止（Ctrl+C / `Stop-Process`），
+  **不要**用删除 PEL、清空 Stream 或 `XTRIM` 之类手段"收尾"。
+- **验收口径**：本项的正常验收**以 Agent 启动为准**；手工启动仅用于排障，且必须同时说明
+  **工作目录、所属角色、凭据来源、停止方式**四要素，并确认没有重复实例。
+
 ### 5.2 StreamConsumer（消费-入库主循环）
 
 `writer/consumer.py:61`。主循环 `run_loop` (`consumer.py:105`) 每轮依次：
