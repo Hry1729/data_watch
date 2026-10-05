@@ -16,7 +16,13 @@
 护栏
 ----
 * 全字段对账规模预检：devices × ticks × (points+1) 超过 2,000,000 直接拒绝。
-* 只允许 perf-redis/perf-mysql/perf-td 这类专用主机名。
+* 连接配置来自**仓库外**的测试配置文件（`--test-config`，样例见
+  `scripts/diagnose-test-config.example.json`）；准备数据、Writer 配置、采集与查询**共用同一份**。
+* 隔离闸门：主机必须在配置的 `allowed_hosts` 白名单内（默认仅回环）；库名必须是本轮临时库前缀
+  （本脚本 `dwcap_`、联合脚本 `dwjnt_`）；同名库已存在**直接拒绝**（只新建临时库，不接管既有库再删）。
+  它不是"连生产环境"的通行证。
+* Writer 子进程环境**剥离继承的 `DATAWATCH_*`** 后再显式注入本次配置，外部环境无法改变测试目标。
+* 验收结论非 `pass` 时进程返回**非零退出码**（失败详情仍完整写入报告文件）。
 """
 from __future__ import annotations
 
@@ -54,7 +60,127 @@ from data_watch_shared.stream_envelope import build_stream_fields, stream_key  #
 from storage.durable_redis_writer import FRAME_LUA_V2  # noqa: E402
 
 MAX_FULL_FIELD_CELLS = 2_000_000
-ALLOWED = {"perf-redis": "redis", "perf-mysql": "mysql", "perf-td": "td"}
+
+# 仓库外的开发机测试连接配置（普通文件权限，不做 ACL 加固）；样例见
+# scripts/diagnose-test-config.example.json（仓库内只放占位值，真口令不入 Git）。
+DEFAULT_TEST_CONFIG = Path(os.environ.get("DW_DIAG_TEST_CONFIG")
+                           or r"D:\python\device_alarm\dw-test-env\diagnose-test-config.json")
+
+
+def exit_code_for(overall: str) -> int:
+    """验收结论 → 进程退出码：只有 pass 才是 0（此前 main() 恒 return 0，把 fail 报成成功）。"""
+    return 0 if overall == PASS else 1
+
+
+def round_resource_keys(*, stream_keys, devices, group: str, period_ms: int) -> list[str]:
+    """本轮测试对象在 Redis 里的键（stream + latest + window）。只用于**按名**清理。"""
+    keys = set(stream_keys)
+    for device in devices:
+        keys.add(f"rt:latest:{device}:{group}")
+        keys.add(f"rt:window:{device}:{group}:{period_ms}")
+    return sorted(keys)
+
+
+def cleanup_round_resources(cfg: dict, *, database: str, client, keys) -> dict:
+    """只清理本轮创建的临时资源：TDengine 库、MySQL 库、按名删除的 Redis 键。
+
+    绝不做 FLUSHDB/FLUSHALL，也不触碰本轮之外的任何键或库。
+    """
+    dropped = {"tdengine_database": None, "mysql_database": None, "redis_keys": 0}
+    td = cfg["tdengine"]
+    conn = taosws.connect(host=td["host"], port=int(td["port"]),
+                          user=td.get("user", "root"), password=td.get("password", ""))
+    conn.execute(f"DROP DATABASE IF EXISTS {database}")
+    conn.close()
+    dropped["tdengine_database"] = database
+    mysql_conn = pymysql.connect(host=cfg["mysql"]["host"], port=int(cfg["mysql"]["port"]),
+                                 user=cfg["mysql"].get("user", "root"),
+                                 password=cfg["mysql"].get("password", ""), autocommit=True)
+    with mysql_conn.cursor() as cur:
+        cur.execute(f"DROP DATABASE IF EXISTS `{database}`")
+    mysql_conn.close()
+    dropped["mysql_database"] = database
+    for key in keys:
+        dropped["redis_keys"] += int(client.delete(key))
+    return dropped
+
+
+def load_test_config(path: str | os.PathLike[str] | None) -> dict:
+    """读取测试连接配置：准备数据、Writer 配置、采集与查询共用这一份。"""
+    target = Path(path) if path else DEFAULT_TEST_CONFIG
+    if not target.is_file():
+        raise SystemExit(f"测试连接配置不存在：{target}"
+                         "（样例见 scripts/diagnose-test-config.example.json）")
+    cfg = json.loads(target.read_text(encoding="utf-8"))
+    for section in ("mysql", "redis", "tdengine"):
+        sect = cfg.get(section)
+        if not isinstance(sect, dict):
+            raise SystemExit(f"测试连接配置缺少 [{section}] 段：{target}")
+        for field in ("host", "port"):
+            if sect.get(field) in (None, ""):
+                raise SystemExit(f"测试连接配置 [{section}].{field} 未设置：{target}")
+    cfg["_source"] = str(target)
+    return cfg
+
+
+def assert_test_targets(cfg: dict, *, prefix: str, database: str) -> None:
+    """隔离闸门：主机须在显式白名单内（默认仅回环），库名须是本轮临时库前缀。
+
+    这不是"连生产环境"的通行证：非回环主机必须在配置的 allowed_hosts 中显式列出。
+    """
+    allowed = {str(host).strip().lower() for host in (cfg.get("allowed_hosts") or [])}
+    allowed |= {"127.0.0.1", "localhost"}
+    for section in ("mysql", "redis", "tdengine"):
+        host = str(cfg[section].get("host", "")).strip().lower()
+        if host not in allowed:
+            raise SystemExit(f"拒绝：{section} 主机 {host!r} 不在显式白名单内"
+                             "（配置 allowed_hosts）；本工具不得直连生产环境")
+    if not database.startswith(prefix):
+        raise SystemExit(f"拒绝：库名 {database!r} 必须以本轮前缀 {prefix!r} 开头"
+                         "（能力脚本 dwcap_、联合脚本 dwjnt_）")
+
+
+def assert_tdengine_database_absent(cfg: dict, database: str) -> None:
+    """TDengine 同名库已存在则拒绝（只新建临时库，不接管既有库再删）。"""
+    td = cfg["tdengine"]
+    conn = taosws.connect(host=td["host"], port=int(td["port"]),
+                          user=td.get("user", "root"), password=td.get("password", ""))
+    try:
+        rows = list(conn.query("SELECT COUNT(*) FROM information_schema.ins_databases "
+                               f"WHERE name = '{database}'"))
+    finally:
+        conn.close()
+    if rows and rows[0][0]:
+        raise SystemExit(f"拒绝：TDengine 库 {database!r} 已存在"
+                         "（本轮只允许新建临时库，不接管既有库）")
+
+
+def writer_child_env(cfg: dict, *, database: str) -> dict:
+    """Writer 子进程环境：剥离继承的 DATAWATCH_*，再显式注入本次测试配置。
+
+    注意 redis 段没有 database 字段（writer 只支持 host/port/password 覆盖），
+    Redis 库号由 write_runtime 生成的 settings.toml 的 db 决定。
+    """
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith("DATAWATCH_")}
+    env.update({
+        "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'writer'}{os.pathsep}{ROOT / 'collector'}",
+        "PYTHONUNBUFFERED": "1",
+        "DATAWATCH_REDIS_HOST": str(cfg["redis"]["host"]),
+        "DATAWATCH_REDIS_PORT": str(int(cfg["redis"]["port"])),
+        "DATAWATCH_REDIS_PASSWORD": str(cfg["redis"].get("password", "")),
+        "DATAWATCH_MYSQL_HOST": str(cfg["mysql"]["host"]),
+        "DATAWATCH_MYSQL_PORT": str(int(cfg["mysql"]["port"])),
+        "DATAWATCH_MYSQL_USER": str(cfg["mysql"].get("user", "root")),
+        "DATAWATCH_MYSQL_DATABASE": database,
+        "DATAWATCH_MYSQL_PASSWORD": str(cfg["mysql"].get("password", "")),
+        "DATAWATCH_TDENGINE_HOST": str(cfg["tdengine"]["host"]),
+        "DATAWATCH_TDENGINE_PORT": str(int(cfg["tdengine"]["port"])),
+        "DATAWATCH_TDENGINE_USER": str(cfg["tdengine"].get("user", "root")),
+        "DATAWATCH_TDENGINE_DATABASE": database,
+        "DATAWATCH_TDENGINE_PASSWORD": str(cfg["tdengine"].get("password", "")),
+    })
+    return env
 
 
 def file_sha(path: Path) -> str | None:
@@ -128,11 +254,18 @@ def seed_stream(client, *, devices, device_type, group, points, ticks, period_ms
             "receipt_key": receipt_key}
 
 
-def prepare_mysql(host: str, database: str, *, devices, device_type, group, points,
+def prepare_mysql(mysql: dict, database: str, *, devices, device_type, group, points,
                   stable: str) -> int:
     """最小同构 schema：映射表（MysqlMapper 用）+ 范围表（main.py 发现 scope 用）。"""
-    conn = pymysql.connect(host=host, user="root", autocommit=True)
+    conn = pymysql.connect(host=mysql["host"], port=int(mysql["port"]),
+                           user=mysql.get("user", "root"),
+                           password=mysql.get("password", ""), autocommit=True)
     with conn.cursor() as cur:
+        cur.execute("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA "
+                    "WHERE SCHEMA_NAME = %s", (database,))
+        if cur.fetchone():
+            raise SystemExit(f"拒绝：MySQL 库 {database!r} 已存在"
+                             "（本轮只允许新建临时库，不接管既有库）")
         cur.execute(f"CREATE DATABASE `{database}`")
         cur.execute(f"USE `{database}`")
         cur.execute("CREATE TABLE point_storage_mapping (point_id BIGINT, "
@@ -164,31 +297,45 @@ def prepare_mysql(host: str, database: str, *, devices, device_type, group, poin
     return len(rows) * 0 + len(devices)
 
 
-def write_runtime(runtime: Path, *, database: str, stable: str, device_type: str,
+def write_runtime(runtime: Path, cfg: dict, *, database: str, stable: str, device_type: str,
                   shard_count: int, group: str, consumer_workers: int) -> Path:
     runtime.mkdir(parents=True, exist_ok=True)
     (runtime / "config").mkdir(exist_ok=True)
+    # 与 prepare_mysql / 采集 / 查询共用同一份配置（此前这里硬编码 perf-*，与命令行主机不一致）
+    redis_cfg, mysql_cfg, td_cfg = cfg["redis"], cfg["mysql"], cfg["tdengine"]
+    redis_host = redis_cfg["host"]
+    redis_port = int(redis_cfg["port"])
+    redis_db = int(redis_cfg.get("db", 0))
+    redis_password = redis_cfg.get("password", "")
+    mysql_host = mysql_cfg["host"]
+    mysql_port = int(mysql_cfg["port"])
+    mysql_user = mysql_cfg.get("user", "root")
+    mysql_password = mysql_cfg.get("password", "")
+    td_host = td_cfg["host"]
+    td_port = int(td_cfg["port"])
+    td_user = td_cfg.get("user", "root")
+    td_password = td_cfg.get("password", "")
     settings = f"""[redis]
-host = "perf-redis"
-port = 6379
-db = 0
-password = ""
+host = "{redis_host}"
+port = {redis_port}
+db = {redis_db}
+password = "{redis_password}"
 stream_shard_count = {shard_count}
 group_name = "writer"
 consumer_name = "cap-{uuid4().hex[:8]}"
 
 [mysql]
-host = "perf-mysql"
-port = 3306
-user = "root"
-password = ""
+host = "{mysql_host}"
+port = {mysql_port}
+user = "{mysql_user}"
+password = "{mysql_password}"
 database = "{database}"
 
 [tdengine]
-host = "perf-td"
-port = 6041
-user = "root"
-password = "taosdata"
+host = "{td_host}"
+port = {td_port}
+user = "{td_user}"
+password = "{td_password}"
 database = "{database}"
 
 [writer]
@@ -407,17 +554,14 @@ def main() -> int:
                         help=">0 时改为持续速率喂入（XADD-only）并测 Writer 是否能跟上")
     parser.add_argument("--sample-ticks", type=int, default=2)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--mysql-host", default="perf-mysql")
-    parser.add_argument("--redis-host", default="perf-redis")
-    parser.add_argument("--td-host", default="perf-td")
-    parser.add_argument("--allow-host", action="store_true")
-    parser.add_argument("--keep-database", action="store_true",
-                        help="保留 TDengine 库以便人工检查（默认测完即删，避免 vnode 耗尽）")
+    parser.add_argument("--test-config", default=None,
+                        help="仓库外测试连接配置（默认取 DW_DIAG_TEST_CONFIG 或开发机固定路径）")
+    parser.add_argument("--keep-resources", action="store_true",
+                        help="保留本轮临时库与 Redis 键以便人工检查"
+                             "（默认测完即删，避免 vnode 耗尽与残留键）")
     args = parser.parse_args()
 
-    for host in (args.redis_host, args.mysql_host, args.td_host):
-        if host not in ALLOWED:
-            raise ValueError(f"only dedicated test hosts are allowed, got {host!r}")
+    cfg = load_test_config(args.test_config)
     cells = args.devices * args.ticks * (args.points + 1)
     if cells > MAX_FULL_FIELD_CELLS:
         raise ValueError(f"全字段对账预计 {cells} 单元超过 {MAX_FULL_FIELD_CELLS} 上限")
@@ -427,6 +571,8 @@ def main() -> int:
     group = "gcap"
     stable = f"sd{device_type}"
     database = f"dwcap_{token}"
+    assert_test_targets(cfg, prefix="dwcap_", database=database)
+    assert_tdengine_database_absent(cfg, database)
     devices = [f"cw{token}{index:02d}" for index in range(args.devices)]
     base_ts = int(time.time() * 1000)
 
@@ -442,18 +588,21 @@ def main() -> int:
                                 "不含故障注入与多 worker 容量结论"),
               "mysql_database": database, "stable": stable, "device_type": device_type}
     report["mysql_devices"] = prepare_mysql(
-        args.mysql_host, database, devices=devices, device_type=device_type,
+        cfg["mysql"], database, devices=devices, device_type=device_type,
         group=group, points=args.points, stable=stable)
-    td_config = {"host": args.td_host, "port": 6041, "user": "root",
-                 "password": "taosdata", "database": database}
+    td_config = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+                 "user": cfg["tdengine"].get("user", "root"),
+                 "password": cfg["tdengine"].get("password", ""), "database": database}
     # 先不带 database 连接（否则连不上一个还不存在的库），建库后再按库连接
     admin_config = {key: value for key, value in td_config.items() if key != "database"}
     conn = taosws.connect(**admin_config)
     conn.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
     conn.close()
 
-    client = redis.Redis(host=args.redis_host, port=6379, db=0, decode_responses=True,
-                         socket_timeout=30)
+    client = redis.Redis(host=cfg["redis"]["host"], port=int(cfg["redis"]["port"]),
+                         db=int(cfg["redis"].get("db", 0)),
+                         password=cfg["redis"].get("password") or None,
+                         decode_responses=True, socket_timeout=30)
     assert client.ping()
     continuous = args.duration_seconds > 0
     if continuous:
@@ -470,14 +619,13 @@ def main() -> int:
             base_ts=base_ts, shard_count=args.shard_count)
 
     runtime = output.parent / f"runtime-{token}"
-    settings = write_runtime(runtime, database=database, stable=stable,
+    settings = write_runtime(runtime, cfg, database=database, stable=stable,
                              device_type=device_type, shard_count=args.shard_count,
                              group=group, consumer_workers=args.consumer_workers)
     report["runtime_settings"] = str(settings)
     log_path = output.parent / f"writer-{token}.log"
-    env = dict(os.environ)
-    env.update({"PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT/'writer'}{os.pathsep}{ROOT/'collector'}",
-                "PYTHONUNBUFFERED": "1"})
+    # 剥离继承的 DATAWATCH_*，再显式注入本次配置（防止外部环境把测试目标改到别处）
+    env = writer_child_env(cfg, database=database)
     with open(log_path, "w", encoding="utf-8") as log:
         process = subprocess.Popen(
             [sys.executable, str(ROOT / "writer" / "main.py"),
@@ -644,16 +792,18 @@ def main() -> int:
              + ("" if monitored["kept_up"] else "：**未跟上**，该档位超过 Writer 能力")))
     report["overall_status"] = overall_status(report["verdicts"])
     # 每个档位建一个库；不清掉会在单节点 TDengine 上耗尽 vnode（本工具默认自清，
-    # 需要保留现场时用 --keep-database）。
-    if not args.keep_database:
-        conn = taosws.connect(**admin_config)
-        conn.execute(f"DROP DATABASE IF EXISTS {database}")
-        conn.close()
-        report["database_dropped"] = database
+    # 需要保留现场时用 --keep-resources）。清理只针对本轮创建的对象，不做 Redis 清空。
+    if not args.keep_resources:
+        report["cleanup"] = cleanup_round_resources(
+            cfg, database=database, client=client,
+            keys=round_resource_keys(stream_keys=report["seed"]["stream_keys"],
+                                     devices=devices, group=group,
+                                     period_ms=args.period_ms))
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({k: v for k, v in report.items()
                       if k not in ("drain",)}, ensure_ascii=False, indent=2))
-    return 0
+    # 验收结论非 pass 必须返回非零（此前恒 return 0，把 fail 报成了成功）
+    return exit_code_for(report["overall_status"])
 
 
 if __name__ == "__main__":

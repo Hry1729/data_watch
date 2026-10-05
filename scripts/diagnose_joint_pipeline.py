@@ -43,25 +43,44 @@ def provenance() -> dict:
             "gil_enabled": getattr(sys, "_is_gil_enabled", lambda: None)()}
 
 
+def _exit_code_for(overall: str) -> int:
+    """与能力脚本共用同一退出码契约（只有 pass 才是 0）。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from diagnose_writer_tdengine_capability import exit_code_for  # noqa: PLC0415
+    return exit_code_for(overall)
+
+
 def mode_prep(args) -> int:
     """建 MySQL/TD 与 Writer 运行目录（在 runner 容器里跑）。"""
     import pymysql  # noqa: PLC0415
     import taosws  # noqa: PLC0415
     sys.path.insert(0, str(ROOT / "scripts"))
-    from diagnose_writer_tdengine_capability import prepare_mysql, write_runtime
+    from diagnose_writer_tdengine_capability import (  # noqa: PLC0415
+        assert_test_targets,
+        assert_tdengine_database_absent,
+        load_test_config,
+        prepare_mysql,
+        write_runtime,
+    )
 
+    cfg = load_test_config(args.test_config)
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    prepare_mysql(args.mysql_host, plan["mysql_database"], devices=plan["devices"],
+    assert_test_targets(cfg, prefix="dwjnt_", database=plan["mysql_database"])
+    assert_tdengine_database_absent(cfg, plan["mysql_database"])
+    prepare_mysql(cfg["mysql"], plan["mysql_database"], devices=plan["devices"],
                   device_type=plan["device_type"], group=plan["group"],
                   points=plan["points"], stable=plan["stable"])
-    admin = {"host": args.td_host, "port": 6041, "user": "root", "password": "taosdata"}
+    admin = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+             "user": cfg["tdengine"].get("user", "root"),
+             "password": cfg["tdengine"].get("password", "")}
     conn = taosws.connect(**admin)
     conn.execute(f"CREATE DATABASE IF NOT EXISTS {plan['mysql_database']}")
     conn.close()
-    settings = write_runtime(Path(args.runtime), database=plan["mysql_database"],
+    settings = write_runtime(Path(args.runtime), cfg, database=plan["mysql_database"],
                              stable=plan["stable"], device_type=plan["device_type"],
                              shard_count=plan["shard_count"], group=plan["group"],
                              consumer_workers=args.consumer_workers)
+    plan["test_config"] = cfg["_source"]
     plan["runtime_settings"] = str(settings)
     plan["prep_provenance"] = provenance()
     Path(args.plan).write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -72,10 +91,25 @@ def mode_prep(args) -> int:
 
 def mode_plan(args) -> int:
     """生成联合测试计划（设备/点位/时序基线），供三个模式共用。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from diagnose_writer_tdengine_capability import (  # noqa: PLC0415
+        assert_test_targets,
+        load_test_config,
+    )
+
+    cfg = load_test_config(args.test_config)
     token = uuid4().hex[:8]
+    database = f"dwjnt_{token}"
+    assert_test_targets(cfg, prefix="dwjnt_", database=database)
     devices = [f"jt{token}{index:02d}" for index in range(args.devices)]
     plan = {"token": token, "devices": devices, "device_type": f"jnt{token}",
-            "group": "gjt", "stable": f"sdjnt{token}", "mysql_database": f"dwjnt_{token}",
+            "group": "gjt", "stable": f"sdjnt{token}", "mysql_database": database,
+            # 只记非密字段：口令留在仓库外配置文件里，不进 plan
+            "test_config": cfg["_source"],
+            "test_targets": {section: {"host": cfg[section]["host"],
+                                       "port": cfg[section]["port"]}
+                             for section in ("mysql", "redis", "tdengine")},
+            "redis_db": int(cfg["redis"].get("db", 0)),
             "points": args.points, "period_ms": args.period_ms, "seconds": args.seconds,
             # base_ts 必须是"现在"：若取未来时间，延迟 = now − ts 会变成负数
             # （第一版加了 60s 偏移，量出 −38s 的假延迟）。唯一性由 token/库名保证。
@@ -193,8 +227,13 @@ def mode_tdlag(args) -> int:
     """
     import taosws  # noqa: PLC0415
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    td_config = {"host": args.td_host, "port": 6041, "user": "root",
-                 "password": "taosdata", "database": plan["mysql_database"]}
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from diagnose_writer_tdengine_capability import load_test_config  # noqa: PLC0415
+    cfg = load_test_config(args.test_config or plan.get("test_config"))
+    td_config = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+                 "user": cfg["tdengine"].get("user", "root"),
+                 "password": cfg["tdengine"].get("password", ""),
+                 "database": plan["mysql_database"]}
     stop_file = Path(args.stop_file) if args.stop_file else None
     samples = []
     started = time.monotonic()
@@ -257,7 +296,10 @@ def mode_collector(args) -> int:
     base_ts = int(time.time() * 1000)
     keys = sorted({stream_key(device, plan["device_type"], plan["group"],
                               plan["shard_count"]) for device in devices})
-    client = redis.Redis(host=args.redis_host, port=6379, db=args.redis_db,
+    cfg = load_test_config(args.test_config or plan.get("test_config"))
+    client = redis.Redis(host=cfg["redis"]["host"], port=int(cfg["redis"]["port"]),
+                         db=int(cfg["redis"].get("db", 0)),
+                         password=cfg["redis"].get("password") or None,
                          decode_responses=True, socket_timeout=30)
     assert client.ping(), "isolated Redis unreachable"
     collector = DurableRedisWriter(
@@ -430,7 +472,8 @@ def mode_collector(args) -> int:
     finally:
         collector.close()
         client.close()
-    return 0
+    # 喂入失败（submit_failures）属于验收失败，必须返回非零
+    return _exit_code_for("fail" if submit_failures else "pass")
 
 
 def mode_reconcile(args) -> int:
@@ -438,7 +481,12 @@ def mode_reconcile(args) -> int:
     import redis  # noqa: PLC0415
     import taosws  # noqa: PLC0415
     sys.path.insert(0, str(ROOT / "scripts"))
-    from diagnose_writer_tdengine_capability import read_counts, read_sample_fields
+    from diagnose_writer_tdengine_capability import (  # noqa: PLC0415
+        cleanup_round_resources,
+        read_counts,
+        read_sample_fields,
+        round_resource_keys,
+    )
     from data_watch_shared.acceptance import tdengine_value_column  # noqa: PLC0415
 
     plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
@@ -446,8 +494,13 @@ def mode_reconcile(args) -> int:
     # 时序基准以采集侧实际使用值为准（窗口开始时刻），保证 tick 推算一致
     base_ts_used = collector_report.get("base_ts_used", plan["base_ts"])
     ticks = int(collector_report["submitted_frames"] / len(plan["devices"]))
-    td_config = {"host": args.td_host, "port": 6041, "user": "root",
-                 "password": "taosdata", "database": plan["mysql_database"]}
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from diagnose_writer_tdengine_capability import load_test_config  # noqa: PLC0415
+    cfg = load_test_config(args.test_config or plan.get("test_config"))
+    td_config = {"host": cfg["tdengine"]["host"], "port": int(cfg["tdengine"]["port"]),
+                 "user": cfg["tdengine"].get("user", "root"),
+                 "password": cfg["tdengine"].get("password", ""),
+                 "database": plan["mysql_database"]}
     columns = sorted(tdengine_value_column(point) for point in range(1, plan["points"] + 1)
                      if point not in (1, 6, 7))  # NULL/非存储/STRING 点不进历史，无列
     # 质量行期望必须逐 tick 统计：时有时无 NULL 的点在某些 tick 不进历史，
@@ -483,7 +536,9 @@ def mode_reconcile(args) -> int:
                                               sample_ticks=args.sample_ticks))
         except Exception as exc:                 # noqa: BLE001
             missing_tables.append(f"read_sample_fields({device}): {type(exc).__name__}: {exc}")
-    client = redis.Redis(host=args.redis_host, port=6379, db=args.redis_db,
+    client = redis.Redis(host=cfg["redis"]["host"], port=int(cfg["redis"]["port"]),
+                         db=int(cfg["redis"].get("db", 0)),
+                         password=cfg["redis"].get("password") or None,
                          decode_responses=True, socket_timeout=30)
     stream = _stream_state(client, collector_report["stream_keys"])
     dlq = sum(client.llen(key) for key in client.scan_iter("rt:dlq:*"))
@@ -517,11 +572,19 @@ def mode_reconcile(args) -> int:
               "full_field_sample": {"columns": len(columns), "results": samples,
                                     "coverage_note": "每设备仅抽样 3 帧逐列核对，其余只核对行数"},
               "problems": problems, "status": "pass" if not problems else "fail"}
+    # 成功或失败都按同一规则收尾：只清理本轮对象（库 + 按名键），不清空整个 Redis
+    if not args.keep_resources:
+        result["cleanup"] = cleanup_round_resources(
+            cfg, database=plan["mysql_database"], client=client,
+            keys=round_resource_keys(stream_keys=collector_report["stream_keys"],
+                                     devices=plan["devices"], group=plan["group"],
+                                     period_ms=plan["period_ms"]))
     Path(args.output).write_text(json.dumps(result, ensure_ascii=False, indent=2),
                                  encoding="utf-8")
     print(json.dumps({k: v for k, v in result.items() if k != "full_field_sample"},
                      ensure_ascii=False, indent=2))
-    return 0
+    # 对账结论为 fail 时返回非零（此前恒 return 0，把 fail 报成了成功）
+    return _exit_code_for(result["status"])
 
 
 def main() -> int:
@@ -540,11 +603,11 @@ def main() -> int:
     parser.add_argument("--consumer-workers", type=int, default=1)
     parser.add_argument("--sample-ticks", type=int, default=2)
     parser.add_argument("--drain-seconds", type=float, default=180)
-    parser.add_argument("--redis-host", default="perf-redis")
-    parser.add_argument("--redis-db", type=int, default=0)
-    parser.add_argument("--mysql-host", default="perf-mysql")
-    parser.add_argument("--td-host", default="perf-td")
+    parser.add_argument("--test-config", default=None,
+                        help="仓库外测试连接配置（与能力脚本共用同一份）")
     parser.add_argument("--outbox-dir", default="/tmp")
+    parser.add_argument("--keep-resources", action="store_true",
+                        help="保留本轮临时库与 Redis 键以便人工检查（默认清理，绝不清空整个 Redis）")
     parser.add_argument("--stop-file", default=None,
                         help="tdlag 模式：出现该文件即停止采样")
     parser.add_argument("--writer-cpu-seconds", type=float, default=None,

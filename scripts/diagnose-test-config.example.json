@@ -1,0 +1,23 @@
+{
+  "_comment": "样例：真实配置放仓库外（开发机默认 D:\\python\\device_alarm\\dw-test-env\\diagnose-test-config.json），本文件只放占位值，真实口令不得提交",
+  "_usage": "两个脚本共用：diagnose_writer_tdengine_capability.py 与 diagnose_joint_pipeline.py 的 --test-config；容器内运行时用该参数或 DW_DIAG_TEST_CONFIG 指向容器内路径",
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 13306,
+    "user": "root",
+    "password": "<REPLACE_ME>"
+  },
+  "redis": {
+    "host": "127.0.0.1",
+    "port": 16379,
+    "db": 0,
+    "password": "<REPLACE_ME>"
+  },
+  "tdengine": {
+    "host": "127.0.0.1",
+    "port": 6041,
+    "user": "root",
+    "password": "<REPLACE_ME>"
+  },
+  "allowed_hosts": ["127.0.0.1", "localhost"]
+}
