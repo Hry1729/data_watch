@@ -312,13 +312,27 @@ export const docSections: DocSection[] = [
 ]
 
 /* ------------------------------------------------------------------ *
+ * 内部材料隔离：产品前端产物**不得**包含整改台账/审查材料/会话总结
+ * ------------------------------------------------------------------ */
+
+// 判定逻辑抽到 `docs-scope.ts`（无 glob 依赖，可被 node 测试直接导入），此处再导出一次，
+// 保持既有引用面不变。两处 glob 的负向模式必须与其字面量清单保持一致（测试锁定）。
+export * from './docs-scope'
+import { isInternalDocPath } from './docs-scope'
+
+/* ------------------------------------------------------------------ *
  * 原文加载：构建期把 docs 目录下所有 markdown 以裸字符串内联进来
  * ------------------------------------------------------------------ */
 
 // 路径相对本文件（frontend/src/views/project-docs/） → 仓库根 docs/
-// 负向模式在 glob 层排除 _archive，避免旧文档被读入打包
+// 负向模式在 glob 层排除 _archive 与**内部材料**，避免它们被读入打包。
 const rawModules = import.meta.glob(
-  ['../../../../docs/**/*.md', '!../../../../docs/**/_archive/**'],
+  [
+    '../../../../docs/**/*.md',
+    '!../../../../docs/**/_archive/**',
+    '!../../../../docs/整改记录/**',
+    '!../../../../docs/Data_Watch_综合审查与Agent整改执行清单_*.md'
+  ],
   {
     query: '?raw',
     import: 'default',
@@ -333,8 +347,9 @@ for (const [absKey, content] of Object.entries(rawModules)) {
   const idx = absKey.indexOf(marker)
   if (idx === -1) continue
   const rel = absKey.slice(idx + marker.length)
-  // 双保险：再次排除归档目录
+  // 双保险：归档目录与内部材料都不进入产物
   if (rel.includes('_archive/')) continue
+  if (isInternalDocPath(rel)) continue
   contentByPath[rel] = content
 }
 
@@ -374,7 +389,11 @@ export function getDocCover(slug: string, categoryKey?: string): string | undefi
  * 故 GitHub/IDE 预览仍走相对路径，不受影响。
  * ------------------------------------------------------------------ */
 const docImageModules = import.meta.glob(
-  ['../../../../docs/**/*.{png,jpg,jpeg,webp,gif,svg}', '!../../../../docs/**/_archive/**'],
+  [
+    '../../../../docs/**/*.{png,jpg,jpeg,webp,gif,svg}',
+    '!../../../../docs/**/_archive/**',
+    '!../../../../docs/整改记录/**'
+  ],
   {
     eager: true,
     query: '?url',
@@ -390,6 +409,7 @@ for (const [absKey, url] of Object.entries(docImageModules)) {
   if (idx === -1) continue
   const rel = absKey.slice(idx + marker.length)
   if (rel.includes('_archive/')) continue
+  if (isInternalDocPath(rel)) continue
   imageUrlByPath[rel] = url
 }
 
