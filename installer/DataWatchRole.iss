@@ -276,12 +276,18 @@ procedure HardenTokenFile(TokenPath: String);
 var
   ResultCode: Integer;
 begin
-  { 服务令牌是明文秘密：只允许 管理员 + SYSTEM 读取/修改，且不继承上级。}
+  { 服务令牌是明文秘密：只允许 管理员 + SYSTEM 读取/修改，且不继承上级。
+    B50/S3：只靠 `/inheritance:r` + `/grant:r` 形成不了白名单——前者只删**继承**的 ACE，后者只
+    替换**所列 SID** 的显式 ACE。隔离实验（icacls）已证实：文件上若已有**显式** `BUILTIN\Users:(RX)`，
+    只跑 `/inheritance:r /grant:r 544/18` 之后它**仍然在**；补 `/remove:g` 才被移除。
+    因此这里必须显式回收广域 SID：Users(S-1-5-32-545)、Everyone(S-1-1-0)、
+    Authenticated Users(S-1-5-11)。}
   if not Exec(
       'icacls.exe',
       '"' + TokenPath + '" /inheritance:r /grant:r'
         + ' "*S-1-5-32-544:F"'
-        + ' "*S-1-5-18:F"',
+        + ' "*S-1-5-18:F"'
+        + ' /remove:g "*S-1-5-32-545" "*S-1-1-0" "*S-1-5-11"',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
     RaiseException('Unable to run icacls for ' + TokenPath);
   if ResultCode <> 0 then
@@ -294,6 +300,7 @@ var
   DataPath: String;
   AgentPath: String;
   TokenPath: String;
+  IpcTokenPath: String;
   Token: String;
   Lines: TStringList;
 begin
@@ -325,10 +332,17 @@ begin
     end;
   end;
 
-  { 令牌写好后立刻落实 ACL：先收紧数据根（存量目录一并处理），再单独锁住令牌文件。}
+  { 令牌写好后立刻落实 ACL：先收紧数据根（存量目录一并处理），再单独锁住**两个**秘密文件——
+    agent 服务令牌，以及 Edge Storage 的 IPC 令牌。后者此前从未被安装器加固：升级安装时它若已
+    存在，只会在数据根递归加固中拿到继承来的 Users 只读，随后无人回收；运行期由
+    `ensure_token_file` 新建的文件同样需要收敛（Python 侧已同步修复）。
+    路径与 `edge/app/paths.py::edge_database_path()` 的父目录一致：<数据根>\edge\storage-ipc-tokens.json }
   HardenDataPermissions(DataPath);
   if FileExists(TokenPath) then
     HardenTokenFile(TokenPath);
+  IpcTokenPath := DataPath + '\edge\storage-ipc-tokens.json';
+  if FileExists(IpcTokenPath) then
+    HardenTokenFile(IpcTokenPath);
 
 
   if not ServiceExists then

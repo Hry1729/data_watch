@@ -92,7 +92,19 @@ IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
 
 
 def _restrict_token_file_acl(path: Path) -> None:
-    """Best-effort ACL tightening: owner + SYSTEM + Administrators only."""
+    """Best-effort ACL tightening: owner + SYSTEM + Administrators only.
+
+    B50/S3：**仅** `/inheritance:r /grant:r` 不足以形成白名单——它只删**继承**的 ACE、只替换
+    **所列 SID** 的显式 ACE。安装器用 `icacls /T /grant:r "…:(OI)(CI)RX"` 递归执行时，`OI/CI`
+    是目录专用标志，落到**文件**上退化为一条**显式** `BUILTIN\\Users:RX`，`/inheritance:r`
+    并不会删掉它。因此这里必须再**显式回收**广域 SID，白名单才真正成立：
+
+      * ``S-1-5-32-545`` BUILTIN\\Users
+      * ``S-1-1-0``      Everyone
+      * ``S-1-5-11``     Authenticated Users
+
+    不回收的代价是"任意本机用户可读服务令牌"。
+    """
     if os.name != "nt":
         return
     grants = ["*S-1-5-18:F", "*S-1-5-32-544:F"]
@@ -101,7 +113,17 @@ def _restrict_token_file_acl(path: Path) -> None:
         grants.append(f"{owner}:F")
     try:
         subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", *grants],
+            [
+                "icacls",
+                str(path),
+                "/inheritance:r",
+                "/grant:r",
+                *grants,
+                "/remove:g",
+                "*S-1-5-32-545",
+                "*S-1-1-0",
+                "*S-1-5-11",
+            ],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -111,6 +133,23 @@ def _restrict_token_file_acl(path: Path) -> None:
         logger.warning(
             "Could not restrict permissions on Edge Storage IPC token file %s: %s", path, exc
         )
+
+
+_TOKEN_ACL_HARDENED: set[str] = set()
+
+
+def _harden_existing_token_file(path: Path) -> None:
+    """B50/S3：**既有**令牌文件也要收敛 ACL。
+
+    覆盖升级后，旧版本（或安装器 `/T` 递归授权）留在文件上的宽松授权不会因为"文件已存在"而
+    消失，所以"存在即直接返回"的旧路径必须补做一次加固。进程内每个路径只做一次，避免把
+    `icacls` 放进热路径。
+    """
+    key = str(path)
+    if key in _TOKEN_ACL_HARDENED:
+        return
+    _TOKEN_ACL_HARDENED.add(key)
+    _restrict_token_file_acl(path)
 
 
 def _new_token_payload() -> bytes:
@@ -129,6 +168,10 @@ def ensure_token_file(path: Path | None = None, *, rotate: bool = False) -> Path
     """
     target = Path(path) if path is not None else default_token_file()
     if target.exists() and not rotate:
+        # B50/S3：**既有**文件也必须收敛 ACL。覆盖升级后，旧版本或安装器 `/T` 递归授权留下的
+        # 宽松授权（尤其显式 `BUILTIN\Users:RX`）不会因为"文件已存在"而消失；旧实现直接
+        # `return target` 会让这些权限永久保留。进程内每路径只做一次（见该函数注释）。
+        _harden_existing_token_file(target)
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     if rotate:
@@ -138,15 +181,18 @@ def ensure_token_file(path: Path | None = None, *, rotate: bool = False) -> Path
             handle.write(_new_token_payload())
         os.replace(temporary, target)
         _restrict_token_file_acl(target)
+        _TOKEN_ACL_HARDENED.add(str(target))
         return target
     try:
         descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        # Another edge process won the race; its file is just as good.
+        # Another edge process won the race; its file is just as good（但仍需收敛其 ACL）。
+        _harden_existing_token_file(target)
         return target
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(_new_token_payload())
     _restrict_token_file_acl(target)
+    _TOKEN_ACL_HARDENED.add(str(target))
     return target
 
 
