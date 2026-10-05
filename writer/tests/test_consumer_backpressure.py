@@ -84,6 +84,9 @@ async def test_drain_xautoclaim_stops_when_flush_never_frees_space():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     # 6 页 × 5 条 = 30 条 PEL 积压，远超 max_buffer_rows=10
     pages = []
     for page in range(6):
@@ -107,6 +110,9 @@ async def test_drain_xautoclaim_skips_entry_already_buffered():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     dup_id = "1-0"
     entries = [(f"{i}-0", _entry_data(f"{i}-0")) for i in range(1, 5)]
     entries.append((dup_id, _entry_data(dup_id)))  # 与第一页第一条重复
@@ -129,6 +135,9 @@ async def test_drain_resumes_after_recovery_and_processes_remaining():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     pages = []
     for page in range(4):
         entries = [(f"{page + 1}-{i}", _entry_data(f"{page + 1}-{i}")) for i in range(5)]
@@ -172,6 +181,9 @@ async def test_drain_claim_count_respects_remaining_capacity():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client, max_buffer_rows=3)
     # 预先占满 2 条，仅剩 1 条容量
     from consumer import _BufferedRow
@@ -202,6 +214,9 @@ async def test_drain_xpending_fallback_respects_budget_and_dedup():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     # XAUTOCLAIM 不支持 → 回退
     redis_client.xautoclaim.side_effect = Exception("unknown command 'XAUTOCLAIM'")
     pending = [
@@ -244,6 +259,9 @@ async def test_normal_read_count_capped_to_remaining_capacity():
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xreadgroup.return_value = []
     consumer = _consumer(writer, redis_client)
 
@@ -268,6 +286,9 @@ def test_handle_entry_rejects_duplicate_entry_into_buffer():
     """同一条目两次 _handle_entry 只入缓冲一次。"""
     writer = MagicMock()
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
     import asyncio
 
@@ -286,6 +307,9 @@ async def test_flush_failure_keeps_keys_in_buffered_set():
     writer = MagicMock()
     _retry_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
 
     await consumer._handle_entry("rt:stream:qc:g001:0", "7-0", _entry_data("7-0"), 1)
@@ -350,6 +374,9 @@ async def test_concurrent_append_survives_flush_and_is_not_acked_early():
 
     writer.write_multi_table = write
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
     stream = "rt:stream:qc:g001:0"
     await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
@@ -378,6 +405,9 @@ async def test_cancelled_flush_restores_inflight_batch():
 
     writer.write_multi_table = write
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
     stream = "rt:stream:qc:g001:0"
     await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
@@ -398,6 +428,9 @@ async def test_overdelivered_entry_is_tracked_and_reclaimed_after_flush():
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client, max_buffer_rows=2)
     consumer._max_buffer_bytes = 1
     stream = "rt:stream:qc:g001:0"
@@ -428,6 +461,9 @@ async def test_schema_retry_releases_buffer_while_healthy_frame_acks():
         return_value=[([0], RETRY, 1.0), ([1], LANDED, 1.0)]
     )
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
     stream = "rt:stream:qc:g001:0"
     await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
@@ -443,6 +479,9 @@ async def test_missing_writer_outcome_restores_batch_without_ack():
     writer = MagicMock()
     writer.write_multi_table = AsyncMock(return_value=[])
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(writer, redis_client)
     stream = "rt:stream:qc:g001:0"
     await consumer._handle_entry(stream, "1-0", _entry_data("1-0"), 1)
@@ -458,6 +497,9 @@ async def test_bounded_pending_reclaim_resumes_cursor_next_call():
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xpending_range.return_value = []
     redis_client.xautoclaim.side_effect = [
         ("2-0", [("1-0", _entry_data("1-0"))], []),
@@ -480,6 +522,9 @@ async def test_bounded_xpending_fallback_continues_after_claimed_id():
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xautoclaim.side_effect = Exception("unknown command 'XAUTOCLAIM'")
     first = [
         {"message_id": f"{i}-0", "time_since_delivered": 999999, "times_delivered": 1}
@@ -502,6 +547,9 @@ async def test_bounded_xpending_fallback_continues_after_claimed_id():
 
 def test_retry_ack_and_delete_rotate_across_streams_with_id_budget():
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(MagicMock(), redis_client)
     consumer._ack_retry = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
     consumer._delete_retry = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
@@ -519,6 +567,9 @@ def test_retry_ack_and_delete_rotate_across_streams_with_id_budget():
 @pytest.mark.asyncio
 async def test_overdelivered_reclaim_is_bounded_and_rotates_streams():
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     consumer = _consumer(MagicMock(), redis_client, max_buffer_rows=10)
     consumer._batch_count = 1
     consumer._overdelivered_ids = {"s1": {"1-0", "2-0"}, "s2": {"3-0"}}
@@ -538,6 +589,9 @@ async def test_scope_join_processes_one_new_stream_before_regular_read():
     import asyncio
 
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xreadgroup.side_effect = asyncio.CancelledError()
     consumer = _consumer(MagicMock(), redis_client)
     consumer.drain_pending = AsyncMock()
@@ -557,6 +611,9 @@ async def test_ack_outage_bounds_new_reads_and_reclaim_never_rewrites_landed_fra
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xack.side_effect = RuntimeError("Redis ACK unavailable")
     stream = "s1"
     entries = [
@@ -595,6 +652,9 @@ async def test_delete_outage_uses_same_identity_capacity_until_recovered():
     writer = MagicMock()
     _landed_flush(writer)
     redis_client = MagicMock()
+    # B31：拓扑判定改为 fail-closed 后，替身必须显式声明“单消费组”（部署不变式），
+    # 否则一律按未知拓扑处理、不执行终态 XDEL——旧用例依赖 fail-open，属被纠正的旧行为。
+    redis_client.xinfo_groups.return_value = [{"name": "writer"}]
     redis_client.xdel.side_effect = RuntimeError("Redis DELETE unavailable")
     consumer = _consumer(writer, redis_client, max_buffer_rows=2)
     for entry_id in ("1-0", "2-0"):

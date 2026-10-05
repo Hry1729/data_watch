@@ -54,7 +54,12 @@ class XAutoclaimUnsupported(RuntimeError):
 
 
 # B31：消费组拓扑查询的缓存 TTL。拓扑极少变化，避免每次终态删除都查 XINFO GROUPS。
-_GROUP_TOPOLOGY_TTL_S = 60.0
+#
+# **残差窗口（必须知道）**：缓存命中期间若新增了消费组，本进程会在这段窗口内仍按"单组"删除
+# （XDEL 是全局删除）。窗口越短风险越小，故从 60s 收到 5s。真正的安全依据**不是**这个缓存，
+# 而是部署不变式「**每个 Stream 只允许一个消费组**」；缓存只是把该不变式的检查代价摊薄。
+# 未知/不可读的拓扑**不缓存**（fail-closed：保留数据、下一轮重探）。
+_GROUP_TOPOLOGY_TTL_S = 5.0
 
 # B8：按**错误类别**（不是次数）判定的永久性 RETRY 原因。命中即推 DLQ，DLQ 写入被接受后才 XACK。
 # 只收录"由该帧内容本身决定、重试不可能成功"的类别：
@@ -1759,19 +1764,23 @@ class StreamConsumer:
             self._ack_ids(sk, ids)
 
     def _may_delete_terminal(self, stream_key: str) -> bool:
-        """B31：终态删除是否安全——**只在确实观察到多个消费组时拒绝**。
+        """B31：终态删除是否安全——**只有确认该 Stream 只有一个消费组时才允许**。
 
         `XDEL` 是**全局删除**，不区分消费组：同一 Stream 上若还有别的消费组尚未处理该条目，
-        删除就等于**毁掉那一组的数据**（清单："确认单/多消费组假设后…多组必须保护其他组的
-        未处理消息"）。
+        删除就等于**毁掉那一组的数据**。
 
         **调用位置约束**：本方法必须由 `_delete_ids` 的**调用方**使用，并把结果作为参数传下去。
-        `_delete_ids` 自身的 redis 交互必须保持**只有 `xdel`**——`_delete_ids` 是在 `_ack_ids`
-        的同一个 `try` 内紧跟 `xack` 之后调用的，任何就地插入的 redis 交互都会扰动既有用例
-        精确锁定的 xack→xdel 序列（曾导致 7~8 个既有用例失败）。
+        `_delete_ids` 自身的 redis 交互必须保持**只有 `xdel`**——它是在 `_ack_ids` 的同一个 `try`
+        内紧跟 `xack` 之后调用的，就地插入的 redis 交互会扰动既有用例锁定的 xack→xdel 序列。
 
-        语义刻意收窄：**读到多个组** ⇒ 拒绝并可见计数；**查询失败或形态不可读** ⇒ 继续删除但
-        记录 `terminal_delete_topology_unknown`——否则任何瞬时查询故障都会让终态清理全面停摆。
+        **判定语义（fail-closed）**：
+        - **读到多个组** ⇒ 拒绝删除，保留条目并记 `terminal_delete_multi_group_skipped`；
+        - **查询失败或形态不可读** ⇒ **同样拒绝删除**（保留数据 + 告警 +
+          `terminal_delete_topology_unknown`）。既然无法证明"只有本组"，就不能做全局删除——
+          清理是可选动作，误删是数据损失，两者不对称。**未知结果不写缓存**，下一轮重探。
+        - **只有读到恰好一个组**才返回 True，并把该结论缓存 `_GROUP_TOPOLOGY_TTL_S`。
+
+        **ACK 不受本判定影响**：调用方先完成本组应做的 XACK，删除只是可选清理。
         """
         now = time.monotonic()
         cached = self._single_group_cache.get(stream_key)
@@ -1782,18 +1791,19 @@ class StreamConsumer:
         except Exception as exc:
             self._metrics.record_retry("terminal_delete_topology_unknown")
             logger.warning(
-                "[consumer] cannot query consumer groups for %s (%s); proceeding with terminal XDEL",
+                "[consumer] cannot query consumer groups for %s (%s); preserving terminal entries "
+                "(no XDEL) because the single-group assumption is unconfirmed",
                 stream_key, exc,
             )
-            return True
+            return False
         if not isinstance(groups, (list, tuple)):
             self._metrics.record_retry("terminal_delete_topology_unknown")
             logger.warning(
-                "[consumer] consumer-group topology for %s is unreadable (%s); proceeding with "
-                "terminal XDEL without confirming the single-group assumption",
+                "[consumer] consumer-group topology for %s is unreadable (%s); preserving terminal "
+                "entries (no XDEL) because the single-group assumption is unconfirmed",
                 stream_key, type(groups).__name__,
             )
-            return True
+            return False
         single = len(groups) == 1
         self._single_group_cache[stream_key] = (single, now)
         if not single:
@@ -1848,10 +1858,14 @@ class StreamConsumer:
             if not pending:
                 continue
             chunk = list(pending)[: min(500, remaining)]
+            # B31：这条路径以前用默认 `allow_delete=True` 调用 `_delete_ids`，**绕过**了多消费组判定。
+            # 判定放在 `try` **之外**（与 `_ack_ids`/`_ack_single` 一致）：既不进入 xack→xdel 的
+            # 异常范围，也不改动下面的 remaining/游标核算。XACK 仍然照常执行——删除只是可选清理。
+            allow_delete = self._may_delete_terminal(stream_key)
             try:
                 self._r.xack(stream_key, self._group_name, *chunk)
                 pending.difference_update(chunk)
-                self._delete_ids(stream_key, chunk)
+                self._delete_ids(stream_key, chunk, allow_delete=allow_delete)
             except Exception as exc:
                 logger.warning(
                     "[consumer] xack retry still failing for %s (%d ids pending): %s",

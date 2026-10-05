@@ -1,17 +1,17 @@
-"""B31 回归：多消费组下**拒绝**终态 XDEL，且判定不得扰动 xack→xdel 序列。
+"""B31 回归：终态删除保护必须覆盖**所有**删除路径，且未知拓扑 fail-closed。
 
-缺陷（已取证）：`XDEL` 是**全局删除**、不区分消费组。同一 Stream 上若还有别的消费组尚未处理
-某条目，删除就等于**毁掉那一组的数据**；而旧实现的两处 XDEL 完全没有拓扑判断。
+本轮（工作单阶段一 · 问题 2）核实到两个真实缺口：
+1. `_retry_pending_acks()` 用**默认** `allow_delete=True` 调 `_delete_ids()`，**绕过**多消费组判定；
+2. `_may_delete_terminal()` 在**查询失败/形态不可读**时 `return True`（fail-open），即"未知拓扑仍做
+   全局删除"。
 
-修法（第 4 次尝试，前三次均回退）：
-- 拓扑判定 `_may_delete_terminal()` 只在**调用层**做一次，结果以 `allow_delete` 参数传给
-  `_delete_ids()`；
-- **`_delete_ids()` 内的 redis 交互必须只有 `xdel`** —— 它是紧跟 `xack` 之后、在同一个 `try` 内
-  被调用的，任何就地插入的 redis 交互都会扰动既有用例精确锁定的 xack→xdel 序列（曾致 7~8 个
-  既有用例失败）；
-- 重试路径多组时**直接跳过**，且**不改动** `remaining`/游标核算（同样为避免扰动额度行为）；
-- 语义刻意收窄：**确实读到多个组**才拒绝；查询失败/形态不可读 ⇒ 继续删除并计数，避免任何瞬时
-  查询故障让终态清理全面停摆。
+修复后的语义（本文件锁定）：
+- `XDEL` 是**全局删除**，只有**确认恰好一个消费组**才允许；**读到多组**或**无法确认**都**保留数据**；
+- **未知结果不写缓存**（下一轮重探）；只有"确认单组"的结论才缓存 `_GROUP_TOPOLOGY_TTL_S`；
+- **ACK 不受影响**：本组该做的 XACK 照常执行，删除只是可选清理；
+- 所有删除路径（`_ack_ids` / `_ack_single` / `_retry_pending_acks` / `_retry_pending_deletes`）
+  遵守**同一个**安全条件；
+- `_delete_ids()` 自身仍**只**做 `xdel`（判定由调用方通过参数传入），以免扰动 xack→xdel 序列。
 """
 
 from __future__ import annotations
@@ -28,10 +28,13 @@ for _candidate in (WRITER_ROOT, REPO_ROOT):
     if str(_candidate) not in sys.path:
         sys.path.insert(0, str(_candidate))
 
+import consumer as consumer_module  # noqa: E402
 from consumer import StreamConsumer  # noqa: E402
 from performance import WriterPerformanceMetrics  # noqa: E402
 
 STREAM = "rt:stream:qc:g001:0"
+MULTI = [{"name": "writer"}, {"name": "other"}]
+SINGLE = [{"name": "writer"}]
 
 
 def _config() -> dict:
@@ -47,131 +50,140 @@ def _config() -> dict:
     }
 
 
-def _consumer(redis_client: MagicMock) -> StreamConsumer:
+def _consumer(groups) -> StreamConsumer:
+    client = MagicMock()
+    client.xinfo_groups.return_value = groups
     return StreamConsumer(
-        _config(),
-        MagicMock(),
-        MagicMock(),
-        redis_client,
-        metrics=WriterPerformanceMetrics(),
+        _config(), MagicMock(), MagicMock(), client, metrics=WriterPerformanceMetrics()
     )
 
 
-def _client(groups) -> MagicMock:
-    client = MagicMock()
-    client.xinfo_groups.return_value = groups
-    return client
+# ── 判定语义 ────────────────────────────────────────────────────────────────
+
+
+def test_single_group_allows_terminal_delete() -> None:
+    consumer = _consumer(SINGLE)
+    assert consumer._may_delete_terminal(STREAM) is True
+    consumer._delete_ids(STREAM, ["1-0"], allow_delete=True)
+    consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
+
+
+def test_multi_group_refuses_and_records_metric() -> None:
+    consumer = _consumer(MULTI)
+    assert consumer._may_delete_terminal(STREAM) is False
+    assert consumer._metrics._counters.get("retry_terminal_delete_multi_group_skipped_rows") == 1
+
+
+def test_query_error_preserves_entries_fail_closed() -> None:
+    """无法确认拓扑 ⇒ **保留**（旧实现这里是 fail-open，会做全局删除）。"""
+    consumer = _consumer(SINGLE)
+    consumer._r.xinfo_groups.side_effect = Exception("ERR unknown command")
+
+    assert consumer._may_delete_terminal(STREAM) is False
+    assert consumer._metrics._counters.get("retry_terminal_delete_topology_unknown_rows") == 1
+
+
+def test_unreadable_topology_preserves_entries_fail_closed() -> None:
+    consumer = _consumer("nonsense")
+
+    assert consumer._may_delete_terminal(STREAM) is False
+    assert consumer._metrics._counters.get("retry_terminal_delete_topology_unknown_rows") == 1
+
+
+def test_unknown_topology_is_not_cached() -> None:
+    """未知结果不得固化：下一轮必须重探（否则一次抖动会长时间停掉清理）。"""
+    consumer = _consumer("nonsense")
+
+    consumer._may_delete_terminal(STREAM)
+    consumer._may_delete_terminal(STREAM)
+
+    assert consumer._r.xinfo_groups.call_count == 2
+
+
+def test_confirmed_single_group_is_cached_until_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """只有"确认单组"才缓存；TTL 过后必须重探（残差窗口即由此 TTL 界定）。"""
+    monkeypatch.setattr(consumer_module, "_GROUP_TOPOLOGY_TTL_S", 0.0)
+    consumer = _consumer(SINGLE)
+
+    consumer._may_delete_terminal(STREAM)
+    consumer._may_delete_terminal(STREAM)
+
+    assert consumer._r.xinfo_groups.call_count == 2
+
+
+# ── 所有删除路径遵守同一条件，且 ACK 不受影响 ───────────────────────────────
+
+
+@pytest.mark.parametrize("path", ["ack_ids", "ack_single", "retry_pending_acks"])
+def test_every_delete_path_preserves_on_multi_group_but_still_acks(path: str) -> None:
+    consumer = _consumer(MULTI)
+
+    if path == "ack_ids":
+        consumer._ack_ids(STREAM, ["1-0"])
+    elif path == "ack_single":
+        consumer._ack_single(STREAM, "1-0")
+    else:
+        consumer._ack_retry = {STREAM: {"1-0"}}
+        consumer._retry_pending_acks()
+
+    consumer._r.xack.assert_called_once()  # 本组该做的 ACK 必须照常执行
+    assert consumer._r.xdel.call_count == 0, "多消费组下不得全局删除"
+    assert consumer._delete_retry == {STREAM: {"1-0"}}, "条目必须保留等待人工/后续处理"
+
+
+@pytest.mark.parametrize("path", ["ack_ids", "retry_pending_acks"])
+def test_every_delete_path_deletes_on_confirmed_single_group(path: str) -> None:
+    consumer = _consumer(SINGLE)
+
+    if path == "ack_ids":
+        consumer._ack_ids(STREAM, ["1-0"])
+    else:
+        consumer._ack_retry = {STREAM: {"1-0"}}
+        consumer._retry_pending_acks()
+
+    consumer._r.xack.assert_called_once()
+    consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
+
+
+def test_retry_pending_deletes_skips_multi_group_and_keeps_ids() -> None:
+    consumer = _consumer(MULTI)
+    consumer._delete_retry = {STREAM: {"1-0"}}
+
+    consumer._retry_pending_deletes()
+
+    assert consumer._r.xdel.call_count == 0
+    assert consumer._delete_retry == {STREAM: {"1-0"}}
+
+
+def test_retry_pending_deletes_still_deletes_single_group() -> None:
+    consumer = _consumer(SINGLE)
+    consumer._delete_retry = {STREAM: {"1-0"}}
+
+    consumer._retry_pending_deletes()
+
+    consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
+    assert consumer._delete_retry == {}
 
 
 # ── 设计约束：_delete_ids 内不得有 redis 交互 ────────────────────────────────
 
 
 def test_delete_ids_issues_no_redis_call_when_refused() -> None:
-    """`allow_delete=False` 时 `_delete_ids` 必须**零 redis 调用**（判定在调用层，不在这里）。"""
-    client = _client([])
-    consumer = _consumer(client)
+    consumer = _consumer(SINGLE)
 
     consumer._delete_ids(STREAM, ["1-0"], allow_delete=False)
 
-    assert client.xdel.call_count == 0
-    assert client.xinfo_groups.call_count == 0, "拓扑判定不得发生在 _delete_ids 内"
+    assert consumer._r.xdel.call_count == 0
+    assert consumer._r.xinfo_groups.call_count == 0, "拓扑判定不得发生在 _delete_ids 内"
     assert consumer._delete_retry == {STREAM: {"1-0"}}
 
 
 def test_discriminating_power_default_would_delete() -> None:
-    """判别力校验：不传 `allow_delete`（旧行为）时确实会执行 XDEL，证明守卫并非空转。"""
-    client = _client([])
-    consumer = _consumer(client)
+    """判别力：不传 `allow_delete`（调用方必须显式传入）时确实会删除，说明参数是安全闸门。"""
+    consumer = _consumer(MULTI)
 
-    consumer._delete_ids(STREAM, ["1-0"])
+    consumer._delete_ids(STREAM, ["1-0"])  # 旧 `_retry_pending_acks` 就是这样调的
 
-    client.xdel.assert_called_once_with(STREAM, "1-0")
-
-
-# ── 拓扑判定本身 ────────────────────────────────────────────────────────────
-
-
-def test_multi_group_refuses_terminal_xdel() -> None:
-    client = _client([{"name": "writer"}, {"name": "other"}])
-    consumer = _consumer(client)
-
-    allow = consumer._may_delete_terminal(STREAM)
-    consumer._delete_ids(STREAM, ["1-0"], allow_delete=allow)
-
-    assert allow is False
-    assert client.xdel.call_count == 0, "多消费组下不得全局 XDEL"
-    assert consumer._delete_retry == {STREAM: {"1-0"}}, "条目必须保留，不得丢失"
-
-
-def test_single_group_allows_terminal_xdel() -> None:
-    client = _client([{"name": "writer"}])
-    consumer = _consumer(client)
-
-    assert consumer._may_delete_terminal(STREAM) is True
-    consumer._delete_ids(STREAM, ["1-0"], allow_delete=True)
-
-    client.xdel.assert_called_once_with(STREAM, "1-0")
-
-
-def test_unreadable_topology_fails_open() -> None:
-    """形态不可读（例如替身返回非序列）⇒ 继续删除，但留下可见计数。"""
-    client = _client("nonsense")
-    consumer = _consumer(client)
-
-    assert consumer._may_delete_terminal(STREAM) is True
-    assert consumer._metrics._counters.get("retry_terminal_delete_topology_unknown_rows") == 1
-
-
-def test_query_error_fails_open() -> None:
-    client = MagicMock()
-    client.xinfo_groups.side_effect = Exception("ERR unknown command")
-    consumer = _consumer(client)
-
-    assert consumer._may_delete_terminal(STREAM) is True
-    assert consumer._metrics._counters.get("retry_terminal_delete_topology_unknown_rows") == 1
-
-
-def test_multi_group_records_visible_metric() -> None:
-    client = _client([{}, {}])
-    consumer = _consumer(client)
-
-    consumer._may_delete_terminal(STREAM)
-
-    assert consumer._metrics._counters.get("retry_terminal_delete_multi_group_skipped_rows") == 1
-
-
-def test_topology_query_is_cached() -> None:
-    """拓扑极少变化：同一 Stream 在 TTL 内只查一次。"""
-    client = _client([{"name": "writer"}])
-    consumer = _consumer(client)
-
-    consumer._may_delete_terminal(STREAM)
-    consumer._may_delete_terminal(STREAM)
-
-    assert client.xinfo_groups.call_count == 1
-
-
-# ── 重试路径 ────────────────────────────────────────────────────────────────
-
-
-def test_retry_pending_deletes_skips_multi_group_and_keeps_ids() -> None:
-    client = _client([{}, {}])
-    consumer = _consumer(client)
-    consumer._delete_retry = {STREAM: {"1-0"}}
-
-    consumer._retry_pending_deletes()
-
-    assert client.xdel.call_count == 0
-    assert consumer._delete_retry == {STREAM: {"1-0"}}
-
-
-def test_retry_pending_deletes_still_deletes_single_group() -> None:
-    client = _client([{}])
-    consumer = _consumer(client)
-    consumer._delete_retry = {STREAM: {"1-0"}}
-
-    consumer._retry_pending_deletes()
-
-    client.xdel.assert_called_once_with(STREAM, "1-0")
-    assert consumer._delete_retry == {}
-
+    consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
