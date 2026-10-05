@@ -104,11 +104,20 @@ foreach ($name in $Modules) {
         foreach ($hit in $m) { $total += [int]$hit.Groups[1].Value }
         return $total
     }
+    # 两套 runner 的摘要格式不同，必须都认：
+    #   pytest      : "127 passed in 25.7s" / "739 passed, 26 skipped in 314s"
+    #   node --test : "ℹ tests 34" / "ℹ pass 34" / "ℹ fail 1" / "ℹ skipped 2"
+    $passedCount = _Count '(\d+) passed'
+    if ($passedCount -eq 0) { $passedCount = _Count 'pass (\d+)' }
+    $failedCount = _Count '(\d+) failed'
+    if ($failedCount -eq 0) { $failedCount = _Count 'fail (\d+)' }
+    $skippedCount = _Count '(\d+) skipped'
+    if ($skippedCount -eq 0) { $skippedCount = _Count 'skipped (\d+)' }
     $counts = [ordered]@{
-        passed  = _Count '(\d+) passed'
-        failed  = _Count '(\d+) failed'
+        passed  = $passedCount
+        failed  = $failedCount
         errors  = _Count '(\d+) error'
-        skipped = _Count '(\d+) skipped'
+        skipped = $skippedCount
         tests   = _Count 'tests (\d+)'
     }
     $skipReasons = @($text -split "`r?`n" | Where-Object { $_ -match '^SKIPPED' } | ForEach-Object { $_.Trim() })
