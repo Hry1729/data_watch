@@ -73,6 +73,7 @@ _KNOWN_TAG_COLUMNS = {"device_code"}
 # 单条 INSERT 的 SQL 字节上限。实测 TDengine 3.4.0.9 硬上限 ≈4 MiB（超出报
 # 0x0219 SQL statement too long），取 ~3MB 留余量（scripts/experiment_tdengine_multitable.py）。
 MAX_SQL_BYTES = 3 * 1024 * 1024
+IO_TIMEOUT_SECONDS = 15.0
 
 # write_multi_table 的行级结果状态（§7.6 二分降级）：
 #   LANDED   已确认落库 → 调用方 XACK
@@ -201,7 +202,7 @@ class TDengineWriter:
         password = quote_plus(str(td["password"]))
         host = td["host"]
         port = td["port"]
-        dsn = f"ws://{user}:{password}@{host}:{port}"
+        dsn = f"ws://{user}:{password}@{host}:{port}?read_timeout=10&conn_timeout=5"
 
         loop = asyncio.get_running_loop()
         try:
@@ -213,12 +214,7 @@ class TDengineWriter:
             await self._ensure_database()
             await self._preload_stables(config)
         except Exception as exc:
-            if self._conn is not None:
-                try:
-                    self._conn.close()
-                except Exception:
-                    pass
-            self._conn = None
+            await self.close()
             logger.error("[tdengine] connect failed: %s", exc)
             raise
 
@@ -226,7 +222,7 @@ class TDengineWriter:
         if self._conn is not None:
             try:
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._conn.close)
+                await asyncio.wait_for(loop.run_in_executor(None, self._conn.close), timeout=IO_TIMEOUT_SECONDS)
             except Exception as exc:
                 logger.warning("[tdengine] close error: %s", exc)
             finally:
@@ -252,9 +248,13 @@ class TDengineWriter:
             return False, None
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, lambda: self._conn.execute(sql))
+            connection = self._conn
+            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
             return True, None
         except Exception as exc:
+            if isinstance(exc, asyncio.TimeoutError):
+                self._conn = None
+                exc = TimeoutError("TDengine execute timed out")
             logger.error("[tdengine] execute failed: %s | SQL: %.200s", exc, sql)
             if (
                 self._config is not None
@@ -274,8 +274,8 @@ class TDengineWriter:
             return []
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(None, lambda: self._conn.query(sql))
-            return list(result) if result else []
+            connection = self._conn
+            return await asyncio.wait_for(loop.run_in_executor(None, lambda: list(connection.query(sql))), timeout=IO_TIMEOUT_SECONDS)
         except Exception as exc:
             logger.error("[tdengine] query failed: %s | SQL: %.200s", exc, sql)
             return []
@@ -289,12 +289,7 @@ class TDengineWriter:
         self._reconnecting = True
         logger.info("[tdengine] attempting reconnect...")
         try:
-            if self._conn is not None:
-                try:
-                    self._conn.close()
-                except Exception:
-                    pass
-                self._conn = None
+            await self.close()
             await self.connect(self._config)
             logger.info("[tdengine] reconnect succeeded")
             if self._syslog is not None:
@@ -452,7 +447,8 @@ class TDengineWriter:
 
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(None, lambda: self._conn.execute(sql))
+            connection = self._conn
+            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
             logger.info("[tdengine] added column: %s.%s DOUBLE", stable, col)
             return True
         except Exception as exc:
@@ -771,7 +767,7 @@ class TDengineWriter:
     def _build_chunk_sql(self, rows: list[dict], indices: list[int]) -> str:
         """构建一个恰好覆盖指定索引的多表 INSERT。Build one multi-table INSERT covering exactly `indices` (for bisection).
 
-        Groups indices by child table and unions columns per table, mirroring
+        Groups indices by child table and consecutive actual column sets, mirroring
         _iter_chunks but without the byte-budget packing (a bisected half is
         already smaller than the chunk that failed).
         """
@@ -779,13 +775,28 @@ class TDengineWriter:
         for i in indices:
             by_table.setdefault(rows[i]["child_table"], []).append(i)
         fragments = []
-        for idxs in by_table.values():
+        for idxs in self._column_runs(rows, by_table.values()):
             frag = self._subtable_fragment(rows, idxs, self._union_cols(rows, idxs))
             q_frag = self._quality_fragment_for_rows(rows, idxs)
             if q_frag:
                 frag = f"{frag} {q_frag}"
             fragments.append(frag)
         return "INSERT INTO " + " ".join(fragments)
+
+    @staticmethod
+    def _column_runs(rows: list[dict], table_indices):
+        for indices in table_indices:
+            run: list[int] = []
+            columns = None
+            for index in indices:
+                current = frozenset(rows[index]["columns"])
+                if run and current != columns:
+                    yield run
+                    run = []
+                run.append(index)
+                columns = current
+            if run:
+                yield run
 
     @staticmethod
     def _format_value(raw: object) -> str:
@@ -927,7 +938,7 @@ class TDengineWriter:
         current_indices: list[int] = []
         current_parts: list[tuple[list[int], str, int, int]] = []
         current_bytes = prefix_bytes
-        for indices in by_table.values():
+        for indices in self._column_runs(rows, by_table.values()):
             for part_indices, fragment, value_rows, quality_rows in self._iter_table_fragments(
                 rows, indices, budget
             ):

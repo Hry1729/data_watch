@@ -1883,7 +1883,7 @@ class StreamConsumer:
         """删除已经终态并完成 XACK 的 Stream 条目。
 
         `allow_delete=False`（**确实存在多个消费组**）时**不做任何 redis 调用**，只把条目留在
-        `_delete_retry` 中保留证据与容量视图——多组下 XDEL 是全局删除，会毁掉其他组尚未处理的
+        Redis 中，不再占用本 worker 的重试容量——多组下 XDEL 是全局删除，会毁掉其他组尚未处理的
         条目。默认 `True` 保持原行为。
 
         **约束**：本方法内的 redis 交互必须**只有 `xdel`**；拓扑判定由调用方通过 `allow_delete`
@@ -1892,7 +1892,11 @@ class StreamConsumer:
         if not ids:
             return
         if not allow_delete:
-            self._delete_retry.setdefault(stream_key, set()).update(ids)
+            pending = self._delete_retry.get(stream_key)
+            if pending is not None:
+                pending.difference_update(ids)
+                if not pending:
+                    self._delete_retry.pop(stream_key, None)
             return
         chunk_size = 500
         for i in range(0, len(ids), chunk_size):
@@ -1921,9 +1925,9 @@ class StreamConsumer:
             pending = self._delete_retry.get(stream_key)
             if not pending:
                 continue
-            # B31：确实存在多个消费组时不做全局 XDEL（条目留在 _delete_retry 中保留证据与容量视图）。
-            # 刻意**不改动** remaining/游标核算——直接跳过本 Stream，避免扰动既有用例锁定的额度行为。
+            # 本组已 ACK；多组或未知拓扑时留在 Redis，释放本地重试容量。
             if not self._may_delete_terminal(stream_key):
+                self._delete_retry.pop(stream_key, None)
                 continue
             chunk = list(pending)[: min(500, remaining)]
             try:

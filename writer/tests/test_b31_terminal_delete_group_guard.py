@@ -130,7 +130,7 @@ def test_every_delete_path_preserves_on_multi_group_but_still_acks(path: str) ->
 
     consumer._r.xack.assert_called_once()  # 本组该做的 ACK 必须照常执行
     assert consumer._r.xdel.call_count == 0, "多消费组下不得全局删除"
-    assert consumer._delete_retry == {STREAM: {"1-0"}}, "条目必须保留等待人工/后续处理"
+    assert consumer._delete_retry == {}, "已 ACK 的条目不再占本地容量"
 
 
 @pytest.mark.parametrize("path", ["ack_ids", "retry_pending_acks"])
@@ -147,14 +147,14 @@ def test_every_delete_path_deletes_on_confirmed_single_group(path: str) -> None:
     consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
 
 
-def test_retry_pending_deletes_skips_multi_group_and_keeps_ids() -> None:
+def test_retry_pending_deletes_skips_multi_group_and_releases_ids() -> None:
     consumer = _consumer(MULTI)
     consumer._delete_retry = {STREAM: {"1-0"}}
 
     consumer._retry_pending_deletes()
 
     assert consumer._r.xdel.call_count == 0
-    assert consumer._delete_retry == {STREAM: {"1-0"}}
+    assert consumer._delete_retry == {}
 
 
 def test_retry_pending_deletes_still_deletes_single_group() -> None:
@@ -177,7 +177,7 @@ def test_delete_ids_issues_no_redis_call_when_refused() -> None:
 
     assert consumer._r.xdel.call_count == 0
     assert consumer._r.xinfo_groups.call_count == 0, "拓扑判定不得发生在 _delete_ids 内"
-    assert consumer._delete_retry == {STREAM: {"1-0"}}
+    assert consumer._delete_retry == {}
 
 
 def test_discriminating_power_default_would_delete() -> None:
@@ -187,3 +187,13 @@ def test_discriminating_power_default_would_delete() -> None:
     consumer._delete_ids(STREAM, ["1-0"])  # 旧 `_retry_pending_acks` 就是这样调的
 
     consumer._r.xdel.assert_called_once_with(STREAM, "1-0")
+
+
+def test_multi_group_ack_does_not_exhaust_capacity():
+    consumer = _consumer(MULTI)
+    capacity = consumer._remaining_capacity()
+    for i in range(30):
+        consumer._ack_single(STREAM, f"{i}-0")
+    assert consumer._remaining_capacity() == capacity
+    assert consumer._delete_retry == {}
+    consumer._r.xdel.assert_not_called()

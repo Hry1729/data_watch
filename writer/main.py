@@ -236,6 +236,9 @@ def _open_mysql_connection(config: dict) -> pymysql.connections.Connection:
         password=config["password"],
         database=config["database"],
         charset="utf8mb4",
+        connect_timeout=5,
+        read_timeout=10,
+        write_timeout=10,
         autocommit=True,
     )
 
@@ -480,6 +483,7 @@ async def main() -> None:
         password=rc["password"] or None,
         decode_responses=True,
         socket_connect_timeout=5,
+        socket_timeout=10,
     )
     try:
         r.ping()

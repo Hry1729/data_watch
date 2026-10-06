@@ -1,7 +1,7 @@
 """TDengineWriter.write_multi_table 单元测试。Unit tests for TDengineWriter.write_multi_table (stage 5 / §7.6 step 1).
 
 Covers cross-subtable packing into one statement, byte-budget chunking, column
-union with NULL for missing columns, mixed stables, and chunk-level failure.
+actual column sets without synthesized NULL, mixed stables, and chunk-level failure.
 The taosws connection is mocked; execute() runs the captured SQL synchronously.
 """
 
@@ -78,7 +78,7 @@ async def test_multi_table_chunks_by_byte_budget():
 
 
 @pytest.mark.asyncio
-async def test_multi_table_missing_column_becomes_null():
+async def test_multi_table_missing_columns_are_omitted():
     writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})
     rows = [
         {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": {"qc1": 1.0, "qc2": 2.0}},
@@ -86,8 +86,52 @@ async def test_multi_table_missing_column_becomes_null():
     ]
     await writer.write_multi_table(rows)
     sql = executed[0]
-    # 列并集 (ts, qc1, qc2)，第二行缺 qc2 → NULL
-    assert "(1100, 3.0, NULL)" in sql
+    assert "(`ts`, `qc1`, `qc2`) VALUES (1000, 1.0, 2.0)" in sql
+    assert "(`ts`, `qc1`) VALUES (1100, 3.0)" in sql
+    assert "NULL" not in sql
+
+
+def test_bisected_insert_preserves_each_rows_actual_columns():
+    writer, _ = _make_writer({"sdqc": {"qc1", "qc2"}})
+    rows = [
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": {"qc1": 1.0}},
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": {"qc2": 2.0}},
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1100, "columns": {"qc1": 3.0}},
+    ]
+    sql = writer._build_chunk_sql(rows, [0, 1, 2])
+    assert "(`ts`, `qc1`) VALUES (1000, 1.0)" in sql
+    assert "(`ts`, `qc1`) VALUES (1100, 3.0)" in sql
+    assert "(`ts`, `qc2`) VALUES (1000, 2.0)" in sql
+    assert "NULL" not in sql
+
+
+@pytest.mark.parametrize("budget", [180, 3 * 1024 * 1024])
+def test_column_runs_preserve_overlapping_timestamp_order(monkeypatch, budget):
+    writer, _ = _make_writer({"sdqc": {"qc1", "qc2"}})
+    rows = [
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": columns}
+        for columns in ({"qc1": 1}, {"qc1": 2, "qc2": 3}, {"qc1": 4})
+    ]
+    monkeypatch.setattr(tdengine_writer, "MAX_SQL_BYTES", budget)
+    chunks = list(writer._iter_chunks(rows))
+    assert [i for indices, _, _ in chunks for i in indices] == [0, 1, 2]
+    sql = writer._build_chunk_sql(rows, [0, 1, 2])
+    assert sql.index("(1000, 1.0)") < sql.index("(1000, 2.0, 3.0)") < sql.index("(1000, 4.0)")
+
+
+@pytest.mark.asyncio
+async def test_column_grouping_keeps_explicit_null_and_column_order():
+    writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})
+    rows = [
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": {"qc1": 1.0, "qc2": 2.0}},
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1100, "columns": {"qc2": None, "qc1": 3.0}},
+    ]
+    results = await writer.write_multi_table(rows)
+    assert len(executed) == 1
+    assert executed[0].count("USING `device_data`.`sdqc`") == 1
+    assert "(1100, 3.0, NULL)" in executed[0]
+    assert results[0][0] == [0, 1]
+    assert results[0][1] == LANDED
 
 
 @pytest.mark.asyncio
@@ -445,3 +489,20 @@ async def test_unready_quality_schema_retries_only_affected_stable():
     assert writer._last_local_retry_indices == {0}
     assert all("qc100" not in sql for sql in executed)
     assert any("asc7" in sql for sql in executed)
+
+
+@pytest.mark.asyncio
+async def test_execute_timeout_releases_worker_and_detaches_connection(monkeypatch):
+    import asyncio
+    import threading
+    writer, _ = _make_writer({})
+    release = threading.Event()
+    writer._conn.execute.side_effect = lambda sql: release.wait(2)
+    monkeypatch.setattr(tdengine_writer, "IO_TIMEOUT_SECONDS", 0.02)
+    try:
+        ok, error = await asyncio.wait_for(writer._execute_ex("SELECT 1"), timeout=0.5)
+        assert not ok
+        assert isinstance(error, TimeoutError)
+        assert writer._conn is None
+    finally:
+        release.set()
