@@ -122,3 +122,17 @@ def test_window_timeout_returns_collected_events_without_error() -> None:
     )
 
     assert list(watcher.events("QC100", "g001", duration_seconds=0.01)) == []
+
+
+def test_successful_messages_reset_consecutive_reconnect_budget():
+    class IntermittentSocket(FakeWebSocket):
+        def recv(self, timeout=None):
+            try:
+                return super().recv(timeout)
+            except StopIteration:
+                raise OSError("connection lost")
+
+    sockets = iter(IntermittentSocket([json.dumps({"type": "update", "values": {}})]) for _ in range(6))
+    watcher = RealtimeWatcher("http://backend.local", "token", timeout_seconds=5,
+        connect_factory=lambda *a, **k: next(sockets), max_reconnects=1, sleep=lambda _: None)
+    assert len(list(watcher.events("QC100", "g001", max_events=6))) == 6

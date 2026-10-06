@@ -41,7 +41,11 @@ POINT_FIELDS = {
 def load_json_object(path_value: str) -> dict[str, Any]:
     path = None if path_value == "-" else _input_file(path_value)
     try:
-        content = sys.stdin.read() if path is None else path.read_text(encoding="utf-8-sig")
+        if path is None:
+            binary_stdin = getattr(sys.stdin, "buffer", None)
+            content = binary_stdin.read().decode("utf-8-sig") if binary_stdin is not None else sys.stdin.read()
+        else:
+            content = path.read_text(encoding="utf-8-sig")
         payload = json.loads(content)
     except (OSError, ValueError) as exc:
         source = "标准输入" if path is None else str(path)

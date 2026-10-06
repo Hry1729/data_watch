@@ -107,6 +107,7 @@ class RealtimeWatcher:
                             if event is None:
                                 continue
                             self._raise_server_error(event)
+                            reconnects = 0
                             event = self._filter_point_event(event, point_id)
                             if event is None:
                                 continue

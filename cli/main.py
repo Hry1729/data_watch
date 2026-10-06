@@ -160,6 +160,7 @@ def _write_json(payload: dict[str, Any], *, pretty: bool, error: bool = False) -
     )
     stream = sys.stderr if error else sys.stdout
     stream.write(text + "\n")
+    stream.flush()
 
 
 def _execute(ctx: typer.Context, command: str, operation: Callable[[], T]) -> T:
@@ -683,7 +684,7 @@ install_realtime_commands(
 
 
 def _configure_standard_streams() -> None:
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             reconfigure(encoding="utf-8")

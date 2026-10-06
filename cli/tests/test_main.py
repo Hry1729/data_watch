@@ -125,3 +125,19 @@ def test_production_entrypoint_outputs_json_for_usage_errors(monkeypatch, capsys
     assert payload["ok"] is False
     assert payload["schemaVersion"] == main_module.OUTPUT_SCHEMA_VERSION
     assert payload["error"]["type"] == "usage_error"
+
+
+def test_each_json_event_flushes_pipe_immediately(monkeypatch):
+    import io
+    import cli.main as main_module
+    class Pipe(io.StringIO):
+        flushes = 0
+        def flush(self):
+            self.flushes += 1
+            super().flush()
+    pipe = Pipe()
+    monkeypatch.setattr(main_module.sys, "stdout", pipe)
+    main_module._write_json({"data": 1}, pretty=False)
+    assert pipe.flushes == 1
+    main_module._write_json({"data": 2}, pretty=False)
+    assert pipe.flushes == 2

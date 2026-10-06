@@ -54,3 +54,13 @@ def test_confirmation_and_batch_ids_are_strict() -> None:
         require_confirmation("plc001", "PLC001")
     with pytest.raises(CliError):
         parse_ids("1,1")
+
+
+def test_json_pipe_decodes_utf8_independently_of_console_encoding(monkeypatch):
+    import io
+    import json
+    from cli.files import load_json_object
+    payload = {"deviceName": "设备测试"}
+    stream = io.TextIOWrapper(io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")), encoding="gbk")
+    monkeypatch.setattr("cli.files.sys.stdin", stream)
+    assert load_json_object("-") == payload
