@@ -22,6 +22,7 @@ _TOUCH_INTERVAL_SECONDS = 5.0
 # B26：验签前公钥缓存的**容量上限**。未认证请求可以携带任意唯一 node_uuid，若不设上限，
 # 缓存会随唯一 UUID 数量无界增长（内存放大）。上限内按 LRU 淘汰，过期项在触及上限时清理。
 _PUBLIC_KEY_CACHE_MAX = 4096
+_CONTROL_CACHE_MAX = 4096
 # 这几类驳回可能只是控制面已提交、而本进程控制缓存落后的结果：
 # 永久化（rejected_consumed）之前必须对决定该判定的那个缓存命名空间做一次受控权威重读。
 _UNKNOWN_VAR_ID = "malformed_envelope:unknown_var_id"
@@ -78,18 +79,25 @@ class MySQLIngestRepository:
         control_cache_ttl_seconds: float = 1.0,
     ) -> None:
         self._pool = pool
-        self._last_touch: dict[str, float] = {}
+        self._last_touch: OrderedDict[str, float] = OrderedDict()
         self._touch_tasks: set[asyncio.Task[None]] = set()
         self._control_cache_ttl_seconds = control_cache_ttl_seconds
         # B26：`OrderedDict` 以支持 LRU 提升与有界淘汰（正/负结果都缓存，但总量有上限）。
         self._public_key_cache: OrderedDict[str, tuple[float, list[str]]] = OrderedDict()
-        self._assignment_cache: dict[
+        self._assignment_cache: OrderedDict[
             tuple[str, str, int], tuple[float, dict | None]
-        ] = {}
-        self._mapping_cache: dict[
+        ] = OrderedDict()
+        self._mapping_cache: OrderedDict[
             tuple[str, str], tuple[float, frozenset[int]]
-        ] = {}
-        self._reread_at: dict[object, float] = {}
+        ] = OrderedDict()
+        self._reread_at: OrderedDict[object, float] = OrderedDict()
+
+    @staticmethod
+    def _cache_store(cache: OrderedDict, key, value) -> None:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _CONTROL_CACHE_MAX:
+            cache.popitem(last=False)
 
     @classmethod
     async def create(
@@ -197,7 +205,7 @@ class MySQLIngestRepository:
         now = monotonic()
         if now - self._last_touch.get(node_uuid, 0.0) < _TOUCH_INTERVAL_SECONDS:
             return
-        self._last_touch[node_uuid] = now
+        self._cache_store(self._last_touch, node_uuid, now)
         task = asyncio.create_task(self._touch_node_in_background(node_uuid, now))
         self._touch_tasks.add(task)
         task.add_done_callback(self._touch_tasks.discard)
@@ -418,7 +426,7 @@ class MySQLIngestRepository:
         last = self._reread_at.get(key)
         if last is not None and now - last < self._control_cache_ttl_seconds:
             return False
-        self._reread_at[key] = now
+        self._cache_store(self._reread_at, key, now)
         return True
 
     async def _assignment_rows(
@@ -435,6 +443,7 @@ class MySQLIngestRepository:
             cached = self._assignment_cache.get(key)
             if key not in forced and cached is not None and cached[0] > now:
                 result[key] = cached[1]
+                self._assignment_cache.move_to_end(key)
             else:
                 missing.add(key)
 
@@ -450,10 +459,10 @@ class MySQLIngestRepository:
             }
             for key in missing:
                 value = fetched.get(key)
-                self._assignment_cache[key] = (
+                self._cache_store(self._assignment_cache, key, (
                     self._cache_expiry("assignment", key),
                     value,
-                )
+                ))
                 result[key] = value
         return result, set(missing)
 
@@ -471,6 +480,7 @@ class MySQLIngestRepository:
             cached = self._mapping_cache.get(key)
             if key not in forced and cached is not None and cached[0] > now:
                 result[key] = set(cached[1])
+                self._mapping_cache.move_to_end(key)
             else:
                 missing.add(key)
 
@@ -488,10 +498,10 @@ class MySQLIngestRepository:
                     fetched[key].add(int(row["point_id"]))
             for key in missing:
                 value = frozenset(fetched[key])
-                self._mapping_cache[key] = (
+                self._cache_store(self._mapping_cache, key, (
                     self._cache_expiry("mapping", key),
                     value,
-                )
+                ))
                 result[key] = set(value)
         return result, set(missing)
 

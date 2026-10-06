@@ -22,6 +22,32 @@ def test_invalid_timestamp_is_a_single_item_rejection(timestamp):
 
 
 @pytest.mark.asyncio
+async def test_control_caches_are_bounded_without_losing_batch_results(monkeypatch):
+    monkeypatch.setattr(repository_module, "_CONTROL_CACHE_MAX", 4)
+    repository = MySQLIngestRepository(None)
+    repository._fetch_assignment_rows = AsyncMock(return_value=[])
+    repository._fetch_mapping_rows = AsyncMock(return_value=[])
+    assignment_keys = {(str(index), "g", 1) for index in range(20)}
+    mapping_keys = {(str(index), "g") for index in range(20)}
+    assignments, _ = await repository._assignment_rows(assignment_keys)
+    mappings, _ = await repository._mapping_point_sets(mapping_keys)
+    assert set(assignments) == assignment_keys
+    assert set(mappings) == mapping_keys
+    assert len(repository._assignment_cache) <= 4
+    assert len(repository._mapping_cache) <= 4
+    for index in range(20):
+        assert repository._claim_reread(str(index))
+    assert len(repository._reread_at) <= 4
+    assert repository._claim_reread("0")
+    repository._touch_node_in_background = AsyncMock()
+    for index in range(20):
+        await repository.touch_node(str(index))
+    await asyncio.gather(*repository._touch_tasks)
+    assert len(repository._last_touch) <= 4
+    assert repository._touch_node_in_background.await_count == 20
+
+
+@pytest.mark.asyncio
 async def test_repository_create_can_skip_worker_schema_migration(monkeypatch) -> None:
     class FakePool:
         def __init__(self) -> None:
