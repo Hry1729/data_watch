@@ -333,3 +333,94 @@ async def test_session_network_failure_does_not_end_upload_loop(tmp_path):
         uploader.run_cycle.assert_awaited_once()
         assert store.stats() == {"pending": 1}
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_contract_rejection_isolates_single_bad_record(tmp_path):
+    import json
+    from dataclasses import replace
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 3)
+    calls = []
+    def handler(request):
+        items = json.loads(request.content)["items"]
+        calls.append([item["local_seq"] for item in items])
+        if any(item["local_seq"] == 2 for item in items):
+            return httpx.Response(400, text="bad item")
+        return httpx.Response(200, json={"results": [dict(batch_id=item["batch_id"], upload_session_id=item["upload_session_id"], local_seq=item["local_seq"], status="ack", durability="redis-aof") for item in items]})
+    client = httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler))
+    uploader = Uploader(store, replace(settings(tmp_path), retry_base_ms=0), client=client, signer=FakeSigner())
+    try:
+        await uploader.run_cycle()
+        await uploader.run_cycle()
+        assert calls == [[1, 2, 3], [1], [2]]
+        rows = store._connection.execute("SELECT local_seq, state, reject_count FROM outbox ORDER BY local_seq").fetchall()
+        assert [tuple(row) for row in rows] == [(1, "sent", 0), (2, "retry_wait", 1), (3, "retry_wait", 0)]
+    finally:
+        await client.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["seq_reject", "commit_unknown"])
+async def test_uncertain_head_never_quarantines_following_records(tmp_path, status):
+    import json
+    from unittest.mock import AsyncMock
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 3)
+    cfg = settings(tmp_path)
+    store._connection.execute("UPDATE outbox SET reject_count=?", (cfg.max_attempts,))
+    def handler(request):
+        items = json.loads(request.content)["items"]
+        return httpx.Response(200, json={"results": [dict(batch_id=item["batch_id"], upload_session_id=item["upload_session_id"], local_seq=item["local_seq"], status=status) for item in items]})
+    client = httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler))
+    uploader = Uploader(store, cfg, client=client, signer=FakeSigner())
+    uploader._abandon_and_switch = AsyncMock()
+    try:
+        await uploader.run_cycle()
+        rows = store._connection.execute("SELECT local_seq, state, reject_count FROM outbox ORDER BY local_seq").fetchall()
+        assert rows[0]["state"] == "dead"
+        assert [row["state"] for row in rows[1:]] == ["retry_wait", "retry_wait"]
+        assert all(row["reject_count"] == cfg.max_attempts for row in rows[1:])
+    finally:
+        await client.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_oversized_head_switches_session_before_good_frame(tmp_path):
+    import json
+    from dataclasses import replace
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 2)
+    cfg = replace(settings(tmp_path), max_batch_bytes=1000, retry_base_ms=0)
+    store._connection.execute("UPDATE outbox SET payload=? WHERE local_seq=1", (b"x" * 2000,))
+    store._connection.execute("UPDATE outbox SET reject_count=? WHERE local_seq=2", (cfg.max_attempts - 1,))
+    calls = []
+    high_water = 0
+    def handler(request):
+        nonlocal high_water
+        calls.append(request.url.path)
+        if request.url.path == "/ingest/session_switch":
+            high_water = 0
+            return httpx.Response(200, json={"status": "switched"})
+        items = json.loads(request.content)["items"]
+        results = []
+        for item in items:
+            status = "ack" if item["local_seq"] == high_water + 1 else "seq_reject"
+            if status == "ack":
+                high_water += 1
+            results.append(dict(batch_id=item["batch_id"], upload_session_id=item["upload_session_id"], local_seq=item["local_seq"], status=status, durability="redis-aof"))
+        return httpx.Response(200, json={"results": results})
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, cfg, client=client, signer=FakeSigner())
+        try:
+            await uploader.run_cycle()
+            assert calls == []
+            await uploader.run_cycle()
+            assert calls == ["/ingest/session_switch", "/ingest"]
+            rows = store._connection.execute("SELECT state, reject_count FROM outbox ORDER BY created_at, rowid").fetchall()
+            assert [row["state"] for row in rows] == ["dead", "sent"]
+            assert rows[1]["reject_count"] == cfg.max_attempts - 1
+        finally:
+            store.close()

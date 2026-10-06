@@ -49,6 +49,42 @@ def _snapshot() -> dict:
 def test_storage_http_uses_keepalive_protocol() -> None:
     assert StorageRequestHandler.protocol_version == "HTTP/1.1"
 
+
+def test_storage_start_waits_for_slow_migration(tmp_path, monkeypatch):
+    from edge.app import storage_service
+    original = storage_service.OutboxStore
+    entered = threading.Event()
+    release = threading.Event()
+    def slow_store(path):
+        entered.set()
+        assert release.wait(2)
+        return original(path)
+    monkeypatch.setattr(storage_service, "OutboxStore", slow_store)
+    engine = StorageEngine(tmp_path / "edge.db")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        started = pool.submit(engine.start, None)
+        try:
+            assert entered.wait(1)
+            assert not started.done()
+            release.set()
+            started.result(timeout=2)
+            assert engine.submit("status")["writer_queue_depth"] == 0
+        finally:
+            release.set()
+            engine.close()
+
+
+def test_storage_index_failure_does_not_become_ready(tmp_path, monkeypatch):
+    from edge.app import storage_service
+    def failed_store(path):
+        raise RuntimeError("index migration failed")
+    monkeypatch.setattr(storage_service, "OutboxStore", failed_store)
+    engine = StorageEngine(tmp_path / "edge.db")
+    with pytest.raises(RuntimeError, match="index migration failed"):
+        engine.start(timeout_seconds=None)
+    engine.close()
+    assert not engine._worker.is_alive()
+
 def test_storage_serializes_concurrent_frames_and_batch_ack(
     tmp_path: Path, monkeypatch
 ) -> None:

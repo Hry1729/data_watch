@@ -24,6 +24,16 @@ def configure(store: OutboxStore, device: str, epoch: int, rate: int) -> None:
     store.configure_assignment(device, epoch, rate, 1)
 
 
+def test_claim_index_excludes_sent_rows(tmp_path):
+    store = OutboxStore(tmp_path / "edge.db")
+    try:
+        plan = store._connection.execute("EXPLAIN QUERY PLAN SELECT batch_id FROM outbox INDEXED BY idx_outbox_active_seq WHERE upload_session_id=? AND local_seq<=? AND state IN ('pending', 'retry_wait', 'inflight') ORDER BY local_seq LIMIT ?", ("s", 100, 10)).fetchall()
+        assert any("idx_outbox_active_seq" in str(tuple(row)) for row in plan)
+        assert not any("TEMP B-TREE" in str(tuple(row)) for row in plan)
+    finally:
+        store.close()
+
+
 def test_atomic_sequence_starts_at_one_and_rolls_back_without_assignment(
     tmp_path: Path,
 ) -> None:
@@ -276,4 +286,38 @@ def test_outbox_initialization_does_not_import_collector_config(
 
     monkeypatch.setattr("builtins.__import__", guarded_import)
     store = OutboxStore(tmp_path / "edge.db")
+    store.close()
+
+
+def test_clock_rollback_preserves_retry_delay(tmp_path):
+    now = [1000]
+    store = OutboxStore(tmp_path / "edge.db", clock_ms=lambda: now[0])
+    configure(store, "QC100", 1, 100)
+    append(store)
+    kwargs = dict(target_seq=1, lease_owner="owner", lease_ms=5000, max_items=10, max_bytes=10000)
+    record = store.claim_batch(**kwargs)[0]
+    store.mark_retry(record, "owner", error="network", http_status=None, delay_ms=500)
+    now[0] = 500
+    assert store.claim_batch(**kwargs) == []
+    now[0] = 1000
+    assert len(store.claim_batch(**kwargs)) == 1
+    store.close()
+
+
+def test_oversized_payload_is_preserved_without_blocking_following_rows(tmp_path):
+    store = OutboxStore(tmp_path / "edge.db")
+    configure(store, "QC100", 1, 100)
+    first, second = append(store), append(store)
+    original = b"x" * 20000
+    store._connection.execute("UPDATE outbox SET payload=? WHERE batch_id=?", (original, first.batch_id))
+    rows = store.claim_batch(target_seq=2, lease_owner="owner", lease_ms=5000, max_items=10, max_bytes=10000)
+    assert rows == []
+    switch = store.pending_session_switch()
+    assert switch is not None
+    store.complete_session_switch(switch)
+    rows = store.claim_batch(target_seq=2, lease_owner="owner", lease_ms=5000, max_items=10, max_bytes=10000)
+    assert [row.batch_id for row in rows] == [second.batch_id]
+    assert rows[0].local_seq == 1
+    dead = store._connection.execute("SELECT state, payload, last_error FROM outbox WHERE batch_id=?", (first.batch_id,)).fetchone()
+    assert tuple(dead) == ("dead", original, "payload_size_limit")
     store.close()

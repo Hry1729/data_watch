@@ -60,6 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_outbox_state_retry ON outbox(state, next_retry_at
 CREATE INDEX IF NOT EXISTS idx_outbox_created ON outbox(created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_lease ON outbox(state, lease_until);
 CREATE INDEX IF NOT EXISTS idx_outbox_seq ON outbox(upload_session_id, local_seq);
+CREATE INDEX IF NOT EXISTS idx_outbox_active_seq ON outbox(upload_session_id, local_seq)
+    WHERE state IN ('pending', 'retry_wait', 'inflight');
 CREATE INDEX IF NOT EXISTS idx_outbox_device_ts ON outbox(device_code, ts);
 
 CREATE TABLE IF NOT EXISTS metadata (
@@ -379,6 +381,15 @@ class OutboxStore:
             )
             return cursor.rowcount
 
+    def _normalize_retry_clock(self, connection, now: int) -> None:
+        row = connection.execute("SELECT value FROM metadata WHERE key='retry_clock_ms'").fetchone()
+        previous = int(row[0]) if row is not None else now
+        if now < previous:
+            delta = now - previous
+            connection.execute("UPDATE outbox SET next_retry_at=next_retry_at+? WHERE state='retry_wait'", (delta,))
+            connection.execute("UPDATE outbox SET lease_until=lease_until+? WHERE state='inflight'", (delta,))
+        connection.execute("INSERT INTO metadata(key, value) VALUES('retry_clock_ms', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(now),))
+
     def claim_batch(
         self,
         *,
@@ -391,14 +402,16 @@ class OutboxStore:
         if max_items <= 0 or max_bytes <= 0:
             raise ValueError("batch limits must be positive")
         now = self._clock_ms()
+        oversized_batch_id = None
         with self._transaction() as connection:
+            self._normalize_retry_clock(connection, now)
             session_id = self._metadata(connection, "upload_session_id")
             rows = connection.execute(
                 """
                 SELECT batch_id, upload_session_id, local_seq, assignment_epoch,
                        payload, attempt_count, reject_count, state, next_retry_at,
                        lease_until, lease_owner
-                FROM outbox
+                FROM outbox INDEXED BY idx_outbox_active_seq
                 WHERE upload_session_id = ?
                   AND local_seq <= ?
                   AND state IN ('pending', 'retry_wait', 'inflight')
@@ -420,37 +433,42 @@ class OutboxStore:
                 ):
                     break
                 if not selected and payload_size > max_bytes:
-                    raise ValueError("single outbox payload exceeds max_bytes")
+                    oversized_batch_id = str(row["batch_id"])
+                    logger.error("Outbox payload quarantined batch_id=%s local_seq=%s bytes=%s max_bytes=%s", row["batch_id"], row["local_seq"], payload_size, max_bytes)
+                    break
                 selected.append(row)
                 total_bytes += payload_size
                 if len(selected) >= max_items:
                     break
 
-            if not selected:
+            if not selected and oversized_batch_id is None:
                 return []
-            batch_ids = [str(row["batch_id"]) for row in selected]
-            placeholders = ",".join(["?"] * len(batch_ids))
-            connection.execute(
-                f"""
-                UPDATE outbox
-                SET state='inflight', lease_owner=?, inflight_at=?, lease_until=?
-                WHERE batch_id IN ({placeholders})
-                  AND state IN ('pending', 'retry_wait')
-                """,
-                (lease_owner, now, now + lease_ms, *batch_ids),
-            )
-            return [
-                OutboxRecord(
-                    batch_id=str(row["batch_id"]),
-                    upload_session_id=str(row["upload_session_id"]),
-                    local_seq=int(row["local_seq"]),
-                    assignment_epoch=int(row["assignment_epoch"]),
-                    payload=bytes(row["payload"]),
-                    attempt_count=int(row["attempt_count"]),
-                    reject_count=int(row["reject_count"]),
+            if selected:
+                batch_ids = [str(row["batch_id"]) for row in selected]
+                placeholders = ",".join(["?"] * len(batch_ids))
+                connection.execute(
+                    f"""
+                    UPDATE outbox
+                    SET state='inflight', lease_owner=?, inflight_at=?, lease_until=?
+                    WHERE batch_id IN ({placeholders})
+                      AND state IN ('pending', 'retry_wait')
+                    """,
+                    (lease_owner, now, now + lease_ms, *batch_ids),
                 )
-                for row in selected
-            ]
+                return [
+                    OutboxRecord(
+                        batch_id=str(row["batch_id"]),
+                        upload_session_id=str(row["upload_session_id"]),
+                        local_seq=int(row["local_seq"]),
+                        assignment_epoch=int(row["assignment_epoch"]),
+                        payload=bytes(row["payload"]),
+                        attempt_count=int(row["attempt_count"]),
+                        reject_count=int(row["reject_count"]),
+                    )
+                    for row in selected
+                ]
+        self.prepare_session_switch(_quarantine_batch_id=oversized_batch_id)
+        return []
 
     def mark_sent(self, record: OutboxRecord, lease_owner: str) -> None:
         self.complete_batch([OutboxCompletion(record, "sent")], lease_owner)
@@ -551,6 +569,7 @@ class OutboxStore:
             http_status in (200, 400) and error in PROTOCOL_REJECT_ERRORS
         )
         with self._transaction() as connection:
+            self._normalize_retry_clock(connection, now)
             for record, delay_ms in records:
                 cursor = connection.execute(
                     """
@@ -590,6 +609,8 @@ class OutboxStore:
     def prepare_session_switch(
         self,
         expected_old_session_id: str | None = None,
+        *,
+        _quarantine_batch_id: str | None = None,
     ) -> SessionSwitchState:
         if expected_old_session_id is not None and expected_old_session_id != self.current_session_id():
             raise RuntimeError("refusing to replace a foreign active session")
@@ -603,6 +624,8 @@ class OutboxStore:
                     old_session_id=str(existing["value"]),
                     new_session_id=self._metadata(connection, "upload_session_id"),
                 )
+            if _quarantine_batch_id is not None:
+                connection.execute("UPDATE outbox SET state='dead', dead_at=?, last_error='payload_size_limit', lease_owner=NULL, lease_until=NULL, inflight_at=NULL WHERE batch_id=?", (self._clock_ms(), _quarantine_batch_id))
             old_session_id = expected_old_session_id or self._metadata(
                 connection, "upload_session_id"
             )

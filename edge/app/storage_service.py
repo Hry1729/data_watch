@@ -315,7 +315,7 @@ class StorageEngine:
         self._errors_total = 0
         self._started_at = time.time()
 
-    def start(self, timeout_seconds: float = 10.0) -> None:
+    def start(self, timeout_seconds: float | None = 10.0) -> None:
         with self._lifecycle_lock:
             if self._closing:
                 raise RuntimeError("Edge Storage is stopping")

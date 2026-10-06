@@ -219,7 +219,7 @@ class Uploader:
                 target_seq=target_seq,
                 lease_owner=self._lease_owner,
                 lease_ms=self._settings.lease_ms,
-                max_items=self._settings.max_batch_items,
+                max_items=min(self._settings.max_batch_items, getattr(self, "_contract_batch_limit", self._settings.max_batch_items)),
                 max_bytes=self._settings.max_batch_bytes,
             )
             if not records:
@@ -227,6 +227,8 @@ class Uploader:
             should_continue = await self._upload_records(records)
             if not should_continue:
                 return
+            if records[-1].local_seq >= target_seq:
+                self._contract_batch_limit = self._settings.max_batch_items
 
     async def _upload_records(self, records: list[OutboxRecord]) -> bool:
         batch_started = time.perf_counter()
@@ -268,6 +270,10 @@ class Uploader:
             await self._retry_records(records, response.text, response.status_code)
             return False
         if response.status_code == 400:
+            if len(records) > 1:
+                self._contract_batch_limit = 1
+                await self._retry_records(records, "http_400_batch_isolation", 400)
+                return False
             logger.error(
                 "Upload contract rejected status=400 records=%d response=%s; retrying batch without discarding backlog",
                 len(records),
@@ -280,6 +286,7 @@ class Uploader:
                 quarantine_after_max=True,
             )
             if quarantined:
+                self._contract_batch_limit = self._settings.max_batch_items
                 await self._abandon_and_switch()
             return False
         if response.status_code != 200:
@@ -358,16 +365,17 @@ class Uploader:
                 await self._persist_confirmed(completions)
                 unconfirmed = records[index:]
                 quarantined = await self._retry_records(
-                    unconfirmed,
+                    unconfirmed[:1],
                     status,
                     200,
                     quarantine_after_max=True,
                 )
+                await self._retry_records(unconfirmed[1:], "batch_sequence_wait", 200)
                 if quarantined:
                     logger.error(
                         "Quarantined %d unresolvable upload records after max attempts; "
                         "payloads remain in local dead state for replay/reconciliation",
-                        len(unconfirmed),
+                        1,
                     )
                 await self._abandon_and_switch()
                 return False

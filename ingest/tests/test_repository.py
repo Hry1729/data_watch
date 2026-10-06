@@ -14,6 +14,13 @@ from ingest.app.repository import MySQLIngestRepository
 from ingest.app.schemas import UploadBatch, UploadItem
 
 
+@pytest.mark.parametrize("timestamp", [1721800000000000, 10**1000])
+def test_invalid_timestamp_is_a_single_item_rejection(timestamp):
+    decision = MySQLIngestRepository._validate_assignment_window({"assignment_status": "active"}, timestamp)
+    assert decision.reason == "malformed_envelope:invalid_timestamp"
+    assert MySQLIngestRepository._validate_assignment_window({"assignment_status": "active"}, 1721800000000) is None
+
+
 @pytest.mark.asyncio
 async def test_repository_create_can_skip_worker_schema_migration(monkeypatch) -> None:
     class FakePool:

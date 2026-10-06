@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+MAX_TIMESTAMP_MS = 253402300799999
+
 
 class RequestValidationError(ValueError):
     pass
@@ -46,6 +48,8 @@ class UploadItem:
             group_code = _required_text(payload, "group_code")
             scan_rate = _required_positive_int(payload, "scan_rate")
             ts = _required_non_negative_int(payload, "ts")
+            if ts > MAX_TIMESTAMP_MS:
+                raise RequestValidationError("invalid timestamp range")
             config_version = _required_non_negative_int(payload, "config_version")
             contract_version = int(payload.get("contract_version", 1))
             values = _string_map(payload.get("values"), "values")
@@ -65,7 +69,7 @@ class UploadItem:
                     raise RequestValidationError(f"{label} keys must match latest_values")
             if latest_qualities is not None and any(v < 0 or v > 65535 for v in latest_qualities.values()):
                 raise RequestValidationError("invalid latest quality")
-            if latest_timestamps is not None and any(v < 0 for v in latest_timestamps.values()):
+            if latest_timestamps is not None and any(v < 0 or v > MAX_TIMESTAMP_MS for v in latest_timestamps.values()):
                 raise RequestValidationError("invalid latest timestamp")
 
         except (RequestValidationError, TypeError, ValueError) as exc:

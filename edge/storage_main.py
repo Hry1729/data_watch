@@ -194,7 +194,13 @@ def main() -> int:
             "%s", _bind_error_message(args.host, args.port, exc)
         )
         return 2
-    engine.start()
+    try:
+        # Existing outboxes may need a long index migration before accepting commands.
+        engine.start(timeout_seconds=None)
+    except Exception:
+        server.server_close()
+        engine.close()
+        raise
     server.timeout = 0.5
     stopped = threading.Event()
 

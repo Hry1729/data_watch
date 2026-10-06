@@ -587,7 +587,10 @@ class MySQLIngestRepository:
         status = str(row.get("assignment_status") or "")
         cutover_at = _as_utc(row.get("cutover_at"))
         grace_until = _as_utc(row.get("grace_until"))
-        sample_at = datetime.fromtimestamp(sample_ts_ms / 1000, tz=timezone.utc)
+        try:
+            sample_at = datetime.fromtimestamp(sample_ts_ms / 1000, tz=timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return ValidationDecision.reject("malformed_envelope:invalid_timestamp")
         now = datetime.now(timezone.utc)
 
         if status == "active":
