@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use reqwest::{header::CONTENT_DISPOSITION, redirect::Policy, Client, Url};
@@ -10,13 +10,15 @@ const MAX_BACKEND_REQUEST_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Default)]
 pub struct BackendOriginState(pub Mutex<Option<String>>);
 
-fn build_client(timeout: Duration) -> Result<Client, String> {
-    Client::builder()
+static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+
+fn shared_client() -> Result<&'static Client, String> {
+    HTTP_CLIENT.get_or_init(|| Client::builder()
         .connect_timeout(Duration::from_secs(3))
-        .timeout(timeout)
         .redirect(Policy::none())
         .build()
-        .map_err(|e| format!("http client initialization failed: {}", e))
+        .map_err(|e| format!("http client initialization failed: {}", e)))
+        .as_ref().map_err(Clone::clone)
 }
 
 fn normalize_backend_origin(value: &str) -> Result<String, String> {
@@ -161,7 +163,7 @@ pub async fn agent_request(
 ) -> Result<(u16, String), String> {
     let url = build_local_agent_url(port, &path)?;
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
-    let client = build_client(timeout)?;
+    let client = shared_client()?;
 
     let mut req = match method.as_str() {
         "GET" => client.get(url),
@@ -171,6 +173,7 @@ pub async fn agent_request(
         m => return Err(format!("unsupported method: {}", m)),
     };
 
+    req = req.timeout(timeout);
     if let Some(t) = token {
         // 不 log token 值
         req = req.header("Authorization", format!("Bearer {}", t));
@@ -203,8 +206,8 @@ pub async fn backend_download(
     let base = ensure_backend_origin(&base_url, &state)?;
     validate_backend_path(&path)?;
 
-    let client = build_client(Duration::from_secs(60))?;
-    let mut req = client.get(format!("{}{}", base, path));
+    let client = shared_client()?;
+    let mut req = client.get(format!("{}{}", base, path)).timeout(Duration::from_secs(60));
     if let Some(a) = authorization {
         req = req.header("Authorization", a);
     }
@@ -238,7 +241,7 @@ pub async fn backend_request(
     validate_backend_path(&path)?;
     validate_request_body(body.as_ref())?;
     let url = format!("{}{}", base, path);
-    let client = build_client(Duration::from_secs(10))?;
+    let client = shared_client()?;
 
     let mut req = match method.as_str() {
         "GET" => client.get(&url),
@@ -249,6 +252,7 @@ pub async fn backend_request(
         _ => unreachable!("method validated above"),
     };
 
+    req = req.timeout(Duration::from_secs(10));
     if let Some(a) = authorization {
         req = req.header("Authorization", a);
     }
@@ -273,6 +277,17 @@ mod tests {
         validate_backend_path, validate_request_body, MAX_BACKEND_REQUEST_BYTES,
         MAX_BACKEND_RESPONSE_BYTES,
     };
+
+    #[test]
+    fn shared_pool_keeps_timeouts_per_request() {
+        use std::time::Duration;
+        let client = super::shared_client().unwrap();
+        assert!(std::ptr::eq(client, super::shared_client().unwrap()));
+        let fast = client.get("http://127.0.0.1:7070/health").timeout(Duration::from_secs(5)).build().unwrap();
+        let stop = client.get("http://127.0.0.1:7070/health").timeout(Duration::from_secs(60)).build().unwrap();
+        assert_eq!(fast.timeout(), Some(&Duration::from_secs(5)));
+        assert_eq!(stop.timeout(), Some(&Duration::from_secs(60)));
+    }
 
     #[test]
     fn origin_policy_accepts_only_a_normalized_http_origin() {

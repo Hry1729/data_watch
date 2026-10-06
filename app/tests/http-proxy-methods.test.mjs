@@ -16,9 +16,16 @@ test("backend client rejects non-success business response codes", () => {
 test("desktop proxy bounds Agent and backend requests with connection timeouts", () => {
   assert.match(proxySource, /connect_timeout\(Duration::from_secs\(3\)\)/);
   // Agent 支持动态 timeout_secs，默认 5s
-  assert.match(proxySource, /timeout_secs\.unwrap_or\(5\)/);
-  assert.match(proxySource, /build_client\(timeout\)/);
-  assert.match(proxySource, /build_client\(Duration::from_secs\(10\)\)/);
+  const agentBlock = proxySource.slice(proxySource.indexOf("pub async fn agent_request"), proxySource.indexOf("pub async fn backend_download"));
+  const downloadBlock = proxySource.slice(proxySource.indexOf("pub async fn backend_download"), proxySource.indexOf("pub async fn backend_request"));
+  const backendBlock = proxySource.slice(proxySource.indexOf("pub async fn backend_request"), proxySource.indexOf("#[cfg(test)]"));
+  for (const block of [agentBlock, downloadBlock, backendBlock]) {
+    assert.match(block, /shared_client\(\)\?/);
+  }
+  assert.match(agentBlock, /timeout_secs\.unwrap_or\(5\)/);
+  assert.match(agentBlock, /req\.timeout\(timeout\)/);
+  assert.match(downloadBlock, /timeout\(Duration::from_secs\(60\)\)/);
+  assert.match(backendBlock, /req\.timeout\(Duration::from_secs\(10\)\)/);
 });
 test("startup and retry leave the loading state when the Agent never responds", () => {
   assert.match(appSource, /const STARTUP_TIMEOUT_MS = 6_000/);
