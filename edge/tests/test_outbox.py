@@ -321,3 +321,53 @@ def test_oversized_payload_is_preserved_without_blocking_following_rows(tmp_path
     dead = store._connection.execute("SELECT state, payload, last_error FROM outbox WHERE batch_id=?", (first.batch_id,)).fetchone()
     assert tuple(dead) == ("dead", original, "payload_size_limit")
     store.close()
+
+
+def test_frame_group_uses_one_durable_commit_and_isolates_bad_frame(tmp_path):
+    path = tmp_path / "edge.db"
+    store = OutboxStore(path)
+    configure(store, "QC100", 1, 100)
+    statements = []
+    store._connection.set_trace_callback(statements.append)
+    frames = [dict(batch_id=f"batch-{index}", device_code=device, device_type="qc", group_code="g001", scan_rate_ms=100, ts=1000 + index, config_version=1, values={"1": str(index)}, qualities={"1": 192}, latest_fields={"1": {"v": str(index), "t": 1000 + index, "q": 192}})
+              for index, device in enumerate(("QC100", "UNKNOWN", "QC100"))]
+    results = store.commit_frames(frames)
+    assert not isinstance(results[0], Exception)
+    assert isinstance(results[1], Exception)
+    assert not isinstance(results[2], Exception)
+    assert [results[0].local_seq, results[2].local_seq] == [1, 2]
+    assert sum(statement == "COMMIT" for statement in statements) == 1
+    assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
+    store.close()
+    reopened = OutboxStore(path)
+    try:
+        assert reopened._connection.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 2
+        assert reopened.snapshot_target_seq() == 2
+    finally:
+        reopened.close()
+
+
+def test_failed_group_commit_rolls_back_and_allows_retry(tmp_path):
+    import sqlite3
+    store = OutboxStore(tmp_path / "edge.db")
+    configure(store, "QC100", 1, 100)
+    connection = store._connection
+    class CommitFailure:
+        failed = False
+        def execute(self, statement, *args):
+            if statement == "COMMIT" and not self.failed:
+                self.failed = True
+                raise sqlite3.OperationalError("simulated commit failure")
+            return connection.execute(statement, *args)
+        def __getattr__(self, name):
+            return getattr(connection, name)
+    store._connection = CommitFailure()
+    frame = dict(batch_id="retryable", device_code="QC100", device_type="qc", group_code="g001", scan_rate_ms=100, ts=1000, config_version=1, values={"1": "1"}, qualities={"1": 192}, latest_fields={})
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="commit failure"):
+            store.commit_frames([frame])
+        assert not connection.in_transaction
+        assert connection.execute("SELECT COUNT(*) FROM outbox").fetchone()[0] == 0
+        assert store.commit_frames([frame])[0].local_seq == 1
+    finally:
+        store.close()

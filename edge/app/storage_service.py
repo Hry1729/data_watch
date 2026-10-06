@@ -396,10 +396,15 @@ class StorageEngine:
             self._ready.set()
             return
         self._ready.set()
+        pending = None
+        has_pending = False
         try:
             while True:
                 try:
-                    command = self._queue.get(timeout=0.5)
+                    if has_pending:
+                        command, has_pending = pending, False
+                    else:
+                        command = self._queue.get(timeout=0.5)
                 except Empty:
                     if self._sentinel_requested.is_set() and not self._sentinel_enqueued.is_set():
                         try:
@@ -410,20 +415,33 @@ class StorageEngine:
                     continue
                 if command is None:
                     break
-                started = time.perf_counter()
-                try:
-                    command.result = self._dispatch(outbox, config, command.action, command.payload)
-                    self._action_counts[command.action] += 1
-                except Exception as exc:
-                    self._errors_total += 1
-                    command.error = exc
-                    logger.exception("Storage command failed: %s", command.action)
-                finally:
-                    if command.action == "frame.commit":
-                        self._latencies_ms.append(
-                            (time.perf_counter() - command.queued_at) * 1000
-                        )
-                    command.done.set()
+                if command.action == "frame.commit":
+                    commands = [command]
+                    while len(commands) < 32:
+                        try:
+                            following = self._queue.get_nowait()
+                        except Empty:
+                            break
+                        if following is None or following.action != "frame.commit":
+                            pending, has_pending = following, True
+                            break
+                        commands.append(following)
+                    self._commit_frame_commands(outbox, commands)
+                else:
+                    started = time.perf_counter()
+                    try:
+                        command.result = self._dispatch(outbox, config, command.action, command.payload)
+                        self._action_counts[command.action] += 1
+                    except Exception as exc:
+                        self._errors_total += 1
+                        command.error = exc
+                        logger.exception("Storage command failed: %s", command.action)
+                    finally:
+                        if command.action == "frame.commit":
+                            self._latencies_ms.append(
+                                (time.perf_counter() - command.queued_at) * 1000
+                            )
+                        command.done.set()
                 if (
                     self._sentinel_requested.is_set()
                     and not self._sentinel_enqueued.is_set()
@@ -437,6 +455,27 @@ class StorageEngine:
         finally:
             config.close()
             outbox.close()
+
+    def _commit_frame_commands(self, outbox: OutboxStore, commands: list[_Command]) -> None:
+        try:
+            results = outbox.commit_frames([command.payload for command in commands])
+        except Exception as exc:
+            logger.exception("Storage frame group commit failed")
+            results = [exc] * len(commands)
+        for command, result in zip(commands, results):
+            try:
+                if isinstance(result, Exception):
+                    raise result
+                command.result = _record_payload(result)
+                self._action_counts["frame.commit"] += 1
+                self._recent_frames.append((time.monotonic(), len(command.payload.get("values") or {})))
+            except Exception as exc:
+                self._errors_total += 1
+                command.error = exc
+                logger.error("Storage frame command failed: %s", exc)
+            finally:
+                self._latencies_ms.append((time.perf_counter() - command.queued_at) * 1000)
+                command.done.set()
 
     def _dispatch(
         self,

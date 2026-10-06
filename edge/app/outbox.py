@@ -291,31 +291,36 @@ class OutboxStore:
         latest_fields: dict[str, dict[str, Any]],
     ) -> OutboxRecord:
         """Persist the durable envelope and local latest values atomically."""
+        result = self.commit_frames([dict(batch_id=batch_id, device_code=device_code,
+            device_type=device_type, group_code=group_code, scan_rate_ms=scan_rate_ms,
+            ts=ts, config_version=config_version, values=values, qualities=qualities,
+            latest_fields=latest_fields)])[0]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def commit_frames(self, frames: list[dict]) -> list[OutboxRecord | Exception]:
+        """Commit a queued group durably, isolating bad frames with savepoints."""
+        if not frames:
+            return []
         self._ensure_disk_writable()
         now = self._clock_ms()
+        results = []
         with self._transaction() as connection:
-            record = self._append_envelope(
-                connection,
-                batch_id=batch_id,
-                device_code=device_code,
-                device_type=device_type,
-                group_code=group_code,
-                scan_rate_ms=scan_rate_ms,
-                ts=ts,
-                config_version=config_version,
-                values=values,
-                qualities=qualities,
-                latest_fields=latest_fields,
-                now=now,
-            )
-            self._write_local_latest_frame(
-                connection,
-                device_code,
-                group_code,
-                latest_fields,
-                now,
-            )
-            return record
+            for frame in frames:
+                connection.execute("SAVEPOINT frame_commit")
+                try:
+                    record = self._append_envelope(connection, now=now, **frame)
+                    self._write_local_latest_frame(connection, frame["device_code"],
+                        frame["group_code"], frame["latest_fields"], now)
+                except Exception as exc:
+                    connection.execute("ROLLBACK TO frame_commit")
+                    results.append(exc)
+                else:
+                    results.append(record)
+                finally:
+                    connection.execute("RELEASE frame_commit")
+        return results
 
     def write_local_latest(
         self,
@@ -1198,6 +1203,13 @@ class _Transaction:
     def __exit__(self, exc_type, exc, tb) -> bool:
         try:
             self._connection.execute("ROLLBACK" if exc_type else "COMMIT")
+        except Exception:
+            try:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
         finally:
             self._lock.release()
         return False

@@ -85,6 +85,29 @@ def test_storage_index_failure_does_not_become_ready(tmp_path, monkeypatch):
     engine.close()
     assert not engine._worker.is_alive()
 
+
+def test_group_commands_are_not_confirmed_before_commit(tmp_path):
+    from edge.app.storage_service import _Command
+    engine = StorageEngine(tmp_path / "unused.db")
+    commands = [_Command("frame.commit", {}) for _ in range(2)]
+    entered, release = threading.Event(), threading.Event()
+    class FailedStore:
+        def commit_frames(self, frames):
+            entered.set()
+            assert release.wait(2)
+            raise RuntimeError("commit failed")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        done = pool.submit(engine._commit_frame_commands, FailedStore(), commands)
+        try:
+            assert entered.wait(1)
+            assert all(not command.done.is_set() for command in commands)
+            release.set()
+            done.result(timeout=2)
+            assert all(command.done.is_set() and isinstance(command.error, RuntimeError) for command in commands)
+            assert engine._action_counts["frame.commit"] == 0
+        finally:
+            release.set()
+
 def test_storage_serializes_concurrent_frames_and_batch_ack(
     tmp_path: Path, monkeypatch
 ) -> None:
