@@ -34,11 +34,14 @@ $agentSite = Join-Path $root 'agent\.venv-pack\Lib\site-packages'
 $backendSite = Join-Path $root 'backend\.py314t-site'
 
 $sha = (& git -C $root rev-parse --short HEAD).Trim()
-$dirty = (& git -C $root status --porcelain --untracked-files=no | Measure-Object).Count -gt 0
+$fullSha = (& git -C $root rev-parse HEAD).Trim()
+$dirty = (& git -C $root status --porcelain | Measure-Object).Count -gt 0
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $suffix = if ($Label) { "-$Label" } else { '' }
 $runDir = Join-Path $LogRoot "$stamp-$sha$suffix"
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+$testTempRoot = Join-Path $root ('artifacts/t/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $testTempRoot -Force | Out-Null
 
 function Get-Version([string]$Exe, [string[]]$VersionArgs) {
     try { return ((& $Exe @VersionArgs 2>&1 | Select-Object -First 1) -as [string]).Trim() }
@@ -56,6 +59,7 @@ function Get-PkgVersion([string]$Exe, [string]$Package) {
 
 $envInfo = [ordered]@{
     frozenSha      = $sha
+    fullSha        = $fullSha
     worktreeDirty  = $dirty
     startedAt      = (Get-Date -Format 's')
     host           = $env:COMPUTERNAME
@@ -86,6 +90,7 @@ foreach ($name in $Modules) {
 
     Write-Host "########## $name ##########"
     $savedPythonPath = $env:PYTHONPATH
+    $savedPythonIOEncoding = $env:PYTHONIOENCODING
     $started = Get-Date
     $exitCode = 1
     $output = @()
@@ -95,8 +100,11 @@ foreach ($name in $Modules) {
         Push-Location $spec.WorkDir -ErrorAction Stop
         $locationPushed = $true
         if ($spec.PyPath) { $env:PYTHONPATH = $spec.PyPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+        $env:PYTHONIOENCODING = 'utf-8'
         $global:LASTEXITCODE = $null
-        $output = & $spec.Exe @($spec.Args) 2>&1
+        $runArgs = @($spec.Args)
+        if ($name -ne 'frontend') { $runArgs += @('--basetemp', (Join-Path $testTempRoot $name)) }
+        $output = & $spec.Exe @runArgs 2>&1
         if ($null -eq $global:LASTEXITCODE) { throw "Runner did not provide an exit code: $($spec.Exe)" }
         $exitCode = $global:LASTEXITCODE
     } catch {
@@ -104,11 +112,12 @@ foreach ($name in $Modules) {
         $exitCode = 1
     } finally {
         if ($null -ne $savedPythonPath) { $env:PYTHONPATH = $savedPythonPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPythonIOEncoding) { $env:PYTHONIOENCODING = $savedPythonIOEncoding } else { Remove-Item Env:\PYTHONIOENCODING -ErrorAction SilentlyContinue }
         if ($locationPushed) { Pop-Location }
     }
     $elapsed = ((Get-Date) - $started).TotalSeconds
 
-    $text = ($output | Out-String)
+    $text = ($output | Out-String -Width 4096)
     $text | Out-File -FilePath $logPath -Encoding utf8
 
     function _Count([string]$pattern) {
@@ -141,6 +150,7 @@ foreach ($name in $Modules) {
         ok          = ($exitCode -eq 0)
         seconds     = [math]::Round($elapsed, 1)
         log         = $logPath
+        testTemp    = if ($name -eq 'frontend') { $null } else { Join-Path $testTempRoot $name }
         counts      = $counts
         skipReasons = $skipReasons
     }
@@ -152,6 +162,7 @@ foreach ($name in $Modules) {
 
 $summary = [ordered]@{
     frozenSha   = $sha
+    fullSha     = $fullSha
     worktreeDirty = $dirty
     finishedAt  = (Get-Date -Format 's')
     modules     = $results
