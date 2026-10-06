@@ -275,6 +275,18 @@ export default function HistoryDataPage() {
   const [exportProgress, setExportProgress] = useState(0);
   const lastQueryRef = useRef<{ query: ReturnType<typeof buildQuery> } | null>(null);
   const matrixAlignRef = useRef<AlignGranularity>(matrixAlign);
+  const queryVersionRef = useRef(0);
+  const matrixVersionRef = useRef(0);
+  useEffect(() => {
+    ++queryVersionRef.current;
+    ++matrixVersionRef.current;
+    setLoading(false);
+    setMatrixLoading(false);
+    return () => {
+      ++queryVersionRef.current;
+      ++matrixVersionRef.current;
+    };
+  }, [deviceId, selectedPoints, startTime, endTime, interval, aggregate, token]);
 
   const loadDevices = useCallback((backendToken: string) => monitorClient.historyDevices(backendToken), []);
   const loadTypes = useCallback((backendToken: string) => monitorClient.historyDeviceTypes(backendToken), []);
@@ -314,8 +326,10 @@ export default function HistoryDataPage() {
 
   useEffect(() => {
     const snapshot = lastQueryRef.current;
-    if (!token || !snapshot || refreshVersion === 0) return;
+    if (!token || !snapshot || refreshVersion === 0 || loading) return;
     let active = true;
+    const queryVersion = ++queryVersionRef.current;
+    const matrixVersion = ++matrixVersionRef.current;
     setLoading(true);
     setMatrixLoading(true);
     Promise.all([
@@ -327,17 +341,17 @@ export default function HistoryDataPage() {
       }),
     ])
       .then(([nextChart, nextMatrix]) => {
-        if (!active) return;
+        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
         setChart(nextChart);
         setMatrix(nextMatrix);
       })
       .catch((reason) => {
-        if (!active) return;
+        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
         if ((reason as { type?: string })?.type === "unauthorized") logout();
         else toast.error(historyErrorMessage(reason, "历史数据刷新失败"));
       })
       .finally(() => {
-        if (!active) return;
+        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
         setLoading(false);
         setMatrixLoading(false);
       });
@@ -349,6 +363,8 @@ export default function HistoryDataPage() {
   }, [deviceId, devices.data]);
 
   function changeDevice(value: string) {
+    ++queryVersionRef.current;
+    ++matrixVersionRef.current;
     setDeviceId(Number(value));
     setSelectedPoints([]);
     setChart(null);
@@ -376,6 +392,8 @@ export default function HistoryDataPage() {
   }
 
   function confirmPoints() {
+    ++queryVersionRef.current;
+    ++matrixVersionRef.current;
     setSelectedPoints(draftPoints);
     setChart(null);
     setMatrix(null);
@@ -401,34 +419,44 @@ export default function HistoryDataPage() {
   async function loadMatrix(granularity: AlignGranularity, reset: boolean, cursorTs?: string, query?: ReturnType<typeof buildQuery>) {
     const effectiveQuery = query ?? lastQueryRef.current?.query;
     if (!token || !effectiveQuery?.varSeqs.length) return;
+    const matrixVersion = ++matrixVersionRef.current;
+    const queryVersion = queryVersionRef.current;
+    const isCurrent = () => matrixVersion === matrixVersionRef.current && queryVersion === queryVersionRef.current;
     setMatrixLoading(true);
     try {
       const result = await monitorClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs });
+      if (!isCurrent()) return;
       setMatrix((current) => reset || !current ? result : { ...result, rows: [...current.rows, ...result.rows] });
     } catch (reason) {
+      if (!isCurrent()) return;
       if ((reason as { type?: string })?.type === "unauthorized") logout();
       else toast.error(historyErrorMessage(reason, "历史数据矩阵加载失败"));
     } finally {
-      setMatrixLoading(false);
+      if (isCurrent()) setMatrixLoading(false);
     }
   }
 
   async function queryHistory() {
     if (!token || !validateQuery()) return;
     const query = buildQuery();
+    const queryVersion = ++queryVersionRef.current;
+    ++matrixVersionRef.current;
+    const isCurrent = () => queryVersion === queryVersionRef.current;
     setLoading(true);
     setChart(null);
     setMatrix(null);
     try {
       const result = await monitorClient.historyChart(token, query);
+      if (!isCurrent()) return;
       lastQueryRef.current = { query };
       setChart(result);
       await loadMatrix(matrixAlign, true, undefined, query);
     } catch (reason) {
+      if (!isCurrent()) return;
       if ((reason as { type?: string })?.type === "unauthorized") logout();
       else toast.error(historyErrorMessage(reason, "历史数据查询失败"));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 

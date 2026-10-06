@@ -57,6 +57,7 @@ import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
 import { monitorClient } from "@/lib/monitor-client";
 import { loadAllDevicePages } from "@/lib/device-catalog";
 import { saveDownload } from "@/lib/save-download";
+import { decimateTimeSeries } from "@/components/charts/decimate-time-series";
 import type { RealtimeDataItem } from "@/types/device-monitor";
 
 const COLORS = [
@@ -86,7 +87,7 @@ const REALTIME_VIEW_WINDOWS = [
 const DEFAULT_REALTIME_VIEW_MS = 60_000;
 
 type ChartType = "line" | "area" | "status";
-type SampleRow = Record<string, string | number>;
+type SampleRow = Record<string, string | number | null>;
 
 function formatSampleTime(timestamp: number) {
   const date = new Date(timestamp);
@@ -133,9 +134,10 @@ function normalizePointValue(point: RealtimeDataItem, value: unknown) {
 
 function chartValue(value: string | number | boolean) {
   if (typeof value === "boolean") return value ? 1 : 0;
-  if (typeof value === "number") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (!value.trim() || value === "--") return null;
   const number = Number(value);
-  return Number.isFinite(number) ? number : 0;
+  return Number.isFinite(number) ? number : null;
 }
 
 function formatValue(value: string | number | boolean) {
@@ -174,6 +176,10 @@ function TrendChart({
     [points],
   );
 
+  const chartSamples = useMemo(() => decimateTimeSeries(
+    samples, 600, points.map((point) => `v${point.varSeq}`),
+  ), [samples, points]);
+
   if (title && points.length === 0) return null;
   if (chartType === "status") {
     const rows = samples.slice(compact ? -3 : -6).reverse();
@@ -183,7 +189,7 @@ function TrendChart({
         <div className="overflow-hidden rounded-md border">
           <Table>
             <TableHeader><TableRow><TableHead className="w-28">时间</TableHead>{points.map((point) => <TableHead key={point.varSeq}>{point.pointName}</TableHead>)}</TableRow></TableHeader>
-            <TableBody>{rows.map((row, index) => <TableRow key={`${row.time}-${index}`}><TableCell className="font-mono text-xs">{row.time}</TableCell>{points.map((point) => { const value = Number(row[`v${point.varSeq}`] ?? 0); return <TableCell key={point.varSeq}><span className={`inline-flex min-w-12 justify-center rounded px-2 py-1 text-xs font-medium ${value > 0 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{value}</span></TableCell>; })}</TableRow>)}</TableBody>
+            <TableBody>{rows.map((row, index) => <TableRow key={`${row.time}-${index}`}><TableCell className="font-mono text-xs">{row.time}</TableCell>{points.map((point) => { const value = row[`v${point.varSeq}`] ?? "--"; return <TableCell key={point.varSeq}><span className={`inline-flex min-w-12 justify-center rounded px-2 py-1 text-xs font-medium ${typeof value === "number" && value > 0 ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}>{value}</span></TableCell>; })}</TableRow>)}</TableBody>
           </Table>
         </div>
       </div>
@@ -202,7 +208,7 @@ function TrendChart({
     <div className={["flex min-h-0 flex-col gap-1.5", className].join(" ")}>
       {title && <p className="text-xs font-medium text-muted-foreground">{title}</p>}
       <ChartContainer config={config} className={[compact ? "h-16 max-h-16" : "h-full min-h-0 flex-1", "w-full aspect-auto"].join(" ")}>
-        <Chart data={samples} accessibilityLayer>
+        <Chart data={chartSamples} accessibilityLayer>
           <CartesianGrid vertical={false} />
           <XAxis
             dataKey="sampleAt"

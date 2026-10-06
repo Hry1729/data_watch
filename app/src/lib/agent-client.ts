@@ -417,8 +417,8 @@ function makeRealAgent(): AgentClient {
       agentFetch<{ status: string }>("GET", `/viewer/processes/${name}/status`),
 
     startProcess:   (name) => agentFetch<void>("POST", `/admin/processes/${name}/start`),
-    stopProcess:    (name) => agentFetch<void>("POST", `/admin/processes/${name}/stop`),
-    restartProcess: (name) => agentFetch<void>("POST", `/admin/processes/${name}/restart`),
+    stopProcess:    (name) => agentFetch<void>("POST", `/admin/processes/${name}/stop`, undefined, undefined, 60),
+    restartProcess: (name) => agentFetch<void>("POST", `/admin/processes/${name}/restart`, undefined, undefined, 120),
 
     getConfig: () =>
       agentFetch<ConnectionConfig>("GET", "/admin/config"),
