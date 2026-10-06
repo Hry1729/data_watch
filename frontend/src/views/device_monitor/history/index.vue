@@ -297,6 +297,7 @@
 </template>
 
 <script setup lang="ts">
+import { useUserStore } from '@/store/modules/user'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -320,6 +321,8 @@ import { isHttpError } from '@/utils/http/error'
 defineOptions({ name: 'HistoryData' })
 
 // 缓存相关常量
+const historyUserStore = useUserStore()
+const historyOwnerUserId = historyUserStore.info.userId
 const HISTORY_CACHE_KEY = 'history_query_cache'
 const HISTORY_CACHE_MAX_CHART_POINTS = 5000
 const HISTORY_CACHE_MAX_MATRIX_ROWS = 2000
@@ -1045,6 +1048,7 @@ const canCacheHistoryResult = computed(() => {
 
 // 保存缓存（查询条件始终保存，数据根据大小决定）
 const saveHistoryCache = () => {
+  if (!historyUserStore.isLogin || historyUserStore.info.userId !== historyOwnerUserId) return
   try {
     const cacheData: any = {
       // 查询条件始终保存

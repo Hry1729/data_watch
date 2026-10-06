@@ -180,6 +180,9 @@ export const useUserStore = defineStore(
       // 注意：不清空工作台标签页，等下次登录时根据用户判断
       // 移除iframe路由缓存
       sessionStorage.removeItem('iframeRoutes')
+      for (const key of ['realtime-monitor-state', 'realtime-monitor-chart-state', 'history_query_cache']) {
+        localStorage.removeItem(key)
+      }
       // 清空主页路径
       useMenuStore().setHomePath('')
       // 重置路由状态

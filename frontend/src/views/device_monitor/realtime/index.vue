@@ -302,8 +302,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, onActivated, onDeactivated, ref, shallowRef, watch, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRoute } from 'vue-router'
+import { useUserStore } from '@/store/modules/user'
 import { expandRealtimeSamples, type RealtimeSample } from '@/utils/realtime-samples'
 import { isQualityAbnormal } from '@/utils/realtime-quality'
 import type { CheckboxValueType } from 'element-plus'
@@ -321,6 +323,13 @@ import {
 
 defineOptions({ name: 'RealtimeMonitor' })
 
+const userStore = useUserStore()
+const ownerUserId = userStore.info.userId
+const canPersist = () => userStore.isLogin && userStore.info.userId === ownerUserId
+const route = useRoute()
+let pageActive = false
+let pageEpoch = 0
+let resumeMonitoring = false
 const settingStore = useSettingStore()
 const { isDark } = storeToRefs(settingStore)
 
@@ -407,6 +416,7 @@ const CHART_STATE_KEY = 'realtime-monitor-chart-state'
 const MAX_SNAPSHOT_RECORDS = 500 // 保存最近500条数据快照
 
 const saveStateToStorage = () => {
+  if (!canPersist()) return
   const state = {
     deviceId: currentDevice.value?.deviceId,
     deviceCode: currentDevice.value?.deviceCode,
@@ -458,7 +468,7 @@ const saveChartSnapshot = async () => {
       timestamp: Date.now()
     }
 
-    localStorage.setItem(CHART_STATE_KEY, JSON.stringify(chartState))
+    if (canPersist()) localStorage.setItem(CHART_STATE_KEY, JSON.stringify(chartState))
   } catch (error) {
     console.warn('保存图表快照失败:', error)
   }
@@ -470,6 +480,8 @@ const loadStateFromStorage = (): boolean => {
     if (!raw) return false
 
     const state = JSON.parse(raw)
+    if (!deviceList.value.some((device) => device.deviceId === Number(state.deviceId))) return false
+    if (route.query.deviceId && Number(route.query.deviceId) !== Number(state.deviceId)) return false
     if (state.deviceId && state.selectedPoints?.length > 0) {
       currentDevice.value = {
         deviceId: state.deviceId,
@@ -752,11 +764,14 @@ const loadDeviceTree = async () => {
       }))
     deviceList.value = devices
 
-    // 默认选择第一个设备
-    if (devices.length > 0) {
-      currentDevice.value = devices[0]
-      await loadPointList(devices[0].deviceId)
-      void loadPointGroups(devices[0].deviceCode)
+    const requestedId = Number(route.query.deviceId)
+    const device = requestedId
+      ? devices.find((item) => item.deviceId === requestedId)
+      : devices[0]
+    currentDevice.value = device ?? null
+    if (device) {
+      await loadPointList(device.deviceId)
+      void loadPointGroups(device.deviceCode)
     }
   } catch (error) {
     console.error('加载设备列表失败:', error)
@@ -1028,6 +1043,7 @@ const flushPendingRealtimeUpdates = () => {
 }
 
 const startFlushTimer = () => {
+  if (!pageActive || !canPersist()) return
   if (valueFlushTimer === null) valueFlushTimer = setInterval(flushPendingValues, 100)
   if (chartFlushTimer !== null) clearInterval(chartFlushTimer)
   chartFlushTimer = setInterval(flushPendingChart, refreshRate.value)
@@ -1075,7 +1091,7 @@ const disconnectForUnmount = () => {
 
 // WebSocket 连接
 const connectWebSocket = () => {
-  if (!isMonitoring.value) return
+  if (!pageActive || !canPersist() || !isMonitoring.value) return
 
   closeWebSocket()
 
@@ -1083,6 +1099,10 @@ const connectWebSocket = () => {
     websocket.value = new WebSocket(getRealtimeWebSocketUrl())
 
     websocket.value.onopen = () => {
+      if (!pageActive || !canPersist()) {
+        closeWebSocket()
+        return
+      }
       wsConnected.value = true
       reconnectAttempts.value = 0
       // 发送认证消息（token 不放 URL，避免暴露在日志/历史记录中）
@@ -1198,7 +1218,7 @@ const clearHeartbeat = () => {
 }
 
 const scheduleReconnect = () => {
-  if (!isMonitoring.value || reconnectTimer.value) return
+  if (!pageActive || !isMonitoring.value || reconnectTimer.value) return
   const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts.value))
   reconnectAttempts.value += 1
   reconnectTimer.value = setTimeout(() => {
@@ -1229,7 +1249,7 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
     // 单图表模式：所有数据放入同一个图表
     if (!separateBoolChart.value && perspectiveViewer.value) {
       if (!perspectiveTable.value) {
-        perspectiveTable.value = await perspectiveWorker.value.table(schema as any)
+        perspectiveTable.value = await perspectiveWorker.value.table(schema as any, { limit: MAX_RECORDS })
         await (perspectiveTable.value as any).update(records)
         const config = buildViewerConfig(false)
         await perspectiveViewer.value.load(perspectiveTable.value)
@@ -1248,7 +1268,7 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
     // 更新数值型图表
     if (numericRecords.length > 0 && perspectiveNumericViewer.value) {
       if (!perspectiveNumericTable.value) {
-        perspectiveNumericTable.value = await perspectiveWorker.value.table(schema as any)
+        perspectiveNumericTable.value = await perspectiveWorker.value.table(schema as any, { limit: MAX_RECORDS })
         await (perspectiveNumericTable.value as any).update(numericRecords)
         const config = buildViewerConfig(false)
         await perspectiveNumericViewer.value.load(perspectiveNumericTable.value)
@@ -1262,7 +1282,7 @@ const updatePerspectiveTable = async (newRecords: RealtimeDataRecord[]) => {
     // 更新 Bool 型图表
     if (boolRecords.length > 0 && perspectiveBoolViewer.value) {
       if (!perspectiveBoolTable.value) {
-        perspectiveBoolTable.value = await perspectiveWorker.value.table(schema as any)
+        perspectiveBoolTable.value = await perspectiveWorker.value.table(schema as any, { limit: MAX_RECORDS })
         await (perspectiveBoolTable.value as any).update(boolRecords)
         const config = buildViewerConfig(true)
         await perspectiveBoolViewer.value.load(perspectiveBoolTable.value)
@@ -1463,14 +1483,22 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
 
 // Perspective 图表
 const initPerspectiveViewer = async () => {
+  const epoch = pageEpoch
+  if (!pageActive) return
   await nextTick() // 确保 DOM 已渲染
 
   try {
     const runtime = await ensurePerspectiveViewerRuntime()
+    if (!pageActive || epoch !== pageEpoch) return
     perspectiveReady.value = true
 
     if (!perspectiveWorker.value) {
-      perspectiveWorker.value = await runtime.perspective.worker()
+      const worker = await runtime.perspective.worker()
+      if (!pageActive || epoch !== pageEpoch) {
+        worker.terminate?.()
+        return
+      }
+      perspectiveWorker.value = worker
     }
 
     // 单图表模式
@@ -1745,25 +1773,33 @@ const formatExportTime = (date: Date): string => {
 }
 
 // 生命周期
-onMounted(async () => {
+const initializePage = async () => {
+  const epoch = ++pageEpoch
+  const isCurrent = () => pageActive && epoch === pageEpoch && canPersist()
   await loadDeviceTree()
+  if (!isCurrent()) return
 
   // 恢复之前的状态
   const wasMonitoring = loadStateFromStorage()
   if (currentDevice.value) {
     await loadPointList(currentDevice.value.deviceId)
+    if (!isCurrent()) return
     void loadPointGroups(currentDevice.value.deviceCode)
   }
 
   // 无论是否正在监控，都先初始化 Perspective 并恢复快照
   if (currentDevice.value && selectedPoints.value.length > 0) {
     await nextTick()
+    if (!isCurrent()) return
     await initPerspectiveViewer()
+    if (!isCurrent()) return
 
     // 恢复数据快照（如果有）
     const snapshotLoaded = await loadChartSnapshot()
+    if (!isCurrent()) return
     if (snapshotLoaded && realtimeRecords.value.length > 0) {
       await updatePerspectiveTable(realtimeRecords.value)
+      if (!isCurrent()) return
     }
 
     // 如果之前正在监控，再连接 WebSocket 继续接收新数据
@@ -1773,9 +1809,47 @@ onMounted(async () => {
       startFlushTimer()
     }
   }
+}
+
+const activatePage = () => {
+  if (pageActive) return
+  pageActive = true
+  isPerspectiveCleaning.value = false
+  void initializePage()
+}
+watch(() => userStore.isLogin, (loggedIn) => {
+  if (!loggedIn) {
+    pageActive = false
+    ++pageEpoch
+    disconnectForUnmount()
+  }
+})
+watch(() => route.query.deviceId, async () => {
+  if (!pageActive) return
+  ++pageEpoch
+  resumeMonitoring = false
+  disconnectForUnmount()
+  selectedPoints.value = []
+  realtimeRecords.value = []
+  clearPending()
+  await clearPerspectiveTable()
+  if (pageActive) void initializePage()
+})
+onMounted(activatePage)
+onActivated(activatePage)
+onDeactivated(() => {
+  resumeMonitoring = isMonitoring.value
+  saveStateToStorage()
+  pageActive = false
+  ++pageEpoch
+  isPerspectiveCleaning.value = true
+  disconnectForUnmount()
 })
 
 onUnmounted(() => {
+  pageActive = false
+  ++pageEpoch
+  isPerspectiveCleaning.value = true
   // 保存状态和数据快照
   const state = {
     deviceId: currentDevice.value?.deviceId,
@@ -1791,9 +1865,9 @@ onUnmounted(() => {
     chartRefreshRate: refreshRate.value,
     chartType: chartType.value,
     separateBoolChart: separateBoolChart.value,
-    wasMonitoring: isMonitoring.value
+    wasMonitoring: isMonitoring.value || resumeMonitoring
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+  if (canPersist()) localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
 
   // 保存数据快照（保留已有的 configs，避免覆盖 saveChartSnapshot 写入的图表配置）
   flushPendingRealtimeUpdates()
@@ -1806,7 +1880,7 @@ onUnmounted(() => {
   const existingChartState = (() => {
     try { return JSON.parse(localStorage.getItem(CHART_STATE_KEY) || '{}') } catch { return {} }
   })()
-  localStorage.setItem(CHART_STATE_KEY, JSON.stringify({
+  if (canPersist()) localStorage.setItem(CHART_STATE_KEY, JSON.stringify({
     data: dataSnapshot,
     configs: existingChartState.configs,
     timestamp: Date.now()

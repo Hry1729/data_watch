@@ -2,7 +2,8 @@ import type { HistoryPerspectiveRecord } from './perspective-session'
 
 export type PerspectiveWorkerClient = {
   table: (
-    data: Record<string, unknown>[] | Record<string, string>
+    data: Record<string, unknown>[] | Record<string, string>,
+    options?: { limit?: number }
   ) => Promise<PerspectiveTableClient>
   terminate?: () => void
 }
