@@ -55,6 +55,35 @@ def test_signing_tool_and_static_signature_validation(signed_package, tmp_path):
     assert result.publisher == "reviewed-company"
 
 
+def test_rebuilt_offline_catalog_preserves_signing_trust(signed_package, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import data_watch_driver_manifest
+    from data_watch_driver_catalog import OFFICIAL_ALIASES, write_catalog
+    from data_watch_driver_signatures import verify_package_signature
+    root, catalog_path = signed_package
+    manifest = data_watch_driver_manifest.load_driver_toml(root / "driver.toml")
+    packages = tmp_path / "sources"
+    source_catalog = packages / "driver-catalog/catalog.json"
+    source_catalog.parent.mkdir(parents=True)
+    trust = read_catalog(catalog_path)
+    trust["approved_packages"] = [{"id": "reviewed", "publisher": "reviewed-company", "version": "1.0.0", "tree_sha256": "a" * 64}]
+    source_catalog.write_text(json.dumps(trust), encoding="utf-8")
+    for driver_id in OFFICIAL_ALIASES:
+        package = packages / driver_id
+        package.mkdir()
+        (package / "driver.toml").write_text("test fixture", encoding="utf-8")
+    def load(path):
+        driver_id = path.parent.name
+        return SimpleNamespace(id=driver_id, protocol=driver_id, name=driver_id, description="fixture", version="1.0.0", publisher="datawatch", aliases=OFFICIAL_ALIASES[driver_id], capabilities=["read"], read_write="只读")
+    monkeypatch.setattr(data_watch_driver_manifest, "load_driver_toml", load)
+    generated = tmp_path / "build/driver-catalog/catalog.json"
+    write_catalog(packages, generated, "0.1.0")
+    actual = read_catalog(generated)
+    assert actual["trusted_publishers"] == trust["trusted_publishers"]
+    assert actual["approved_packages"] == trust["approved_packages"]
+    assert verify_package_signature(root, manifest, actual)
+
+
 @pytest.mark.parametrize("mutation", ["code", "extra_file", "signature", "publisher", "unknown_key"])
 def test_rejects_tampered_or_untrusted_signature(signed_package, tmp_path, mutation):
     root, catalog = signed_package

@@ -96,6 +96,8 @@ def write_catalog(packages_root: Path, destination: Path, version: str, *, execu
     packages_root = Path(packages_root)
     if (packages_root / "packages").is_dir():
         packages_root = packages_root / "packages"
+    trust_path = packages_root / "driver-catalog/catalog.json"
+    trust = read_catalog(trust_path) if trust_path.is_file() else {}
     destination.parent.mkdir(parents=True, exist_ok=True)
     entries = []
     for driver_id in OFFICIAL_ALIASES:
@@ -114,5 +116,8 @@ def write_catalog(packages_root: Path, destination: Path, version: str, *, execu
                         "capabilities": list(manifest.capabilities), "readWriteType": manifest.read_write,
                         "archive": archive, "sha256": file_digest(archive_path), "tree_sha256": tree_digest(root)})
     data = {"schema_version": 2, "collector_version": version, "python_abi": "cp314t", "drivers": entries}
+    for field in ("trusted_publishers", "approved_packages"):
+        if field in trust:
+            data[field] = trust[field]
     data["build_id"] = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
     destination.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
