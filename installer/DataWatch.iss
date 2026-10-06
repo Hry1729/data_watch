@@ -465,6 +465,9 @@ begin
   // 三个根环境变量须在进程启动前注入(CONFIG_PATH 在 import 期计算)
   NssmRequired('set AppEnvironmentExtra', 'set {#MyServiceName} AppEnvironmentExtra "DATAWATCH_INSTALL_ROOT=' + app + '" "DATAWATCH_DATA_ROOT=' + data + '" "DATAWATCH_AGENT_SERVICE_TOKEN=' + token + '"');
   NssmRequired('set Start', 'set {#MyServiceName} Start SERVICE_AUTO_START');
+  NssmRequired('set AppStopMethodConsole', 'set {#MyServiceName} AppStopMethodConsole 60000');
+  NssmRequired('set AppStopMethodWindow', 'set {#MyServiceName} AppStopMethodWindow 1500');
+  NssmRequired('set AppStopMethodThreads', 'set {#MyServiceName} AppStopMethodThreads 1500');
   NssmRequired('set AppStdout', 'set {#MyServiceName} AppStdout "' + data + '\runtime\logs\agent-service.out.log"');
   NssmRequired('set AppStderr', 'set {#MyServiceName} AppStderr "' + data + '\runtime\logs\agent-service.err.log"');
   NssmRequired('start', 'start {#MyServiceName}');

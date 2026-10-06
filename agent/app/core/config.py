@@ -92,10 +92,17 @@ def mutate_config(mutator) -> dict:
         return cfg
 
 
+def initialize_config_permissions() -> None:
+    """Repair existing secret file ACLs once, before accepting requests."""
+    with _CONFIG_LOCK:
+        for path in (CONFIG_PATH, CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")):
+            if path.exists() or path.is_symlink():
+                _restrict_config_acl(path)
+
+
 def _load_config_unlocked() -> dict:
-    for path in (CONFIG_PATH, CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.tmp")):
-        if path.exists() or path.is_symlink():
-            _restrict_config_acl(path)
+    if CONFIG_PATH.is_symlink() or CONFIG_PATH.is_junction():
+        raise ValueError(f"Refusing linked Agent configuration: {CONFIG_PATH}")
     if not CONFIG_PATH.exists():
         cfg = _default_config()
         _save_config_unlocked(cfg)

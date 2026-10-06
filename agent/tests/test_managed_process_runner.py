@@ -86,6 +86,43 @@ def test_verify_alive_rejects_stale_create_time(runtime_dir):
     assert r.verify_alive({"pid": os.getpid(), "create_time": 1.0}) is None
 
 
+def test_verify_alive_rejects_subsecond_pid_reuse(runtime_dir):
+    r = ManagedProcessRunner(runtime_dir)
+    created = psutil.Process(os.getpid()).create_time()
+    assert r.verify_alive({"pid": os.getpid(), "create_time": created - 0.5}) is None
+    assert r.verify_alive({"pid": os.getpid(), "create_time": created}) is not None
+
+
 def test_read_pid_record_missing_returns_none(runtime_dir):
     r = ManagedProcessRunner(runtime_dir)
     assert r.read_pid_record("nope") is None
+
+
+def test_atomic_pid_failure_preserves_previous_record(runtime_dir, monkeypatch):
+    import pytest
+    r = ManagedProcessRunner(runtime_dir)
+    r.write_pid_record("atomic", 123, 10.0)
+    before = r.pid_file("atomic").read_bytes()
+    def fail_replace(*args):
+        raise OSError("interrupted replace")
+    monkeypatch.setattr("app.services.managed_process_runner.os.replace", fail_replace)
+    with pytest.raises(OSError, match="interrupted"):
+        r.write_pid_record("atomic", 456, 20.0)
+    assert r.pid_file("atomic").read_bytes() == before
+    assert list(r.pids_dir.glob("*.tmp")) == []
+
+
+def test_restart_preserves_log_even_while_tail_reader_holds_file(runtime_dir):
+    r = ManagedProcessRunner(runtime_dir)
+    log = r.log_file("proxy_9090")
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("crash diagnostic", encoding="utf-8")
+    pid = None
+    try:
+        with log.open("r", encoding="utf-8"):
+            pid, _ = _spawn(r)
+            assert log.with_name("previous.log").read_text(encoding="utf-8") == "crash diagnostic"
+    finally:
+        if pid is not None:
+            r.force_stop(psutil.Process(pid))
+        r.close_log("proxy_9090")

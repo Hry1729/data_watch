@@ -6,6 +6,7 @@
 """
 
 import sys
+import pytest
 
 from app.factory import build_sidecar_manager
 from app.services.sidecar_manager import SidecarManager
@@ -81,3 +82,53 @@ def test_install_root_env_var_takes_precedence(tmp_path, monkeypatch):
     monkeypatch.setenv("DATAWATCH_INSTALL_ROOT", str(tmp_path))
     sm = build_sidecar_manager(_cfg(), tmp_path)
     assert sm.install_root == tmp_path.resolve()
+
+
+@pytest.mark.asyncio
+async def test_storage_crash_recovery_backs_off(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+    from app import factory
+    delays = []
+    async def sleep(delay):
+        delays.append(delay)
+        if len(delays) == 5:
+            raise asyncio.CancelledError()
+    monkeypatch.setattr(factory.asyncio, "sleep", sleep)
+    monkeypatch.setattr(factory, "_storage_env", lambda: {})
+    pm = SimpleNamespace(status=lambda name: SimpleNamespace(status="crashed"), restart=AsyncMock(), log_file=lambda name: tmp_path / "current.log")
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, edge_storage=SimpleNamespace(wait_ready=lambda: None), log_manager=MagicMock()))
+    with pytest.raises(asyncio.CancelledError):
+        await factory._recover_edge_storage(app)
+    assert delays == [2.0, 4.0, 8.0, 16.0, 32.0]
+
+
+@pytest.mark.asyncio
+async def test_storage_retries_failed_recovery_from_stopped_state(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app import factory
+    from app.services.managed_process_runner import ManagedProcessError
+    status = SimpleNamespace(status="crashed")
+    attempts = []
+    async def restart(*args, **kwargs):
+        attempts.append(1)
+        status.status = "stopped"
+        if len(attempts) == 1:
+            raise ManagedProcessError("archive failed")
+        status.status = "running"
+    delays = []
+    async def sleep(delay):
+        delays.append(delay)
+        if len(delays) == 4:
+            raise asyncio.CancelledError()
+    monkeypatch.setattr(factory.asyncio, "sleep", sleep)
+    monkeypatch.setattr(factory, "_storage_env", lambda: {})
+    pm = SimpleNamespace(status=lambda name: status, restart=restart, log_file=lambda name: tmp_path / "current.log")
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, edge_storage=SimpleNamespace(wait_ready=lambda: None), log_manager=MagicMock()))
+    with pytest.raises(asyncio.CancelledError):
+        await factory._recover_edge_storage(app)
+    assert len(attempts) == 2
+    assert app.state._storage_recovery_pending is False

@@ -35,6 +35,41 @@ _INSTALL_REL = "sidecars/opcda_proxy_service/bin"
 _DEV_REL = "collector/sidecars/opcda_proxy_service/bin"
 
 
+def test_prepare_spawn_error_rolls_back_started_instances(runtime_dir, monkeypatch):
+    from app.services.managed_process_runner import ManagedProcessError
+    from app.services.sidecar_manager import ProxyInstance
+    sm = _wire_prepare(runtime_dir, ["host-a", "host-b"])
+    inst = ProxyInstance(9090, 123, 20.0, runtime_dir / "config.json", runtime_dir / "log.txt")
+    stopped = []
+    calls = []
+    def start(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            raise ManagedProcessError("spawn failure")
+        return inst
+    monkeypatch.setattr(sm, "start_proxy", start)
+    monkeypatch.setattr(sm, "_stop_instance", stopped.append)
+    with pytest.raises(ManagedProcessError, match="spawn failure"):
+        sm.prepare_for_collector_start()
+    assert stopped == [inst]
+    assert sm._proxies == {}
+
+
+def test_proxy_exit_after_launch_cleans_pid_and_log(runtime_dir, monkeypatch):
+    from unittest.mock import MagicMock
+    sm = _wire_prepare(runtime_dir, ["host-a"])
+    monkeypatch.setattr(sm.runner, "launch", lambda *args, **kwargs: (123, 20.0))
+    monkeypatch.setattr(sm.runner, "close_log", MagicMock())
+    monkeypatch.setattr(sm.runner, "delete_pid_record", MagicMock())
+    def gone(pid):
+        raise psutil.NoSuchProcess(pid)
+    monkeypatch.setattr(psutil, "Process", gone)
+    with pytest.raises(psutil.NoSuchProcess):
+        sm.start_proxy(port=9090, vm_host="host-a", endpoint="host-a")
+    sm.runner.close_log.assert_called_once_with("proxy_9090")
+    sm.runner.delete_pid_record.assert_called_once_with("proxy_9090")
+
+
 def _make_exe(root, rel):
     exe = root.joinpath(*rel.split("/"), _EXE)
     exe.parent.mkdir(parents=True, exist_ok=True)
@@ -711,3 +746,16 @@ def test_on_collector_stop_stops_all_proxies_and_clears(runtime_dir):
         sm.runner.close_log(f"proxy_{p2}")
 
 
+
+
+def test_stop_proxy_refuses_reused_pid(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    sm = SidecarManager(install_root=tmp_path)
+    sm.runner = MagicMock()
+    sm._terminate_tree = MagicMock()
+    proc = MagicMock()
+    proc.create_time.return_value = 20.0
+    monkeypatch.setattr("app.services.sidecar_manager.psutil.Process", lambda pid: proc)
+    sm._stop_instance(SimpleNamespace(pid=123, create_time=10.0, port=9090))
+    sm._terminate_tree.assert_not_called()

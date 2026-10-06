@@ -406,6 +406,12 @@ begin
     RaiseException('Unable to set Agent environment');
   if Nssm('set {#MyServiceName} Start SERVICE_AUTO_START') <> 0 then
     RaiseException('Unable to set Agent service startup type');
+  if Nssm('set {#MyServiceName} AppStopMethodConsole 60000') <> 0 then
+    RaiseException('Unable to set Agent graceful stop timeout');
+  if Nssm('set {#MyServiceName} AppStopMethodWindow 1500') <> 0 then
+    RaiseException('Unable to set Agent window stop timeout');
+  if Nssm('set {#MyServiceName} AppStopMethodThreads 1500') <> 0 then
+    RaiseException('Unable to set Agent thread stop timeout');
   if Nssm('set {#MyServiceName} AppStdout "' + DataPath + '\runtime\logs\agent-service.out.log"') <> 0 then
     RaiseException('Unable to set Agent stdout log');
   if Nssm('set {#MyServiceName} AppStderr "' + DataPath + '\runtime\logs\agent-service.err.log"') <> 0 then

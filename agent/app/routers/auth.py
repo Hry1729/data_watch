@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 
 import pymysql
 from fastapi import APIRouter, HTTPException
@@ -24,6 +25,8 @@ def _get_mysql_conn(cfg: dict):
         password=password,
         database=mysql["database"],
         connect_timeout=5,
+        read_timeout=5,
+        write_timeout=5,
         cursorclass=pymysql.cursors.DictCursor,
     )
 
@@ -48,6 +51,10 @@ async def login(body: LoginRequest):
 
 
 async def _mysql_roles(cfg: dict, body: LoginRequest) -> list[str]:
+    return await asyncio.to_thread(_mysql_roles_sync, cfg, body)
+
+
+def _mysql_roles_sync(cfg: dict, body: LoginRequest) -> list[str]:
     try:
         conn = _get_mysql_conn(cfg)
     except Exception:

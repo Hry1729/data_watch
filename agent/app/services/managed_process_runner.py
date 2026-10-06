@@ -4,6 +4,8 @@ import logging
 import os
 import subprocess
 import time
+import tempfile
+import shutil
 from pathlib import Path
 from typing import BinaryIO
 
@@ -34,13 +36,13 @@ def child_environment(extra: dict[str, str] | None = None) -> dict[str, str]:
     ``extra`` 里若试图重新注入被剥离的名字，**仍会被丢弃**——凭据必须由该进程自己的
     数据文件（如按角色的 Edge Storage 令牌文件）提供，而不是靠继承。
     """
-    run_env = {key: value for key, value in os.environ.items() if key not in _CHILD_ENV_DENY}
+    run_env = {key: value for key, value in os.environ.items() if key.upper() not in _CHILD_ENV_DENY}
     # 实时落盘 + 强制 UTF-8：子进程在 GBK 代码页的控制台下会因打印非 GBK 字符失败。
     run_env.setdefault("PYTHONUNBUFFERED", "1")
     run_env.setdefault("PYTHONUTF8", "1")
     run_env.setdefault("PYTHONIOENCODING", "utf-8")
     if extra:
-        run_env.update({key: value for key, value in extra.items() if key not in _CHILD_ENV_DENY})
+        run_env.update({key: value for key, value in extra.items() if key.upper() not in _CHILD_ENV_DENY})
     return run_env
 
 
@@ -106,7 +108,18 @@ class ManagedProcessRunner:
             ),
             "module": name,
         }
-        path.write_text(toml.dumps(data), encoding="utf-8")
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=path.name + ".", suffix=".tmp", delete=False) as handle:
+                tmp_path = Path(handle.name)
+                handle.write(toml.dumps(data))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
 
     def delete_pid_record(self, name: str) -> None:
         path = self.pid_file(name)
@@ -120,7 +133,7 @@ class ManagedProcessRunner:
         try:
             proc = psutil.Process(record["pid"])
             recorded = float(record.get("create_time", 0))
-            if abs(proc.create_time() - recorded) < 1.0:
+            if proc.create_time() == recorded:
                 return proc
         except (psutil.NoSuchProcess, psutil.AccessDenied, KeyError, ValueError):
             return None
@@ -136,7 +149,7 @@ class ManagedProcessRunner:
     ) -> tuple[int, float]:
         """spawn 子进程 + 日志重定向 + 写 PID 文件，返回 (pid, create_time)。
 
-        子进程 stdout/stderr → logs/{name}/current.log（启动前截断，PYTHONUNBUFFERED
+        子进程 stdout/stderr → logs/{name}/current.log（启动前保留 previous.log，PYTHONUNBUFFERED
         保证实时落盘）。立即退出或 PID 落盘失败时回收进程并抛 ManagedProcessError。
         """
         self.ensure_dirs()
@@ -144,6 +157,11 @@ class ManagedProcessRunner:
         log_path = self.log_file(name)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self.close_log(name)  # 防御：关掉可能残留的旧句柄
+        if log_path.exists():
+            try:
+                shutil.copyfile(log_path, log_path.with_name("previous.log"))
+            except OSError as exc:
+                raise ManagedProcessError(f"failed to archive previous log for {name}: {exc}") from exc
         log_fp = open(log_path, "wb")  # 二进制 sink，交给子进程直接写
 
         run_env = child_environment(env)

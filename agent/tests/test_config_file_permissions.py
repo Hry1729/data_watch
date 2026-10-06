@@ -52,6 +52,7 @@ def test_load_repairs_explicit_and_inherited_grants_without_rotating(isolated_co
         result = subprocess.run(["icacls", str(path), "/inheritance:e", "/grant",
                                  "*S-1-5-32-545:RX", "*S-1-1-0:RX"], capture_output=True)
         assert result.returncode == 0
+    config.initialize_config_permissions()
     assert config.load_config()["agent"]["jwt_secret"] == cfg["agent"]["jwt_secret"]
     assert isolated_config.read_bytes() == before
     _assert_private(isolated_config)
@@ -78,4 +79,15 @@ def test_acl_failure_refuses_to_use_existing_secret(isolated_config, monkeypatch
         raise PermissionError("synthetic ACL failure")
     monkeypatch.setattr(config, "_restrict_config_acl", failed_acl)
     with pytest.raises(PermissionError, match="synthetic"):
-        config.load_config()
+        config.initialize_config_permissions()
+
+
+def test_regular_load_does_not_rewrite_acl(isolated_config, monkeypatch):
+    cfg = config._default_config()
+    config.save_config(cfg)
+    config.initialize_config_permissions()
+    def forbidden(path):
+        raise AssertionError("ACL write in authentication read path")
+    monkeypatch.setattr(config, "_restrict_config_acl", forbidden)
+    for _ in range(3):
+        assert config.load_config()["agent"]["jwt_secret"] == cfg["agent"]["jwt_secret"]

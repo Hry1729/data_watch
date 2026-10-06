@@ -74,6 +74,47 @@ def test_explicit_extra_cannot_reinject_stripped_credentials(monkeypatch):
     assert "SENTINEL_reinjected" not in env.values()
 
 
+def test_windows_case_aliases_cannot_reinject_credentials(monkeypatch):
+    from app.services import managed_process_runner as runner_module
+    monkeypatch.setattr(runner_module.os, "environ", {"Auth_Secret_Key": "sentinel", "PATH": "runtime"})
+    env = child_environment({"datawatch_agent_service_token": "secret", "DataWatch_Edge_Storage_Token": "secret", "MYSQL_HOST": "db"})
+    assert {key.upper() for key in env}.isdisjoint({"DATAWATCH_AGENT_SERVICE_TOKEN", "DATAWATCH_EDGE_STORAGE_TOKEN", "AUTH_SECRET_KEY"})
+    assert env["PATH"] == "runtime"
+    assert env["MYSQL_HOST"] == "db"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("packaged", [True, False])
+async def test_driver_preflight_filters_parent_environment(tmp_path, monkeypatch, packaged):
+    import json
+    from unittest.mock import AsyncMock
+    from app.core import config
+    from app.services.driver_installer import DriverInstaller
+    executable = tmp_path / "collector.exe"
+    fallback = tmp_path / "collector/.venv-pack/Scripts/python.exe"
+    fallback.parent.mkdir(parents=True)
+    (executable if packaged else fallback).touch()
+    monkeypatch.setattr(config, "module_paths", lambda _: (executable, tmp_path))
+    monkeypatch.setattr(config, "install_root", lambda: tmp_path)
+    for key in ("DATAWATCH_AGENT_SERVICE_TOKEN", "DATAWATCH_EDGE_STORAGE_TOKEN", "AUTH_SECRET_KEY"):
+        monkeypatch.setenv(key, "SENTINEL_" + key)
+    monkeypatch.setenv("DATAWATCH_ROLE", "edge")
+    installer = DriverInstaller(tmp_path)
+    monkeypatch.setattr(installer, "_catalog_path", lambda: tmp_path / "catalog/catalog.json")
+    process = AsyncMock()
+    process.returncode = 0
+    process.communicate.return_value = (json.dumps({"status": "verified"}).encode(), b"")
+    spawn = AsyncMock(return_value=process)
+    monkeypatch.setattr("app.services.driver_installer.asyncio.create_subprocess_exec", spawn)
+    assert await installer._preflight_package(tmp_path / "candidate") == {"status": "verified"}
+    env = spawn.call_args.kwargs["env"]
+    assert not any(value.startswith("SENTINEL_") for value in env.values())
+    assert env["DATAWATCH_ROLE"] == "edge"
+    assert env["DATAWATCH_DATA_ROOT"] == str(installer.drivers_root.parent)
+    assert env["DATAWATCH_DRIVER_CATALOG_ROOT"] == str(tmp_path / "catalog")
+    assert env["PYTHONIOENCODING"] == "utf-8"
+
+
 def _wait_for_log(path: Path, marker: str, timeout: float = 20.0) -> str:
     deadline = time.monotonic() + timeout
     text = ""

@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import asyncio
+from contextlib import asynccontextmanager
 import logging
 import socket
 import time
@@ -27,6 +29,40 @@ from app.services.opcda_detect import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def collector_lifecycle(pm):
+    lock = getattr(pm, "_collector_lifecycle_lock", None)
+    if lock is None:
+        lock = pm._collector_lifecycle_lock = asyncio.Lock()
+    async with lock:
+        yield
+
+
+async def wait_for_sidecar_operation(operation):
+    task = asyncio.create_task(asyncio.to_thread(operation))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+            if task.cancelled():
+                raise
+            continue
+        except Exception:
+            if cancelled:
+                raise asyncio.CancelledError() from None
+            raise
+        if cancelled:
+            raise asyncio.CancelledError()
+        return result
+
+
+async def stop_collector_for_drivers(pm):
+    async with collector_lifecycle(pm):
+        await pm.stop("collector")
 
 PROXY_EXE_NAME = "OpcDaProxyService.exe"
 
@@ -258,31 +294,22 @@ class SidecarManager:
         name = f"proxy_{port}"
         cmd = self._build_proxy_cmd(config_path)
         pid, create_time = self.runner.launch(name, cmd, cwd=str(self.runtime_dir))
-        proc = psutil.Process(pid)
-        log_path = self.runner.log_file(name)
-
-        deadline = time.monotonic() + ready_timeout
-        while time.monotonic() < deadline:
-            if not proc.is_running():
-                break  # proxy 进程先退（如端口被占致 bind 失败）→ 提前判失败
-                # 注：不查 proc.status()——Windows 无 POSIX zombie，且 status() 在进程
-                # 刚退时抛 NoSuchProcess，会绕过统一失败路径；is_running() 对死进程返回 False。
-            if self._port_connectable(port) and self._proxy_owns_listen(proc, port):
-                return ProxyInstance(
-                    port=port,
-                    pid=pid,
-                    create_time=create_time,
-                    config_path=config_path,
-                    log_path=log_path,
-                )
-            time.sleep(poll_interval)
-
-        self._terminate_tree(proc)
-        self.runner.close_log(name)
-        self.runner.delete_pid_record(name)
-        raise ProxyStartError(
-            f"proxy 端口闸门未通过: endpoint={endpoint} port={port} 日志={log_path}"
-        )
+        inst = ProxyInstance(port, pid, create_time, config_path, self.runner.log_file(name))
+        try:
+            proc = psutil.Process(pid)
+            deadline = time.monotonic() + ready_timeout
+            while time.monotonic() < deadline:
+                if not proc.is_running():
+                    break
+                if self._port_connectable(port) and self._proxy_owns_listen(proc, port):
+                    return inst
+                time.sleep(poll_interval)
+            raise ProxyStartError(
+                f"proxy 端口闸门未通过: endpoint={endpoint} port={port} 日志={inst.log_path}"
+            )
+        except Exception:
+            self._stop_instance(inst)
+            raise
 
     # ── prepare 编排（T018）──────────────────────────────────────
     def _mapping_path(self) -> Path:
@@ -328,6 +355,8 @@ class SidecarManager:
         """停掉一个 proxy 实例：整树强停 + 收日志 + 清 PID 记录（回滚/US5 复用）。"""
         try:
             proc = psutil.Process(inst.pid)
+            if proc.create_time() != inst.create_time:
+                proc = None
         except psutil.Error:
             proc = None
         if proc is not None:
@@ -378,7 +407,7 @@ class SidecarManager:
                 )
                 started_this_run.append((ep, inst))
                 proxies.append(inst)
-        except ProxyStartError:
+        except Exception:
             for _ep, inst in started_this_run:  # 只清本次新起的，既有/认领的不动
                 self._stop_instance(inst)
             raise

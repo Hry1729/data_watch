@@ -161,6 +161,25 @@ async def test_edge_login_uses_center_mysql(monkeypatch):
     assert opened["value"] is True
 
 
+async def test_login_database_and_password_checks_run_off_event_loop(monkeypatch):
+    import threading
+    loop_thread = threading.get_ident()
+    calls = []
+    monkeypatch.setattr("app.routers.auth.load_config", _config)
+    def connect(_cfg):
+        calls.append(threading.get_ident())
+        return FakeConnection()
+    def verify(*_args):
+        calls.append(threading.get_ident())
+        return True
+    monkeypatch.setattr("app.routers.auth._get_mysql_conn", connect)
+    monkeypatch.setattr("app.routers.auth.verify_password", verify)
+    monkeypatch.setattr("app.routers.auth.create_access_token", lambda **_kwargs: "token")
+    assert (await login(LoginRequest(username="admin", password="password"))).roles == ["R_ADMIN"]
+    assert len(calls) == 2
+    assert all(thread != loop_thread for thread in calls)
+
+
 def test_driver_inventory_allows_viewer_but_mutation_requires_admin(monkeypatch):
     from app.core.deps import get_current_user_or_driver_service
     monkeypatch.setattr("app.core.deps.load_config", lambda: {"agent": {"jwt_secret": "test-secret"}})

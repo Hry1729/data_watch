@@ -103,6 +103,90 @@ def _existing_settings(tmp_path):
     return str(p)
 
 
+@pytest.mark.asyncio
+async def test_concurrent_collector_starts_prepare_only_once(tmp_path):
+    import asyncio
+    pm = FakePM()
+    original_start = pm.start
+    async def start(*args, **kwargs):
+        await original_start(*args, **kwargs)
+        pm._running = True
+    pm.start = start
+    sm = FakeSM(settings_path=_existing_settings(tmp_path))
+    request = _req(pm, sidecar_manager=sm)
+    results = await asyncio.gather(start_process("collector", request, _user="u"), start_process("collector", request, _user="u"), return_exceptions=True)
+    assert sm.prepare_calls == 1
+    assert len(pm.start_calls) == 1
+    assert sum(isinstance(result, HTTPException) and result.status_code == 409 for result in results) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_prepare_holds_lock_until_worker_finishes(tmp_path):
+    import asyncio
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    pm = FakePM()
+    sm = FakeSM(settings_path=_existing_settings(tmp_path))
+    original = sm.prepare_for_collector_start
+    def prepare():
+        entered.set()
+        assert release.wait(2)
+        return original()
+    sm.prepare_for_collector_start = prepare
+    request = _req(pm, sidecar_manager=sm)
+    start = asyncio.create_task(start_process("collector", request, _user="u"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        start.cancel()
+        stop = asyncio.create_task(stop_process("collector", request, _user="u"))
+        await asyncio.sleep(0.02)
+        start.cancel()
+        await asyncio.sleep(0.02)
+        assert not stop.done()
+        assert sm.on_stop_calls == 0
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await start
+        await stop
+        assert sm.on_stop_calls == 1
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_proxy_stop_finishes_before_next_start(tmp_path):
+    import asyncio
+    import threading
+    entered, release = threading.Event(), threading.Event()
+    pm = FakePM(running=True)
+    original_stop = pm.stop
+    async def stop_pm(*args, **kwargs):
+        await original_stop(*args, **kwargs)
+        pm._running = False
+    pm.stop = stop_pm
+    sm = FakeSM(settings_path=_existing_settings(tmp_path))
+    def stop_proxy():
+        entered.set()
+        assert release.wait(2)
+    sm.on_collector_stop = stop_proxy
+    request = _req(pm, sidecar_manager=sm)
+    stop = asyncio.create_task(stop_process("collector", request, _user="u"))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        stop.cancel()
+        start = asyncio.create_task(start_process("collector", request, _user="u"))
+        await asyncio.sleep(0.02)
+        assert not start.done()
+        assert sm.prepare_calls == 0
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await stop
+        await start
+        assert sm.prepare_calls == 1
+    finally:
+        release.set()
+
+
 async def test_collector_no_opcda_passes_only_config(tmp_path):
     pm = FakePM()
     settings = _existing_settings(tmp_path)

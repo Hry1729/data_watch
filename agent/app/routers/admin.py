@@ -5,6 +5,7 @@ import base64
 import urllib.parse
 import logging
 from pathlib import Path
+from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -35,6 +36,7 @@ from app.services.driver_installer import DriverInstallError, DriverInstaller
 from app.services.driver_zip import DriverZipError
 from app.services.health_checker import check_mysql, check_redis, check_tdengine
 from app.services.process_manager import ProcessManagerError
+from app.services.sidecar_manager import collector_lifecycle, wait_for_sidecar_operation, stop_collector_for_drivers
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -67,7 +69,7 @@ def _process_config_out(section: str) -> dict:
     return {"executable": str(executable), "working_dir": str(working_dir)}
 
 
-def _collector_extra_args(request: Request) -> list[str]:
+async def _collector_extra_args(request: Request) -> list[str]:
     """collector 启动/重启前的准备 + 拼参（start/restart 共用，避免一改一漏）。
 
     sidecar_manager 在 try 外取：未接好属接线 bug，让 AttributeError→500，不伪装 400。
@@ -82,7 +84,7 @@ def _collector_extra_args(request: Request) -> list[str]:
             detail="collector settings.toml not found; run bootstrap first",
         )
     try:
-        plan = sm.prepare_for_collector_start()
+        plan = await wait_for_sidecar_operation(sm.prepare_for_collector_start)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     # 显式下发 runtime_dir：与 Agent 写 shutdown_flag 的目录(pm.runtime_dir)同源。
@@ -239,11 +241,27 @@ async def _ensure_edge_storage(request: Request) -> None:
         )
     await asyncio.to_thread(request.app.state.edge_storage.wait_ready)
 
-@router.post("/processes/{name}/start")
-async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
+def _require_driver_idle(name, request):
     installer = getattr(request.app.state, "driver_installer", None)
     if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
         raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
+
+
+def _serialized_collector_operation(handler):
+    @wraps(handler)
+    async def wrapped(name, request, *args, **kwargs):
+        if name in {"collector", "storage", "uploader"}:
+            _require_driver_idle(name, request)
+            async with collector_lifecycle(request.app.state.pm):
+                return await handler(name, request, *args, **kwargs)
+        return await handler(name, request, *args, **kwargs)
+    return wrapped
+
+
+@router.post("/processes/{name}/start")
+@_serialized_collector_operation
+async def start_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
+    _require_driver_idle(name, request)
     pm = request.app.state.pm
     _require_known(pm, name)
     if pm.status(name).status == "running":
@@ -256,7 +274,7 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
             raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
-    extra_args = _collector_extra_args(request) if name == "collector" else None
+    extra_args = await _collector_extra_args(request) if name == "collector" else None
     env = _process_env(name)
 
     try:
@@ -272,32 +290,31 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
 
 @router.post("/processes/{name}/stop")
+@_serialized_collector_operation
 async def stop_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
-    installer = getattr(request.app.state, "driver_installer", None)
-    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
-        raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
+    _require_driver_idle(name, request)
     pm = request.app.state.pm
     _require_known(pm, name)
     if name == "storage":
+        request.app.state._storage_recovery_pending = False
         for dependent in ("uploader", "collector"):
             if dependent in pm.modules and pm.status(dependent).status == "running":
                 await pm.stop(dependent)
                 await asyncio.to_thread(request.app.state.log_manager.detach, dependent)
                 if dependent == "collector" and request.app.state.sidecar_manager is not None:
-                    request.app.state.sidecar_manager.on_collector_stop()
+                    await wait_for_sidecar_operation(request.app.state.sidecar_manager.on_collector_stop)
     await pm.stop(name)
     await asyncio.to_thread(request.app.state.log_manager.detach, name)
     # 停模块 → 停其关联 proxy（FR-P17）；writer 不碰 sidecar。重启不走这里、proxy 保留。
     if name == "collector":
-        request.app.state.sidecar_manager.on_collector_stop()
+        await wait_for_sidecar_operation(request.app.state.sidecar_manager.on_collector_stop)
     return {}
 
 
 @router.post("/processes/{name}/restart")
+@_serialized_collector_operation
 async def restart_process(name: str, request: Request, _user: str = Depends(get_current_admin)):
-    installer = getattr(request.app.state, "driver_installer", None)
-    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
-        raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
+    _require_driver_idle(name, request)
     pm = request.app.state.pm
     _require_known(pm, name)
 
@@ -308,7 +325,7 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
             raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
-    extra_args = _collector_extra_args(request) if name == "collector" else None
+    extra_args = await _collector_extra_args(request) if name == "collector" else None
     env = _process_env(name)
 
     try:
@@ -425,7 +442,7 @@ async def health_check(
 def _get_installer(request: Request) -> DriverInstaller:
     installer = getattr(request.app.state, "driver_installer", None)
     if installer is None:
-        installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: request.app.state.pm.stop("collector"), collector_pid=lambda: request.app.state.pm.status("collector").pid)
+        installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: stop_collector_for_drivers(request.app.state.pm), collector_pid=lambda: request.app.state.pm.status("collector").pid)
         request.app.state.driver_installer = installer
     return installer
 
@@ -433,17 +450,17 @@ def _get_installer(request: Request) -> DriverInstaller:
 async def _restart_collector_for_drivers(request: Request) -> None:
     """安装/卸载后冷加载：复用现有 collector restart 拼参与 env。"""
     pm = request.app.state.pm
-    if "collector" not in pm.modules:
-        raise ProcessManagerError("collector module not configured")
-    extra_args = _collector_extra_args(request)
-    env = _collector_env()
-    await pm.restart("collector", extra_args=extra_args, env=env)
-    request.app.state.log_manager.attach(
-        "collector",
-        pm.log_file("collector"),
-        asyncio.get_running_loop(),
-    )
-
+    async with collector_lifecycle(pm):
+        if "collector" not in pm.modules:
+            raise ProcessManagerError("collector module not configured")
+        extra_args = await _collector_extra_args(request)
+        env = _collector_env()
+        await pm.restart("collector", extra_args=extra_args, env=env)
+        request.app.state.log_manager.attach(
+            "collector",
+            pm.log_file("collector"),
+            asyncio.get_running_loop(),
+        )
 
 async def _collector_is_alive(request: Request) -> bool:
     pm = request.app.state.pm

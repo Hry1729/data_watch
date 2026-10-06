@@ -24,6 +24,7 @@ from app.services.driver_zip import (
     is_valid_driver_id,
     validate_and_extract,
 )
+from app.services.managed_process_runner import child_environment
 
 logger = logging.getLogger(__name__)
 
@@ -450,7 +451,7 @@ class DriverInstaller:
             if not python.is_file():
                 raise DriverInstallError("找不到目标 Collector 运行时，无法预检", status_code=503)
             command = [str(python), str(root / "collector/driver_preflight.py")]
-        env = dict(os.environ, PYTHONIOENCODING="utf-8", DATAWATCH_DATA_ROOT=str(self.drivers_root.parent), DATAWATCH_DRIVER_CATALOG_ROOT=str(self._catalog_path().parent))
+        env = child_environment(dict(PYTHONIOENCODING="utf-8", DATAWATCH_DATA_ROOT=str(self.drivers_root.parent), DATAWATCH_DRIVER_CATALOG_ROOT=str(self._catalog_path().parent)))
         approval_args = []
         from data_watch_driver_manifest import load_driver_toml
         from data_watch_driver_signatures import verify_package_signature

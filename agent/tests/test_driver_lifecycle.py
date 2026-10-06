@@ -9,6 +9,7 @@ from data_watch_driver_catalog import read_catalog, tree_digest
 
 ROOT = Path(__file__).resolve().parents[2]
 CATALOG = ROOT / "packages/driver-catalog/catalog.json"
+S7_VERSION = next(item["version"] for item in read_catalog(CATALOG)["drivers"] if item["id"] == "s7")
 
 @pytest.fixture
 def real_installer(tmp_path, monkeypatch):
@@ -76,7 +77,7 @@ async def test_stop_precedes_switch_and_restart_then_digest_probe(real_installer
     def fetch(url):
         current = dict(identity, boot_id="new" if "restart" in events else "old")
         active = inst.drivers_root / "s7"
-        drivers = [{"id": "s7", "version": "1.0.0", "status": "loaded", "tree_sha256": tree_digest(active)}] if active.is_dir() else []
+        drivers = [{"id": "s7", "version": S7_VERSION, "status": "loaded", "tree_sha256": tree_digest(active)}] if active.is_dir() else []
         return {"instance": current, "drivers": drivers}
     inst._stop_collector = stop
     inst._collector_pid = lambda: 7
@@ -151,7 +152,7 @@ def upgrade_archive(inst, tmp_path):
     package = tmp_path / "upgrade/s7"
     shutil.copytree(ROOT / "packages/s7", package, ignore=shutil.ignore_patterns("__pycache__"))
     manifest = package / "driver.toml"
-    manifest.write_text(manifest.read_text(encoding="utf-8").replace('version = "1.0.0"', 'version = "2.0.0"'), encoding="utf-8")
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace(f'version = "{S7_VERSION}"', 'version = "2.0.0"'), encoding="utf-8")
     catalog = read_catalog(CATALOG)
     item = next(item for item in catalog["drivers"] if item["id"] == "s7")
     item.update(version="2.0.0", tree_sha256=tree_digest(package))
@@ -192,7 +193,7 @@ async def test_upgrade_restart_failure_restores_old_package_and_running_state(re
         await inst.install(archive, restart_collector=restart, collector_alive=alive)
     assert restarts == 2 and running
     assert tree_digest(inst.drivers_root / "s7") == old_digest
-    assert inst.get_driver("s7")["version"] == "1.0.0"
+    assert inst.get_driver("s7")["version"] == S7_VERSION
     assert not inst.recovery_blocked
     assert not inst._latest_incomplete_operations()
 
@@ -203,7 +204,7 @@ async def test_crash_recovery_keeps_originally_stopped_collector_stopped(real_in
     await inst.install(inst.restoration_archive("s7"), restart_collector=must_not_start, collector_alive=stopped)
     previous = inst.get_driver("s7")
     archive, package = upgrade_archive(inst, tmp_path)
-    backup = inst.backup_root / "s7/1.0.0"
+    backup = inst.backup_root / "s7" / previous["version"]
     backup.parent.mkdir(parents=True)
     shutil.move(str(inst.drivers_root / "s7"), backup)
     shutil.copytree(package, inst.drivers_root / "s7")
@@ -211,7 +212,7 @@ async def test_crash_recovery_keeps_originally_stopped_collector_stopped(real_in
     inst._persist_operation("crashed-upgrade", "activated", "s7", "2.0.0", previous_record=previous)
     result = await inst.recover_incomplete_operations(restart_collector=must_not_start, collector_alive=stopped)
     assert result[0]["verified"]
-    assert inst.get_driver("s7")["version"] == "1.0.0"
+    assert inst.get_driver("s7")["version"] == previous["version"]
     assert tree_digest(inst.drivers_root / "s7") == previous["tree_sha256"]
     assert not inst.recovery_blocked
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import data_root, install_root, load_config, module_paths, mutate_config
+from app.core.config import initialize_config_permissions, data_root, install_root, load_config, module_paths, mutate_config
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
@@ -21,6 +21,9 @@ from app.services.sidecar_manager import (
     DEFAULT_CHANNEL,
     DEFAULT_SERVER_PROG_ID,
     SidecarManager,
+    collector_lifecycle,
+    wait_for_sidecar_operation,
+    stop_collector_for_drivers,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,17 +53,17 @@ def build_sidecar_manager(cfg: dict, runtime_dir: Path) -> SidecarManager:
 
 
 async def _stop_child_processes(pm: ProcessManager) -> None:
-    ordered = [
-        name
-        for name in ("uploader", "collector", "ingest", "writer", "storage")
-        if name in pm.modules
-    ]
-    for name in ordered:
-        try:
-            await pm.stop(name)
-        except Exception:
-            logger.exception("Failed to stop module %s during Agent shutdown", name)
-
+    async with collector_lifecycle(pm):
+        ordered = [
+            name
+            for name in ("uploader", "collector", "ingest", "writer", "storage")
+            if name in pm.modules
+        ]
+        for name in ordered:
+            try:
+                await pm.stop(name)
+            except Exception:
+                logger.exception("Failed to stop module %s during Agent shutdown", name)
 
 async def _detach_log_tails(pm: ProcessManager, log_manager: LogManager) -> None:
     for name in pm.modules:
@@ -72,19 +75,34 @@ async def _detach_log_tails(pm: ProcessManager, log_manager: LogManager) -> None
 
 async def _recover_edge_storage(app: FastAPI) -> None:
     pm: ProcessManager = app.state.pm
+    delay = 2.0
+    stable_since = None
     while True:
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(delay)
         try:
-            if pm.status("storage").status != "crashed":
-                continue
-            await pm.restart("storage", env=_storage_env())
-            await asyncio.to_thread(app.state.edge_storage.wait_ready)
-            app.state.log_manager.attach(
-                "storage",
-                pm.log_file("storage"),
-                asyncio.get_running_loop(),
-            )
-            logger.warning("Edge Storage crashed and was restarted")
+            async with collector_lifecycle(pm):
+                status = pm.status("storage").status
+                if status == "crashed":
+                    app.state._storage_recovery_pending = True
+                if not getattr(app.state, "_storage_recovery_pending", False):
+                    now = asyncio.get_running_loop().time()
+                    if stable_since is None:
+                        stable_since = now
+                    if now - stable_since >= 60:
+                        delay = 2.0
+                    continue
+                stable_since = None
+                delay = min(60.0, delay * 2)
+                if status in {"crashed", "stopped"}:
+                    await pm.restart("storage", env=_storage_env())
+                await asyncio.to_thread(app.state.edge_storage.wait_ready)
+                app.state._storage_recovery_pending = False
+                app.state.log_manager.attach(
+                    "storage",
+                    pm.log_file("storage"),
+                    asyncio.get_running_loop(),
+                )
+                logger.warning("Edge Storage crashed and was restarted")
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -98,24 +116,25 @@ async def _recover_drivers_sync_collector(app: FastAPI) -> None:
     sm = app.state.sidecar_manager
 
     async def _restart() -> None:
-        settings_path = sm.collector_settings_path
-        if settings_path is None or not Path(settings_path).exists():
-            raise RuntimeError("collector settings.toml not found; run bootstrap first")
-        plan = sm.prepare_for_collector_start()
-        extra_args = [
-            "--config",
-            str(settings_path),
-            "--runtime-dir",
-            str(pm.runtime_dir),
-        ]
-        if plan.port_mapping_path is not None:
-            extra_args += ["--port-mapping", str(plan.port_mapping_path)]
-        await pm.restart("collector", extra_args=extra_args, env=_collector_env())
-        app.state.log_manager.attach(
-            "collector",
-            pm.log_file("collector"),
-            asyncio.get_running_loop(),
-        )
+        async with collector_lifecycle(pm):
+            settings_path = sm.collector_settings_path
+            if settings_path is None or not Path(settings_path).exists():
+                raise RuntimeError("collector settings.toml not found; run bootstrap first")
+            plan = await wait_for_sidecar_operation(sm.prepare_for_collector_start)
+            extra_args = [
+                "--config",
+                str(settings_path),
+                "--runtime-dir",
+                str(pm.runtime_dir),
+            ]
+            if plan.port_mapping_path is not None:
+                extra_args += ["--port-mapping", str(plan.port_mapping_path)]
+            await pm.restart("collector", extra_args=extra_args, env=_collector_env())
+            app.state.log_manager.attach(
+                "collector",
+                pm.log_file("collector"),
+                asyncio.get_running_loop(),
+            )
 
     async def _alive() -> bool:
         try:
@@ -147,6 +166,7 @@ async def _recover_drivers_sync_collector(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Stage 3 将在此处初始化 LogManager（日志 tail）
+    await asyncio.to_thread(initialize_config_permissions)
     cfg = load_config()
     runtime_dir = Path(cfg["agent"].get("runtime_dir", r"C:\ProgramData\DataWatch\runtime"))
     modules = {}
@@ -168,7 +188,7 @@ async def lifespan(app: FastAPI):
     if app.state.sidecar_manager is not None:
         app.state.sidecar_manager.claim_existing_proxies()
     # 外置驱动安装根：DATAWATCH_DATA_ROOT/drivers
-    app.state.driver_installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: pm.stop("collector"), collector_pid=lambda: pm.status("collector").pid)
+    app.state.driver_installer = DriverInstaller(data_root() / "drivers", stop_collector=lambda: stop_collector_for_drivers(pm), collector_pid=lambda: pm.status("collector").pid)
     app.state.driver_installer.ensure_layout()
     if build_role() == "edge":
         app.state.edge_storage = EdgeStorageClient(_edge_storage_url(), timeout_seconds=2.0)
