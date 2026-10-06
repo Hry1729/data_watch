@@ -7,6 +7,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -84,3 +85,23 @@ def test_query_token_is_bounded_compatibility_fallback() -> None:
     websocket = FakeWebSocket(headers={}, query_params={"token": "x" * 4097})
 
     assert perspective._resolve_websocket_authorization(websocket) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["snapshot", "json"])
+async def test_attached_session_is_released_on_transport_failure(monkeypatch, failure):
+    app = FakeApp()
+    manager = MagicMock()
+    manager.attach_connection.return_value = (object(), False, False)
+    manager.serialize_snapshot.return_value = {"recordCount": 1 if failure == "snapshot" else 0}
+    monkeypatch.setattr(perspective, "get_settings", lambda: SimpleNamespace(
+        perspective_ws_route="/perspective", perspective_enabled=True))
+    monkeypatch.setattr(perspective, "get_perspective_session_manager", lambda: manager)
+    monkeypatch.setattr(perspective, "require_permissions_from_authorization", AsyncMock(return_value={"user_id": 1}))
+    websocket = FakeWebSocket(headers={}, query_params={})
+    websocket.send_json = AsyncMock(side_effect=ValueError("broken transport"))
+    websocket.receive_json = AsyncMock(side_effect=ValueError("invalid JSON"))
+    perspective.register_perspective_websocket(app)
+    with pytest.raises(ValueError):
+        await app.handler(websocket, perspectiveSessionId="s1", connectionId="c1")
+    manager.detach_connection.assert_called_once()

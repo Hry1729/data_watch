@@ -86,26 +86,26 @@ def register_perspective_websocket(app: TurboAPI) -> None:
             await websocket.close(code=1008)
             return
 
-        if restored:
-            await websocket.send_json(
-                {
-                    "type": "session_restored",
-                    "sessionId": perspectiveSessionId,
-                }
+        try:
+            if restored:
+                await websocket.send_json(
+                    {
+                        "type": "session_restored",
+                        "sessionId": perspectiveSessionId,
+                    }
+                )
+
+            manager.bind_transport(
+                owner_key=owner_key,
+                session_id=perspectiveSessionId,
+                connection_id=connectionId,
+                transport=websocket,
             )
 
-        manager.bind_transport(
-            owner_key=owner_key,
-            session_id=perspectiveSessionId,
-            connection_id=connectionId,
-            transport=websocket,
-        )
+            snapshot = manager.serialize_snapshot(session)
+            if snapshot["recordCount"] > 0:
+                await websocket.send_json(snapshot)
 
-        snapshot = manager.serialize_snapshot(session)
-        if snapshot["recordCount"] > 0:
-            await websocket.send_json(snapshot)
-
-        try:
             while True:
                 payload = await websocket.receive_json()
                 action = str(payload.get("action", "")).strip().lower()
@@ -120,6 +120,8 @@ def register_perspective_websocket(app: TurboAPI) -> None:
                     }
                 )
         except WebSocketDisconnect:
+            pass
+        finally:
             manager.detach_connection(
                 owner_key=owner_key,
                 session_id=perspectiveSessionId,

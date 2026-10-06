@@ -3,9 +3,10 @@
 from datetime import datetime
 from typing import Any
 
-from turboapi import APIRouter, Depends
+from turboapi import APIRouter, Depends, Request
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.api.routes.auth import _resolve_client_ip
 from app.api.permissions import require_permissions
 from app.core.responses import success_response
 from app.core.time_utils import parse_local_datetime
@@ -202,15 +203,14 @@ async def cleanup_logs(
 @router.post("/api/device-monitor/log/client")
 async def report_client_log(
     params: dict[str, Any],
-    x_forwarded_for: str | None = None,
-    x_real_ip: str | None = None,
+    request: Request,
 ):
     """前端客户端日志上报（带限流）
 
     允许匿名上报，每个来源每分钟最多 30 条日志。
     """
     # 添加客户端 IP 到参数
-    client_ip = _resolve_client_ip(x_forwarded_for, x_real_ip)
+    client_ip = _resolve_client_ip(request)
     params["clientIp"] = client_ip
 
     session_factory = get_mysql_session_factory()
@@ -250,15 +250,4 @@ def _serialize_policy(policy: Any) -> dict[str, Any]:
         "updateBy": policy.update_by_name,
         "updateTime": policy.update_time.strftime("%Y-%m-%d %H:%M:%S") if policy.update_time else None,
     }
-
-
-def _resolve_client_ip(x_forwarded_for: str | None, x_real_ip: str | None) -> str:
-    """解析客户端 IP"""
-    if x_forwarded_for:
-        first_ip = x_forwarded_for.split(",", 1)[0].strip()
-        if first_ip:
-            return first_ip
-    if x_real_ip and x_real_ip.strip():
-        return x_real_ip.strip()
-    return "unknown"
 

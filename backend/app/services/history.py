@@ -194,35 +194,16 @@ class HistoryService:
         points = await self._fetch_selected_points(device_id, var_seqs)
         start_dt, end_dt = self._validate_query_range(start_time, end_time)
         self._validate_query_points(points, var_seqs)
-        # Query points in order and pass the remaining budget plus one row to
-        # the database. This avoids a fixed per-point split that could reject
-        # a valid skewed result (one busy point and several empty points).
-        record_budget = (
-            self._record_budget()
-            if max_records is None
-            else int(max_records)
-        )
+        record_budget = self._record_budget() if max_records is None else int(max_records)
         if record_budget <= 0:
             raise ApiError(503, "History query protection limit is not configured")
-        remaining_records = record_budget
-        series_list: list[list[tuple[Any, Any]] | Exception] = []
-        for point in points:
-            fetch_limit = max(1, remaining_records + 1)
-            try:
-                rows = await self._fetch_point_series(
-                    device,
-                    point,
-                    start_dt,
-                    end_dt,
-                    limit=fetch_limit,
-                )
-            except Exception as exc:
-                rows = exc
-            if not isinstance(rows, Exception):
-                if len(rows) >= fetch_limit:
-                    raise self._record_limit_error(limit=record_budget)
-                remaining_records = max(0, remaining_records - len(rows))
-            series_list.append(rows)
+        slots = asyncio.Semaphore(2)
+        async def fetch_point(point):
+            async with slots:
+                return await self._fetch_point_series(device, point, start_dt, end_dt, limit=record_budget + 1)
+        series_list = await asyncio.gather(*(fetch_point(point) for point in points), return_exceptions=True)
+        if sum(len(rows) for rows in series_list if not isinstance(rows, Exception)) > record_budget:
+            raise self._record_limit_error(limit=record_budget)
 
         timeline: dict[datetime, str] = {}
         point_value_maps: dict[int, dict[str, str | int | float]] = {}
@@ -316,28 +297,18 @@ class HistoryService:
             calc_interval = interval
 
         record_budget = self._record_budget()
-        remaining_records = record_budget
-        series_results = []
-        for point in points:
-            # 对布尔类型强制使用 LAST 聚合，避免产生 0.5 这样的无效插值
+        slots = asyncio.Semaphore(2)
+        async def fetch_point(point):
             is_bool = str(point.var_type).lower() == "bool"
-            current_aggregate = "last" if is_bool else aggregate
-            agg_func = self._map_aggregate_function(current_aggregate)
-            
-            fetch_limit = max(1, remaining_records + 1)
-            rows = await self._fetch_downsampled_series(
-                device,
-                point,
-                start_dt,
-                end_dt,
-                calc_interval,
-                agg_func,
-                limit=fetch_limit,
-            )
-            if len(rows) >= fetch_limit:
-                raise self._record_limit_error(limit=record_budget)
-            remaining_records = max(0, remaining_records - len(rows))
-            series_results.append(rows)
+            agg_func = self._map_aggregate_function("last" if is_bool else aggregate)
+            async with slots:
+                return await self._fetch_downsampled_series(
+                    device, point, start_dt, end_dt, calc_interval, agg_func,
+                    limit=record_budget + 1,
+                )
+        series_results = await asyncio.gather(*(fetch_point(point) for point in points))
+        if sum(len(rows) for rows in series_results) > record_budget:
+            raise self._record_limit_error(limit=record_budget)
 
         if not any(series_results):
             await self._raise_if_tdengine_unavailable("chart_data", device.device_code)
@@ -1136,7 +1107,7 @@ class HistoryService:
                                 limit=fetch_limit,
                             )
                         except Exception as exc:
-                            rows = exc
+                            raise ApiError(503, "History export data source unavailable") from exc
                         if not isinstance(rows, Exception):
                             if len(rows) >= fetch_limit:
                                 raise self._record_limit_error(limit=record_budget)

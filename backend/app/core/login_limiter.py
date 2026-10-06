@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import OrderedDict
 
 
 class LoginLimiter:
     def __init__(self, max_failures: int, window_seconds: float) -> None:
         self._max_failures = max(1, int(max_failures))
         self._window_seconds = max(1.0, float(window_seconds))
-        self._failures: dict[tuple[str, str], list[float]] = {}
+        self._failures: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
         self._lock = threading.Lock()
 
     def _key(self, user_name: str, client_ip: str) -> tuple[str, str]:
@@ -28,9 +29,12 @@ class LoginLimiter:
         key = self._key(user_name, client_ip)
         now = time.monotonic()
         with self._lock:
-            for old_key in list(self._failures):
-                self._prune_locked(old_key, now)
-            return (key not in self._failures and len(self._failures) >= 10000) or len(self._prune_locked(key, now)) >= self._max_failures
+            while self._failures:
+                oldest, stamps = next(iter(self._failures.items()))
+                if stamps[-1] > now - self._window_seconds:
+                    break
+                self._failures.pop(oldest)
+            return len(self._prune_locked(key, now)) >= self._max_failures
 
     def record_failure(self, user_name: str, client_ip: str) -> None:
         key = self._key(user_name, client_ip)
@@ -38,10 +42,11 @@ class LoginLimiter:
         with self._lock:
             stamps = self._prune_locked(key, now)
             if key not in self._failures and len(self._failures) >= 10000:
-                return
+                self._failures.popitem(last=False)
             stamps = stamps[-(self._max_failures - 1):] if self._max_failures > 1 else []
             stamps.append(now)
             self._failures[key] = stamps
+            self._failures.move_to_end(key)
 
     def reset(self, user_name: str, client_ip: str) -> None:
         key = self._key(user_name, client_ip)
