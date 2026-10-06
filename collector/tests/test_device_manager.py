@@ -665,3 +665,14 @@ def test_registry_initialization_is_once_under_concurrent_reads(monkeypatch):
         results = list(pool.map(lambda _: manager._resolve_driver_registry(), range(32)))
     assert len(calls) == 1
     assert all(result is registry for result in results)
+@pytest.mark.asyncio
+async def test_repeated_read_failures_report_only_status_transition(device_manager):
+    from device.device import Device, DeviceStatus
+    device = Device("FAILED", "QC", "s7", {})
+    device.status = DeviceStatus.ONLINE
+    device_manager._report_device_status = AsyncMock()
+    device_manager.schedule_reconnect = AsyncMock()
+    for _ in range(5):
+        await device_manager.mark_device_error(device, "read failed")
+    device_manager._report_device_status.assert_awaited_once()
+    assert device.error_count == 5

@@ -46,7 +46,7 @@ class TimingHistogram:
         self._count = 0
         self._sum_ms = 0.0
         self._max_ms = 0.0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def record(self, value_ms: float) -> None:
         value = max(0.0, float(value_ms))
@@ -103,7 +103,7 @@ class PerformanceMetrics:
         self._timings: dict[str, TimingHistogram] = {}
         self._counters: dict[str, int] = {}
         self._gauges: dict[str, int | float] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._runtime_wall = time.perf_counter()
         self._runtime_cpu = time.process_time()
         self._runtime_allocated_blocks = _get_allocated_blocks()

@@ -357,6 +357,8 @@ class CollectorApp:
                 await self._reload_task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.exception("Config reload task failed before shutdown")
             self._reload_task = None
 
         if self._performance_task is not None:
@@ -482,9 +484,12 @@ class CollectorApp:
         get_device_config_versions() 已过滤 enable==1，因此从当前集合消失即按
         下线处理（删除与禁用同一路径）。每轮只在检测到变更时拉取一次完整快照。
         """
-        tracked = await self.config_db_manager.get_device_config_versions()
+        tracked = None
         while not self._shutdown.is_set():
             try:
+                if tracked is None:
+                    tracked = await self.config_db_manager.get_device_config_versions()
+                    continue
                 await asyncio.sleep(10)
                 current = await self.config_db_manager.get_device_config_versions()
                 current_ids = set(current.keys())
@@ -588,22 +593,18 @@ class CollectorApp:
                 self.config.variables = variables
                 self.opcda_mapper.rebuild(self.config.variables)
                 if self.ingest_server is not None:
-                    self.ingest_server.update_metadata(self.config)
+                    await asyncio.to_thread(self.ingest_server.update_metadata, self.config)
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 logger.error("Config reload loop error: %s", exc)
+                await asyncio.sleep(10)
 
     async def _replace_device_atomic(self, device_id: str, dev_cfg, var_cfgs) -> None:
         """字段变更：候选不入表，就绪后原子交换；失败保留旧代际。"""
         from collector.task import CollectTask
 
         old = self.device_manager.get_device(device_id)
-        old_tasks = []
-        if isinstance(old, Device):
-            old_tasks = [
-                CollectTask(device=old, scan_task=st) for st in old.scan_tasks
-            ]
 
         candidate = self.device_manager.prepare_candidate_device(dev_cfg, var_cfgs)
         if candidate.status == DeviceStatus.CONFIG_ERROR:
@@ -626,14 +627,13 @@ class CollectorApp:
                 )
                 raise RuntimeError("candidate connect failed")
 
-            new_tasks = [
-                CollectTask(device=candidate, scan_task=st)
-                for st in candidate.scan_tasks
-            ]
-
             # 原子交换后再装调度；失败则换回旧对象并重装旧任务
             await self.device_manager.swap_device(device_id, candidate)
             try:
+                new_tasks = [
+                    CollectTask(device=candidate, scan_task=st)
+                    for st in candidate.scan_tasks
+                ]
                 await self.scheduler.reload_device_tasks(device_id, new_tasks)
             except Exception:
                 if isinstance(old, Device):
@@ -663,6 +663,10 @@ class CollectorApp:
                                 schedule_exc,
                             )
                     try:
+                        old_tasks = [
+                            CollectTask(device=old, scan_task=st)
+                            for st in old.scan_tasks
+                        ]
                         await self.scheduler.reload_device_tasks(device_id, old_tasks)
                     except Exception as restore_exc:
                         logger.error(
@@ -720,7 +724,7 @@ class CollectorApp:
 
     async def _apply_device_variables(self, device_id: str, dev_cfg, var_cfgs) -> None:
         """版本变更：重建单台设备的变量与采集任务，不影响其他设备。"""
-        device = self.device_manager.rebuild_device_variables(device_id, var_cfgs)
+        device = await asyncio.to_thread(self.device_manager.rebuild_device_variables, device_id, var_cfgs)
         if device is None:
             logger.warning("Cannot reload device %s: not found", device_id)
             return

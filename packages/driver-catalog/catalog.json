@@ -8,7 +8,7 @@
       "protocol": "s7",
       "name": "s7",
       "description": "DataWatch s7 只读采集驱动",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "publisher": "datawatch",
       "aliases": [
         "s7",
@@ -24,9 +24,9 @@
         "health_check"
       ],
       "readWriteType": "只读",
-      "archive": "s7-1.0.0.zip",
-      "sha256": "7e6910a82224762ac9042031aec1e8200f2bd66ad2cc515837332a96dd3d4965",
-      "tree_sha256": "0ae03427aabdc8c899ae5c1d92f0b537144dbfd6eb7ee1882baf671922da80cf"
+      "archive": "s7-1.0.1.zip",
+      "sha256": "a1839e25b7dfc087b5a26094f90890ebf9abd2db7052455ce29e5718e29ac245",
+      "tree_sha256": "a2dd711c3bb2f543c02f3a4e23524174710c2766d28c487c07dfab440ff2b733"
     },
     {
       "id": "ge_srtp",
@@ -54,7 +54,7 @@
       "protocol": "opcua",
       "name": "opcua",
       "description": "DataWatch opcua 只读采集驱动",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "publisher": "datawatch",
       "aliases": [
         "opcua",
@@ -67,9 +67,9 @@
         "health_check"
       ],
       "readWriteType": "只读",
-      "archive": "opcua-1.0.0.zip",
-      "sha256": "e60d2e5393010852dcf4d3424b97c75dd879da25004ca7a7c2d9533f0a1fd853",
-      "tree_sha256": "5e263c17d8242753d2afccf8caaf7f66a839ac5bca8b41cf215d7ec386899959"
+      "archive": "opcua-1.0.1.zip",
+      "sha256": "8f4525c460cda2da1fab5b7764841237fff7f8807aebe7c81bf848b3cf707126",
+      "tree_sha256": "c6306d3bbbd8f3dfeef40f2d75504802ca5b19d9d20e69c286faa5314534f138"
     },
     {
       "id": "opcda_center",
@@ -114,5 +114,5 @@
       "tree_sha256": "f0c1e6a6a432eb5d84809a02360f98803586586cf9a934dab79905202f555a16"
     }
   ],
-  "build_id": "410a043b100f6ec4d1418d8128e6b04b70a843565da406e89bdd577526a0eb6b"
+  "build_id": "67d4982fa4f7682c3900bdec4a775debedc567f2320d180385e2f50eeef40608"
 }

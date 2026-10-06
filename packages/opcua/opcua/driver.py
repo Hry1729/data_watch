@@ -75,13 +75,16 @@ class OPCUADriver(BaseDriver):
 
         result: Dict[str, Any] = {}
         async with self._read_lock:
-            for block in blocks:
-                try:
-                    node = self._client.get_node(block.address)
-                    value = await node.read_value()
-                    result[block.address] = [value]
-                except Exception as exc:
-                    logger.error("OPC UA read failed for %s: %s", block.address, exc)
+            nodes = [self._client.get_node(block.address) for block in blocks]
+            try:
+                values = await self._client.read_attributes(nodes)
+            except Exception as exc:
+                self._connected = False
+                raise ReadError(f"OPC UA batch read failed: {exc}") from exc
+            for block, value in zip(blocks, values, strict=True):
+                if value.StatusCode.is_good() and value.Value is not None:
+                    result[block.address] = [value.Value.Value]
+                else:
                     result[block.address] = None
         return result
 

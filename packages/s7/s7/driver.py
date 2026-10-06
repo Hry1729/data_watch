@@ -127,6 +127,7 @@ class S7Driver(BaseDriver):
 
     def _read_blocks(self, blocks: List[ReadBlock]) -> Dict[str, Any]:
         """在线程中批量读取所有block"""
+        from snap7.error import S7ConnectionError, S7TimeoutError
         with self._client_lock:
             if self._client is None:
                 raise ReadError("S7 driver not connected")
@@ -136,6 +137,9 @@ class S7Driver(BaseDriver):
                 try:
                     values = self._read_single_block(block)
                     result[block.address] = values
+                except (S7ConnectionError, S7TimeoutError, ConnectionError, TimeoutError, OSError) as e:
+                    self._connected = False
+                    raise ReadError(f"S7 connection failed while reading {block.address}: {e}") from e
                 except Exception as e:
                     logger.error(f"S7 read block {block.address} failed: {e}")
                     result[block.address] = None

@@ -60,3 +60,21 @@ def test_gc_pause_tracking_can_be_enabled_and_closed():
 
     metrics.close()
     assert metrics._on_gc not in gc.callbacks
+
+
+def test_gc_callback_can_reenter_metrics_lock():
+    import threading
+    metrics = PerformanceMetrics()
+    metrics.enable_gc_pause_tracking()
+    done = threading.Event()
+    def reenter():
+        with metrics._lock:
+            metrics._on_gc("start", {"generation": 0})
+            metrics._on_gc("stop", {"generation": 0})
+        done.set()
+    worker = threading.Thread(target=reenter, daemon=True)
+    worker.start()
+    assert done.wait(2)
+    worker.join()
+    assert metrics.snapshot()["counters"]["gc_collection_count"] >= 1
+    metrics.close()

@@ -30,6 +30,8 @@ for _candidate in (REPO_ROOT, REPO_ROOT / "collector"):
 from core.config import CollectorConfig, DeviceConfig, VariableConfig  # noqa: E402
 from device.manager import DeviceManager  # noqa: E402
 from main import CollectorApp  # noqa: E402
+from collector.executor import TaskExecutor
+from collector.task import CollectTask
 
 
 def _manager_with_device() -> tuple[DeviceManager, object]:
@@ -162,3 +164,26 @@ async def test_stale_generation_is_rejected_while_lock_held() -> None:
 
     assert accepted is False
     assert calls == [], "旧代不得提交写入"
+
+
+@pytest.mark.asyncio
+async def test_execute_generation_check_does_not_stall_loop():
+    manager, device = _manager_with_device()
+    started, release = threading.Event(), threading.Event()
+    def hold():
+        with manager._generation_lock_for(device.device_id):
+            started.set()
+            release.wait(3)
+    worker = asyncio.create_task(asyncio.to_thread(hold))
+    await asyncio.to_thread(started.wait, 2)
+    executor = TaskExecutor(device_manager=manager, redis_writer=MagicMock())
+    manager.schedule_reconnect = AsyncMock()
+    executing = asyncio.create_task(executor.execute(CollectTask(device, device.scan_tasks[0])))
+    try:
+        await asyncio.sleep(0.05)
+        assert not executing.done()
+        assert not release.is_set()
+    finally:
+        release.set()
+        await worker
+        await executing

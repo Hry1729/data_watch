@@ -23,6 +23,7 @@ from core.quality_codes import QUALITY_BAD, QUALITY_CONFIG_DECODE_ERROR, QUALITY
 from collector.bounded_executor import BoundedExecutor, ExecutorSaturatedError
 from collector.task import CollectTask
 from data_queue.types import DataPoint
+from device.device import DeviceStatus
 from device.manager import DeviceManager
 from drivers.base import DriverSample
 from monitor.performance import PerformanceMetrics
@@ -179,7 +180,7 @@ class TaskExecutor:
         device = task.device
         scan_task = task.scan_task
 
-        if not self._task_is_current(task):
+        if not await asyncio.to_thread(self._task_is_current, task):
             self._record_stale_generation_drop()
             return
 
@@ -217,7 +218,7 @@ class TaskExecutor:
             self._record_read_summary(task, 0, (self._clock() - start) * 1000, error=True)
             return
         except Exception as e:
-            if not self._task_is_current(task):
+            if not await asyncio.to_thread(self._task_is_current, task):
                 self._metrics.record_timing("read_ms", (self._clock() - start) * 1000)
                 self._record_stale_generation_drop()
                 return
@@ -241,7 +242,7 @@ class TaskExecutor:
         self._metrics.increment("read_success_count")
         self._total_reads += 1
 
-        if not self._task_is_current(task):
+        if not await asyncio.to_thread(self._task_is_current, task):
             self._record_stale_generation_drop()
             return
 
@@ -352,7 +353,7 @@ class TaskExecutor:
         """Read coincident tasks for one device once, then preserve per-task outputs."""
         active_tasks = []
         for task in tasks:
-            if self._task_is_current(task):
+            if await asyncio.to_thread(self._task_is_current, task):
                 active_tasks.append(task)
             else:
                 self._record_stale_generation_drop()
@@ -712,6 +713,8 @@ class TaskExecutor:
             return
 
         device = task.device
+        if device.status == DeviceStatus.ERROR:
+            return
         self._system_logger.emit(
             level="ERROR",
             log_type="collect",

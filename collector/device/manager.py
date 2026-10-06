@@ -1339,11 +1339,12 @@ class DeviceManager:
         """标记设备异常并调度重连。"""
         if device.status == DeviceStatus.CONFIG_ERROR:
             return
-        if device.status == DeviceStatus.ONLINE:
-            device.status = DeviceStatus.ERROR
+        newly_failed = device.status != DeviceStatus.ERROR
+        device.status = DeviceStatus.ERROR
         device.error_count += 1
         device.last_error_time = time.time()
-        await self._report_device_status(device, 2, message, event_type)
+        if newly_failed:
+            await self._report_device_status(device, 2, message, event_type)
         await self.schedule_reconnect(device)
 
     async def _report_device_status(

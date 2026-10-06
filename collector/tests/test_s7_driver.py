@@ -10,6 +10,43 @@ from drivers.base import ReadBlock
 from packages.s7.s7.driver import S7Driver
 
 
+@pytest.mark.asyncio
+async def test_batch_stops_after_connection_fault(monkeypatch):
+    from snap7.error import S7ConnectionError
+    from drivers.base import ReadError
+    driver = S7Driver()
+    driver._client = FakeS7Client()
+    driver._connected = True
+    calls = []
+    def failed(block):
+        calls.append(block.address)
+        raise S7ConnectionError("connection lost")
+    monkeypatch.setattr(driver, "_read_single_block", failed)
+    blocks = [ReadBlock("DB1.DBW0", "INT", 1), ReadBlock("DB2.DBW0", "INT", 1)]
+    with pytest.raises(ReadError, match="connection failed"):
+        await driver.read(blocks)
+    assert calls == ["DB1.DBW0"]
+    assert not driver.is_connected
+
+
+@pytest.mark.asyncio
+async def test_batch_continues_after_local_address_error(monkeypatch):
+    from drivers.base import ReadError
+    driver = S7Driver()
+    driver._client = FakeS7Client()
+    driver._connected = True
+    calls = []
+    def read(block):
+        calls.append(block.address)
+        if len(calls) == 1:
+            raise ReadError("invalid address")
+        return [7]
+    monkeypatch.setattr(driver, "_read_single_block", read)
+    result = await driver.read([ReadBlock("BAD", "INT", 1), ReadBlock("DB2.DBW0", "INT", 1)])
+    assert result == {"BAD": None, "DB2.DBW0": [7]}
+    assert driver.is_connected
+
+
 class FakeS7Client:
     def __init__(self):
         self.db_calls = []

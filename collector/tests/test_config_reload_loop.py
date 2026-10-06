@@ -11,6 +11,38 @@ from core.config import CollectorConfig, DeviceConfig, VariableConfig
 from core.config_db import DeviceSignature
 from main import CollectorApp
 from device.device import Device
+from device.manager import DeviceManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rollback", [False, True])
+async def test_replacement_tasks_capture_installed_generation(rollback):
+    app = CollectorApp.__new__(CollectorApp)
+    manager = DeviceManager(CollectorConfig(devices=[], variables=[]))
+    manager.register_devices()
+    old = manager.add_device(_device(), [_variable()])
+    app.device_manager = manager
+    manager.connect_device = AsyncMock(return_value=True)
+    installed = []
+
+    async def install(device_id, tasks):
+        assert tasks
+        assert all(manager.is_current_generation(device_id, task.generation) for task in tasks)
+        installed.append(tasks)
+        if rollback and len(installed) == 1:
+            raise RuntimeError("scheduler install failed")
+
+    app.scheduler = MagicMock()
+    app.scheduler.reload_device_tasks = AsyncMock(side_effect=install)
+    if rollback:
+        with pytest.raises(RuntimeError, match="scheduler install failed"):
+            await app._replace_device_atomic("PLC001", _device(ip="10.0.0.2"), [_variable()])
+        assert manager.get_device("PLC001") is old
+        assert len(installed) == 2
+    else:
+        await app._replace_device_atomic("PLC001", _device(ip="10.0.0.2"), [_variable()])
+        assert manager.get_device("PLC001") is not old
+        assert len(installed) == 1
 
 
 def _device(
@@ -110,6 +142,23 @@ async def _run_reload_loop(monkeypatch, app):
 
     monkeypatch.setattr(collector_main.asyncio, "sleep", _no_sleep)
     await app._config_reload_loop()
+
+
+@pytest.mark.asyncio
+async def test_initial_config_version_failure_is_retried(monkeypatch):
+    fake_db = _FakeConfigDB([{}, {}], [], [])
+    app = _make_app(fake_db, [], [])
+    original = fake_db.get_device_config_versions
+    calls = 0
+    async def flaky_versions():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("initial database unavailable")
+        return await original()
+    fake_db.get_device_config_versions = flaky_versions
+    await _run_reload_loop(monkeypatch, app)
+    assert calls == 3
 
 
 @pytest.mark.asyncio

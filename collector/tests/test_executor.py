@@ -749,3 +749,17 @@ def test_partial_block_failure_writes_bad_latest_but_not_history_value():
     latest_fields = redis_writer.write_latest.call_args.args[2]
     assert latest_fields["failed"]["v"] == ""
     assert latest_fields["failed"]["q"] == QUALITY_BAD
+
+
+def test_repeated_failure_system_logs_follow_status_transitions():
+    from types import SimpleNamespace
+    from device.device import Device, DeviceStatus
+    device = Device("FAILED", "QC", "s7", {})
+    device.status = DeviceStatus.ONLINE
+    task = SimpleNamespace(device=device, task_name="FAILED_1s", scan_task=SimpleNamespace(scan_rate=1, read_blocks=[]))
+    executor = TaskExecutor.__new__(TaskExecutor)
+    executor._system_logger = MagicMock()
+    executor._emit_read_failure(task, RuntimeError("failure"), 10)
+    device.status = DeviceStatus.ERROR
+    executor._emit_read_failure(task, RuntimeError("failure"), 10)
+    executor._system_logger.emit.assert_called_once()

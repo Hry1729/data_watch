@@ -318,15 +318,22 @@ async def test_stale_reconnect_loop_stops_even_if_cancel_is_missed():
 
     old.driver = AsyncMock()
     old.status = DeviceStatus.ERROR
-    manager._sleep = AsyncMock()
+    sleeping = asyncio.Event()
+    resume = asyncio.Event()
+    async def delayed_reconnect(_delay):
+        sleeping.set()
+        await resume.wait()
+    manager._sleep = delayed_reconnect
     connect = AsyncMock(return_value=True)
     manager.connect_device = connect
     await manager.schedule_reconnect(old)
     stale_task = manager._reconnect_tasks["STALE_PLC"]
+    await asyncio.wait_for(sleeping.wait(), timeout=1)
 
     manager._cancel_reconnect_task = AsyncMock()  # 模拟"取消没赶上"
     candidate = _candidate_like(old)
     await manager.swap_device("STALE_PLC", candidate)
+    resume.set()
 
     await asyncio.wait_for(stale_task, timeout=3)
     connect.assert_not_awaited(), "旧代不得再发起连接"
