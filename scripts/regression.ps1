@@ -40,7 +40,7 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $suffix = if ($Label) { "-$Label" } else { '' }
 $runDir = Join-Path $LogRoot "$stamp-$sha$suffix"
 New-Item -ItemType Directory -Path $runDir -Force | Out-Null
-$testTempRoot = Join-Path $root ('artifacts/t/' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$testTempRoot = Join-Path ([IO.Path]::GetTempPath()) ('dw-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $testTempRoot -Force | Out-Null
 
 function Get-Version([string]$Exe, [string[]]$VersionArgs) {
@@ -91,6 +91,7 @@ foreach ($name in $Modules) {
     Write-Host "########## $name ##########"
     $savedPythonPath = $env:PYTHONPATH
     $savedPythonIOEncoding = $env:PYTHONIOENCODING
+    $savedPythonUTF8 = $env:PYTHONUTF8
     $started = Get-Date
     $exitCode = 1
     $output = @()
@@ -101,6 +102,7 @@ foreach ($name in $Modules) {
         $locationPushed = $true
         if ($spec.PyPath) { $env:PYTHONPATH = $spec.PyPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
         $env:PYTHONIOENCODING = 'utf-8'
+        $env:PYTHONUTF8 = '1'
         $global:LASTEXITCODE = $null
         $runArgs = @($spec.Args)
         if ($name -ne 'frontend') { $runArgs += @('--basetemp', (Join-Path $testTempRoot $name)) }
@@ -113,6 +115,7 @@ foreach ($name in $Modules) {
     } finally {
         if ($null -ne $savedPythonPath) { $env:PYTHONPATH = $savedPythonPath } else { Remove-Item Env:\PYTHONPATH -ErrorAction SilentlyContinue }
         if ($null -ne $savedPythonIOEncoding) { $env:PYTHONIOENCODING = $savedPythonIOEncoding } else { Remove-Item Env:\PYTHONIOENCODING -ErrorAction SilentlyContinue }
+        if ($null -ne $savedPythonUTF8) { $env:PYTHONUTF8 = $savedPythonUTF8 } else { Remove-Item Env:\PYTHONUTF8 -ErrorAction SilentlyContinue }
         if ($locationPushed) { Pop-Location }
     }
     $elapsed = ((Get-Date) - $started).TotalSeconds
