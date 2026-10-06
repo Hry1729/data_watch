@@ -26,6 +26,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
+from collections import OrderedDict
 
 import redis
 
@@ -99,6 +100,28 @@ class _BufferedRow:
 
 
 @dataclass
+class _PreparedQuality:
+    mismatched_ids: tuple[set[str], set[str]] | None
+    columns: dict[str, int]
+    bad_var_ids: list[str]
+
+
+def _prepare_quality_fields(raw_values: dict, raw_qualities: dict, var_map: dict) -> _PreparedQuality:
+    normalized = {str(key): value for key, value in raw_qualities.items()}
+    value_ids = {str(key) for key in raw_values if key in var_map}
+    quality_ids = {key for key in normalized if key in var_map}
+    columns, bad = {}, []
+    for key in value_ids & quality_ids:
+        code = normalized[key]
+        if is_valid_quality(code):
+            columns[key] = int(code)
+        else:
+            bad.append(key)
+    mismatch = (value_ids, quality_ids) if value_ids != quality_ids else None
+    return _PreparedQuality(mismatch, columns, bad)
+
+
+@dataclass
 class _PreparedPayload:
     payload_bytes: int
     decoded: bool = True
@@ -117,9 +140,11 @@ class _PreparedPayload:
     # **对象身份**与即将使用的 mapping.var_map 比对：映射 reload 会换上一个新 dict，
     # 身份不同即说明结果可能缺列（新增点），必须重算。空 dict 也要绑定。
     conversion_var_map: dict | None = None
+    conversion_unmapped_var_ids: list[str] | None = None
+    prepared_quality: _PreparedQuality | None = None
 
 
-def _convert_values(raw_values: dict, var_map: dict) -> tuple[dict, list]:
+def _convert_values(raw_values: dict, var_map: dict, unmapped: list[str] | None = None) -> tuple[dict, list]:
     """把原始字符串值转换成列名字典（float + 有限值检查）。
 
     这是原本留在事件循环里的重型转换；抽成纯函数后可在执行单元里批量执行。
@@ -130,6 +155,8 @@ def _convert_values(raw_values: dict, var_map: dict) -> tuple[dict, list]:
     for var_id, str_val in raw_values.items():
         col_name = var_map.get(var_id)
         if not col_name:
+            if unmapped is not None:
+                unmapped.append(str(var_id))
             continue
         try:
             num = float(str_val)
@@ -207,9 +234,12 @@ def _prepare_payload_batch(
                 # 必须绑定后才能被调用方判定为已失效，而不是被当成"没有结果"。
                 if var_map is not None:
                     started = time.perf_counter()
+                    item.conversion_unmapped_var_ids = []
                     item.converted_columns, item.conversion_bad_var_ids = (
-                        _convert_values(item.raw_values, var_map)
+                        _convert_values(item.raw_values, var_map, item.conversion_unmapped_var_ids)
                     )
+                    if isinstance(item.raw_qualities, dict):
+                        item.prepared_quality = _prepare_quality_fields(item.raw_values, item.raw_qualities, var_map)
                     item.conversion_ms = (time.perf_counter() - started) * 1000
                     item.conversion_var_map = var_map
         prepared.append(item)
@@ -309,6 +339,19 @@ class StreamConsumer:
         # 防刷库：坏数据洪峰下 DLQ 事件可能逐条触发，各自 ≥60s 限流写 system_log
         self._last_dlq_moved_log: float | None = None
         self._last_dlq_failed_log: float | None = None
+        self._mapping_warnings: OrderedDict[tuple[str, str, str], tuple[float, int]] = OrderedDict()
+
+    def _warn_mapping(self, device_code, group_code, reason, message, *args):
+        key = (device_code, group_code, reason)
+        now = time.monotonic()
+        previous = self._mapping_warnings.pop(key, None)
+        if previous is not None and now - previous[0] < 60.0:
+            self._mapping_warnings[key] = (previous[0], previous[1] + 1)
+            return
+        if len(self._mapping_warnings) >= 256:
+            self._mapping_warnings.popitem(last=False)
+        self._mapping_warnings[key] = (now, 0)
+        logger.warning(message + " (suppressed=%d)", *args, previous[1] if previous else 0)
 
     def _push_dlq(self, **kwargs) -> bool:
         """按 writer 配置写入 DLQ，并按保留模式发出容量告警。"""
@@ -1150,7 +1193,7 @@ class StreamConsumer:
                 config_version,
             )
         if mapping is None:
-            logger.warning(
+            self._warn_mapping(device_code, group_code, "missing_mapping",
                 "[consumer] no current mapping for device=%s group=%s version=%s, leaving entry %s pending",
                 device_code,
                 group_code,
@@ -1162,11 +1205,11 @@ class StreamConsumer:
         # 永久 mapping 不按 config_version 失效，以便解码历史 entry；但同组新增点
         # 需要让已热缓存的 worker 重新读取一次永久 mapping。若仍未知，保留 entry
         # 在 PEL，不能只写旧点后 ACK 造成新点静默漏写。
-        unmapped_var_ids = [
-            str(var_id)
-            for var_id in raw_values
-            if not mapping.var_map.get(str(var_id))
-        ]
+        if (prepared is not None and prepared.conversion_var_map is mapping.var_map
+                and prepared.conversion_unmapped_var_ids is not None):
+            unmapped_var_ids = prepared.conversion_unmapped_var_ids
+        else:
+            unmapped_var_ids = [str(var_id) for var_id in raw_values if not mapping.var_map.get(str(var_id))]
         if unmapped_var_ids and cache_hit:
             mapping = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -1177,7 +1220,7 @@ class StreamConsumer:
                 True,  # bound repeated reloads for partially missing mappings
             )
             if mapping is None:
-                logger.warning(
+                self._warn_mapping(device_code, group_code, "reload_failed",
                     "[consumer] mapping reload failed for device=%s group=%s "
                     "unknown var_ids=%s, leaving entry %s pending",
                     device_code,
@@ -1192,7 +1235,7 @@ class StreamConsumer:
                 if not mapping.var_map.get(str(var_id))
             ]
         if unmapped_var_ids:
-            logger.warning(
+            self._warn_mapping(device_code, group_code, "unknown_var_ids",
                 "[consumer] unknown var_ids after mapping load for "
                 "device=%s group=%s: %s; leaving entry %s pending",
                 device_code,
@@ -1217,7 +1260,7 @@ class StreamConsumer:
             self._metrics.record_parse(prepared.conversion_ms)
         else:
             parse_started = time.perf_counter()
-            columns, bad_var_ids = _convert_values(raw_values, mapping.var_map)
+            columns, bad_var_ids = await self._run_blocking(_convert_values, raw_values, mapping.var_map)
             self._metrics.record_parse((time.perf_counter() - parse_started) * 1000)
 
         if bad_var_ids:
@@ -1335,14 +1378,13 @@ class StreamConsumer:
                 return
 
             # 过滤非存储点后，values 与 qualities 键集合必须对齐（设计契约）
-            raw_qualities_norm = {str(k): v for k, v in raw_qualities.items()}
-            stored_value_ids = {
-                str(vid) for vid in raw_values if vid in mapping.var_map
-            }
-            stored_quality_ids = {
-                vid for vid in raw_qualities_norm if vid in mapping.var_map
-            }
-            if stored_value_ids != stored_quality_ids:
+            if (prepared is not None and prepared.conversion_var_map is mapping.var_map
+                    and prepared.prepared_quality is not None):
+                quality_fields = prepared.prepared_quality
+            else:
+                quality_fields = await self._run_blocking(_prepare_quality_fields, raw_values, raw_qualities, mapping.var_map)
+            if quality_fields.mismatched_ids is not None:
+                stored_value_ids, stored_quality_ids = quality_fields.mismatched_ids
                 moved = await self._run_blocking(
                     self._push_dlq,
                     device_type=device_type or "unknown",
@@ -1360,13 +1402,8 @@ class StreamConsumer:
                     await self._run_blocking(self._ack_single, stream_key, entry_id)
                 return
 
-            bad_quality_var_ids: list[str] = []
-            for var_id in stored_value_ids:
-                q_code = raw_qualities_norm[var_id]
-                if not is_valid_quality(q_code):
-                    bad_quality_var_ids.append(str(var_id))
-                    continue
-                qualities[str(var_id)] = int(q_code)
+            bad_quality_var_ids = quality_fields.bad_var_ids
+            qualities = quality_fields.columns
 
             if bad_quality_var_ids:
                 last_error = (

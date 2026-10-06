@@ -197,3 +197,38 @@ async def test_unchanged_mapping_still_uses_converted_fast_path():
 
     assert spy.call_count == 1, "只应在执行单元的批量准备里转换一次"
     assert consumer._buffer[0].columns == {"p1": 1.5, "p2": 2.5}
+
+
+@pytest.mark.asyncio
+async def test_cached_quality_validation_runs_once_off_event_loop(monkeypatch):
+    import threading
+    mapper = _FakeMapper({"1": "p1", "2": "p2"})
+    consumer = _consumer(mapper)
+    loop_thread = threading.get_ident()
+    threads = []
+    original = consumer_mod._prepare_quality_fields
+    def prepare(*args):
+        threads.append(threading.get_ident())
+        return original(*args)
+    monkeypatch.setattr(consumer_mod, "_prepare_quality_fields", prepare)
+    entry = _entry("1-0", {"1": "1.5", "2": "2.5"})
+    entry.update(contract_version="2", qualities='{"1":0,"2":192}')
+    await _dispatch_batch(consumer, [entry])
+    assert len(threads) == 1
+    assert threads[0] != loop_thread
+    assert consumer._buffer[0].qualities == {"1": 0, "2": 192}
+
+
+def test_mapping_warning_is_bounded_and_reports_suppression(monkeypatch, caplog):
+    consumer = _consumer(_FakeMapper({"1": "p1"}))
+    now = [10.0]
+    monkeypatch.setattr(consumer_mod.time, "monotonic", lambda: now[0])
+    for _ in range(3):
+        consumer._warn_mapping("d", "g", "missing", "mapping pending %s", "entry")
+    assert len(caplog.records) == 1
+    now[0] = 71.0
+    consumer._warn_mapping("d", "g", "missing", "mapping pending %s", "entry")
+    assert "suppressed=2" in caplog.records[-1].message
+    for index in range(300):
+        consumer._warn_mapping(str(index), "g", "missing", "mapping pending %s", "entry")
+    assert len(consumer._mapping_warnings) <= 256
