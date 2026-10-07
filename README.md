@@ -19,7 +19,7 @@ DataWatch 是面向自动化码头的工业设备数据采集与监控平台。�
 
 ## 能做什么
 
-- **接入多种工业协议**：S7、GE SRTP、OPC UA、OPC DA 与 HTTP Push；OPC DA 通过独立的 C# x86 sidecar / proxy 隔离 COM 与 DCOM 依赖。
+- **接入多种工业协议**：五个受控驱动包覆盖 S7、GE SRTP、OPC UA、OPC DA 与 Modbus TCP；HTTP Push 与 OPC DA sidecar 是外部推送接入方式，共用同一数据契约。OPC DA 通过独立的 C# x86 sidecar / proxy 隔离 COM 与 DCOM 依赖。
 - **覆盖中心式与分布式现场**：中心式采集直接进入 Redis；分布式边缘先写 SQLite outbox，再由 Uploader 经 Ingest 汇入中心。
 - **分离实时态与历史事实**：Redis 承载 latest、window、stream 与 DLQ，Writer 消费 Stream 并批量写入 TDengine；MySQL 保存设备拓扑、映射、用户与权限。
 - **传递数据质量**：Good / Uncertain / Bad 质量码从驱动层贯穿 Redis、Writer、TDengine、Backend 与前端，区分真实零值和采集失败。
@@ -159,4 +159,4 @@ Collector、Edge、Ingest、Writer 与 Agent 的测试应在安装各自依赖�
 - 当前项目没有设备点位告警引擎；CLI 的 `system-alerts` 指真实系统 / 操作日志中的高等级事件，不代表阈值越限或通讯中断告警。
 - `frontend` 是业务 Web 控制台，`app` 是现场桌面运维端；两者的身份流程和职责不同。
 - 生产进程应由 Agent 按角色启动，不要手工重复启动 Collector 或 Writer，以免重复采集、消费或入库。
-- 仓库当前未提供许可证文件。使用、修改或分发前，请先向维护者确认授权范围。
+- 本项目采用 Apache License 2.0 授权，全文见 [`LICENSE`](LICENSE)。

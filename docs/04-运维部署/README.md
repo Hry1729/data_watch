@@ -305,7 +305,7 @@ DATAWATCH_AGENT_BASE_URL=http://host.docker.internal:7070
 - **`DATAWATCH_AGENT_SERVICE_TOKEN`**: Backend 调用 Agent 装卸驱动时的服务凭据，必须与 Agent 侧配置的 `DATAWATCH_AGENT_SERVICE_TOKEN` **完全一致**。
   - **优先做法：直接取安装器已生成的值。** 角色安装包在安装时生成该令牌并写入角色数据根：中心式为 `C:\ProgramData\DataWatch\agent_service_token.txt`，分布式中心为 `C:\ProgramData\DataWatch Distributed Center\agent_service_token.txt`。安装后令牌由安装器以 CSPRNG 生成（256 位），且文件 ACL 只授予**管理员 + SYSTEM**。
   - **安全读取**：以管理员身份读取该文件并只粘贴到目标 `backend.env`。**不要把真实令牌写入 Markdown、工单、聊天记录、日志或任何提交**；也不要把文件复制到普通用户可读的位置。
-  - **仅在没有安装器产物时**（例如纯 Docker / 手工部署，Agent 由通用脚本安装）才自行生成：`python -c "import secrets; print(secrets.token_hex(32))"`，并同时写入 Agent 侧与 Backend 侧。
+  - **仅在没有安装器产物时**（例如纯 Docker / 手工部署，Agent 由通用脚本安装）才自行生成：`python -c "import secrets; print(secrets.token_hex(32))"`，并同时写入 Agent 侧与 Backend 侧。注意该通用脚本不注入 `DATAWATCH_ROLE`，缺失时 Agent 按中心式运行，只限开发辅助，不能用于正式角色部署。
   - **轮换与回滚（必须两端一起改）**：①生成新值；②同时更新 Agent 侧（`agent_service_token.txt` + Agent 服务环境）与 Backend 侧 `backend.env`；③重启 Agent 服务与 Backend；④验证 Backend 的驱动装卸接口可用、Agent 日志出现鉴权成功。**任一侧先改都会导致 Backend 调 Agent 失败**——这正是"旧凭据失效可验证"的判据。失败时把旧值写回两侧并重启即可回滚（无需重新安装）。
 - **`DATAWATCH_AGENT_BASE_URL`（新增）**: Agent 地址。Docker 部署 Backend 时，Agent 在宿主机使用 `http://host.docker.internal:7070`；多节点部署时改为 Agent 实际 IP。
 
@@ -510,6 +510,9 @@ C:\ProgramData\DataWatch\            # DATAWATCH_DATA_ROOT，可写数据根
 安装器/NSSM 注入：
 
 ```text
+DATAWATCH_ROLE
+DATAWATCH_AGENT_PORT
+DATAWATCH_AGENT_SERVICE_TOKEN
 DATAWATCH_INSTALL_ROOT
 DATAWATCH_DATA_ROOT
 ```
@@ -553,7 +556,7 @@ agent 启动子进程时：
 - 解密 DB 密码；
 - 注入 `DATAWATCH_<DB>_<FIELD>`；
 - 设置工作目录；
-- 拼接 `--config`、`--runtime-dir`、`--port-mapping` 等运行参数；
+- 仅对 collector 拼接 `--config`、`--runtime-dir`、`--port-mapping` 运行参数；writer 不附加动态参数，只读 `config.toml [writer].args` 静态项；
 - stdout/stderr 写入 runtime logs；
 - PID 文件包含 pid + create_time。
 

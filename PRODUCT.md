@@ -10,10 +10,10 @@ web
 
 - **Frontend**: Vue 3 + TypeScript + Vite 5（art-design-pro admin 模板）
 - **Backend**: free-threaded CPython 3.14t（解释器路径见 `backend/.py314t-site`）
-- **Edge runtime**: Tauri 桌面端（现场运维）
+- **Edge runtime**: Python 边缘数据面（Storage / Uploader）；Tauri 桌面端（`app/`）负责现场运维
 - **Data plane**: Redis（latest / window / stream / DLQ）+ TDengine（历史事实）+ MySQL（拓扑 / 映射 / 权限）
 - **CLI**: `data-watch`（`cli/`，基于 Typer），输出永远是 JSON / JSONL
-- **打包**: Inno Setup 单包一键装（见 `scripts/build.ps1`）
+- **打包**: Inno Setup 三角色安装包（centralized / edge / distributed-center，见 `installer/build.ps1` 与 `installer/build-roles.ps1`）
 - **部署**: Windows 优先；中心式 + 分布式边缘双路径
 - **环境**: 凭据统一通过 `DATAWATCH_<DB>_<FIELD>` env 注入，agent DPAPI 落 `ProgramData`
 
@@ -32,7 +32,7 @@ web
 
 ## Positioning
 
-**5 协议统一受控接入**是主轴：同一个 `data-watch` CLI、同一种 JSON 数据契约、同一个质量码体系覆盖 S7 / GE SRTP / OPC UA / OPC DA / HTTP Push 五种现场协议。邻居产品要抄这个机制，必须重做协议驱动框架、重新建立命令-驱动-数据契约的解耦——这是工程护城河而非营销词。
+**5 协议统一受控接入**是主轴：同一个 `data-watch` CLI、同一种 JSON 数据契约、同一个质量码体系覆盖 S7 / GE SRTP / OPC UA / OPC DA / Modbus TCP 五个协议族（各对应一个受控驱动包）；HTTP Push 与 OPC DA sidecar 是外部推送接入方式，共用同一契约但不计入驱动包。邻居产品要抄这个机制，必须重做协议驱动框架、重新建立命令-驱动-数据契约的解耦——这是工程护城河而非营销词。
 
 支撑定位的次级叙事（不喧宾夺主）：跨空洞合并的工程指标、边-云协同的部署灵活性、CLI 即 AI 入口的前瞻性。
 
@@ -46,7 +46,7 @@ web
 
 ## Capabilities and Constraints
 
-- **接入 5 协议**: S7（S7-300/400/1200/1500）、GE SRTP（RX3i / RX7i / 90-70）、OPC UA（IEC 62541）、OPC DA（通过独立 C# x86 sidecar / proxy 隔离 COM + DCOM 依赖）、HTTP Push（REST / Webhook）
+- **接入 5 协议**: S7（S7-300/400/1200/1500）、GE SRTP（RX3i / RX7i / 90-70）、OPC UA（IEC 62541）、OPC DA（通过独立 C# x86 sidecar / proxy 隔离 COM + DCOM 依赖）、Modbus TCP；HTTP Push（REST / Webhook）与 OPC DA sidecar 是外部推送接入方式，不重复计入驱动包
 - **双部署**: 中心式（Collector → Redis → Writer → TDengine）+ 分布式边缘（Collector → Edge Storage → SQLite outbox → Uploader → Ingest → 中心）
 - **受控驱动包**: 新协议以受控驱动包形式热插拔，不修改调度、缓存与上层业务
 - **快照快取**: collector CPU 热点已 O(N²) → O(N) 块级缓存优化；瓶颈是 I/O + 算法而非语言
@@ -68,7 +68,6 @@ web
 - 真实 CLI 命令族: `cli/commands/*.py`（devices / points / dashboard / diagnostics / history / realtime / infrastructure / system / contracts / update）
 - CLI 主名: `data-watch`（`cli/main.py:49 name="data-watch"`）
 - 论文里强调的 4 条核心创新：5 协议统一 / 跨空洞合并 / 边-云协同 / CLI 即 AI 入口
-- 后续开发在 Multica 7-agent squad 开展（PM leader + 6 工程师），提示词落 `docs\设计\multica\`
 
 **禁止杜撰**:
 - 没有 Python SDK、没有 MCP 命令——CLI 是 `data-watch` 唯一一等入口

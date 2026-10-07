@@ -15,4 +15,12 @@
 | 其他交付与故障 | [后端 Docker 验证](2026-09/docker-backend-validation-20260924.md)、[驱动生命周期交付](2026-09/driver-lifecycle-delivery.md)、[可靠性评审交付](2026-09/reliability-review-delivery.md) |
 | 小型 JSON 证据 | `2026-09/collector-*-profile-20260924.json`、`2026-09/receipt-v2-fault-validation-20260924.json`、`2026-09/tdengine-fault-validation-20260924.json` |
 
+## 2026 年 10 月
+
+完整文件位于 [2026-10](2026-10/)。
+
+| 主题 | 记录 |
+| --- | --- |
+| 审计整改与核验 | [2026-10-06 整改提交与核验记录](2026-10/2026-10-06-整改提交与核验记录.md) — B1–B50 / D1–D39 / S1–S6 的逐项提交对应、独立只读复核、回归门禁证据与现场剩余事项；主清单见 [`docs/Data_Watch_综合审查与Agent整改执行清单_6845e80.md`](../Data_Watch_综合审查与Agent整改执行清单_6845e80.md) |
+
 联合测量与阶梯联调两篇仍留在 `docs/` 根部，因为 `evidence/` 下的 `SHA256SUMS.txt` 使用其原始相对路径和内容哈希；挪动或改写会使现存证据无法按清单复核。`docs/tdengine-schema-20260929.json` 也是本机数据库恢复时的原始 schema 导出，保留原路径。`outputs/` 内各批次原始结果与 `evidence/` 下的签名清单也保持原位。

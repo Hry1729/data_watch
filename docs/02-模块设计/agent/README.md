@@ -19,7 +19,7 @@ agent 是一个基于 **FastAPI** 的本机 HTTP 服务，以 Windows 服务方�
 
 注意：agent 用 FastAPI，与 backend 的 TurboAPI 是两个不同的 Python 服务，职责与端口均不同。
 
-入口：`agent/app/factory.py:108`（`create_app()`）；Windows 服务封装见 `agent/service/install_service.py`。
+入口：`agent/app/factory.py`（`create_app()`）；正式 Windows 服务由角色安装包（`installer/DataWatchRole.iss`）注册并注入 `DATAWATCH_ROLE`。`agent/service/install_service.py` 只是开发/手工部署用的通用 NSSM 辅助脚本，不注入角色，不得用于正式角色部署。
 
 ---
 
@@ -77,7 +77,7 @@ agent/
 │   │   └── log_manager.py            # 子进程日志 tail
 │   ├── core/                # config(DPAPI 双根) / security(JWT+DPAPI) / deps / exceptions
 │   └── schemas/models.py    # 请求/响应模型
-└── service/install_service.py  # Windows 服务注册/运行
+└── service/install_service.py  # 开发辅助：通用 NSSM 服务注册（不注入角色）
 ```
 
 组件协作：
@@ -108,11 +108,11 @@ flowchart TD
 
 `agent/app/services/process_manager.py`。公共监管内核管控本角色模块：
 
-- **start**（`process_manager.py:142`）：校验未在运行（PID 文件 + 存活校验）后，用 `spec.args + extra_args` 启动；`extra_args`（如 `--config`/`--port-mapping`）由 agent 运行期编排拼入、不写回 config。
-- **stop**（`process_manager.py:200`）：写 `shutdown_flag` 让子进程优雅退出，轮询超时后 `force_stop`。
+- **start**（`process_manager.py:143`）：校验未在运行（PID 文件 + 存活校验）后，用 `spec.args + extra_args` 启动；`extra_args`（如 `--config`/`--port-mapping`）由 agent 运行期编排拼入、不写回 config。
+- **stop**（`process_manager.py:201`）：写 `shutdown_flag` 让子进程优雅退出，轮询超时后 `force_stop`。
 - **restart**：stop + start，并原子递增持久化 `restart_count`（`state/process_state.json`）。
 - **status**：基于 PID 文件与 `verify_alive` 返回 running/stopped/crashed。
-- **health_check_loop**（`process_manager.py:345`，2s）：崩溃检测 + CPU 采样。**CPU 归一化**：`cpu_percent / 逻辑核数`，换算为占整机 0–100%（`_sample_cpu` `process_manager.py:319`，复用同一 psutil.Process 对象做增量）。
+- **health_check_loop**（`process_manager.py:377`，2s）：崩溃检测 + CPU 采样。**CPU 归一化**：`cpu_percent / 逻辑核数`，换算为占整机 0–100%（`_sample_cpu` `process_manager.py:341`，复用同一 psutil.Process 对象做增量）。
 
 边缘角色启动 Collector 或 Uploader 前先确保 Storage 已运行且 `/healthz` 可达；单独停止 Storage 时必须先停止依赖它的 Collector/Uploader，避免界面显示运行而数据无法持久化或更新状态。
 
@@ -197,7 +197,7 @@ sequenceDiagram
 - `[collector]`/`[writer]`/`[ingest]`/`[uploader]`：按角色存在的运行参数；
 - `[storage]`：边缘 Storage host、port（默认 7073）和有界队列容量。
 
-环境变量：`DATAWATCH_INSTALL_ROOT`、`DATAWATCH_DATA_ROOT`（安装器/NSSM 注入）。详见《04-运维部署》。
+环境变量：`DATAWATCH_ROLE`、`DATAWATCH_AGENT_PORT`、`DATAWATCH_AGENT_SERVICE_TOKEN`、`DATAWATCH_INSTALL_ROOT`、`DATAWATCH_DATA_ROOT`（角色安装器/NSSM 注入）。`DATAWATCH_ROLE` 缺失时回退 `centralized`，非法值启动即报错。详见《04-运维部署》。
 
 ---
 
