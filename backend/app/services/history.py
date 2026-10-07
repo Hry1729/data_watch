@@ -197,13 +197,18 @@ class HistoryService:
         record_budget = self._record_budget() if max_records is None else int(max_records)
         if record_budget <= 0:
             raise ApiError(503, "History query protection limit is not configured")
-        slots = asyncio.Semaphore(2)
-        async def fetch_point(point):
-            async with slots:
-                return await self._fetch_point_series(device, point, start_dt, end_dt, limit=record_budget + 1)
-        series_list = await asyncio.gather(*(fetch_point(point) for point in points), return_exceptions=True)
-        if sum(len(rows) for rows in series_list if not isinstance(rows, Exception)) > record_budget:
-            raise self._record_limit_error(limit=record_budget)
+        series_list = []
+        remaining = record_budget
+        for index in range(0, len(points), 2):
+            batch = await asyncio.gather(*(
+                self._fetch_point_series(device, point, start_dt, end_dt, limit=remaining + 1)
+                for point in points[index:index + 2]
+            ), return_exceptions=True)
+            count = sum(len(rows) for rows in batch if not isinstance(rows, Exception))
+            if count > remaining:
+                raise self._record_limit_error(limit=record_budget)
+            remaining -= count
+            series_list.extend(batch)
 
         timeline: dict[datetime, str] = {}
         point_value_maps: dict[int, dict[str, str | int | float]] = {}
@@ -297,18 +302,23 @@ class HistoryService:
             calc_interval = interval
 
         record_budget = self._record_budget()
-        slots = asyncio.Semaphore(2)
-        async def fetch_point(point):
+        async def fetch_point(point, limit):
             is_bool = str(point.var_type).lower() == "bool"
             agg_func = self._map_aggregate_function("last" if is_bool else aggregate)
-            async with slots:
-                return await self._fetch_downsampled_series(
-                    device, point, start_dt, end_dt, calc_interval, agg_func,
-                    limit=record_budget + 1,
-                )
-        series_results = await asyncio.gather(*(fetch_point(point) for point in points))
-        if sum(len(rows) for rows in series_results) > record_budget:
-            raise self._record_limit_error(limit=record_budget)
+            return await self._fetch_downsampled_series(
+                device, point, start_dt, end_dt, calc_interval, agg_func, limit=limit,
+            )
+        series_results = []
+        remaining = record_budget
+        for index in range(0, len(points), 2):
+            batch = await asyncio.gather(*(
+                fetch_point(point, remaining + 1) for point in points[index:index + 2]
+            ))
+            count = sum(len(rows) for rows in batch)
+            if count > remaining:
+                raise self._record_limit_error(limit=record_budget)
+            remaining -= count
+            series_results.extend(batch)
 
         if not any(series_results):
             await self._raise_if_tdengine_unavailable("chart_data", device.device_code)
@@ -1356,6 +1366,8 @@ class HistoryService:
         legacy_database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
+        query_succeeded = False
+        last_error: Exception | None = None
 
         # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
@@ -1373,14 +1385,17 @@ class HistoryService:
                     ),
                     database=database_name,
                 )
+                query_succeeded = True
                 if rows:
                     return rows
             except ValueError as exc:
+                last_error = exc
                 logger.warning(
                     "[history] invalid identifier td_column_name=%r device=%s: %s",
                     point.td_column_name, device.device_code, exc,
                 )
             except Exception as exc:
+                last_error = exc
                 logger.warning(
                     "[history] point child query failed device=%s point=%s: %s",
                     device.device_code, point.point_id, exc,
@@ -1411,7 +1426,9 @@ class HistoryService:
                     ),
                     database=legacy_database_name,
                 )
+                query_succeeded = True
             except Exception as exc:
+                last_error = exc
                 logger.warning("[history] subtable query failed table=%s: %s", candidate_table_name, exc)
                 continue
 
@@ -1443,11 +1460,15 @@ class HistoryService:
         for statement in stable_statements:
             try:
                 rows = await self.tdengine.fetch_all(statement, database=legacy_database_name)
+                query_succeeded = True
             except Exception as exc:
+                last_error = exc
                 logger.warning("[history] stable fallback query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
             if rows:
                 return rows
+        if not query_succeeded and last_error is not None:
+            raise ApiError(503, "History data source unavailable", status_code=503) from last_error
         return []
 
     async def _store_perspective_snapshot(

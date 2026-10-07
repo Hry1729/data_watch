@@ -172,6 +172,49 @@ class TestHistoryLimits(unittest.IsolatedAsyncioTestCase):
         await service.query_history(1, [1, 2, 3, 4], "2026-01-01", "2026-01-02")
         self.assertEqual(peak, 2)
 
+    async def test_both_query_paths_stop_after_first_over_budget_batch(self):
+        for chart in (False, True):
+            with self.subTest(chart=chart):
+                service = self._service()
+                points = self._points() + [HistoryPoint(i, f"p{i}", f"a{i}", "REAL", i, None) for i in range(3, 21)]
+                service._fetch_device = AsyncMock(return_value=HistoryDevice(1, "dev", "Device", "qc"))
+                service._fetch_selected_points = AsyncMock(return_value=points)
+                service._validate_query_points = MagicMock()
+                service._validate_query_range = MagicMock(return_value=(datetime(2026, 1, 1), datetime(2026, 1, 2)))
+                calls = []
+                async def fetch(*args, limit):
+                    calls.append(limit)
+                    return [(datetime(2026, 1, 1), 1)] * limit
+                service._fetch_point_series = fetch
+                service._fetch_downsampled_series = fetch
+                with self.assertRaises(ApiError):
+                    if chart:
+                        await service.get_chart_data(1, list(range(1, 21)), "2026-01-01", "2026-01-02")
+                    else:
+                        await service.query_history(1, list(range(1, 21)), "2026-01-01", "2026-01-02")
+                self.assertEqual(calls, [6, 6])
+
+    async def test_both_query_paths_reduce_later_batch_limits(self):
+        for chart in (False, True):
+            with self.subTest(chart=chart):
+                service = self._service()
+                points = self._points() + [HistoryPoint(i, f"p{i}", f"a{i}", "REAL", i, None) for i in (3, 4)]
+                service._fetch_device = AsyncMock(return_value=HistoryDevice(1, "dev", "Device", "qc"))
+                service._fetch_selected_points = AsyncMock(return_value=points)
+                service._validate_query_points = MagicMock()
+                service._validate_query_range = MagicMock(return_value=(datetime(2026, 1, 1), datetime(2026, 1, 2)))
+                calls = []
+                async def fetch(_device, point, *args, limit):
+                    calls.append(limit)
+                    return [(datetime(2026, 1, 1), 1)] * (5 if point.var_seq == 1 else 0)
+                service._fetch_point_series = fetch
+                service._fetch_downsampled_series = fetch
+                if chart:
+                    await service.get_chart_data(1, [1, 2, 3, 4], "2026-01-01", "2026-01-02")
+                else:
+                    await service.query_history(1, [1, 2, 3, 4], "2026-01-01", "2026-01-02")
+                self.assertEqual(calls, [6, 6, 1, 1])
+
 
 if __name__ == "__main__":
     unittest.main()
