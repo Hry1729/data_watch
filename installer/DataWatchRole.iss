@@ -21,6 +21,10 @@ WizardStyle=modern
 UninstallDisplayName={#MyAppName}
 SetupIconFile={#SrcRoot}\app\src-tauri\icons\icon.ico
 UninstallDisplayIcon={app}\app\app.exe
+; ssPostInstall 阶段（权限加固 / 服务注册）向导没有进度反馈，现场出现过
+; 「Finish 点不动、疑似卡死」的反馈且无任何日志可查。SetupLogging 让每次安装
+; 都在 %TEMP% 留下带时间戳的 Setup Log，用于定位这类静默停顿。
+SetupLogging=yes
 
 [Languages]
 Name: "default"; MessagesFile: "compiler:Default.isl"
@@ -217,6 +221,9 @@ end;
 function SystemFunction036(var RandomBuffer: Byte; RandomBufferLength: Cardinal): Boolean;
   external 'SystemFunction036@advapi32.dll stdcall';
 
+function EnableWindow(hWnd: HWND; bEnable: LongInt): LongInt;
+  external 'EnableWindow@user32.dll stdcall';
+
 function GenerateToken: String;
 var
   Buffer: array[0..31] of Byte;
@@ -271,40 +278,84 @@ begin
     RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [TokenPath, ResultCode]));
 end;
 
-procedure RestoreInheritedDataPermissions(DataPath: String);
+{ 4 个明文秘密必须始终是「不继承上级」的显式白名单。
+  恢复普通数据的继承权限时必须跳过它们，不能先开放再收紧。 }
+procedure HardenDataSecrets(DataPath: String);
+begin
+  if FileExists(DataPath + '\config.toml') then HardenTokenFile(DataPath + '\config.toml');
+  if FileExists(DataPath + '\.config.toml.tmp') then HardenTokenFile(DataPath + '\.config.toml.tmp');
+  if FileExists(DataPath + '\agent_service_token.txt') then HardenTokenFile(DataPath + '\agent_service_token.txt');
+  if FileExists(DataPath + '\edge\storage-ipc-tokens.json') then HardenTokenFile(DataPath + '\edge\storage-ipc-tokens.json');
+end;
+
+{ 递归扫描：任何重解析点（junction/symlink）都必须拒绝，且要在执行 /T 之前扫完。
+  icacls 的 /T 会**穿过** junction 去改链接目标（隔离实验证实：root\link\secret.txt
+  被列入处理清单），所以守卫必须先跑，否则安装器可能去改数据根之外的文件。 }
+procedure AssertNoLinkedEntries(DataPath: String);
 var
   FindRec: TFindRec;
   EntryPath: String;
+begin
+  if not FindFirst(DataPath + '\*', FindRec) then Exit;
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        EntryPath := DataPath + '\' + FindRec.Name;
+        if (FindRec.Attributes and $400) <> 0 then
+          RaiseException('Refusing linked data entry ' + EntryPath);
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+          AssertNoLinkedEntries(EntryPath);
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
+  end;
+end;
+
+procedure RestoreInheritedDataPermissions(DataPath, RootPath: String);
+var
+  FindRec: TFindRec;
+  EntryPath: String;
+  Params: String;
+  IsEdgeDirectory: Boolean;
   ResultCode: Integer;
 begin
-  if FindFirst(DataPath + '\*', FindRec) then
-  begin
-    try
-      repeat
-        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+  { 普通子树批量 icacls /T，避免逐文件启动进程造成数分钟停顿。
+    根目录的三个秘密直接跳过；edge 目录只处理自身，再遍历直接子项，
+    跳过 storage-ipc-tokens.json，其他子树仍批量处理。
+    不能对数据根或含秘密的 edge 目录跑 /T，否则会重新打开秘密的继承。 }
+  if not FindFirst(DataPath + '\*', FindRec) then Exit;
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        EntryPath := DataPath + '\' + FindRec.Name;
+        if (FindRec.Attributes and $400) <> 0 then
+          RaiseException('Refusing linked data entry ' + EntryPath);
+        if (CompareText(EntryPath, RootPath + '\config.toml') <> 0) and
+           (CompareText(EntryPath, RootPath + '\.config.toml.tmp') <> 0) and
+           (CompareText(EntryPath, RootPath + '\agent_service_token.txt') <> 0) and
+           (CompareText(EntryPath, RootPath + '\edge\storage-ipc-tokens.json') <> 0) then
         begin
-          EntryPath := DataPath + '\' + FindRec.Name;
-          { Never re-enable inheritance on protected secret representations. }
-          if (CompareText(FindRec.Name, 'config.toml') <> 0) and
-             (CompareText(FindRec.Name, '.config.toml.tmp') <> 0) and
-             (CompareText(FindRec.Name, 'agent_service_token.txt') <> 0) and
-             (CompareText(FindRec.Name, 'storage-ipc-tokens.json') <> 0) then
-          begin
-            if (FindRec.Attributes and $400) <> 0 then
-              RaiseException('Refusing linked data entry ' + EntryPath);
-            if not Exec('icacls.exe', '"' + EntryPath + '" /inheritance:e /C',
-                '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-              RaiseException('Unable to restore inherited permissions for ' + EntryPath);
-            if ResultCode <> 0 then
-              RaiseException(Format('Unable to restore permissions on %s (icacls exit %d)', [EntryPath, ResultCode]));
-            if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
-              RestoreInheritedDataPermissions(EntryPath);
-          end;
+          AssertNoLinkedEntries(EntryPath);
+          IsEdgeDirectory := (CompareText(EntryPath, RootPath + '\edge') = 0) and
+            ((FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0);
+          Params := '"' + EntryPath + '" /inheritance:e /C';
+          if not IsEdgeDirectory then
+            Params := Params + ' /T';
+          if not Exec('icacls.exe', Params,
+              '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+            RaiseException('Unable to restore inherited permissions for ' + EntryPath);
+          if ResultCode <> 0 then
+            RaiseException(Format('Unable to restore permissions on %s (icacls exit %d)', [EntryPath, ResultCode]));
+          if IsEdgeDirectory then
+            RestoreInheritedDataPermissions(EntryPath, RootPath);
         end;
-      until not FindNext(FindRec);
-    finally
-      FindClose(FindRec);
-    end;
+      end;
+    until not FindNext(FindRec);
+  finally
+    FindClose(FindRec);
   end;
 end;
 
@@ -313,15 +364,12 @@ var
   ResultCode: Integer;
 begin
   { Protect management secrets before changing parent inheritance. }
-  if FileExists(DataPath + '\config.toml') then HardenTokenFile(DataPath + '\config.toml');
-  if FileExists(DataPath + '\.config.toml.tmp') then HardenTokenFile(DataPath + '\.config.toml.tmp');
-  if FileExists(DataPath + '\agent_service_token.txt') then HardenTokenFile(DataPath + '\agent_service_token.txt');
-  if FileExists(DataPath + '\edge\storage-ipc-tokens.json') then HardenTokenFile(DataPath + '\edge\storage-ipc-tokens.json');
+  HardenDataSecrets(DataPath);
   { 显式落实 ACL：ProgramData 下的目录默认允许 Users 创建/追加，
     同一个用户还能对自己创建的对象拿到完全控制——对存放服务令牌与
     点位/配置的数据根来说过宽。
      做法：去掉继承并显式授予「管理员 + SYSTEM 完全控制」，另给 Users 只读执行
-    （保留合法的读取面）；管理秘密先单独收紧，递归恢复继承时跳过它们。
+    （保留合法的读取面）；管理秘密先单独收紧，恢复继承之后必须再收紧一次。
      不使用 [Dirs] Permissions 关键字是为了能显式关闭继承并覆盖存量目录。}
   if not Exec(
       'icacls.exe',
@@ -336,7 +384,9 @@ begin
     RaiseException(Format('Unable to restrict permissions on %s (icacls exit %d)', [DataPath, ResultCode]));
   { 根目录关闭继承；子项继承根目录的有效授权。不能递归 /inheritance:r：
     (OI)(CI) 授权在普通文件上不生效，会把仅有继承权限的配置清为空 DACL。 }
-  RestoreInheritedDataPermissions(DataPath);
+  RestoreInheritedDataPermissions(DataPath, DataPath);
+  { 再核实秘密白名单；遍历过程中始终跳过秘密，失败时也不会开放其继承。 }
+  HardenDataSecrets(DataPath);
 end;
 
 procedure RegisterRoleService;
@@ -412,6 +462,14 @@ begin
     RaiseException('Unable to set Agent window stop timeout');
   if Nssm('set {#MyServiceName} AppStopMethodThreads 1500') <> 0 then
     RaiseException('Unable to set Agent thread stop timeout');
+  { nssm 用 AppThrottle 兼作两件事：应用「起够多久才算启动成功」的判定，以及
+    `nssm start` 等 SERVICE_RUNNING 的超时——service.cpp 里 cutoff 直接取自
+    NSSM_REG_THROTTLE，缺省 NSSM_RESET_THROTTLE_RESTART=1500ms，超时即返回 1。
+    本 agent 启动要数秒（uvicorn + storage 子进程），1500ms 必然超时，于是
+    安装器误报「Unable to start service」——而服务其实已启动。2026-10-08 三次安装
+    实测：Edge / Distributed-Center 均误报，事后服务 Running、端口正常响应。 }
+  if Nssm('set {#MyServiceName} AppThrottle 30000') <> 0 then
+    RaiseException('Unable to set Agent start throttle');
   if Nssm('set {#MyServiceName} AppStdout "' + DataPath + '\runtime\logs\agent-service.out.log"') <> 0 then
     RaiseException('Unable to set Agent stdout log');
   if Nssm('set {#MyServiceName} AppStderr "' + DataPath + '\runtime\logs\agent-service.err.log"') <> 0 then
@@ -426,6 +484,17 @@ begin
   begin
     ProvisionRoleConfig;
     RegisterRoleService;
+  end;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID = wpFinished then
+  begin
+    { Exec disables the native window without changing the VCL Enabled property.
+      Restore input only after installation and service registration have ended. }
+    if EnableWindow(WizardForm.Handle, 1) <> 0 then
+      Log('Restored disabled wizard window on the finished page.');
   end;
 end;
 

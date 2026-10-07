@@ -226,12 +226,25 @@ class EdgeSyncService:
         self._stopped.set()
 
     async def run_forever(self) -> None:
+        last_error: str | None = None
         while not self._stopped.is_set():
             try:
                 await self.run_once()
+                last_error = None
             except Exception as exc:
-                logger.warning("Edge center sync failed: %s", exc)
-                self._record_sync(status=None, error=str(exc))
+                # 同一条错误只报一次：中心未注册/拒绝连接属于运维条件，可能持续数天，
+                # 每 10 秒一条曾把 agent-service.err.log 撑到 22MB。
+                if str(exc) != last_error:
+                    logger.warning("Edge center sync failed: %s", exc)
+                    last_error = str(exc)
+                try:
+                    self._record_sync(status=None, error=str(exc))
+                except Exception:
+                    # 记录同步状态失败不得杀死同步循环。_record_sync 走 config 保存路径，
+                    # 冻结包里缺 win32timezone 这类问题会让它抛错；此前异常逃逸出循环，
+                    # 协程静默死亡 = 节点永久停止同步，且只在关机时才以
+                    # "Application shutdown failed" 现形。
+                    logger.exception("Failed to record edge sync state")
             try:
                 await asyncio.wait_for(
                     self._stopped.wait(),

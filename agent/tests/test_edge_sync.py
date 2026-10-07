@@ -103,3 +103,70 @@ def test_sync_heartbeats_and_applies_desired_snapshot(tmp_path) -> None:
     assert EdgeConfigStore(tmp_path / "edge.db").revision() == 4
     assert cfg["edge"]["registration_status"] == "approved"
     assert len(requests) == 2
+
+
+def _sync_service(tmp_path, **overrides) -> EdgeSyncService:
+    cfg: dict = {}
+    options = {
+        "load_config": lambda: cfg,
+        "mutate_config": lambda mutator: mutator(cfg) or cfg,
+        "decrypt": lambda value: value,
+        "process_status": lambda _name: "running",
+        "interval_seconds": 0.01,
+    }
+    options.update(overrides)
+    return EdgeSyncService(tmp_path / "edge.db", **options)
+
+
+def test_record_sync_failure_does_not_kill_sync_loop(tmp_path, monkeypatch) -> None:
+    """_record_sync 抛错不得让 run_forever 退出。
+
+    冻结包里缺 win32timezone 时，config 保存路径会抛 ModuleNotFoundError；异常此前
+    逃逸出 while 循环，同步协程静默死亡 = 节点永久停止同步。
+    """
+    import asyncio
+
+    calls: list[int] = []
+    service = _sync_service(tmp_path)
+
+    async def fake_run_once():
+        calls.append(1)
+        if len(calls) >= 3:
+            service.stop()
+        raise RuntimeError("节点未注册已登录")
+
+    def boom(**_kwargs):
+        raise ModuleNotFoundError("No module named 'win32timezone'")
+
+    monkeypatch.setattr(service, "run_once", fake_run_once)
+    monkeypatch.setattr(service, "_record_sync", boom)
+
+    asyncio.run(service.run_forever())
+
+    assert len(calls) == 3
+
+
+def test_repeated_identical_sync_failure_is_logged_once(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    """同一条同步失败只报一次：中心未注册可能持续数天，逐次刷屏曾把日志撑到 22MB。"""
+    import asyncio
+    import logging
+
+    calls: list[int] = []
+    service = _sync_service(tmp_path)
+
+    async def fake_run_once():
+        calls.append(1)
+        if len(calls) >= 5:
+            service.stop()
+        raise RuntimeError("节点未注册已登录")
+
+    monkeypatch.setattr(service, "run_once", fake_run_once)
+
+    with caplog.at_level(logging.WARNING, logger="app.services.edge_sync"):
+        asyncio.run(service.run_forever())
+
+    failures = [r for r in caplog.records if "Edge center sync failed" in r.getMessage()]
+    assert len(calls) == 5
+    assert len(failures) == 1

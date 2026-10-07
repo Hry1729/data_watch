@@ -70,6 +70,20 @@ def module_paths(name: str) -> tuple[Path, Path]:
     except KeyError as exc:
         raise ValueError(f"module {name!r} is not available for role {build_role()!r}") from exc
     return install_root() / directory / executable, data_root() / name
+
+
+def resolve_runtime_dir(cfg: dict) -> Path:
+    """运行目录：Agent 写 shutdown_flag、子进程读同一 flag 的**唯一**目录。
+
+    `[agent].runtime_dir` 可能缺失（手改配置/旧版 config.toml）或为空串，两者都回退
+    data_root()/runtime。factory（pm.runtime_dir，写侧）与 admin（DATAWATCH_RUNTIME_DIR
+    /--runtime-dir，读侧）必须共用本函数：各自写一份默认值会让写入点与读取点分叉，
+    子进程收不到优雅停机 flag，停机退化为超时强杀（D36.3 同类）。
+    """
+    value = (cfg.get("agent") or {}).get("runtime_dir")
+    return Path(value) if value else data_root() / "runtime"
+
+
 EMPTY_PASSWORD_DETAIL = "password 不允许为空串；如需保留原密码请省略 password 字段"
 
 
@@ -125,28 +139,45 @@ def _ensure_jwt_secret_unlocked(cfg: dict) -> None:
     """既有配置的 jwt_secret 强制校验（B15）。
 
     - 合格：原样保留，不轮换、不改写文件（合法存量配置保持稳定）。
-    - 不合格且 bootstrap 未完成（明确首装场景）：原子生成并落盘安全随机值，并显式告警。
-    - 不合格且 bootstrap 已完成：抛错，不得启动认证服务。
+    - **未配置**（键缺失，或值是空/纯空白占位符）：生成并落盘安全随机值，不论
+      bootstrap 是否完成。这两种形态都是产品自己留下的，按篡改拒绝会让升级即砖机：
+        * 键缺失：早于 2026-06-02 的配置模板从未写过该字段。
+        * 空值：2026-06-02 ~ 2026-10-03 的 config.toml.example 写死
+          `jwt_secret = ""` 并注明「首次启动时自动随机生成」，而那段自动生成
+          2026-10-03（B15）才落地。该窗口内按文档流程装机的节点全是这个形态；
+          现场 `C:\\ProgramData\\DataWatch` 即此——2026-10-08 实测服务 Paused、
+          agent 反复以退出码 1 崩溃。
+    - 键存在且**非空**但不合格：bootstrap 未完成时按首装生成；已完成则抛错——非空
+      弱值只可能来自人为设置，是伪造管理员令牌的入口。
     """
     from app.core.security import validate_jwt_secret
 
     agent_section = cfg.get("agent")
     if not isinstance(agent_section, dict):
         raise ValueError(AGENT_SECTION_INVALID_DETAIL)
-    try:
-        validate_jwt_secret(agent_section.get("jwt_secret"))
-        return
-    except ValueError:
-        pass
 
-    if agent_section.get("bootstrap_done", False):
-        raise ValueError(JWT_SECRET_INVALID_DETAIL)
+    if "jwt_secret" in agent_section:
+        value = agent_section["jwt_secret"]
+        try:
+            validate_jwt_secret(value)
+            return
+        except ValueError:
+            pass
+        if isinstance(value, str) and not value.strip():
+            reason = "为空（模板占位符，旧版配置迁移）"
+        elif agent_section.get("bootstrap_done", False):
+            raise ValueError(JWT_SECRET_INVALID_DETAIL)
+        else:
+            reason = "为空或过弱（bootstrap 未完成）"
+    else:
+        reason = "键缺失（旧版配置迁移）"
 
     agent_section["jwt_secret"] = secrets.token_hex(32)
     _save_config_unlocked(cfg)
     logger.warning(
-        "config.toml 已存在但 [agent].jwt_secret 为空或过弱；首装场景（bootstrap 未完成）"
-        "已生成并落盘新的随机密钥，此前用旧密钥签发的令牌全部失效。"
+        "config.toml 的 [agent].jwt_secret %s；已生成并落盘新的随机密钥，"
+        "此前用旧密钥签发的令牌全部失效。",
+        reason,
     )
 
 

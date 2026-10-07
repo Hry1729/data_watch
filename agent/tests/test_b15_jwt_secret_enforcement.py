@@ -82,20 +82,33 @@ def _forge(secret: str, roles: list[str] | None = None) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
-# ── 验收 2：空密钥不得启动认证服务，且空密钥伪造的 token 被拒 ──────────────────
+# ── 验收 2：空密钥绝不用于签发/校验；存量空占位符自愈 ─────────────────────────
 
 
-def test_existing_config_with_empty_secret_refuses_to_load(tmp_path, monkeypatch):
-    """已存在配置 + bootstrap_done=true + 空密钥 → 加载必须失败（不得启动认证服务）。"""
+@pytest.mark.parametrize("placeholder", ["", " ", "\t", "   "])
+def test_template_placeholder_secret_is_migrated_after_bootstrap(
+    tmp_path, monkeypatch, placeholder
+):
+    """模板占位符空密钥 + bootstrap 已完成 → 必须自愈，不得拒绝启动。
+
+    2026-06-02 ~ 2026-10-03 的 config.toml.example 写死
+    `jwt_secret = ""  # 首次启动时自动随机生成`，而那段自动生成 2026-10-03（B15）
+    才落地。该窗口内按文档流程装机的节点，配置里就是这个空占位符 +
+    bootstrap_done=true；按篡改拒绝会让它们升级即砖机（现场
+    `C:\\ProgramData\\DataWatch` 正是此形态，2026-10-08 实测 agent 退出码 1）。
+    """
     path = tmp_path / "config.toml"
-    original = _write_config(path, jwt_secret="", bootstrap_done=True)
+    _write_config(path, jwt_secret=placeholder, bootstrap_done=True)
     _use_config_path(monkeypatch, path)
 
-    with pytest.raises(ValueError):
-        load_config()
+    generated = load_config()["agent"]["jwt_secret"]
+    assert isinstance(generated, str) and len(generated) == 64
+    assert toml.load(path)["agent"]["jwt_secret"] == generated
 
-    # 拒绝启动不得顺手改写/轮换既有配置
-    assert path.read_text(encoding="utf-8") == original
+    # 补写一次即稳定，不得每次加载都轮换
+    assert load_config()["agent"]["jwt_secret"] == generated
+    # 迁移不得动 bootstrap 状态
+    assert toml.load(path)["agent"]["bootstrap_done"] is True
 
 
 def test_forged_token_with_empty_secret_is_rejected_by_admin_dependency(monkeypatch):
@@ -167,15 +180,17 @@ def test_missing_config_generates_secret_and_keeps_it_across_restart(tmp_path, m
 @pytest.mark.parametrize(
     "agent_fields",
     [
-        {"jwt_secret": "", "bootstrap_done": True},
-        {"jwt_secret": "   ", "bootstrap_done": True},
-        {"bootstrap_done": True},  # 键缺失
         {"jwt_secret": 12345, "bootstrap_done": True},  # 类型错误：数字
         {"jwt_secret": ["a" * 64], "bootstrap_done": True},  # 类型错误：数组
     ],
 )
 def test_unusable_secret_matrix_refuses_to_start(tmp_path, monkeypatch, agent_fields):
-    """反证：空/纯空白/键缺失/类型错误都必须拒绝启动，且不得改写文件。"""
+    """反证：键存在、非空但类型错误必须拒绝启动，且不得改写文件。
+
+    未配置（键缺失，或值为空/纯空白占位符）不在此列——那是产品自己留下的迁移
+    形态，见 test_legacy_config_without_secret_key_is_migrated 与
+    test_template_placeholder_secret_is_migrated_after_bootstrap。
+    """
     path = tmp_path / "config.toml"
     original = _write_config(path, **agent_fields)
     _use_config_path(monkeypatch, path)
@@ -186,13 +201,42 @@ def test_unusable_secret_matrix_refuses_to_start(tmp_path, monkeypatch, agent_fi
     assert path.read_text(encoding="utf-8") == original
 
 
+# ── 旧版模板迁移：键缺失（不是篡改）→ 补写，且不因 bootstrap 已完成而拒绝 ──────
+
+
+@pytest.mark.parametrize("bootstrap_done", [True, False])
+def test_legacy_config_without_secret_key_is_migrated(
+    tmp_path, monkeypatch, bootstrap_done
+):
+    """早于 2026-06-02 的配置模板从未写过 jwt_secret。
+
+    升级到带 B15 校验的版本后，这类**键缺失**配置必须在两种 bootstrap 状态下都能
+    起来：按篡改拒绝会让升级即砖机（现场 `C:\\ProgramData\\DataWatch` 正是此形态）。
+    补写的是 64 位 hex 强随机值，不触碰 B15 的底线。
+    """
+    path = tmp_path / "config.toml"
+    _write_config(path, bootstrap_done=bootstrap_done)
+    _use_config_path(monkeypatch, path)
+    assert "jwt_secret" not in toml.load(path)["agent"]
+
+    generated = load_config()["agent"]["jwt_secret"]
+    assert isinstance(generated, str) and len(generated) == 64
+    assert toml.load(path)["agent"]["jwt_secret"] == generated
+
+    # 补写一次即稳定，不得每次加载都轮换
+    assert load_config()["agent"]["jwt_secret"] == generated
+
+    # 迁移不得动 [agent] 之外的既有内容
+    assert toml.load(path)["redis"] == {"host": "127.0.0.1", "port": 6379}
+    assert toml.load(path)["agent"]["bootstrap_done"] is bootstrap_done
+
+
 @pytest.mark.parametrize(
     "agent_fields",
     [
         {"jwt_secret": "", "bootstrap_done": False},
         {"jwt_secret": "changeme", "bootstrap_done": False},
         {"jwt_secret": "   ", "bootstrap_done": False},
-        {"bootstrap_done": False},  # 键缺失
         {"jwt_secret": 12345, "bootstrap_done": False},  # 类型错误
     ],
 )

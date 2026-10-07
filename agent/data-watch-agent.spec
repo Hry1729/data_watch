@@ -9,12 +9,17 @@ datas = []
 binaries = []
 # win32crypt/pywintypes: DPAPI 加解密(app.core.security)；routers 在 create_app 内动态 import；
 # uvicorn[standard] 协议实现运行期动态选择，WS 日志推送(viewer)未冒烟，显式兜底。
+# win32timezone: pywin32 的纯 Python 模块（site-packages\win32\lib），**不被静态分析发现**。
+# win32file.GetFileInformationByHandle 返回 FILETIME，pywintypes 转 datetime 时才 import 它；
+# 漏掉会让 config._open_config_temp 在冻结包里抛 ModuleNotFoundError——而它位于
+# edge_sync._record_sync 的保存路径上，一次同步失败即杀死同步协程（节点永久停同步）。
 hiddenimports = [
     'win32crypt',
     'pywintypes',
     'win32api',
     'win32file',
     'win32security',
+    'win32timezone',
     'app.routers.bootstrap',
     'app.routers.auth',
     'app.routers.viewer',

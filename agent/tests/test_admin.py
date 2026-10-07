@@ -14,8 +14,10 @@ import types
 import pytest
 from fastapi import HTTPException
 
+from app.core.config import resolve_runtime_dir
 from app.routers.admin import (
     _raise_driver_error,
+    _storage_env,
     get_config,
     restart_process,
     start_process,
@@ -241,6 +243,32 @@ async def test_writer_passes_runtime_dir_matching_pm(monkeypatch):
         args = calls[0][1]
         assert "--runtime-dir" in args
         assert args[args.index("--runtime-dir") + 1] == pm.runtime_dir
+
+
+def test_storage_env_runtime_dir_matches_pm_runtime_dir(tmp_path, monkeypatch):
+    """storage 读 flag 的目录必须与 Agent 写 flag 的目录同源。
+
+    storage_main 从 DATAWATCH_RUNTIME_DIR 读 storage.shutdown_flag，而 pm 把 flag 写进
+    resolve_runtime_dir()（factory 侧）。两侧曾各写一份默认值（factory 硬编码 ProgramData、
+    admin 用 data_root()），[agent].runtime_dir 缺失或为空串时即分叉 → storage 收不到优雅
+    停机 flag，被超时强杀（D36.3 同类）。
+    """
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
+
+    def dirs_for(agent_section: dict) -> tuple[str, str]:
+        cfg = {"agent": agent_section, "storage": {}}
+        monkeypatch.setattr("app.routers.admin.load_config", lambda: cfg)
+        # 写侧：factory 用同一个 resolve_runtime_dir 求 pm.runtime_dir
+        return _storage_env()["DATAWATCH_RUNTIME_DIR"], str(resolve_runtime_dir(cfg))
+
+    for agent_section, expected in (
+        ({"runtime_dir": str(tmp_path / "custom")}, str(tmp_path / "custom")),
+        ({}, str(tmp_path / "runtime")),  # 键缺失 → 回退 data_root()/runtime
+        ({"runtime_dir": ""}, str(tmp_path / "runtime")),  # 空串 → 同样回退
+    ):
+        storage_dir, pm_dir = dirs_for(agent_section)
+        assert storage_dir == expected, f"storage 读侧未按契约解析: {agent_section}"
+        assert storage_dir == pm_dir, f"storage 读侧与 pm 写侧分叉: {agent_section}"
 
 
 def _conn_cfg():

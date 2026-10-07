@@ -18,6 +18,7 @@ from app.core.config import (
     load_config,
     module_paths,
     mutate_config,
+    resolve_runtime_dir,
 )
 from app.core.deps import (
     get_current_admin,
@@ -200,7 +201,7 @@ def _edge_storage_url() -> str:
 def _storage_env() -> dict[str, str]:
     cfg = load_config()
     storage = cfg.get("storage") or {}
-    runtime_dir = (cfg.get("agent") or {}).get("runtime_dir") or data_root() / "runtime"
+    runtime_dir = resolve_runtime_dir(cfg)
     return {
         "DATAWATCH_DATA_ROOT": str(data_root()),
         "DATAWATCH_EDGE_DB": str(data_root() / "edge" / "edge.db"),

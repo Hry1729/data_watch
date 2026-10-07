@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 
-from app.core.config import initialize_config_permissions, data_root, install_root, load_config, module_paths, mutate_config
+from app.core.config import initialize_config_permissions, data_root, install_root, load_config, module_paths, mutate_config, resolve_runtime_dir
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
@@ -168,7 +168,7 @@ async def lifespan(app: FastAPI):
     # Stage 3 将在此处初始化 LogManager（日志 tail）
     await asyncio.to_thread(initialize_config_permissions)
     cfg = load_config()
-    runtime_dir = Path(cfg["agent"].get("runtime_dir", r"C:\ProgramData\DataWatch\runtime"))
+    runtime_dir = resolve_runtime_dir(cfg)
     modules = {}
     for name in managed_module_names():
         exe, working_dir = module_paths(name)
