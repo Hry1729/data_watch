@@ -16,6 +16,30 @@ from tests.test_driver_install import _minimal_driver_toml
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+@pytest.mark.parametrize("driver_id", ["s7", "opcua"])
+def test_published_101_archives_verify_through_installer(driver_id, tmp_path):
+    catalog_path = ROOT / "packages/driver-catalog/catalog.json"
+    catalog = read_catalog(catalog_path)
+    entry = next(item for item in catalog["drivers"] if item["id"] == driver_id)
+    assert entry["version"] == "1.0.1"
+    result = validate_and_extract((catalog_path.parent / entry["archive"]).read_bytes(), tmp_path / "staging", catalog_path=catalog_path)
+    assert result.signature_verified
+    assert result.publisher == "datawatch"
+    assert result.tree_sha256 == entry["tree_sha256"]
+
+
+def test_published_signature_rejects_modified_driver_before_import(tmp_path):
+    catalog_path = ROOT / "packages/driver-catalog/catalog.json"
+    entry = next(item for item in read_catalog(catalog_path)["drivers"] if item["id"] == "s7")
+    data = io.BytesIO()
+    with zipfile.ZipFile(catalog_path.parent / entry["archive"]) as source:
+        with zipfile.ZipFile(data, "w", zipfile.ZIP_DEFLATED) as changed:
+            for name in source.namelist():
+                changed.writestr(name, b"raise AssertionError('must not execute')" if name == "s7/s7/driver.py" else source.read(name))
+    with pytest.raises(DriverZipError, match="签名"):
+        validate_and_extract(data.getvalue(), tmp_path / "staging", catalog_path=catalog_path)
+
 def archive(root):
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:

@@ -1,0 +1,43 @@
+{
+  "algorithm": "ed25519",
+  "key_id": "0924dd172443321c",
+  "payload": {
+    "id": "s7",
+    "publisher": "datawatch",
+    "version": "1.0.1",
+    "files": {
+      "driver.toml": "e8ef62f760eb7ad30bf0c6f0adda7f5aab298f9956d700bc353ebf30935edf19",
+      "requirements-vendor.txt": "6fa41bdfac7761dc804dc5f5dea923054ec89d2cfe33cb3500518ac590239d18",
+      "s7/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "s7/driver.py": "80badaea9cc37caa311169c1f0bb7d80d21a3983476364829fb2fd72e8d3418a",
+      "s7/planner.py": "afeb19edfa0045b81980e8c363c4ac92b5937c517caf029ef564aadb17796d5a",
+      "vendor/bin/snap7-server.exe": "4664480df8f91c371c1ad47e9f7aa2748f24e8ed05085781b4562fc7ca7fd4c2",
+      "vendor/python_snap7-3.0.0.dist-info/INSTALLER": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508",
+      "vendor/python_snap7-3.0.0.dist-info/METADATA": "c40054831e6c5e5b277c952c6bb5c283ea82db1c0329962199f50ba9d592869a",
+      "vendor/python_snap7-3.0.0.dist-info/RECORD": "3214c6d99ba425b1d104951884915d01bdf5badeae8e15f9349b4be4fb6fad2f",
+      "vendor/python_snap7-3.0.0.dist-info/REQUESTED": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendor/python_snap7-3.0.0.dist-info/WHEEL": "69e6228a0d35958183cc1812f07c565ce837b95eb51bd8a33acba9fa4f68d6c9",
+      "vendor/python_snap7-3.0.0.dist-info/entry_points.txt": "ffdec8fb146a0eefbdf9d9a92603e04bee65f3a18c220c95446ea99efd0e8944",
+      "vendor/python_snap7-3.0.0.dist-info/licenses/LICENSE": "3c88a113fc8ffbc81cf9f7fd8a4bd040f39ad1b88e099e8173eea1dc6df14544",
+      "vendor/python_snap7-3.0.0.dist-info/top_level.txt": "5691579b5c39ffbdea80910837fe4ecd0588347c98241b4da0e5b80cca22ce0c",
+      "vendor/snap7/__init__.py": "ce07a48197eb7e42cb430e668791eb2889cac405473d2b16f56a3057d69c77b3",
+      "vendor/snap7/client.py": "0d4ca7c3f178fe3484b8282b61635c14d2edf1ef925b1761e2f5b2865251c2ff",
+      "vendor/snap7/connection.py": "fd0f1dde0786bb66709bdec4f46d5f63bb1562b47893feb97056a824a5e62b8b",
+      "vendor/snap7/datatypes.py": "cc980f6ac115efdfc7e2a1da6e2bc8c585f9d23ef8a4d83ae1aa41a6900a2366",
+      "vendor/snap7/error.py": "4e819af39689eb897074ce603f07aa3d9243ef1ae0152c3634adfa54e6265d48",
+      "vendor/snap7/logo.py": "94584710b47caf73803d19c9ff772b1342e93f1cc1336427e60a03efb1e5b245",
+      "vendor/snap7/partner.py": "ced1fba4dfef0fa1e070c8729ca8b83a415ebd07e24237485bff19565fc928b8",
+      "vendor/snap7/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "vendor/snap7/s7protocol.py": "fef41a421ad01213621422c0599631061640dc7f558e1e700b87bf6975ef74ad",
+      "vendor/snap7/server/__init__.py": "2340809a899725cad73a3ec663c3066b8b632fab9d04aeb279df830e42eac201",
+      "vendor/snap7/server/__main__.py": "39d3a0c8c9854e18d27b68d282f95b92ab8662765c056eb0b9bb3695d84d48e1",
+      "vendor/snap7/type.py": "40e63a6ba9e08c04e1ce0f3ce54cdcb04bf535d28531b7b43591ab204b549ed6",
+      "vendor/snap7/util/__init__.py": "7a4bcb25d34f08a68c97c9e83dd28e1ec5413c56753ba8dfb79d1da8f2818088",
+      "vendor/snap7/util/db.py": "c62e4e1719ed15242aeb02ec73cd511568871cd2604bd6ddafd56e91ba7b134c",
+      "vendor/snap7/util/getters.py": "ca25d58ce0776fa283585dd3b6437fa9119b7f6619eff1242f4fa8b628a7d579",
+      "vendor/snap7/util/setters.py": "5c4f86b45916cac49d14f0efffe730d6bd293b32d78bf394c92def5173f86e2e",
+      "vendor_meta.toml": "8a992466d315d9d1ea2c76cb1a648ba74d7eea39ae04b71dcc6e72d35bb3d068"
+    }
+  },
+  "signature": "fhYRRLI3zY1g0TFzS1AmR6YYIaOBbnpw3xlmYXtPHZEkS9YHZhp6lInuf0V9bL9LRN4dq8DA5WsSugaxUjhRDg=="
+}

@@ -148,12 +148,22 @@ async def test_preview_leaves_active_tree_and_process_untouched(real_installer):
 def upgrade_archive(inst, tmp_path):
     import io
     import zipfile
+    import base64
+    import subprocess
+    import sys
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
     from data_watch_driver_catalog import package_files
     package = tmp_path / "upgrade/s7"
     shutil.copytree(ROOT / "packages/s7", package, ignore=shutil.ignore_patterns("__pycache__"))
     manifest = package / "driver.toml"
     manifest.write_text(manifest.read_text(encoding="utf-8").replace(f'version = "{S7_VERSION}"', 'version = "2.0.0"'), encoding="utf-8")
     catalog = read_catalog(CATALOG)
+    key = Ed25519PrivateKey.generate()
+    private = tmp_path / "upgrade-test.key"
+    private.write_text(base64.b64encode(key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode(), encoding="ascii")
+    signed = subprocess.run([sys.executable, str(ROOT / "packaging/sign-driver.py"), "--package", str(package), "--private-key", str(private)], capture_output=True, text=True, check=True)
+    catalog.setdefault("trusted_publishers", []).append(json.loads(signed.stdout))
     item = next(item for item in catalog["drivers"] if item["id"] == "s7")
     item.update(version="2.0.0", tree_sha256=tree_digest(package))
     path = tmp_path / "trusted/catalog.json"

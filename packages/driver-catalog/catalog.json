@@ -25,8 +25,8 @@
       ],
       "readWriteType": "只读",
       "archive": "s7-1.0.1.zip",
-      "sha256": "a1839e25b7dfc087b5a26094f90890ebf9abd2db7052455ce29e5718e29ac245",
-      "tree_sha256": "a2dd711c3bb2f543c02f3a4e23524174710c2766d28c487c07dfab440ff2b733"
+      "sha256": "be6596955aaa374edd2ace930c109043a8ddc6064133d06a486348f2f3fce2f5",
+      "tree_sha256": "c9186debac87af4e9faa25cf2186e5a8c3875a927920fb4d1739a9380f03c994"
     },
     {
       "id": "ge_srtp",
@@ -68,8 +68,8 @@
       ],
       "readWriteType": "只读",
       "archive": "opcua-1.0.1.zip",
-      "sha256": "8f4525c460cda2da1fab5b7764841237fff7f8807aebe7c81bf848b3cf707126",
-      "tree_sha256": "c6306d3bbbd8f3dfeef40f2d75504802ca5b19d9d20e69c286faa5314534f138"
+      "sha256": "ebf5572523a0a22941c7baee820f75922213482e88c88296130981d3aaa842a0",
+      "tree_sha256": "5ada6735566ee6ae665d3728bc88ae217f751d9baac115b93ef7d8b5873ec910"
     },
     {
       "id": "opcda_center",
@@ -114,5 +114,12 @@
       "tree_sha256": "f0c1e6a6a432eb5d84809a02360f98803586586cf9a934dab79905202f555a16"
     }
   ],
-  "build_id": "67d4982fa4f7682c3900bdec4a775debedc567f2320d180385e2f50eeef40608"
+  "trusted_publishers": [
+    {
+      "publisher": "datawatch",
+      "key_id": "0924dd172443321c",
+      "public_key": "6E8AnH97GOPkFaq5i5ND4nIsc8ofu4JM7NElZmCHR6w="
+    }
+  ],
+  "build_id": "0007824d2845dfae24ea4849227b0a961023416164ef7d7feccdfe0fd32da344"
 }
