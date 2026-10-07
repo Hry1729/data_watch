@@ -204,6 +204,13 @@ class HistoryService:
                 self._fetch_point_series(device, point, start_dt, end_dt, limit=remaining + 1)
                 for point in points[index:index + 2]
             ), return_exceptions=True)
+            for point, rows in zip(points[index:index + 2], batch):
+                if isinstance(rows, Exception):
+                    logger.warning("[history] point series failed device=%s var_seq=%s: %s",
+                        device.device_code, point.var_seq, rows)
+                    if isinstance(rows, ApiError):
+                        raise rows
+                    raise ApiError(503, "History data source unavailable", status_code=503) from rows
             count = sum(len(rows) for rows in batch if not isinstance(rows, Exception))
             if count > remaining:
                 raise self._record_limit_error(limit=record_budget)
@@ -216,13 +223,6 @@ class HistoryService:
         total_record_count = 0
 
         for point, rows in zip(points, series_list, strict=False):
-            if isinstance(rows, Exception):
-                # 不静默丢点：某点位查询异常须留痕，便于排查数据源故障。
-                logger.warning(
-                    "[history] point series failed device=%s var_seq=%s: %s",
-                    device.device_code, point.var_seq, rows,
-                )
-                continue
             value_map: dict[str, str | int | float] = {}
             for ts, value in rows:
                 ts_value = self._coerce_datetime(ts)
@@ -570,6 +570,13 @@ class HistoryService:
         if "table" in text or "表" in str(exc):
             return any(n in text for n in needles)
         return False
+
+    @classmethod
+    def _is_point_schema_missing_error(cls, exc: BaseException) -> bool:
+        return cls._is_quality_table_missing_error(exc) or any(message in str(exc).lower() for message in (
+            "invalid column name", "unknown column", "column does not exist", "column not exist",
+            "column not found", "database does not exist", "database not exist", "unknown database",
+        ))
 
     def _resolve_quality_child_table_name(self, device_code: str) -> str:
         """质量窄表子表名，与 writer.quality_schema.quality_child_table_name 一致。"""
@@ -1367,7 +1374,7 @@ class HistoryService:
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
         query_succeeded = False
-        last_error: Exception | None = None
+        query_errors: list[Exception] = []
 
         # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
@@ -1389,13 +1396,13 @@ class HistoryService:
                 if rows:
                     return rows
             except ValueError as exc:
-                last_error = exc
+                query_errors.append(exc)
                 logger.warning(
                     "[history] invalid identifier td_column_name=%r device=%s: %s",
                     point.td_column_name, device.device_code, exc,
                 )
             except Exception as exc:
-                last_error = exc
+                query_errors.append(exc)
                 logger.warning(
                     "[history] point child query failed device=%s point=%s: %s",
                     device.device_code, point.point_id, exc,
@@ -1428,7 +1435,7 @@ class HistoryService:
                 )
                 query_succeeded = True
             except Exception as exc:
-                last_error = exc
+                query_errors.append(exc)
                 logger.warning("[history] subtable query failed table=%s: %s", candidate_table_name, exc)
                 continue
 
@@ -1462,13 +1469,16 @@ class HistoryService:
                 rows = await self.tdengine.fetch_all(statement, database=legacy_database_name)
                 query_succeeded = True
             except Exception as exc:
-                last_error = exc
+                query_errors.append(exc)
                 logger.warning("[history] stable fallback query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
             if rows:
                 return rows
-        if not query_succeeded and last_error is not None:
-            raise ApiError(503, "History data source unavailable", status_code=503) from last_error
+        if not query_succeeded and query_errors:
+            if all(self._is_point_schema_missing_error(exc) for exc in query_errors):
+                await self._raise_if_tdengine_unavailable("point_series", device.device_code)
+            else:
+                raise ApiError(503, "History data source unavailable", status_code=503) from query_errors[-1]
         return []
 
     async def _store_perspective_snapshot(
