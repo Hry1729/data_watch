@@ -228,6 +228,21 @@ async def test_collector_start_passes_runtime_dir_matching_pm(tmp_path):
     assert args[args.index("--runtime-dir") + 1] == pm.runtime_dir
 
 
+async def test_writer_passes_runtime_dir_matching_pm(monkeypatch):
+    """C7 同源回归：writer 启动/重启也必须显式带 --runtime-dir，且值 == pm.runtime_dir
+    （Agent 写 shutdown_flag 的同源目录）。writer 此前只对 collector 下发该参数，自己
+    回退到默认目录；分布式角色下写入点与读取点分叉 → 收不到优雅停机 flag，被超时强杀。"""
+    monkeypatch.setattr("app.routers.admin.load_config", _conn_cfg)
+    monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
+    pm = FakePM()
+    await start_process("writer", _req(pm), _user="u")
+    await restart_process("writer", _req(pm), _user="u")
+    for calls in (pm.start_calls, pm.restart_calls):
+        args = calls[0][1]
+        assert "--runtime-dir" in args
+        assert args[args.index("--runtime-dir") + 1] == pm.runtime_dir
+
+
 def _conn_cfg():
     """Agent config.toml 的连接段样例（mysql/redis/tdengine 全字段 + 密文）。"""
     return {
@@ -334,7 +349,7 @@ async def test_writer_does_not_touch_sidecar_manager(monkeypatch):
     pm = FakePM()
     # 故意不在 state 上放 sidecar_manager：writer 路径若误访问会 AttributeError→测试失败
     await start_process("writer", _req(pm), _user="u")
-    assert pm.start_calls == [("writer", None)]
+    assert pm.start_calls == [("writer", ["--runtime-dir", "/runtime"])]
     assert pm.start_envs == [_WRITER_ENV]
 
 
@@ -411,7 +426,7 @@ async def test_writer_restart_does_not_touch_sidecar_manager(monkeypatch):
     monkeypatch.setattr("app.routers.admin.dpapi_decrypt", _decrypt_stub)
     pm = FakePM()
     await restart_process("writer", _req(pm), _user="u")  # 不放 sidecar_manager
-    assert pm.restart_calls == [("writer", None)]
+    assert pm.restart_calls == [("writer", ["--runtime-dir", "/runtime"])]
     assert pm.restart_envs == [_WRITER_ENV]
 
 

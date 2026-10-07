@@ -97,6 +97,20 @@ async def _collector_extra_args(request: Request) -> list[str]:
     return extra_args
 
 
+async def _extra_args_for(request: Request, name: str) -> list[str] | None:
+    """按模块拼运行期参数；无动态参数的模块返回 None。
+
+    collector 与 writer 都必须显式收到 --runtime-dir：Agent 把 shutdown_flag 写进
+    pm.runtime_dir，子进程若自行推导（--runtime-dir → DATAWATCH_HOME → ProgramData
+    默认值），自定义数据根时两端分叉 → 收不到优雅停机 flag → 停机退化为超时强杀。
+    """
+    if name == "collector":
+        return await _collector_extra_args(request)
+    if name == "writer":
+        return ["--runtime-dir", str(request.app.state.pm.runtime_dir)]
+    return None
+
+
 # env 注入契约：Agent 是连接凭据的唯一来源（DPAPI 加密存于 config.toml），启动
 # collector/writer 前解密并经 DATAWATCH_<DB>_<FIELD> 下发；env 优先级高于各模块
 # settings.toml（后者仅作 dev 本地回退）。launch() 合并而非替换 os.environ，故每个
@@ -274,7 +288,7 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
             raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
-    extra_args = await _collector_extra_args(request) if name == "collector" else None
+    extra_args = await _extra_args_for(request, name)
     env = _process_env(name)
 
     try:
@@ -325,7 +339,7 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
             raise HTTPException(status_code=400, detail=f"Edge Storage 启动失败: {exc}") from exc
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
-    extra_args = await _collector_extra_args(request) if name == "collector" else None
+    extra_args = await _extra_args_for(request, name)
     env = _process_env(name)
 
     try:
