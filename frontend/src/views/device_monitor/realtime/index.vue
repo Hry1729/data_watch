@@ -746,13 +746,16 @@ const formatTimestamp = (now: Date) => {
 }
 
 // 设备与点位加载
-const loadDeviceTree = async () => {
+const loadDeviceTree = async (isCurrent: () => boolean) => {
   try {
     // 加载设备类型列表
-    deviceTypes.value = await fetchDeviceTypes()
+    const types = await fetchDeviceTypes()
+    if (!isCurrent()) return
+    deviceTypes.value = types
 
     // 加载带类型信息的设备列表
     const devicesWithType = await fetchHistoryDevices()
+    if (!isCurrent()) return
     const devices: DeviceInfo[] = devicesWithType
       .filter((d) => d.id !== null)
       .map((d) => ({
@@ -770,20 +773,30 @@ const loadDeviceTree = async () => {
       : devices[0]
     currentDevice.value = device ?? null
     if (device) {
-      await loadPointList(device.deviceId)
-      void loadPointGroups(device.deviceCode)
+      await loadPointList(device.deviceId, isCurrent)
+      if (!isCurrent()) return
+      void loadPointGroups(device.deviceCode, isCurrent)
     }
   } catch (error) {
-    console.error('加载设备列表失败:', error)
+    if (isCurrent()) console.error('加载设备列表失败:', error)
   }
 }
 
-const loadPointList = async (deviceId?: number) => {
+const loadPointList = async (deviceId?: number, isCurrent = () => pageActive && canPersist(), inPointSelector = false) => {
+  const groupCode = activeGroupCode.value
+  const epoch = pageEpoch
+  const canApply = () => isCurrent() && epoch === pageEpoch && groupCode === activeGroupCode.value && (
+    inPointSelector
+      ? pointSelectorVisible.value && deviceId === tempDeviceId.value
+      : deviceId === currentDevice.value?.deviceId
+  )
+  if (!canApply()) return
   pointList.value = []
   if (!deviceId) return
 
   try {
-    const snapshot = await fetchRealtimeInit({ deviceId, groupCode: activeGroupCode.value })
+    const snapshot = await fetchRealtimeInit({ deviceId, groupCode })
+    if (!canApply()) return
     pointList.value = (snapshot.data || []).map((item) => ({
       pointId: item.pointId,
       varSeq: item.varSeq,
@@ -792,20 +805,23 @@ const loadPointList = async (deviceId?: number) => {
       dataType: item.dataType
     }))
   } catch (error) {
-    console.error('加载点位列表失败:', error)
+    if (canApply()) console.error('加载点位列表失败:', error)
   }
 }
 
 // 加载点位分组
-const loadPointGroups = async (deviceCode?: string) => {
+const loadPointGroups = async (deviceCode?: string, isCurrent = () => pageActive && canPersist()) => {
+  const canApply = () => isCurrent() && deviceCode === currentDevice.value?.deviceCode
+  if (!canApply()) return
   pointGroups.value = []
   if (!deviceCode) return
   try {
     const groups = await getDevicePointGroups(deviceCode)
+    if (!canApply()) return
     pointGroups.value = groups || []
   } catch {
     // 新接口不可用时静默失败，不影响现有功能
-    pointGroups.value = []
+    if (canApply()) pointGroups.value = []
   }
 }
 
@@ -923,16 +939,16 @@ const clearPerspectiveTable = async () => {
 // 点位选择
 const openPointSelector = () => {
   tempDeviceId.value = currentDevice.value?.deviceId
+  pointSelectorVisible.value = true
   if (tempDeviceId.value) {
-    void loadPointList(tempDeviceId.value)
+    void loadPointList(tempDeviceId.value, undefined, true)
   }
   tempSelectedVarSeqs.value = selectedPoints.value.map((p) => p.varSeq)
-  pointSelectorVisible.value = true
 }
 
 const handleTempDeviceChange = async (deviceId?: number) => {
   tempSelectedVarSeqs.value = []
-  await loadPointList(deviceId)
+  await loadPointList(deviceId, undefined, true)
 }
 
 const handlePointChange = (varSeq: number, checked: boolean) => {
@@ -1776,15 +1792,15 @@ const formatExportTime = (date: Date): string => {
 const initializePage = async () => {
   const epoch = ++pageEpoch
   const isCurrent = () => pageActive && epoch === pageEpoch && canPersist()
-  await loadDeviceTree()
+  await loadDeviceTree(isCurrent)
   if (!isCurrent()) return
 
   // 恢复之前的状态
   const wasMonitoring = loadStateFromStorage()
   if (currentDevice.value) {
-    await loadPointList(currentDevice.value.deviceId)
+    await loadPointList(currentDevice.value.deviceId, isCurrent)
     if (!isCurrent()) return
-    void loadPointGroups(currentDevice.value.deviceCode)
+    void loadPointGroups(currentDevice.value.deviceCode, isCurrent)
   }
 
   // 无论是否正在监控，都先初始化 Perspective 并恢复快照
