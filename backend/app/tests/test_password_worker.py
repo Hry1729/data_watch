@@ -67,7 +67,7 @@ async def test_password_worker_rejects_when_capacity_full() -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_rate_limit_blocks_after_failures(monkeypatch) -> None:
+async def test_login_rate_limit_blocks_after_failures(monkeypatch, login_redis) -> None:
     limiter = LoginLimiter(max_failures=3, window_seconds=60)
     monkeypatch.setattr("app.services.auth.get_login_limiter", lambda: limiter)
     monkeypatch.setattr("app.services.auth.run_password_op", AsyncMock(return_value=False))
@@ -96,7 +96,7 @@ async def test_login_rate_limit_blocks_after_failures(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_login_success_resets_rate_limit(monkeypatch) -> None:
+async def test_login_success_resets_rate_limit(monkeypatch, login_redis) -> None:
     limiter = LoginLimiter(max_failures=2, window_seconds=60)
     monkeypatch.setattr("app.services.auth.get_login_limiter", lambda: limiter)
     monkeypatch.setattr("app.services.auth.run_password_op", AsyncMock(return_value=True))
@@ -122,10 +122,10 @@ async def test_login_success_resets_rate_limit(monkeypatch) -> None:
     service._fetch_user_by_name = AsyncMock(return_value=user)
     service._fetch_user_roles = AsyncMock(return_value=["R_USER"])
 
-    limiter.record_failure("op", "10.0.0.1")
+    await limiter.record_failure("op", "10.0.0.1")
     data = await service.login(user_name="op", password="ok", client_ip="10.0.0.1")
     assert data["token"] == "Bearer t"
-    assert limiter.is_blocked("op", "10.0.0.1") is False
+    assert await limiter.is_blocked("op", "10.0.0.1") is False
 
 
 @pytest.mark.asyncio

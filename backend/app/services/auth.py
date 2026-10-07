@@ -29,7 +29,7 @@ class AuthService:
 
     async def login(self, *, user_name: str, password: str, client_ip: str) -> dict[str, Any]:
         limiter = get_login_limiter()
-        if limiter.is_blocked(user_name, client_ip):
+        if await limiter.is_blocked(user_name, client_ip):
             raise ApiError(429, "登录失败次数过多，请稍后再试")
 
         user = await self._fetch_user_by_name(user_name)
@@ -43,7 +43,7 @@ class AuthService:
                 content=f"登录失败: 用户不存在 [{user_name}]",
                 detail={"user_name": user_name, "client_ip": client_ip, "reason": "user_not_found"},
             )
-            limiter.record_failure(user_name, client_ip)
+            await limiter.record_failure(user_name, client_ip)
             raise ApiError(401, "用户名或密码错误")
 
         # 账号不可用
@@ -63,7 +63,7 @@ class AuthService:
         except PasswordWorkerBusy as exc:
             raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
         if not password_ok:
-            limiter.record_failure(user_name, client_ip)
+            await limiter.record_failure(user_name, client_ip)
             await write_system_log(
                 level="WARN",
                 log_type="auth",
@@ -87,7 +87,7 @@ class AuthService:
             raise ApiError(403, "当前账号未分配角色")
 
         # 登录成功
-        limiter.reset(user_name, client_ip)
+        await limiter.reset(user_name, client_ip)
         user.last_login_time = now_local()
         user.last_login_ip = client_ip
         user.update_by = user.user_name
