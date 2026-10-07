@@ -3,6 +3,32 @@ export function decimateTimeSeries<T extends Record<string, unknown>>(
   maxPoints: number,
   valueKeys: string[] = []
 ): T[] {
+  if (data.length <= maxPoints || maxPoints < 3) return data;
+  const required = new Set([0, data.length - 1]);
+  for (let index = 1; index < data.length; index++) {
+    if (valueKeys.some(key => (data[index - 1][key] == null) !== (data[index][key] == null))) {
+      required.add(index - 1);
+      required.add(index);
+    }
+  }
+  if (required.size === 2) return decimateContinuousSeries(data, maxPoints, valueKeys);
+  // Too many gap boundaries: retain a contiguous recent range rather than bridge gaps.
+  if (required.size > maxPoints) return data.slice(-maxPoints);
+  if (required.size < maxPoints) {
+    const indices = new Map(data.map((row, index) => [row, index]));
+    for (const row of decimateContinuousSeries(data, Math.max(3, maxPoints - required.size + 2), valueKeys)) {
+      if (required.size === maxPoints) break;
+      required.add(indices.get(row)!);
+    }
+  }
+  return [...required].sort((a, b) => a - b).map(index => data[index]);
+}
+
+function decimateContinuousSeries<T extends Record<string, unknown>>(
+  data: T[],
+  maxPoints: number,
+  valueKeys: string[] = []
+): T[] {
   const len = data.length;
   if (maxPoints >= len || maxPoints < 3) {
     return data;

@@ -341,19 +341,19 @@ export default function HistoryDataPage() {
       }),
     ])
       .then(([nextChart, nextMatrix]) => {
-        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
+        if (!active || queryVersion !== queryVersionRef.current) return;
         setChart(nextChart);
-        setMatrix(nextMatrix);
+        if (matrixVersion === matrixVersionRef.current) setMatrix(nextMatrix);
       })
       .catch((reason) => {
-        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
+        if (!active || queryVersion !== queryVersionRef.current) return;
         if ((reason as { type?: string })?.type === "unauthorized") logout();
         else toast.error(historyErrorMessage(reason, "历史数据刷新失败"));
       })
       .finally(() => {
-        if (!active || queryVersion !== queryVersionRef.current || matrixVersion !== matrixVersionRef.current) return;
+        if (!active || queryVersion !== queryVersionRef.current) return;
         setLoading(false);
-        setMatrixLoading(false);
+        if (matrixVersion === matrixVersionRef.current) setMatrixLoading(false);
       });
     return () => { active = false; };
   }, [logout, refreshVersion, token]);
