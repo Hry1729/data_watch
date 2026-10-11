@@ -1,5 +1,8 @@
 redis>=5.0.0
-taos-ws-py
+# The shipped build is not the stock wheel: installer/build-patched-taos-ws-py.ps1
+# rebuilds it from vendor/taos-ws-py with the GIL released around the blocking
+# TDengine calls, and installer/build-roles.ps1 installs that over this pin.
+taos-ws-py==0.7.0
 pymysql
 # tomllib is built-in for Python 3.11+; tomli is a backport for older versions
 tomli>=2.0.0; python_version < "3.11"

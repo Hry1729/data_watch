@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ManifestPath = Join-Path $PSScriptRoot 'roles.json'
 $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-$BuildSources = @('agent', 'app', 'collector', 'writer', 'edge', 'ingest', 'data_watch_shared', 'packages', 'installer', ':(top,glob)*.py')
+$BuildSources = @('agent', 'app', 'collector', 'writer', 'edge', 'ingest', 'data_watch_shared', 'packages', 'installer', 'vendor', ':(top,glob)*.py')
 $SourceRevision = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the source revision.' }
 & git -C $RepoRoot diff --quiet HEAD -- @BuildSources
@@ -135,6 +135,21 @@ if ($needsEdge) {
 if ($needsCentralized -or $needsDistributedCenter) {
     Write-Host '[python] Writer' -ForegroundColor Cyan
     Install-Requirements $writerPython (Join-Path $RepoRoot 'writer\requirements.txt')
+    # The stock taos-ws-py never releases the GIL around its blocking TDengine
+    # calls, so each native call stalls the writer's shared event loop. Build
+    # the patched connector from vendor/ and install it over the stock wheel.
+    # The build reports the path it produced; do not re-derive it here, or a
+    # leftover wheel in that directory could be installed instead.
+    Write-Host '[python] Writer patched taos-ws-py' -ForegroundColor Cyan
+    $taosWheelDirectory = Join-Path $RepoRoot 'installer\.build\wheels'
+    $taosWheelBuild = & (Join-Path $PSScriptRoot 'build-patched-taos-ws-py.ps1') `
+        -OutputDirectory $taosWheelDirectory -Python $writerPython
+    $taosWheel = @($taosWheelBuild)[-1]
+    if (-not $taosWheel -or -not (Test-Path -LiteralPath $taosWheel)) {
+        throw "The patched taos-ws-py wheel was not produced: $taosWheel"
+    }
+    & $writerPython -m pip install --disable-pip-version-check --force-reinstall --no-deps $taosWheel
+    Assert-LastExit 'patched taos-ws-py install'
     Build-PythonTarget $writerPython $writerPyi (Join-Path $RepoRoot 'writer') 'data-watch-writer.spec'
 }
 
