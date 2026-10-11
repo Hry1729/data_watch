@@ -115,6 +115,31 @@ class ProcessManager:
         except (TypeError, ValueError):
             return 0
 
+    def wants_running(self, name: str, *, default: bool = False) -> bool:
+        entry = self._load_state().get(name)
+        if isinstance(entry, dict) and isinstance(entry.get("desired_running"), bool):
+            return entry["desired_running"]
+        # Upgrade older installations that only persisted PID records.
+        return self._read_pid_file(name) is not None or default
+
+    def _set_desired_running(self, name: str, desired: bool) -> None:
+        state = self._load_state()
+        entry = state.get(name)
+        if not isinstance(entry, dict):
+            entry = {}
+        entry["desired_running"] = desired
+        state[name] = entry
+        self._save_state(state)
+
+    def _save_state(self, state: dict) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_file.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(state, indent=2, ensure_ascii=False))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.state_file)
+
     def _bump_restart_count(self, name: str) -> int:
         state = self._load_state()
         entry = state.get(name)
@@ -127,14 +152,7 @@ class ProcessManager:
         count = current + 1
         entry["restart_count"] = count
         state[name] = entry
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        # 临时文件 + 原子替换，避免写入中崩溃产生半截 JSON
-        tmp = self.state_file.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(state, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        os.replace(tmp, self.state_file)
+        self._save_state(state)
         return count
 
     def _verify_alive(self, record: dict) -> psutil.Process | None:
@@ -145,11 +163,15 @@ class ProcessManager:
         name: str,
         extra_args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        *,
+        recovering: bool = False,
     ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
 
         async with self._locks[name]:
+            if recovering and not self.wants_running(name):
+                return self.status(name)
             spec = self.modules[name]
             self._ensure_dirs()
 
@@ -157,6 +179,7 @@ class ProcessManager:
             if record is not None:
                 proc = self._verify_alive(record)
                 if proc is not None:
+                    self._set_desired_running(name, True)
                     logger.info("module %s already running pid=%s", name, proc.pid)
                     return self._info_running(name, proc, record)
                 self._delete_pid_file(name)
@@ -178,6 +201,8 @@ class ProcessManager:
             # 静态 spec.args + 运行期 extra_args（如 --config / --port-mapping，
             # 由 Agent 编排按约定拼入，不写回 config）。
             cmd = [spec.executable, *spec.args, *(extra_args or [])]
+            self._set_desired_running(name, True)
+            self._flag_file(name).unlink(missing_ok=True)
             logger.info("starting module %s: cmd=%s cwd=%s", name, cmd, spec.working_dir)
 
             try:
@@ -202,11 +227,17 @@ class ProcessManager:
         self,
         name: str,
         timeout: float = _STOP_TIMEOUT_DEFAULT,
+        *,
+        preserve_desired: bool = False,
     ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
 
         async with self._locks[name]:
+            if not preserve_desired:
+                self._set_desired_running(name, False)
+            else:
+                self._set_desired_running(name, self.wants_running(name))
             self._ensure_dirs()
 
             record = self._read_pid_file(name)
@@ -288,7 +319,7 @@ class ProcessManager:
     ) -> ProcessInfo:
         if name not in self.modules:
             raise ProcessManagerError(f"unknown module: {name}")
-        await self.stop(name)
+        await self.stop(name, preserve_desired=True)
         info = await self.start(name, extra_args, env=env)
         count = self._bump_restart_count(name)
         info.restart_count = count

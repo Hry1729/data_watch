@@ -97,7 +97,7 @@ async def test_storage_crash_recovery_backs_off(tmp_path, monkeypatch):
             raise asyncio.CancelledError()
     monkeypatch.setattr(factory.asyncio, "sleep", sleep)
     monkeypatch.setattr(factory, "_storage_env", lambda: {})
-    pm = SimpleNamespace(status=lambda name: SimpleNamespace(status="crashed"), restart=AsyncMock(), log_file=lambda name: tmp_path / "current.log")
+    pm = SimpleNamespace(wants_running=lambda *a, **k: True, status=lambda name: SimpleNamespace(status="crashed"), restart=AsyncMock(), log_file=lambda name: tmp_path / "current.log")
     app = SimpleNamespace(state=SimpleNamespace(pm=pm, edge_storage=SimpleNamespace(wait_ready=lambda: None), log_manager=MagicMock()))
     with pytest.raises(asyncio.CancelledError):
         await factory._recover_edge_storage(app)
@@ -126,9 +126,81 @@ async def test_storage_retries_failed_recovery_from_stopped_state(tmp_path, monk
             raise asyncio.CancelledError()
     monkeypatch.setattr(factory.asyncio, "sleep", sleep)
     monkeypatch.setattr(factory, "_storage_env", lambda: {})
-    pm = SimpleNamespace(status=lambda name: status, restart=restart, log_file=lambda name: tmp_path / "current.log")
+    pm = SimpleNamespace(wants_running=lambda *a, **k: True, status=lambda name: status, restart=restart, log_file=lambda name: tmp_path / "current.log")
     app = SimpleNamespace(state=SimpleNamespace(pm=pm, edge_storage=SimpleNamespace(wait_ready=lambda: None), log_manager=MagicMock()))
     with pytest.raises(asyncio.CancelledError):
         await factory._recover_edge_storage(app)
     assert len(attempts) == 2
     assert app.state._storage_recovery_pending is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_restores_real_crashed_writer_and_stops_on_user_request(make_pm, monkeypatch):
+    import asyncio
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app import factory
+    from app.routers import admin
+
+    pm, name = make_pm(name="writer", child_args=["--exit-after", "0.2", "--exit-code", "1"])
+    first = await pm.start(name)
+    for _ in range(100):
+        if pm.status(name).status == "crashed":
+            break
+        await asyncio.sleep(0.02)
+    assert pm.status(name).status == "crashed"
+    pm.modules[name] = replace(pm.modules[name], args=[pm.modules[name].args[0], "--flag", str(pm._flag_file(name))])
+    monkeypatch.setattr(factory, "load_config", lambda: {"agent": {"bootstrap_done": True}})
+    monkeypatch.setattr(admin, "_process_env", lambda name: {})
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, log_manager=MagicMock()))
+    recovery = asyncio.create_task(factory._recover_processes(app, interval=0.02))
+    try:
+        for _ in range(100):
+            if pm.status(name).status == "running":
+                break
+            await asyncio.sleep(0.02)
+        assert pm.status(name).status == "running"
+        assert pm.status(name).pid != first.pid
+        assert pm._restart_count(name) == 1
+        await pm.stop(name)
+        await asyncio.sleep(0.1)
+        assert pm.status(name).status == "stopped"
+    finally:
+        recovery.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await recovery
+        await pm.stop(name)
+
+
+@pytest.mark.asyncio
+async def test_recovery_survives_initial_config_failure_and_backs_off(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app import factory
+
+    clock = [0.0]
+    attempts = []
+    calls = [0]
+    def config():
+        calls[0] += 1
+        if calls[0] == 1:
+            raise OSError("temporarily unavailable")
+        return {"agent": {"bootstrap_done": True}}
+    async def sleep(delay):
+        clock[0] += delay
+        if clock[0] >= 130:
+            raise asyncio.CancelledError()
+    async def start(*args, **kwargs):
+        attempts.append(clock[0])
+        raise OSError("spawn failed")
+    monkeypatch.setattr(factory, "load_config", config)
+    monkeypatch.setattr(factory.asyncio, "sleep", sleep)
+    monkeypatch.setattr(factory.asyncio.get_running_loop(), "time", lambda: clock[0])
+    monkeypatch.setattr(factory, "start_process", start)
+    pm = SimpleNamespace(modules={"writer": None}, wants_running=lambda name: True,
+        status=lambda name: SimpleNamespace(status="stopped", uptime_seconds=0))
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm))
+    with pytest.raises(asyncio.CancelledError):
+        await factory._recover_processes(app)
+    assert attempts == [2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 124.0]
