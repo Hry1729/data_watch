@@ -290,7 +290,14 @@ async function agentFetch<T>(
       token: token ?? getAgentAuthToken() ?? undefined,
       timeoutSecs: timeoutSecs ?? null,
     });
-  } catch {
+  } catch (error) {
+    const message = String(error);
+    if (message.includes("agent_request_too_large") || message.includes("response_body_too_large")) {
+      throw { type: "api_error", status: 413, message: "请求或响应数据过大，请缩小数据范围或驱动包" } satisfies AppError;
+    }
+    if (message.includes("agent_response_invalid_utf8")) {
+      throw { type: "api_error", status: 502, message: "Agent 返回的数据格式无效" } satisfies AppError;
+    }
     throw { type: "agent_unreachable" } satisfies AppError;
   }
 

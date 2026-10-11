@@ -6,6 +6,7 @@ use tauri::State;
 
 pub const MAX_BACKEND_RESPONSE_BYTES: usize = 50 * 1024 * 1024;
 const MAX_BACKEND_REQUEST_BYTES: usize = 4 * 1024 * 1024;
+const MAX_AGENT_DRIVER_REQUEST_BYTES: usize = 4 * ((50 * 1024 * 1024 + 2) / 3) + 4096;
 
 #[derive(Default)]
 pub struct BackendOriginState(pub Mutex<Option<String>>);
@@ -112,18 +113,31 @@ fn validate_request_body(body: Option<&String>) -> Result<(), String> {
     Ok(())
 }
 
-async fn read_limited_bytes(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+fn validate_agent_body(method: &str, path: &str, body: Option<&String>) -> Result<(), String> {
+    let path = path.split('?').next().unwrap_or(path);
+    let limit = if method == "POST" && matches!(path, "/admin/drivers" | "/admin/drivers/preview") {
+        MAX_AGENT_DRIVER_REQUEST_BYTES
+    } else {
+        MAX_BACKEND_REQUEST_BYTES
+    };
+    if body.map_or(0, String::len) > limit {
+        return Err("agent_request_too_large".to_string());
+    }
+    Ok(())
+}
+
+async fn read_limited_bytes(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, String> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_BACKEND_RESPONSE_BYTES as u64)
+        .is_some_and(|length| length > limit as u64)
     {
-        return Err("backend response is too large".to_string());
+        return Err("response_body_too_large".to_string());
     }
 
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| format!("read body failed: {}", e))? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_BACKEND_RESPONSE_BYTES {
-            return Err("backend response is too large".to_string());
+        if bytes.len().saturating_add(chunk.len()) > limit {
+            return Err("response_body_too_large".to_string());
         }
         bytes.extend_from_slice(&chunk);
     }
@@ -131,7 +145,7 @@ async fn read_limited_bytes(mut response: reqwest::Response) -> Result<Vec<u8>, 
 }
 
 async fn read_limited_text(response: reqwest::Response) -> Result<String, String> {
-    String::from_utf8(read_limited_bytes(response).await?)
+    String::from_utf8(read_limited_bytes(response, MAX_BACKEND_RESPONSE_BYTES).await?)
         .map_err(|_| "backend response is not valid UTF-8".to_string())
 }
 
@@ -162,6 +176,7 @@ pub async fn agent_request(
     timeout_secs: Option<u64>,
 ) -> Result<(u16, String), String> {
     let url = build_local_agent_url(port, &path)?;
+    validate_agent_body(&method, &path, body.as_ref())?;
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
     let client = shared_client()?;
 
@@ -188,10 +203,8 @@ pub async fn agent_request(
         .await
         .map_err(|e| format!("agent_unreachable: {}", e))?;
     let status = resp.status().as_u16();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("read body failed: {}", e))?;
+    let text = String::from_utf8(read_limited_bytes(resp, MAX_BACKEND_RESPONSE_BYTES).await?)
+        .map_err(|_| "agent_response_invalid_utf8".to_string())?;
 
     Ok((status, text))
 }
@@ -222,7 +235,7 @@ pub async fn backend_download(
         .get(CONTENT_DISPOSITION)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let bytes = read_limited_bytes(resp).await?;
+    let bytes = read_limited_bytes(resp, MAX_BACKEND_RESPONSE_BYTES).await?;
 
     Ok((status, bytes, disposition))
 }
@@ -312,6 +325,41 @@ mod tests {
         assert!(validate_request_body(Some(&"x".repeat(MAX_BACKEND_REQUEST_BYTES))).is_ok());
         assert!(validate_request_body(Some(&"x".repeat(MAX_BACKEND_REQUEST_BYTES + 1))).is_err());
         assert_eq!(MAX_BACKEND_RESPONSE_BYTES, 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn agent_limits_allow_supported_driver_archives_only_on_upload_routes() {
+        let large = "x".repeat(super::MAX_AGENT_DRIVER_REQUEST_BYTES);
+        assert!(super::validate_agent_body("POST", "/admin/drivers", Some(&large)).is_ok());
+        assert!(super::validate_agent_body("POST", "/admin/drivers/preview?check=1", Some(&large)).is_ok());
+        assert!(super::validate_agent_body("POST", "/admin/config", Some(&large)).is_err());
+        assert!(super::validate_agent_body("PUT", "/admin/drivers", Some(&large)).is_err());
+        assert!(super::validate_agent_body("POST", "/admin/drivers", Some(&(large + "x"))).is_err());
+        let utf8 = "中".repeat(MAX_BACKEND_REQUEST_BYTES / 3 + 1);
+        assert!(super::validate_agent_body("POST", "/admin/config", Some(&utf8)).is_err());
+    }
+
+    #[test]
+    fn response_limits_reject_chunked_bodies_without_content_length() {
+        use std::io::{Read, Write};
+        use std::time::Duration;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            socket.read(&mut request).unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n81\r\n").unwrap();
+            socket.write_all(&[b'x'; 129]).unwrap();
+            socket.write_all(b"\r\n0\r\n\r\n").unwrap();
+        });
+        tauri::async_runtime::block_on(async {
+            let response = super::shared_client().unwrap().get(format!("http://{address}/"))
+                .timeout(Duration::from_secs(5)).send().await.unwrap();
+            assert_eq!(response.content_length(), None);
+            assert_eq!(super::read_limited_bytes(response, 128).await.unwrap_err(), "response_body_too_large");
+        });
+        server.join().unwrap();
     }
 
     // --- B14：Agent 代理目标必须被锚定在 127.0.0.1:<port> -----------------------
