@@ -800,6 +800,11 @@ class TDengineWriter:
 
     @staticmethod
     def _format_value(raw: object) -> str:
+        # 正常消费路径已在 _convert_values 里把点转成有限 float，这里仍是唯一的
+        # 出口，所以**保留有限值检查**（不能写假值），但跳过 float()/try 的重复转换。
+        # 其它调用入口传字符串/None 时走下面的完整校验路径。
+        if type(raw) is float:
+            return repr(raw) if math.isfinite(raw) else "NULL"
         if raw is None:
             return "NULL"
         try:
@@ -812,6 +817,10 @@ class TDengineWriter:
 
     @staticmethod
     def _union_cols(rows: list[dict], idxs: list[int]) -> list[str]:
+        # 单行的并集就是该行本身，跳过逐列去重的簿记。生产的每个子表各自成段
+        # （按 child_table 分组），所以这里是最常见的那条路径。
+        if len(idxs) == 1:
+            return list(rows[idxs[0]]["columns"])
         all_cols: list[str] = []
         seen: set[str] = set()
         for i in idxs:

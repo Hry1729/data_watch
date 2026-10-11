@@ -213,6 +213,51 @@ async def test_unknown_error_retries_whole_chunk_without_bisect():
     assert status[0] == status[1] == RETRY
 
 
+def test_format_value_fast_path_keeps_the_finite_check():
+    """SQL 构建只跳过重复转换，不放松有限值检查，其它入口仍走完整校验。"""
+    assert TDengineWriter._format_value(1.5) == "1.5"
+    assert TDengineWriter._format_value(0.0) == "0.0"
+    assert TDengineWriter._format_value(math.nan) == "NULL"
+    assert TDengineWriter._format_value(math.inf) == "NULL"
+    assert TDengineWriter._format_value(-math.inf) == "NULL"
+    assert TDengineWriter._format_value("2.5") == "2.5"
+    assert TDengineWriter._format_value(3) == "3.0"
+    assert TDengineWriter._format_value(None) == "NULL"
+    assert TDengineWriter._format_value("not-a-number") == "NULL"
+    assert TDengineWriter._format_value(object()) == "NULL"
+
+
+def test_union_cols_single_row_keeps_the_declared_column_order():
+    """单行并集必须仍是该行自身的列集合与声明顺序。"""
+    rows = [{"columns": {"qc2": 1.0, "qc1": 2.0}}, {"columns": {"qc1": 3.0}}]
+
+    assert TDengineWriter._union_cols(rows, [0]) == ["qc2", "qc1"]
+    assert TDengineWriter._union_cols(rows, [1]) == ["qc1"]
+    assert TDengineWriter._union_cols(rows, [0, 1]) == ["qc2", "qc1"]
+
+
+@pytest.mark.asyncio
+async def test_single_row_subtable_emits_every_column_and_quality():
+    """生产形态：每个子表自成一段时，仍写全列集合与全部质量点。"""
+    columns = {f"qc{i}": float(i) for i in range(1, 21)}
+    qualities = {str(i): 192 for i in range(1, 21)}
+    writer, executed = _make_writer({"sdqc": set(columns)})
+    writer._quality_stable_ready = {"sqqc"}  # sdqc 的质量窄表超级表
+    rows = [{
+        "child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+        "ts": 1000, "columns": columns, "qualities": qualities,
+    }]
+
+    results = await writer.write_multi_table(rows)
+
+    assert results[0][1] == LANDED and len(executed) == 1
+    sql = executed[0]
+    col_list = ", ".join(["`ts`"] + [f"`qc{i}`" for i in range(1, 21)])
+    assert f"({col_list}) VALUES (1000, " in sql
+    for i in range(1, 21):
+        assert f"({1000}, {i}, 192)" in sql
+
+
 @pytest.mark.asyncio
 async def test_sql_too_long_bisects_into_smaller_chunks():
     """0x0219 SQL 过长 → 二分缩块（非直接判坏行），缩到能过则全 LANDED。"""
