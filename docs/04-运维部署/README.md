@@ -183,7 +183,7 @@ docker save redis:7.4                   -o "$ReleaseRoot\docker-images\redis.tar
 docker save tdengine/tsdb-amd64:3.4.0.9  -o "$ReleaseRoot\docker-images\tdengine.tar"
 ```
 
-> 仓库内旧的 `deploy\data-watch-images.zip` 实际只含旧版 `data-watch-backend.tar` 和 `data-watch-frontend.tar`，不含 MySQL/Redis/TDengine，也不能代替本次发布的应用镜像。目标机使用按发布指定提交重新导出的 tar。
+> `deploy\data-watch-images.zip` 是前后端应用镜像归档，不含 MySQL/Redis/TDengine。归档内的 `release-manifest.json` 必须记录本次源码提交、镜像 ID 与 tar 哈希；文件名和 `latest` 不能证明版本。旧归档不得代替按本次提交重新导出的镜像。
 
 ### 4.5 复制部署配置到发布目录
 
@@ -206,13 +206,16 @@ Copy-Item ".\deploy\stack-up.ps1"           "$ReleaseRoot\deploy\" -Force
 
 ```text
 D:\data_watch_release\
-├─ DataWatch-Setup-<版本>.exe
+├─ DataWatch-<Role>-Setup-<版本>.exe
+├─ SHA256SUMS.txt
+├─ release-manifest.json
 ├─ docker-images\
 │  ├─ data-watch-backend.tar
 │  ├─ data-watch-frontend.tar
 │  ├─ mysql.tar
 │  ├─ redis.tar
 │  └─ tdengine.tar
+│  # 此目录另含 release-manifest.json 和 SHA256SUMS.txt，记录镜像版本与 tar 哈希
 └─ deploy\
    ├─ docker-compose.yml
    ├─ taos.cfg
@@ -488,7 +491,7 @@ docker exec -it data-watch-tdengine taos -u root -p -f /tmp/tdengine-schema-repl
 ### 7.2 双根目录（中心式示例）
 
 ```text
-C:\Program Files\DataWatch\          # DATAWATCH_INSTALL_ROOT，只读安装根
+C:\Program Files\DataWatch Centralized\ # DATAWATCH_INSTALL_ROOT，只读安装根
   app\
   agent\
   collector\
@@ -556,11 +559,15 @@ agent 启动子进程时：
 - 解密 DB 密码；
 - 注入 `DATAWATCH_<DB>_<FIELD>`；
 - 设置工作目录；
-- 仅对 collector 拼接 `--config`、`--runtime-dir`、`--port-mapping` 运行参数；writer 不附加动态参数，只读 `config.toml [writer].args` 静态项；
+- 对 collector 拼接 `--config`、`--runtime-dir`、`--port-mapping`；writer 同样显式收到 `--runtime-dir`，确保停止标志目录与 Agent 一致；各模块仍保留 `config.toml` 的静态 `args`；
 - stdout/stderr 写入 runtime logs；
 - PID 文件包含 pid + create_time。
 
 停止时先写 `runtime/<name>.shutdown_flag`，超时后才强杀。
+
+Agent 在 `runtime/state/process_state.json` 原子保存用户希望运行的模块。完成引导后，Agent 重启或模块崩溃会按原意恢复运行；人工停止会清除对应意图，停止 Storage 同时清除 Collector/Uploader 的意图。恢复复用手动启动的凭据、驱动事务、proxy 和 Storage 就绪检查，失败重试间隔逐步增加至 60 秒；稳定运行 60 秒后恢复初始间隔。Agent 自身关停和驱动临时停机保留意图，恢复前清理遗留停止标志。状态文件不可作为跨机器迁移凭据，密码迁移仍遵循 DPAPI 限制。
+
+App 经 Agent 的普通请求体上限为 4 MiB；驱动安装/预览兼容最大 50 MiB ZIP 的 base64 JSON（另留 4 KiB 元数据余量），响应上限为 50 MiB，并对无长度标头的分块响应计数。超限明确提示缩小数据范围或驱动包。
 
 ### 7.5 Collector 角色的 OPC DA proxy 验收
 
@@ -634,21 +641,23 @@ pwsh -File installer\build.ps1 -Role distributed-center -Iscc "D:\path\to\ISCC.e
 
 ```powershell
 cd D:\data_watch_release\deploy
-docker compose -f .\docker-compose.yml up -d --build backend frontend
+docker load -i ..\docker-images\data-watch-backend.tar
+docker load -i ..\docker-images\data-watch-frontend.tar
+docker compose --env-file .\backend.env -f .\docker-compose.yml up -d --pull never --no-build backend frontend
 ```
 
-离线目标机：开发机重新 `docker save` → 拷贝 tar → 目标机 `docker load` → `up -d`。
+开发机按第 4 节从同一提交构建、记录镜像 ID 并导出；目标机按上述步骤加载交付镜像。发布目录不含源码，目标机不执行 `--build`。更新前保留上一批 tar 与发布记录，保留全部数据库卷。
 
 修改 `backend.env` 后无需 rebuild，但要重建容器使环境变量生效：
 
 ```powershell
-docker compose -f .\docker-compose.yml up -d --force-recreate backend
+docker compose --env-file .\backend.env -f .\docker-compose.yml up -d --pull never --no-build --force-recreate backend
 ```
 
 ### 9.2 更新 Windows 一体包
 
 1. 开发机重新打包 `installer\build.ps1`；
-2. 拷贝新的 `DataWatch-Setup-<版本>.exe` 到目标机；
+2. 拷贝对应角色的 `DataWatch-<Role>-Setup-<版本>.exe`、`SHA256SUMS.txt` 和 `release-manifest.json` 到目标机，核对文件哈希及记录的源码提交；文件名里的 `0.1.0` 不能单独证明发布批次；
 3. 管理员运行安装器覆盖安装；
 4. ProgramData 现场配置保留；
 5. 按角色检查 `DataWatchCentralizedAgent`、`DataWatchEdgeAgent` 或 `DataWatchDistributedCenterAgent`，并访问对应端口的 `/bootstrap/status`。

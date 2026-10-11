@@ -9,6 +9,11 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $ManifestPath = Join-Path $PSScriptRoot 'roles.json'
 $Manifest = Get-Content -LiteralPath $ManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+$BuildSources = @('agent', 'app', 'collector', 'writer', 'edge', 'ingest', 'data_watch_shared', 'packages', 'installer', ':(top,glob)*.py')
+$SourceRevision = (& git -C $RepoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the source revision.' }
+& git -C $RepoRoot diff --quiet HEAD -- @BuildSources
+if ($LASTEXITCODE -ne 0) { throw 'Commit tracked build inputs before building release installers.' }
 $RoleNames = if ($Role -eq 'all') {
     @('centralized', 'edge', 'distributed-center')
 } else {
@@ -153,6 +158,9 @@ try {
 }
 
 $outputs = @()
+$releaseRecords = @()
+$priorRole = $env:VITE_DATAWATCH_ROLE
+try {
 foreach ($roleName in $RoleNames) {
     $roleConfig = $Manifest.roles.$roleName
     Write-Host "[app] $roleName" -ForegroundColor Cyan
@@ -178,7 +186,34 @@ foreach ($roleName in $RoleNames) {
     $setup = Join-Path $PSScriptRoot ("Output\{0}-0.1.0.exe" -f $roleConfig.outputName)
     if (-not (Test-Path -LiteralPath $setup)) { throw "Expected setup was not produced: $setup" }
     $outputs += Get-Item -LiteralPath $setup
+    $releaseRecords += [ordered]@{
+        role = $roleName
+        file = (Split-Path $setup -Leaf)
+        sourceRevision = $SourceRevision
+        sizeBytes = (Get-Item -LiteralPath $setup).Length
+        sha256 = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+        appSha256 = (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'app\src-tauri\target\release\app.exe')).Hash.ToLowerInvariant()
+        agentSha256 = (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'agent\dist\data-watch-agent\data-watch-agent.exe')).Hash.ToLowerInvariant()
+    }
 }
+} finally {
+    $env:VITE_DATAWATCH_ROLE = $priorRole
+}
+
+if ((& git -C $RepoRoot rev-parse HEAD).Trim() -ne $SourceRevision) { throw 'Source revision changed during the build.' }
+& git -C $RepoRoot diff --quiet HEAD -- @BuildSources
+if ($LASTEXITCODE -ne 0) { throw 'Tracked build inputs changed during the build.' }
+foreach ($record in $releaseRecords) {
+    $actual = (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot "Output\$($record.file)")).Hash.ToLowerInvariant()
+    if ($actual -ne $record.sha256) { throw "Installer changed after build: $($record.file)" }
+}
+$outputDir = Join-Path $PSScriptRoot 'Output'
+$checksums = Get-ChildItem -LiteralPath $outputDir -Filter 'DataWatch-*-Setup-*.exe' -File | Sort-Object Name | ForEach-Object {
+    "{0}  {1}" -f (Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $_.Name
+}
+[IO.File]::WriteAllLines((Join-Path $outputDir 'SHA256SUMS.txt'), [string[]]$checksums, [Text.Encoding]::ASCII)
+@{ schemaVersion = 1; builtAt = [DateTime]::UtcNow.ToString('o'); installers = @($releaseRecords) } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $outputDir 'release-manifest.json') -Encoding utf8NoBOM
 
 Write-Host '=== DONE ===' -ForegroundColor Green
 $outputs | Select-Object Name, @{N='SizeMB'; E={[math]::Round($_.Length / 1MB, 1)}}, LastWriteTime | Format-Table -AutoSize
