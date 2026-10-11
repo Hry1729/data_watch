@@ -15,9 +15,15 @@ import { asyncRoutes } from '../routes/asyncRoutes'
 import { RoutesAlias } from '../routesAlias'
 import { formatMenuTitle } from '@/utils'
 import { buildProjectDocsMenu } from '@/views/project-docs/docs.menu'
-import { buildMonitorScreenMenu } from '@/views/monitor-screen/screen.menu'
-import { buildLightMonitorMenu } from '@/views/monitor-light/screen.menu'
-import { buildLandingMenu } from '@/views/landing/screen.menu'
+type LocalMenuBuilders = {
+  buildMonitorScreenMenu?: () => AppRouteRecord
+  buildLightMonitorMenu?: () => AppRouteRecord
+  buildLandingMenu?: () => AppRouteRecord
+}
+// These local-only pages are excluded from Git; a clean release may omit them.
+const localMenus = import.meta.glob<LocalMenuBuilders>(
+  '../../views/{monitor-screen,monitor-light,landing}/screen.menu.ts', { eager: true }
+)
 
 export class MenuProcessor {
   /**
@@ -36,9 +42,11 @@ export class MenuProcessor {
     // 注入前端管理的菜单项（不依赖后端 sys_menu，对所有登录用户可见）。
     // 顺序：监控大屏 → 浅色监控大屏 → 项目首页 → 后端菜单 → 项目文档。
     menuList = [
-      buildMonitorScreenMenu(),
-      buildLightMonitorMenu(),
-      buildLandingMenu(),
+      ...[
+        localMenus['../../views/monitor-screen/screen.menu.ts']?.buildMonitorScreenMenu?.(),
+        localMenus['../../views/monitor-light/screen.menu.ts']?.buildLightMonitorMenu?.(),
+        localMenus['../../views/landing/screen.menu.ts']?.buildLandingMenu?.()
+      ].filter((menu): menu is AppRouteRecord => menu !== undefined),
       ...menuList,
       buildProjectDocsMenu()
     ]
