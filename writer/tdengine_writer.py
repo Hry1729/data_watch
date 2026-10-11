@@ -830,12 +830,23 @@ class TDengineWriter:
                     all_cols.append(col)
         return all_cols
 
-    def _subtable_header(self, row: dict, all_cols: list[str]) -> str:
+    def _subtable_header(self, row: dict, all_cols: list[str], col_cache: dict | None = None) -> str:
+        """一句话的子表头。Sentence header for one subtable.
+
+        ``col_cache`` 在一次 _iter_chunks 的生成器生命周期内存活，键是列名与顺序：
+        同型号设备的列清单完全相同，逐行重拼纯属浪费。只复用列名这一段，
+        设备名与标签仍逐行生成，批次结束即随生成器一起释放。
+        """
         db = _quote(self._database)
         tbl = _quote(row["child_table"])
         stbl = _quote(row["stable"])
         tag_val = _tag_literal(row["device_code"])
-        col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
+        key = tuple(all_cols)
+        col_list = None if col_cache is None else col_cache.get(key)
+        if col_list is None:
+            col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
+            if col_cache is not None:
+                col_cache[key] = col_list
         return f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') ({col_list}) VALUES "
 
     def _value_clause(self, row: dict, all_cols: list[str]) -> str:
@@ -849,9 +860,12 @@ class TDengineWriter:
         header = self._subtable_header(rows[idxs[0]], all_cols)
         return header + " ".join(self._value_clause(rows[i], all_cols) for i in idxs)
 
-    def _iter_table_fragments(self, rows: list[dict], indices: list[int], budget: int):
+    def _iter_table_fragments(
+        self, rows: list[dict], indices: list[int], budget: int,
+        col_cache: dict | None = None,
+    ):
         all_cols = self._union_cols(rows, indices)
-        value_header = self._subtable_header(rows[indices[0]], all_cols)
+        value_header = self._subtable_header(rows[indices[0]], all_cols, col_cache)
         value_header_bytes = len(value_header.encode("utf-8"))
         group_indices: list[int] = []
         values: list[str] = []
@@ -947,9 +961,12 @@ class TDengineWriter:
         current_indices: list[int] = []
         current_parts: list[tuple[list[int], str, int, int]] = []
         current_bytes = prefix_bytes
+        # 列名清单在这一次分块期间复用，生成器结束即释放：同型号设备的列完全
+        # 相同，逐行重拼没有意义。
+        col_cache: dict[tuple[str, ...], str] = {}
         for indices in self._column_runs(rows, by_table.values()):
             for part_indices, fragment, value_rows, quality_rows in self._iter_table_fragments(
-                rows, indices, budget
+                rows, indices, budget, col_cache
             ):
                 size = len(fragment.encode("utf-8")) if fragment is not None else 0
                 if current and (

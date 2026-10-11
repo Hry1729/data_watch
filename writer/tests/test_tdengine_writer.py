@@ -237,6 +237,34 @@ def test_union_cols_single_row_keeps_the_declared_column_order():
 
 
 @pytest.mark.asyncio
+async def test_column_list_reuse_stays_per_subtable():
+    """列清单可跨子表复用；列不同则各用各的，表名与标签永不互相串用。"""
+    writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})
+    rows = [
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100", "ts": 1000, "columns": {"qc1": 1.0, "qc2": 2.0}},
+        {"child_table": "qc101", "stable": "sdqc", "device_code": "qc101", "ts": 1000, "columns": {"qc1": 3.0, "qc2": 4.0}},
+        {"child_table": "qc102", "stable": "sdqc", "device_code": "qc102", "ts": 1000, "columns": {"qc2": 5.0}},
+    ]
+
+    results = await writer.write_multi_table(rows)
+
+    assert results[0][1] == LANDED and len(executed) == 1
+    sql = executed[0]
+    assert (
+        "`device_data`.`qc100` USING `device_data`.`sdqc` TAGS ('qc100') "
+        "(`ts`, `qc1`, `qc2`) VALUES (1000, 1.0, 2.0)"
+    ) in sql
+    assert (
+        "`device_data`.`qc101` USING `device_data`.`sdqc` TAGS ('qc101') "
+        "(`ts`, `qc1`, `qc2`) VALUES (1000, 3.0, 4.0)"
+    ) in sql
+    assert (
+        "`device_data`.`qc102` USING `device_data`.`sdqc` TAGS ('qc102') "
+        "(`ts`, `qc2`) VALUES (1000, 5.0)"
+    ) in sql
+
+
+@pytest.mark.asyncio
 async def test_single_row_subtable_emits_every_column_and_quality():
     """生产形态：每个子表自成一段时，仍写全列集合与全部质量点。"""
     columns = {f"qc{i}": float(i) for i in range(1, 21)}
