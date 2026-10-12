@@ -78,3 +78,11 @@ Follow these rules:
 6. Fix only one minimal issue at a time.
 7. Before making changes, explain which files will be modified, what will be changed in each file, and why.
 8. Do not refactor, do not casually optimize, and do not modify unrelated files.
+
+## Cursor Cloud 开发环境
+
+上面的 Windows / PowerShell 规则适用于本机开发。Cursor Cloud Agent 是 Linux，仓库在 `/agent/repos/data_watch`，这里使用 bash。
+
+- 前端：`cd frontend && pnpm install --frozen-lockfile && pnpm test`。`tests/monitor-light.test.ts` 会因缺少 `src/views/monitor-light/data` 失败，这是仓库现状。
+- CLI：`python3 -m venv .venv`，再安装 `cli/requirements.txt`、`pytest` 和 `click`（Typer 0.27 不再带上 click，而源码直接导入它），然后 `.venv/bin/python -m pytest cli/tests -q`。
+- Backend 运行时需要 free-threaded Python 3.14t。现场采集、Agent 和 Tauri 桌面端依赖 Windows，不要在这个 Linux 环境里启动它们。
