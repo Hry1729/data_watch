@@ -44,8 +44,15 @@ $distRoot = Join-Path $releaseRoot 'build-dist'
 $workRoot = Join-Path $repoRoot ('installer\.build\writer-field-' + $revision.Substring(0, 8))
 Push-Location (Join-Path $repoRoot 'writer')
 try {
-    & $python -B -m PyInstaller 'data-watch-writer.spec' --noconfirm --clean --distpath $distRoot --workpath $workRoot *> (Join-Path $releaseRoot 'build.log')
-    if ($LASTEXITCODE -ne 0) { throw 'Writer build failed. See build.log.' }
+    # Windows PowerShell 5.1 wraps native stderr INFO lines as error records.
+    # Keep their full log, but decide build success using the native exit code.
+    $savedErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $python -B -m PyInstaller 'data-watch-writer.spec' --noconfirm --clean --distpath $distRoot --workpath $workRoot *> (Join-Path $releaseRoot 'build.log')
+        $buildExit = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $savedErrorAction }
+    if ($buildExit -ne 0) { throw 'Writer build failed. See build.log.' }
 } finally { Pop-Location }
 New-Item -ItemType Directory -Path $payloadRoot | Out-Null
 Move-Item -LiteralPath (Join-Path $distRoot 'data-watch-writer') -Destination (Join-Path $payloadRoot 'writer')
