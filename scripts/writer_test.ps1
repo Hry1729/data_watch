@@ -11,6 +11,19 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$logDirectory = Join-Path $scriptDirectory 'operation-logs'
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$operationLog = Join-Path $logDirectory ('test-' + $Mode + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+function Write-Operation([string]$Message) {
+    [IO.File]::AppendAllText($operationLog, ([DateTimeOffset]::Now.ToString('o') + ' ' + $Message + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+}
+trap {
+    Write-Operation ('failed: ' + $_.Exception.GetBaseException().Message)
+    Write-Host "Operation failed. Log: $operationLog"
+    throw $_
+}
+Write-Operation ('started; PowerShell=' + $PSVersionTable.PSVersion + '; mode=' + $Mode + '; settings=' + $SettingsPath)
+Write-Host "Operation log: $operationLog"
 $settings = (Resolve-Path -LiteralPath $SettingsPath).Path
 $statePath = $settings + '.writer-test-state.json'
 $utf8 = New-Object Text.UTF8Encoding($false)
@@ -47,7 +60,7 @@ function Assert-Stopped {
 function Replace-Settings([string]$Text) {
     $temporary = $settings + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     [IO.File]::WriteAllText($temporary, $Text, $utf8)
-    [IO.File]::Replace($temporary, $settings, $null)
+    [IO.File]::Replace($temporary, $settings, [NullString]::Value)
 }
 if ($Mode -ne 'capture') {
     Assert-Stopped
@@ -59,8 +72,9 @@ if ($Mode -ne 'capture') {
         }
         $restoreTemporary = $settings + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
         Copy-Item -LiteralPath $state.backup_path -Destination $restoreTemporary
-        [IO.File]::Replace($restoreTemporary, $settings, $null)
+        [IO.File]::Replace($restoreTemporary, $settings, [NullString]::Value)
         Remove-Item -LiteralPath $statePath
+        Write-Operation ('original settings restored; backup=' + $state.backup_path)
         Write-Host "Original settings restored. Local backup retained at: $($state.backup_path)"
         Write-Host 'Start Writer from the app.'
         return
@@ -88,11 +102,12 @@ if ($Mode -ne 'capture') {
     Replace-Settings $text
     $state.last_profile_sha256 = (Get-FileHash -LiteralPath $settings -Algorithm SHA256).Hash
     [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json), $utf8)
+    Write-Operation ('profile applied; workers=' + $workers + '; batch_count=' + $batch)
     Write-Host "Applied $Mode : workers=$workers, batch_count=$batch. Other settings retained from the original file."
     Write-Host 'Start Writer from the app, wait about 60 seconds, then run capture.'
     return
 }
-if (-not (Get-Process -Name 'data-watch-writer' -ErrorAction SilentlyContinue)) { throw 'Start Writer from the app before capture.' }
+if (-not (Get-Process -Name 'data-watch-writer' -ErrorAction SilentlyContinue)) { throw 'Writer is stopped. Start Writer from the app, wait about 60 seconds, then run capture.' }
 if (-not $RuntimeRoot) {
     $dataRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $settings))
     $RuntimeRoot = Join-Path $dataRoot 'runtime'
@@ -180,5 +195,6 @@ $profile.writer_processes = @(foreach ($writerProcess in Get-Process -Name 'data
     [pscustomobject]$entry
 })
 [IO.File]::WriteAllText((Join-Path $reportPath 'test-profile.json'), ($profile | ConvertTo-Json -Depth 8), $utf8)
+Write-Operation ('capture completed; results=' + $runRoot + '; data_check=' + $dataCheck.status)
 Write-Host "Data spot-check status: $($dataCheck.status). This does not prove all historical data or exactly-once writes."
 Write-Host "Send the complete results folder: $runRoot"

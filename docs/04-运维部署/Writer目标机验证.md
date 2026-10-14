@@ -2,9 +2,13 @@
 
 本包只更新 Writer，并提供诊断工具。前后端、Collector、Agent 和数据库镜像无需重新部署。分片数、扫描周期、缓冲上限及 ACK/DLQ 规则保持原样。
 
-源版本、Python/依赖版本、原生连接器和所有交付文件的 SHA256 在 `release-manifest.json`。Writer 内的 `writer-release.json` 保留同一版本信息。原生连接器复用上轮 GIL 补丁 wheel，打包时核对 wheel、构建环境、交付包内 `.pyd` 三者的二进制哈希；不声明 wheel 字节可重复构建。
+**已安装 2026-10-14 新中心式安装包（源码 `8ca1f42f`）时，Writer 已更新，直接从第 2 节设置基线；无需再运行 `update_writer.ps1`。** 只有保留旧安装包、单独更新 Writer 时才执行第 1 节。
+
+源版本、Python/依赖版本、原生连接器和所有交付文件的 SHA256 在 `release-manifest.json`。Writer 内的 `writer-release.json` 保留同一版本信息。脚本修订包保留原 Writer 二进制，另用 `script_revision` 记录脚本提交。原生连接器复用上轮 GIL 补丁 wheel，打包时核对 wheel、构建环境、交付包内 `.pyd` 三者的二进制哈希；不声明 wheel 字节可重复构建。
 
 目标机需 Windows PowerShell 5.1 或 7、正在运行的 Backend 容器及 Docker 命令，无需另装 Python。请使用管理员 PowerShell，以便取得 Writer CPU 指标和更新安装目录。本机未做性能压测；吞吐和实际数据库验收由本轮目标机报告决定。
+
+请将本包解压到 D 盘，例如 `D:\writer-target-8ca1f42f`。更新和参数脚本的操作日志位于解压目录的 `operation-logs`，测试报告位于 `target-results`；日志不写入 C 盘。原配置、配置备份及安装目录仍在各自原位置。某一步报错时先停下，不要继续下一组或执行 `capture`。
 
 ## 1. 更新前
 
@@ -18,7 +22,7 @@ $settings = "C:\ProgramData\DataWatch\writer\config\settings.toml"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\update_writer.ps1 -WriterDirectory "$writer"
 ```
 
-更新器先核对 payload 哈希，再保留整份旧 Writer 目录，最后切换新目录。它不会覆盖 ProgramData 中的连接配置，也不清理 Redis 或数据库。记下输出的 `writer.backup-...` 路径。
+更新器先核对 payload 哈希，再验证完整新目录能在同一父目录重命名，通过后保留整份旧 Writer 并切换新目录。重命名不会把源目录嵌套进已有目标目录。它不会覆盖 ProgramData 中的连接配置，也不清理 Redis 或数据库。记下输出的 `writer.backup-...` 路径。若仍报拒绝访问，回传 D 盘的 `operation-logs`，里面有错误码和相关目录权限；无需自行放宽安装目录权限。
 
 ## 2. 基线：4 Worker / 每流200帧
 
@@ -31,6 +35,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\writer_test.ps1 -Mode 
 参数脚本只设置 `[writer]` 的 `consumer_workers`、`batch_count`，其余参数从首次运行时的原文件保留。原配置备份留在配置目录，沿用原文件 ACL；备份可能含连接配置，请留在目标机，不放进回传报告。
 
 在应用中启动 Writer，约60秒后执行：
+
+参数脚本只改配置，不自动启动进程。`capture` 提示 Writer 未运行时，应先在应用中启动 Writer；它不是性能测试结果。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\writer_test.ps1 -Mode capture -SettingsPath "$settings" -DurationSeconds 300

@@ -6,6 +6,19 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$logDirectory = Join-Path $scriptDirectory 'operation-logs'
+New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
+$operationLog = Join-Path $logDirectory ('update-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
+function Write-Operation([string]$Message) {
+    [IO.File]::AppendAllText($operationLog, ([DateTimeOffset]::Now.ToString('o') + ' ' + $Message + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+}
+trap {
+    Write-Operation ('failed: ' + $_.Exception.GetBaseException().Message)
+    Write-Host "Operation failed. Log: $operationLog"
+    throw $_
+}
+Write-Operation ('started; PowerShell=' + $PSVersionTable.PSVersion + '; writer=' + $WriterDirectory)
+Write-Host "Operation log: $operationLog"
 $target = [IO.Path]::GetFullPath($WriterDirectory).TrimEnd('\')
 $parent = Split-Path -Parent $target
 $leaf = Split-Path -Leaf $target
@@ -26,6 +39,28 @@ function Assert-WriterStopped {
         }
     }
 }
+function Move-WriterDirectory([string]$From, [string]$To) {
+    Assert-Sibling $From
+    Assert-Sibling $To
+    Write-Operation "rename: $From -> $To"
+    try {
+        # Both paths are siblings: rename exactly, never nest into an existing directory.
+        [IO.Directory]::Move($From, $To)
+    } catch {
+        $failure = $_.Exception.GetBaseException()
+        Write-Operation ('rename failed; hresult=' + $failure.HResult + '; ' + $failure.Message)
+        foreach ($path in @($From, $To, $parent)) {
+            if (Test-Path -LiteralPath $path) {
+                try {
+                    $item = Get-Item -LiteralPath $path -Force
+                    $acl = Get-Acl -LiteralPath $path
+                    Write-Operation ('path=' + $path + '; attributes=' + $item.Attributes + '; owner=' + $acl.Owner + '; acl=' + $acl.Sddl)
+                } catch { Write-Operation ('path inspection failed: ' + $path) }
+            }
+        }
+        throw
+    }
+}
 Assert-Sibling $target
 Assert-WriterStopped
 $suffix = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 6)
@@ -37,15 +72,17 @@ if ($RollbackBackup) {
     }
     $saved = Join-Path $parent ($leaf + '.before-rollback-' + $suffix)
     Assert-Sibling $saved
-    if (Test-Path -LiteralPath $target) { Move-Item -LiteralPath $target -Destination $saved }
-    try { Move-Item -LiteralPath $backup -Destination $target }
+    if (Test-Path -LiteralPath $target) { Move-WriterDirectory $target $saved }
+    try { Move-WriterDirectory $backup $target }
     catch {
         if (-not (Test-Path -LiteralPath $target) -and (Test-Path -LiteralPath $saved)) {
-            Move-Item -LiteralPath $saved -Destination $target
+            Move-WriterDirectory $saved $target
+            Write-Operation 'Rollback failed; original installed directory restored.'
         }
         throw
     }
     Write-Host "Writer restored. Replaced version retained at: $saved"
+    Write-Operation 'rollback completed'
     Write-Host 'Start Writer from the app after restoring its test parameters.'
     return
 }
@@ -74,12 +111,23 @@ foreach ($item in Get-ChildItem -LiteralPath $target -Force) {
     }
 }
 Assert-WriterStopped
-Move-Item -LiteralPath $target -Destination $backup
-try { Move-Item -LiteralPath $stage -Destination $target }
+$ready = $stage + '.ready'
+Assert-Sibling $ready
+# Exercise the populated staging directory before moving the working installation.
+Move-WriterDirectory $stage $ready
+$stage = $ready
+Assert-WriterStopped
+Move-WriterDirectory $target $backup
+try { Move-WriterDirectory $stage $target }
 catch {
-    if (-not (Test-Path -LiteralPath $target)) { Move-Item -LiteralPath $backup -Destination $target }
+    if (-not (Test-Path -LiteralPath $target)) {
+        Move-WriterDirectory $backup $target
+        Write-Operation 'Update failed; original Writer restored.'
+        Write-Host 'Update failed. The original Writer directory has been restored.'
+    }
     throw
 }
+Write-Operation ('update completed; source_revision=' + $manifest.source_revision + '; backup=' + $backup)
 Write-Host "Installed source revision: $($manifest.source_revision)"
 Write-Host "Previous Writer retained at: $backup"
 Write-Host 'Start Writer from the app. Backend, Collector and database images do not need replacement.'
