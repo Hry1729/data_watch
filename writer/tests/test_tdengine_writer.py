@@ -237,6 +237,31 @@ def test_union_cols_single_row_keeps_the_declared_column_order():
 
 
 @pytest.mark.asyncio
+async def test_bound_metrics_record_executor_segments():
+    """绑定指标后，写入路径必须真的留下执行器三段与 SQL 构建的记录。"""
+    from performance import WriterPerformanceMetrics
+
+    writer, _ = _make_writer({"sdqc": {"qc1"}})
+    metrics = WriterPerformanceMetrics()
+    writer.bind_metrics(metrics)
+    rows = [
+        {"child_table": "qc100", "stable": "sdqc", "device_code": "qc100",
+         "ts": 1000, "columns": {"qc1": 1.0}},
+    ]
+
+    results = await writer.write_multi_table(rows)
+
+    assert results[0][1] == LANDED
+    executor = metrics.snapshot()["timings"]["executor_ms"]
+    assert executor["sql_build"]["calls"] >= 1
+    assert executor["td_execute"]["calls"] == 1
+    assert executor["td_execute"]["incomplete_calls"] == 0
+    # 三段是同一跳的四次取钟，恢复段与排队段都不该为负
+    assert executor["td_execute"]["queue_ms"] >= 0.0
+    assert executor["td_execute"]["resume_ms"] >= 0.0
+
+
+@pytest.mark.asyncio
 async def test_column_list_reuse_stays_per_subtable():
     """列清单可跨子表复用；列不同则各用各的，表名与标签永不互相串用。"""
     writer, executed = _make_writer({"sdqc": {"qc1", "qc2"}})

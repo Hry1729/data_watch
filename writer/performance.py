@@ -4,6 +4,108 @@ from __future__ import annotations
 
 import math
 import threading
+import time
+
+
+# 阶段层级：**只加同层**。父阶段已经包含它的子阶段，跨层相加会重复计数。
+# 特别地，容量满时 drain 会触发 flush，那次 flush 计入 flush_outer_ms，
+# drain 侧只留排除掉它的 drain_own_ms。
+STAGE_CONTAINMENT: dict[str, tuple[str, ...]] = {
+    "loop_iteration_ms": (
+        "read_block_ms",
+        "drain_own_ms",
+        "overdelivered_own_ms",
+        "ack_retry_outer_ms",
+        "delete_retry_outer_ms",
+        "flush_outer_ms",
+        "idle_ms",
+        "loop_other_ms",
+    ),
+    "read_block_ms": ("read_claim_ms", "prepare_ms", "handle_entry_ms", "read_other_ms"),
+    "flush_outer_ms": ("build_ms", "build_wait_ms", "td_execute_ms", "ack_ms", "flush_other_ms"),
+    "drain_own_ms": ("drain_claim_ms", "drain_other_ms"),
+    "overdelivered_own_ms": ("overdelivered_claim_ms", "overdelivered_other_ms"),
+}
+
+
+class ExecutorTiming:
+    """一次 run_in_executor 的等待拆段，附带调用期间的线程 CPU 时间。
+
+    只算"外层减内层"会把线程池排队和事件循环恢复混成一段，所以在四个点位取时钟：
+
+        queue_ms    线程开始   - 提交前     （线程池排队）
+        call_ms     调用结束   - 线程开始   （同步调用，含网络与驱动等待）
+        call_cpu_ms 调用期间的线程 CPU 时间 （区分计算与等待）
+        resume_ms   await 返回 - 调用结束   （事件循环恢复）
+
+    call_ms 是"这一跳等了多久"，**不是**数据库的执行时间：里面含网络往返、
+    驱动内部等待与结果解码。call_cpu_ms 才是这段时间里真正在算的部分。
+    """
+
+    __slots__ = ("queued_at", "started_at", "finished_at", "call_cpu_ms")
+
+    def __init__(self) -> None:
+        self.queued_at: float = 0.0
+        self.started_at: float = 0.0
+        self.finished_at: float = 0.0
+        self.call_cpu_ms: float = 0.0
+
+    def wrap(self, call):
+        """包住要在执行器线程里跑的那个同步调用。"""
+
+        def run():
+            self.started_at = time.perf_counter()
+            cpu_started = time.thread_time()
+            try:
+                return call()
+            finally:
+                self.call_cpu_ms = (time.thread_time() - cpu_started) * 1000
+                self.finished_at = time.perf_counter()
+
+        return run
+
+    def record(self, metrics, name: str, resumed_at: float) -> None:
+        """await 返回后调用；三段只在这一次累加，避免上下游各记一遍。
+
+        超时或取消时执行器里的调用可能**还没返回**（`finished_at` 仍为 0）：这类
+        标为"未完成"，只记已经等到的部分，且不进入完成样本的段长。否则
+        `resumed_at - 0` 会被当成一个巨大段长，半截时间也会污染均值。
+        每次调用都新建一个 ExecutorTiming，所以后台线程之后才结束只是写在一个
+        已经记完账的对象上，不会串到下一批。
+        """
+        if self.finished_at <= 0.0 or self.finished_at > resumed_at:
+            metrics.record_executor(
+                name,
+                completed=False,
+                # 连线程都没排上时 started_at 仍为 0，排队段就是已经等过的全部
+                queue_ms=max(0.0, (min(self.started_at or resumed_at, resumed_at) - self.queued_at) * 1000),
+                call_ms=(max(0.0, (resumed_at - self.started_at) * 1000)
+                         if self.started_at > 0.0 else 0.0),
+                call_cpu_ms=self.call_cpu_ms,
+                resume_ms=0.0,
+            )
+            return
+        metrics.record_executor(
+            name,
+            completed=True,
+            queue_ms=max(0.0, (self.started_at - self.queued_at) * 1000),
+            call_ms=max(0.0, (self.finished_at - self.started_at) * 1000),
+            call_cpu_ms=self.call_cpu_ms,
+            resume_ms=max(0.0, (resumed_at - self.finished_at) * 1000),
+        )
+
+
+async def run_instrumented(loop, executor, metrics, name: str, call):
+    """在默认/指定执行器里跑 `call`，并把 `name` 的三段等待累加进指标。
+
+    只在**唯一一处**调用，避免同一段等待被上下游各记一遍。
+    """
+    timing = ExecutorTiming()
+    timing.queued_at = time.perf_counter()
+    try:
+        return await loop.run_in_executor(executor, timing.wrap(call))
+    finally:
+        timing.record(metrics, name, time.perf_counter())
 
 
 _TIMING_BUCKETS = (
@@ -86,6 +188,10 @@ class WriterPerformanceMetrics:
         self._ack_ms = FixedHistogram(_TIMING_BUCKETS)
         self._parse_ms = FixedHistogram(_TIMING_BUCKETS)
         self._event_loop_lag_ms = FixedHistogram(_TIMING_BUCKETS)
+        # 阶段累计（毫秒）与执行器调用的三段汇总。**按批/按次累加**，不逐点逐条
+        # 记直方图：逐条既放大观测开销，也让分布被长尾淹没。
+        self._stages: dict[str, float] = {}
+        self._executor: dict[str, dict[str, float]] = {}
         self._counters: dict[str, int] = {
             "write_batch_success_count": 0,
             "write_batch_failure_count": 0,
@@ -157,6 +263,46 @@ class WriterPerformanceMetrics:
     def record_parse(self, elapsed_ms: float) -> None:
         self._parse_ms.record(elapsed_ms)
 
+    def record_stage(self, name: str, elapsed_ms: float) -> None:
+        """累加一次阶段耗时。同一段等待只允许在唯一一处累加，见 STAGE_CONTAINMENT。"""
+        with self._lock:
+            self._stages[name] = self._stages.get(name, 0.0) + max(0.0, elapsed_ms)
+
+    def record_executor(
+        self, name: str, *, completed: bool, queue_ms: float, call_ms: float,
+        call_cpu_ms: float, resume_ms: float,
+    ) -> None:
+        """累加一次执行器调用的三段等待与线程 CPU 时间（见 ExecutorTiming）。
+
+        `completed=False` 是"超时/取消，调用尚未返回"：只计未完成计数与已等到的
+        部分，**不进**完成样本的段长与均值。
+        """
+        with self._lock:
+            bucket = self._executor.get(name)
+            if bucket is None:
+                bucket = self._executor[name] = {
+                    "calls": 0.0, "queue_ms": 0.0, "call_ms": 0.0,
+                    "call_cpu_ms": 0.0, "resume_ms": 0.0, "total_ms": 0.0,
+                    "incomplete_calls": 0.0, "incomplete_queue_ms": 0.0,
+                    "incomplete_call_ms": 0.0,
+                }
+            if not completed:
+                bucket["incomplete_calls"] += 1
+                bucket["incomplete_queue_ms"] += queue_ms
+                bucket["incomplete_call_ms"] += call_ms
+                return
+            bucket["calls"] += 1
+            bucket["queue_ms"] += queue_ms
+            bucket["call_ms"] += call_ms
+            bucket["call_cpu_ms"] += call_cpu_ms
+            bucket["resume_ms"] += resume_ms
+            bucket["total_ms"] += queue_ms + call_ms + resume_ms
+
+    def stage_totals(self) -> dict[str, float]:
+        """取阶段累计快照；调用方用它做嵌套相减（例如排除 drain 内触发的 flush）。"""
+        with self._lock:
+            return dict(self._stages)
+
     def record_event_loop_lag(self, elapsed_ms: float) -> None:
         self._event_loop_lag_ms.record(elapsed_ms)
 
@@ -175,6 +321,11 @@ class WriterPerformanceMetrics:
         self._execute_ms.record(execute_ms)
         self._ack_ms.record(ack_ms)
         with self._lock:
+            for name, value in (
+                ("build_ms", build_ms), ("build_wait_ms", build_wait_ms),
+                ("td_execute_ms", execute_ms), ("ack_ms", ack_ms),
+            ):
+                self._stages[name] = self._stages.get(name, 0.0) + max(0.0, value)
             self._counters["sql_bytes"] += sql_bytes
             self._counters["sql_value_rows_attempted"] += sql_value_rows_attempted
             self._counters["sql_quality_rows_attempted"] += sql_quality_rows_attempted
@@ -236,6 +387,8 @@ class WriterPerformanceMetrics:
         with self._lock:
             counters = dict(self._counters)
             gauges = dict(self._gauges)
+            stages = dict(self._stages)
+            executor = {name: dict(bucket) for name, bucket in self._executor.items()}
         return {
             "timings": {
                 "write_batch_ms": self._write_batch_ms.snapshot(),
@@ -246,6 +399,16 @@ class WriterPerformanceMetrics:
                 "build_wait_ms": self._build_wait_ms.snapshot(),
                 "td_execute_ms": self._execute_ms.snapshot(),
                 "ack_ms": self._ack_ms.snapshot(),
+                # 阶段层级：stages_ms 里父子并存，**只能加同层**；
+                # stage_containment 给出父子关系，供报告与核对脚本使用。
+                "stages_ms": {name: round(value, 3) for name, value in stages.items()},
+                "executor_ms": {
+                    name: {field: round(value, 3) for field, value in bucket.items()}
+                    for name, bucket in executor.items()
+                },
+                "stage_containment": {
+                    parent: list(children) for parent, children in STAGE_CONTAINMENT.items()
+                },
             },
             "distributions": {
                 "rows_per_flush": self._rows_per_flush.snapshot(),

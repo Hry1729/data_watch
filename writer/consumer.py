@@ -37,7 +37,7 @@ from dlq import (
     push_dlq,
 )
 from mysql_mapper import MysqlMapper
-from performance import WriterPerformanceMetrics
+from performance import ExecutorTiming, WriterPerformanceMetrics, run_instrumented
 from quality_codes import is_valid_quality
 from tdengine_writer import BAD_DATA, FAILED_INCOMPLETE, LANDED, RETRY, TDengineWriter
 
@@ -386,6 +386,52 @@ class StreamConsumer:
             None, lambda: func(*args, **kwargs)
         )
 
+    async def _run_blocking_timed(self, name: str, func, *args, **kwargs):
+        """同 `_run_blocking`，但把这次调用的三段等待（排队/调用/恢复）记进指标。"""
+        loop = asyncio.get_running_loop()
+        return await run_instrumented(
+            loop, None, self._metrics, name, lambda: func(*args, **kwargs)
+        )
+
+    def _timed_redis_call(self, name: str, func, *args, **kwargs):
+        """ACK 线程内的同步命令，没有额外线程池跳转；不与外层 ack 相加。"""
+        metrics = getattr(self, "_metrics", None)
+        if metrics is None:
+            return func(*args, **kwargs)
+        timing = ExecutorTiming()
+        timing.queued_at = time.perf_counter()
+        try:
+            return timing.wrap(lambda: func(*args, **kwargs))()
+        finally:
+            timing.record(metrics, name, time.perf_counter())
+
+    async def _timed_scoped(self, outer_name: str, own_name: str, call):
+        """把一次调用包成外阶段，并扣掉它**内部触发的 flush**。
+
+        相减必须限于同一个 worker、同一次调用范围：before/after 取自同一个
+        metrics 对象（每 worker 一个），且只跨这一次调用。同一个 consumer 是单
+        任务串行，flush 只可能由本次调用引发，因此差值就是本次范围内的 flush。
+        """
+        before = self._metrics.stage_totals()
+        started = time.perf_counter()
+        try:
+            return await call()
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            after = self._metrics.stage_totals()
+            flush_inside_ms = (
+                after.get("flush_outer_ms", 0.0)
+                - before.get("flush_outer_ms", 0.0)
+            )
+            claim_name = outer_name.replace("_outer_ms", "_claim_ms")
+            claim_inside_ms = after.get(claim_name, 0.0) - before.get(claim_name, 0.0)
+            own_ms = max(0.0, elapsed_ms - flush_inside_ms)
+            self._metrics.record_stage(outer_name, elapsed_ms)
+            self._metrics.record_stage(own_name, own_ms)
+            self._metrics.record_stage(
+                own_name.replace("_own_ms", "_other_ms"), own_ms - claim_inside_ms
+            )
+
     def _remaining_capacity(self) -> int:
         """Bound all locally owned identities, including terminal Redis retries."""
         occupied = len(self._buffer) + self._inflight_rows + len(self._isolated)
@@ -520,6 +566,7 @@ class StreamConsumer:
                 continue
             requested = list(ids)[:remaining]
             try:
+                claim_started = time.perf_counter()
                 claimed = await self._run_blocking(
                     self._r.xclaim,
                     stream_key,
@@ -527,6 +574,9 @@ class StreamConsumer:
                     self._consumer_name,
                     min_idle_time=0,
                     message_ids=requested,
+                )
+                self._metrics.record_stage(
+                    "overdelivered_claim_ms", (time.perf_counter() - claim_started) * 1000
                 )
             except Exception:
                 logger.warning("[consumer] overflow reclaim failed for %s", stream_key, exc_info=True)
@@ -632,6 +682,17 @@ class StreamConsumer:
         block_ms = max(int(self._flush_interval_s * 1000 / 2), 50)
 
         while True:
+            iteration_started = time.perf_counter()
+            # 本轮的阶段耗时（毫秒）。只在这里汇总"同层兄弟"，子阶段由各自唯一的
+            # 记录点累加；loop_other_ms 是总时长减去这些兄弟后的残差。
+            read_block_ms = 0.0
+            drain_ms = 0.0
+            overdelivered_ms = 0.0
+            ack_retry_ms = 0.0
+            delete_retry_ms = 0.0
+            flush_ms = 0.0
+            idle_ms = 0.0
+
             # Join one discovered stream per cycle so a large scope refresh cannot
             # monopolize this worker before its existing streams are serviced.
             if self._queued_stream_keys:
@@ -639,24 +700,42 @@ class StreamConsumer:
                 if stream_key in stream_keys:
                     continue
                 await self._run_blocking(self._ensure_consumer_groups, [stream_key])
-                await self.drain_pending(
-                    stream_key, self._consumer_name, max_entries=self._batch_count,
-                    deadline=time.monotonic() + self._pending_cycle_budget_s,
+                drain_started = time.perf_counter()
+                await self._timed_scoped(
+                    "drain_outer_ms", "drain_own_ms",
+                    lambda sk=stream_key: self.drain_pending(
+                        sk, self._consumer_name, max_entries=self._batch_count,
+                        deadline=time.monotonic() + self._pending_cycle_budget_s,
+                    ),
                 )
+                drain_ms += (time.perf_counter() - drain_started) * 1000
                 stream_keys.append(stream_key)
 
-            await self._recover_overdelivered()
+            overdelivered_started = time.perf_counter()
+            await self._timed_scoped(
+                "overdelivered_outer_ms", "overdelivered_own_ms",
+                self._recover_overdelivered,
+            )
+            overdelivered_ms += (time.perf_counter() - overdelivered_started) * 1000
 
             # --- 首先重试之前失败的 XACK（M5）---
             # 必须早于 drain：否则已成功落库但 XACK 失败、又满足 idle 条件的条目
             # 会被 drain reclaim 触发重写，违背 M5 「避免重复写入」的目标。
             retry_deadline = time.monotonic() + self._pending_cycle_budget_s
+            ack_retry_started = time.perf_counter()
             await self._run_blocking(
                 self._retry_pending_acks, self._batch_count, retry_deadline
             )
+            ack_retry_elapsed = (time.perf_counter() - ack_retry_started) * 1000
+            ack_retry_ms += ack_retry_elapsed
+            self._metrics.record_stage("ack_retry_outer_ms", ack_retry_elapsed)
+            delete_retry_started = time.perf_counter()
             await self._run_blocking(
                 self._retry_pending_deletes, self._batch_count, retry_deadline
             )
+            delete_retry_elapsed = (time.perf_counter() - delete_retry_started) * 1000
+            delete_retry_ms += delete_retry_elapsed
+            self._metrics.record_stage("delete_retry_outer_ms", delete_retry_elapsed)
 
             # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
@@ -668,10 +747,15 @@ class StreamConsumer:
                         break
                     sk = stream_keys[(start + offset) % len(stream_keys)]
                     visited += 1
-                    await self.drain_pending(
-                        sk, self._consumer_name,
-                        max_entries=self._batch_count, deadline=deadline,
+                    drain_started = time.perf_counter()
+                    await self._timed_scoped(
+                        "drain_outer_ms", "drain_own_ms",
+                        lambda key=sk, dl=deadline: self.drain_pending(
+                            key, self._consumer_name,
+                            max_entries=self._batch_count, deadline=dl,
+                        ),
                     )
+                    drain_ms += (time.perf_counter() - drain_started) * 1000
                 self._pending_stream_cursor = (
                     start + (visited if visited < len(stream_keys) else 1)
                 ) % len(stream_keys)
@@ -680,6 +764,8 @@ class StreamConsumer:
             # --- 读取新消息（缓冲区满时跳过以施加背压；count 按剩余容量截断）---
             streams_arg, read_count = self._next_read_scope(stream_keys)
             if streams_arg:
+                read_block_started = time.perf_counter()
+                claim_started = read_block_started
                 try:
                     response = await asyncio.get_running_loop().run_in_executor(
                         None,
@@ -695,7 +781,11 @@ class StreamConsumer:
                     logger.error("[consumer] xreadgroup error: %s", exc)
                     await asyncio.sleep(1)
                     continue
+                claim_ms = (time.perf_counter() - claim_started) * 1000
+                self._metrics.record_stage("read_claim_ms", claim_ms)
 
+                prepare_ms = 0.0
+                handle_entry_ms = 0.0
                 if response:
                     batch = [
                         (stream_key, entry_id, entry_data)
@@ -705,12 +795,17 @@ class StreamConsumer:
                     # The reserved XREADGROUP COUNT bounds preparation; a server
                     # overdelivery stays explicit in PEL without extra decoding.
                     prepare_count = min(len(batch), read_count * len(streams_arg))
-                    prepared = await self._run_blocking(
+                    prepare_started = time.perf_counter()
+                    prepared = await self._run_blocking_timed(
+                        "prepare",
                         _prepare_payload_batch,
                         [entry_data for _, _, entry_data in batch[:prepare_count]],
                         max(0, self._remaining_byte_capacity()),
                         self._var_map_for_entry,
                     )
+                    prepare_ms = (time.perf_counter() - prepare_started) * 1000
+                    self._metrics.record_stage("prepare_ms", prepare_ms)
+                    entries_started = time.perf_counter()
                     for index, (stream_key, entry_id, entry_data) in enumerate(batch):
                         try:
                             await self._handle_entry(
@@ -729,7 +824,19 @@ class StreamConsumer:
                             )
                         if index % 8 == 7:
                             await asyncio.sleep(0)
+                    handle_entry_ms = (time.perf_counter() - entries_started) * 1000
+                    self._metrics.record_stage("handle_entry_ms", handle_entry_ms)
+
+                read_block_elapsed = (time.perf_counter() - read_block_started) * 1000
+                read_block_ms += read_block_elapsed
+                self._metrics.record_stage("read_block_ms", read_block_elapsed)
+                # 读块里除"领取/准备/逐条"之外的部分（构造 batch、enumerate、sleep(0) 等）
+                self._metrics.record_stage(
+                    "read_other_ms",
+                    max(0.0, read_block_elapsed - claim_ms - prepare_ms - handle_entry_ms),
+                )
             else:
+                idle_started = time.perf_counter()
                 # L1: buffer 满 → 跳过 xreadgroup，让底部 flush 块立即触发（buffer_size >= max）。
                 # 失败时由 M6 退避兜底，原先的 flush_interval_s sleep 多余且增加最多 500ms 落库延迟。
                 logger.debug(
@@ -740,6 +847,7 @@ class StreamConsumer:
                 )
                 if not self._buffer:
                     await asyncio.sleep(0.05)
+                idle_ms += (time.perf_counter() - idle_started) * 1000
 
             # 隔离区里的行在主缓冲一空时尽快重试，避免恢复被拖到下一个回收周期。
             # 仍在失败的会再次被隔离，且有重试次数上限兜底，不会形成热循环。
@@ -752,7 +860,11 @@ class StreamConsumer:
             if (buffer_size > 0 and not streams_arg) or buffer_size >= self._max_buffer_rows or (
                 buffer_size > 0 and now - self._last_flush >= self._flush_interval_s
             ):
+                flush_started = time.perf_counter()
                 await self._flush()
+                # flush_outer_ms 在 _flush_owned 里唯一累加；这里只用本地耗时参与
+                # 本轮残差计算，不重复记录。
+                flush_ms += (time.perf_counter() - flush_started) * 1000
                 # M6: 连续失败递增退避 + 日志降噪
                 if self._buffer:
                     self._consecutive_flush_fail += 1
@@ -786,6 +898,16 @@ class StreamConsumer:
                     self._consecutive_flush_fail = 0
 
             self._log_performance_if_due()
+
+            # 本轮总时长与残差。只在这里汇总，避免与子阶段重复计数：
+            # loop_other_ms = 总时长 - 同层兄弟之和。
+            iteration_ms = (time.perf_counter() - iteration_started) * 1000
+            self._metrics.record_stage("loop_iteration_ms", iteration_ms)
+            accounted_ms = (
+                read_block_ms + drain_ms + overdelivered_ms + ack_retry_ms
+                + delete_retry_ms + flush_ms + idle_ms
+            )
+            self._metrics.record_stage("loop_other_ms", iteration_ms - accounted_ms)
 
     # ------------------------------------------------------------------
     # 待处理消息恢复
@@ -847,6 +969,7 @@ class StreamConsumer:
                 self._batch_count, self._remaining_capacity(),
                 max_entries - processed if max_entries is not None else self._batch_count,
             )
+            claim_started = time.perf_counter()
             result = await loop.run_in_executor(
                 None,
                 lambda sid=start_id, cnt=claim_count: self._r.xautoclaim(
@@ -857,6 +980,9 @@ class StreamConsumer:
                     start_id=sid,
                     count=cnt,
                 ),
+            )
+            self._metrics.record_stage(
+                "drain_claim_ms", (time.perf_counter() - claim_started) * 1000
             )
             # 结果形态：Redis 6.2/6.x 为 (next_start_id, [(entry_id, data), ...])，
             # 7.0+ 才有第三元素 (deleted_ids)。按实际长度解包，**不得**因元素个数不同而抛错。
@@ -926,6 +1052,7 @@ class StreamConsumer:
                         "[consumer] buffer full, pausing pending reclaim for %s", stream_key
                     )
                     break
+            claim_started = time.perf_counter()
             pending_entries = await loop.run_in_executor(
                 None,
                 lambda: self._r.xpending_range(
@@ -935,6 +1062,9 @@ class StreamConsumer:
                     max="+",
                     count=self._batch_count,
                 ),
+            )
+            self._metrics.record_stage(
+                "drain_claim_ms", (time.perf_counter() - claim_started) * 1000
             )
             if not pending_entries:
                 self._pending_cursors[stream_key] = "-"
@@ -1475,6 +1605,8 @@ class StreamConsumer:
         self._metrics.set_buffer_bytes(self._inflight_bytes)
         flush_rows = len(buffered)
         completed = False
+        # 提前绑定：异常路径也要在 finally 里参与 flush_other_ms 的残差计算。
+        ack_ms = 0.0
         try:
             rows = [
                 {
@@ -1558,7 +1690,9 @@ class StreamConsumer:
 
             if to_ack:
                 ack_started = time.perf_counter()
-                await self._run_blocking(self._ack_rows, to_ack)
+                # ack_ms 是事件循环侧的整段耗时（含线程等待）；executor_ms["ack"]
+                # 给出它的排队/调用/恢复三段与线程 CPU 时间。
+                await self._run_blocking_timed("ack", self._ack_rows, to_ack)
                 ack_ms = (time.perf_counter() - ack_started) * 1000
             def stat(name: str) -> float:
                 value = getattr(self._writer, name, 0)
@@ -1630,9 +1764,19 @@ class StreamConsumer:
                 (row.stream_key, row.entry_id) for row in self._buffer
             }
             self._metrics.set_buffer_rows(len(self._buffer), len(self._isolated))
-            self._metrics.record_flush(
-                (time.perf_counter() - flush_started) * 1000, flush_rows
+            flush_elapsed_ms = (time.perf_counter() - flush_started) * 1000
+            self._metrics.record_flush(flush_elapsed_ms, flush_rows)
+            # flush 是**唯一**累加 flush_outer_ms 的地方。三个子阶段由 record_pipeline
+            # 记在 build/td_execute/ack；build_wait 是构建线程的排队，也属 flush 内部，
+            # 一并从残差里扣除，剩下的才是真正没归类的 flush_other_ms。
+            self._metrics.record_stage("flush_outer_ms", flush_elapsed_ms)
+            accounted_ms = (
+                float(getattr(self._writer, "_last_build_ms", 0.0) or 0.0)
+                + float(getattr(self._writer, "_last_build_wait_ms", 0.0) or 0.0)
+                + float(getattr(self._writer, "_last_execute_ms", 0.0) or 0.0)
+                + ack_ms
             )
+            self._metrics.record_stage("flush_other_ms", flush_elapsed_ms - accounted_ms)
             self._last_flush = time.monotonic()
 
     def _log_performance_if_due(self) -> None:
@@ -1825,7 +1969,7 @@ class StreamConsumer:
         if cached is not None and now - cached[1] < _GROUP_TOPOLOGY_TTL_S:
             return cached[0]
         try:
-            groups = self._r.xinfo_groups(stream_key)
+            groups = self._timed_redis_call("redis_xinfo_groups", self._r.xinfo_groups, stream_key)
         except Exception as exc:
             self._metrics.record_retry("terminal_delete_topology_unknown")
             logger.warning(
@@ -1861,7 +2005,7 @@ class StreamConsumer:
         for i in range(0, len(ids), chunk_size):
             chunk = ids[i : i + chunk_size]
             try:
-                self._r.xack(stream_key, self._group_name, *chunk)
+                self._timed_redis_call("redis_xack", self._r.xack, stream_key, self._group_name, *chunk)
                 self._delete_ids(stream_key, chunk, allow_delete=allow_delete)
             except Exception as exc:
                 logger.warning("[consumer] xack failed for %s: %s", stream_key, exc)
@@ -1871,7 +2015,7 @@ class StreamConsumer:
         # B31：与 `_ack_ids` 一致——判定放在 xack→xdel 序列**之外**，结果以参数传入。
         allow_delete = self._may_delete_terminal(stream_key)
         try:
-            self._r.xack(stream_key, self._group_name, entry_id)
+            self._timed_redis_call("redis_xack", self._r.xack, stream_key, self._group_name, entry_id)
             self._delete_ids(stream_key, [entry_id], allow_delete=allow_delete)
         except Exception as exc:
             logger.warning("[consumer] xack single failed %s: %s", entry_id, exc)
@@ -1901,7 +2045,7 @@ class StreamConsumer:
             # 异常范围，也不改动下面的 remaining/游标核算。XACK 仍然照常执行——删除只是可选清理。
             allow_delete = self._may_delete_terminal(stream_key)
             try:
-                self._r.xack(stream_key, self._group_name, *chunk)
+                self._timed_redis_call("redis_xack", self._r.xack, stream_key, self._group_name, *chunk)
                 pending.difference_update(chunk)
                 self._delete_ids(stream_key, chunk, allow_delete=allow_delete)
             except Exception as exc:
@@ -1939,7 +2083,7 @@ class StreamConsumer:
         for i in range(0, len(ids), chunk_size):
             chunk = ids[i : i + chunk_size]
             try:
-                self._r.xdel(stream_key, *chunk)
+                self._timed_redis_call("redis_xdel", self._r.xdel, stream_key, *chunk)
             except Exception as exc:
                 logger.warning("[consumer] xdel failed for %s: %s", stream_key, exc)
                 self._delete_retry.setdefault(stream_key, set()).update(chunk)
@@ -1968,7 +2112,7 @@ class StreamConsumer:
                 continue
             chunk = list(pending)[: min(500, remaining)]
             try:
-                self._r.xdel(stream_key, *chunk)
+                self._timed_redis_call("redis_xdel", self._r.xdel, stream_key, *chunk)
                 pending.difference_update(chunk)
             except Exception as exc:
                 logger.warning(

@@ -28,6 +28,7 @@ import time
 from typing import Any
 from urllib.parse import quote_plus
 
+from performance import run_instrumented
 from quality_schema import (
     QUALITY_NARROW_MIGRATION_HINT,
     QualitySchemaError,
@@ -162,6 +163,8 @@ def _merge_part_status(parts: list[tuple[str, float]]) -> str:
 class TDengineWriter:
     def __init__(self, syslog=None) -> None:
         self._conn: Any = None
+        # 由 main 绑定；未绑定时只执行不观测，便于单测与临时脚本直接构造。
+        self._metrics: Any = None
         self._database: str = "device_data"
         self._lock = asyncio.Lock()
         self._col_cache: dict[str, set[str]] = {}
@@ -190,6 +193,21 @@ class TDengineWriter:
     # 生命周期
     # ------------------------------------------------------------------
 
+    def bind_metrics(self, metrics) -> None:
+        """绑定观测指标（可选）。绑定前所有计时点只执行不记录。"""
+        self._metrics = metrics
+
+    async def _run_in_executor(self, name: str, call, executor=None):
+        """执行一次阻塞调用，并把三段等待记进指标。
+
+        `name` 相同的调用共用一条汇总；三段只在 run_instrumented 里累加一次，
+        调用方不得再记一遍。
+        """
+        loop = asyncio.get_running_loop()
+        if self._metrics is None:
+            return await loop.run_in_executor(executor, call)
+        return await run_instrumented(loop, executor, self._metrics, name, call)
+
     async def connect(self, config: dict) -> None:
         """打开到 TDengine 的 WebSocket 连接（在执行器中运行 taosws.connect）。"""
         from taosws import connect  # type: ignore[import]
@@ -204,10 +222,9 @@ class TDengineWriter:
         port = td["port"]
         dsn = f"ws://{user}:{password}@{host}:{port}?read_timeout=10&conn_timeout=5"
 
-        loop = asyncio.get_running_loop()
         try:
             self._conn = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: connect(dsn)),
+                self._run_in_executor("td_connect", lambda: connect(dsn)),
                 timeout=10,
             )
             logger.info("[tdengine] connected to %s:%s db=%s", host, port, self._database)
@@ -221,8 +238,10 @@ class TDengineWriter:
     async def close(self) -> None:
         if self._conn is not None:
             try:
-                loop = asyncio.get_running_loop()
-                await asyncio.wait_for(loop.run_in_executor(None, self._conn.close), timeout=IO_TIMEOUT_SECONDS)
+                await asyncio.wait_for(
+                    self._run_in_executor("td_close", self._conn.close),
+                    timeout=IO_TIMEOUT_SECONDS,
+                )
             except Exception as exc:
                 logger.warning("[tdengine] close error: %s", exc)
             finally:
@@ -246,10 +265,12 @@ class TDengineWriter:
             if self._config is not None and not self._reconnecting:
                 await self._try_reconnect()
             return False, None
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                self._run_in_executor("td_execute", lambda: connection.execute(sql)),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
             return True, None
         except Exception as exc:
             if isinstance(exc, asyncio.TimeoutError):
@@ -272,10 +293,12 @@ class TDengineWriter:
         if self._conn is None:
             logger.error("[tdengine] not connected, cannot query SQL")
             return []
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            return await asyncio.wait_for(loop.run_in_executor(None, lambda: list(connection.query(sql))), timeout=IO_TIMEOUT_SECONDS)
+            return await asyncio.wait_for(
+                self._run_in_executor("td_query", lambda: list(connection.query(sql))),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.error("[tdengine] query failed: %s | SQL: %.200s", exc, sql)
             return []
@@ -445,10 +468,12 @@ class TDengineWriter:
             logger.error("[tdengine] not connected, cannot alter stable")
             return False
 
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                self._run_in_executor("td_add_column", lambda: connection.execute(sql)),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
             logger.info("[tdengine] added column: %s.%s DOUBLE", stable, col)
             return True
         except Exception as exc:
@@ -639,7 +664,6 @@ class TDengineWriter:
             ]
             chunks = self._iter_chunks(rows, self._last_local_retry_indices)
             exhausted = object()
-            loop = asyncio.get_running_loop()
             while True:
                 waiting = time.perf_counter()
 
@@ -648,7 +672,9 @@ class TDengineWriter:
                     chunk = next(chunks, exhausted)
                     return chunk, (time.perf_counter() - started) * 1000
 
-                chunk, build_ms = await loop.run_in_executor(_BUILD_EXECUTOR, next_chunk)
+                chunk, build_ms = await self._run_in_executor(
+                    "sql_build", next_chunk, _BUILD_EXECUTOR
+                )
                 self._last_build_ms += build_ms
                 self._last_build_wait_ms += max(
                     0.0, (time.perf_counter() - waiting) * 1000 - build_ms
@@ -693,9 +719,10 @@ class TDengineWriter:
         if not indices:
             return []
         if sql is None:
-            loop = asyncio.get_running_loop()
-            sql = await loop.run_in_executor(
-                _BUILD_EXECUTOR, self._build_chunk_sql, rows, indices
+            sql = await self._run_in_executor(
+                "sql_build_bisect",
+                lambda: self._build_chunk_sql(rows, indices),
+                _BUILD_EXECUTOR,
             )
 
         value_rows = (
