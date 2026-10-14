@@ -10,6 +10,14 @@
 
 请将本包解压到 D 盘，例如 `D:\writer-target-8ca1f42f`。更新和参数脚本的操作日志位于解压目录的 `operation-logs`，测试报告位于 `target-results`；日志不写入 C 盘。原配置、配置备份及安装目录仍在各自原位置。某一步报错时先停下，不要继续下一组或执行 `capture`。
 
+## 双击菜单入口
+
+完整解压新版工具包到 D 盘的新目录，双击 `run_writer_test.cmd`。Windows 出现管理员权限提示时选择“是”。它使用包内配套脚本，不依赖旧的解压目录；中心式默认配置为 `C:\ProgramData\DataWatch\writer\config\settings.toml`。
+
+菜单操作日志统一位于 `D:\DataWatchWriterTests\operation-logs`，报告位于 `D:\DataWatchWriterTests` 下的各测试组目录。先在 App 停止 Writer，菜单选 1 设置基线；成功后在 App 启动 Writer，等约 60 秒，菜单选 2 采集 5 分钟。随后停止 Writer，选 3 设置 8 Worker，启动并等 60 秒，再选 2；第三组同理使用选项 4。完成后停止 Writer，选 5 恢复原配置，再启动 Writer。
+
+入口会记录实际管理员状态和配置目录 ACL，在修改前测试临时文件创建/删除及原配置写访问。权限失败会停止本步，不改变配置内容、不自动放宽权限；回传 `operation-logs` 供排查。检查中的空临时文件位于原配置目录并立即删除。UAC 提示需要目标机操作者确认，不绕过 Windows 权限检查。
+
 ## 1. 更新前
 
 解压 ZIP，进入解压目录。在应用控制台停止 **Writer**，等状态显示停止；其他模块保持运行。必须通过应用停止，使 Agent 记录期望停止状态；单独结束 PID 会被 Agent 自动拉起。

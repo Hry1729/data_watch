@@ -6,7 +6,8 @@ $revision = (& git -C $repoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify the committed source revision.' }
 $inputs = @('writer', 'scripts/pipeline_diagnostics.py', 'scripts/diagnose_pipeline.ps1',
     'scripts/writer_data_check.py', 'scripts/writer_test.ps1', 'scripts/update_writer.ps1',
-    'scripts/package_writer_target.ps1', 'vendor/taos-ws-py', 'vendor/patches',
+    'scripts/package_writer_target.ps1', 'scripts/run_writer_test.cmd', 'scripts/writer_test_launcher.ps1',
+    'vendor/taos-ws-py', 'vendor/patches',
     'docs/04-运维部署/Writer目标机验证.md')
 & git -C $repoRoot diff --quiet HEAD -- @inputs
 if ($LASTEXITCODE -ne 0) { throw 'Commit the release inputs before packaging.' }
@@ -69,7 +70,7 @@ foreach ($path in $sourceFiles) { $sourceHashes[$path] = (Get-FileHash -LiteralP
 $buildInfo = [ordered]@{ source_revision = $revision; built_at_utc = [DateTimeOffset]::UtcNow.ToString('o');
     runtime = $runtime; source_sha256 = $sourceHashes; performance_validation = 'pending_target_machine' }
 [IO.File]::WriteAllText((Join-Path $payloadRoot 'writer\writer-release.json'), ($buildInfo | ConvertTo-Json -Depth 8), $utf8)
-foreach ($name in @('update_writer.ps1', 'writer_test.ps1', 'diagnose_pipeline.ps1', 'pipeline_diagnostics.py', 'writer_data_check.py')) {
+foreach ($name in @('update_writer.ps1', 'writer_test.ps1', 'diagnose_pipeline.ps1', 'pipeline_diagnostics.py', 'writer_data_check.py', 'run_writer_test.cmd', 'writer_test_launcher.ps1')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot ('scripts\' + $name)) -Destination $releaseRoot
 }
 Copy-Item -LiteralPath (Join-Path $repoRoot 'docs\04-运维部署\Writer目标机验证.md') -Destination (Join-Path $releaseRoot 'README.md')

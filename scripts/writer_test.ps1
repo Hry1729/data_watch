@@ -11,7 +11,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
-$logDirectory = Join-Path $scriptDirectory 'operation-logs'
+$logRoot = if ($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { $scriptDirectory }
+$logDirectory = Join-Path $logRoot 'operation-logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $operationLog = Join-Path $logDirectory ('test-' + $Mode + '-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 6) + '.log')
 function Write-Operation([string]$Message) {
