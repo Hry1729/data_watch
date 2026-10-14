@@ -124,6 +124,7 @@ const RoleManagementPage = __DATAWATCH_ROLE__ !== "edge"
 const MenuManagementPage = __DATAWATCH_ROLE__ !== "edge"
   ? lazy(() => import("@/pages/MenuManagementPage"))
   : null;
+const HelpPage = lazy(() => import("@/pages/HelpPage"));
 
 const DistributedNodesPage = __DATAWATCH_ROLE__ === "distributed-center"
   ? lazy(() => import("@/pages/DistributedNodesPage"))
@@ -332,6 +333,7 @@ export default function App() {
                 </>
               )}
               {SettingsPage && <Route path="/settings" element={<SettingsPage />} />}
+              <Route path="/help" element={<HelpPage />} />
               {DistributedNodesPage && <Route path="/distributed/nodes" element={<DistributedNodesPage />} />}
 
               {placeholderPages.map(({ path, title }) => (

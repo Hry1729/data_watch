@@ -502,7 +502,7 @@ export default function HistoryDataPage() {
   const submittedQuery = lastQueryRef.current?.query;
 
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-4 p-4 md:p-6">
+    <div className="mx-auto w-full max-w-[1800px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-wrap items-center gap-1">
         <div className="flex items-center gap-1"><span className="text-xs text-muted-foreground">当前设备</span><Button variant="outline" className="max-w-56" onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span></Button></div>
         <Button variant="outline" onClick={openPointDialog} disabled={!deviceId}><Search className="size-3.5" />选择点位{selectedPoints.length > 0 && <Badge variant="secondary" className="ml-1">{selectedPoints.length}</Badge>}</Button>

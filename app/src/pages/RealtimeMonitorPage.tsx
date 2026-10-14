@@ -443,7 +443,7 @@ export default function RealtimeMonitorPage() {
   const hasData = samples.length > 0;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden p-4 md:p-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">当前设备</span>

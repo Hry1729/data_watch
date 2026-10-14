@@ -240,7 +240,7 @@ function DbCard({
   children: React.ReactNode;
 }) {
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <div className="flex items-center gap-3">
           <CardTitle>{title}</CardTitle>
@@ -410,7 +410,7 @@ function BasicTab() {
   const [density, setDensity] = useState("标准");
 
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <CardTitle>基础设置</CardTitle>
       </CardHeader>
@@ -442,7 +442,7 @@ function CollectorTab({
   onChange: (f: ProcessForm) => void;
 }) {
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <CardTitle>Collector 配置</CardTitle>
       </CardHeader>
@@ -497,7 +497,7 @@ function CollectorTab({
 
 function IngestTab({ form }: { form: ProcessForm }) {
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <CardTitle>Ingest 配置</CardTitle>
       </CardHeader>
@@ -527,7 +527,7 @@ function WriterTab({
   onChange: (f: ProcessForm) => void;
 }) {
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <CardTitle>Writer 配置</CardTitle>
       </CardHeader>
@@ -602,7 +602,7 @@ function SaveCard({
   onSaveAndRestart: (name: ModuleName) => void;
 }) {
   return (
-    <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+    <Card>
       <CardHeader>
         <CardTitle>保存策略</CardTitle>
       </CardHeader>
@@ -832,7 +832,7 @@ export function SettingsPage() {
 
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
-    <div className="px-6 py-6 space-y-6" style={{ maxWidth: 1200 }}>
+    <div className="px-6 pb-6 space-y-6" style={{ maxWidth: 1200 }}>
       {/* 加载失败 inline 提示（非阻塞：表单仍可编辑） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
@@ -864,7 +864,7 @@ export function SettingsPage() {
             form={form.collector}
             onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, collector: f })); }}
           />
-          <Card style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 }}>
+          <Card>
             <CardHeader>
               <CardTitle>Collector 运行参数</CardTitle>
             </CardHeader>

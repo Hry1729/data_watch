@@ -50,7 +50,7 @@ function getDeviceTone(connectStatus?: string, deviceStatus?: string) {
 
 function RateCard({ title, value, variant }: { title: string; value: number | null; variant: ProgressVariant }) {
   return (
-    <Card size="sm" className="border border-border bg-card shadow-xs">
+    <Card size="sm" className="bg-card">
       <CardContent className="flex min-h-24 flex-col justify-center py-2">
         <p className="text-xs text-muted-foreground">{title}</p>
         <p className="mt-1 text-2xl font-semibold tabular-nums">{value == null ? "—" : `${value.toFixed(1)}%`}</p>
@@ -91,9 +91,9 @@ export default function DeviceCommunicationPage() {
   const types = [...new Set(devices.map((device) => device.deviceType))];
 
   return (
-    <div className="flex w-full flex-col gap-4 p-4 md:p-6">
+    <div className="flex w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card size="sm" className="border border-border bg-card shadow-xs">
+        <Card size="sm" className="bg-card">
           <CardContent className="flex min-h-24 items-center justify-between gap-3 py-2">
             <div>
               <p className="text-xs text-muted-foreground">设备总数</p>
@@ -110,7 +110,7 @@ export default function DeviceCommunicationPage() {
       </div>
 
       {query.data?.truncated && <p className="text-xs text-warning">设备超过选择器安全上限 {devices.length} 台，已加载前 {devices.length} 台；请使用关键字缩小范围。</p>}
-      <Card className="border border-border">
+      <Card>
         <CardHeader className="flex flex-row items-center gap-3">
           <div className="flex shrink-0 items-center gap-4">
             <CardTitle>设备通讯</CardTitle>

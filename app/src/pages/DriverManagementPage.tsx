@@ -346,8 +346,8 @@ export default function DriverManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col p-4 md:p-6">
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 md:px-6 md:pb-6">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
           <CardTitle>驱动管理</CardTitle>
           <CardAction>

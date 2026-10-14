@@ -47,7 +47,7 @@ export function ForcePasswordChangePage() {
 
   return (
     <div className="flex h-full items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md border border-border">
+      <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle>请修改临时密码</CardTitle>
           <p className="text-sm text-muted-foreground">

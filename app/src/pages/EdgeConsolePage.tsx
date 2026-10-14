@@ -83,7 +83,7 @@ export default function EdgeConsolePage() {
   const rates = useEdgeRates();
 
   return (
-    <div className="space-y-4 overflow-auto px-6 py-6" style={{ maxWidth: 1400 }}>
+    <div className="space-y-4 overflow-auto px-6 pb-6" style={{ maxWidth: 1400 }}>
       <div className="grid grid-cols-2 gap-4">
         <ModuleSection name="collector" />
         <ModuleSection name="storage" />

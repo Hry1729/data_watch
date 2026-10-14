@@ -147,7 +147,7 @@ test("edge settings retain local policy behavior", () => {
 
 test("edge operations uses compact six-row pagination without page scrolling", () => {
   assert.ok(operations.includes("const PAGE_SIZE = 6"));
-  assert.ok(operations.includes("overflow-hidden p-4"));
+  assert.ok(operations.includes("overflow-hidden px-4 pb-4"));
   assert.ok(!operations.includes("min-h-[560px]"));
   assert.ok(operations.includes('<Table className="w-full table-fixed">'));
   assert.ok(operations.includes('<TableHeader className="bg-muted/50">'));

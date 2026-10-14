@@ -96,7 +96,7 @@ export function RoleManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 p-4 md:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-wrap items-center gap-2">
         <Input className="h-7 w-44" value={draft.roleName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleName: event.target.value }))} placeholder="角色名称" />
         <Input className="h-7 w-44" value={draft.roleCode ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleCode: event.target.value }))} placeholder="角色编码" />
@@ -115,7 +115,7 @@ export function RoleManagementPage() {
         </div>
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
           <CardTitle>角色列表</CardTitle>
           <CardAction>

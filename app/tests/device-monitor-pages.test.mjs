@@ -240,7 +240,7 @@ test("device and point lists keep filters outside the card and size pages from t
     assert.match(source, /\[&_\[data-slot=table-container\]\]:h-full/);
     assert.match(source, /<Table className="h-full w-full table-fixed"/);
     assert.match(source, /<div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">/);
-    assert.ok(source.indexOf("<Tabs") < source.indexOf('<Card className="flex min-h-0 flex-1 flex-col border border-border">'));
+    assert.ok(source.indexOf("<Tabs") < source.indexOf('<Card className="flex min-h-0 flex-1 flex-col">'));
   }
 });
 test("point management uses server pagination and passes the selected device ids to the catalog API", async () => {
