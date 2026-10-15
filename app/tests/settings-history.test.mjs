@@ -7,7 +7,7 @@ const source = await readFile(new URL("../src/components/AppLayout.tsx", import.
 test("settings section switches replace the current history entry", () => {
   assert.match(
     source,
-    /navigate\(`\/settings\?tab=\$\{tab\.value\}`, \{ replace: true \}\)/,
+    /navigate\(`\/settings\?tab=\$\{value\}`, \{ replace: true \}\)/,
   );
 });
 

@@ -207,7 +207,7 @@ function StatCard({
   loading: boolean;
 }) {
   return (
-    <Card size="sm" className="border border-border bg-card shadow-xs">
+    <Card size="sm" className="bg-card">
       <CardContent className="flex min-h-24 items-center justify-between gap-3 py-2">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{title}</p>
@@ -325,7 +325,7 @@ export function WorkbenchPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4 p-4 md:p-6">
+    <div className="mx-auto w-full max-w-[1680px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="设备总数"
@@ -357,7 +357,7 @@ export function WorkbenchPage() {
         />
       </div>
 
-      <Card data-dashboard-section="trend" className="@container/card border border-border">
+      <Card data-dashboard-section="trend" className="@container/card">
         <CardHeader>
           <CardTitle>采集量 / 在线设备 / 告警趋势</CardTitle>
           <CardDescription>采集量、在线设备数与告警数量变化</CardDescription>
@@ -440,7 +440,7 @@ export function WorkbenchPage() {
       </Card>
 
       <div data-dashboard-row="overview-charts" className="grid gap-4 lg:grid-cols-3">
-        <Card data-dashboard-section="distribution" className="@container/card border border-border">
+        <Card data-dashboard-section="distribution" className="@container/card">
           <CardHeader>
             <CardTitle>设备类型分布</CardTitle>
             <CardDescription>各类型设备在线与离线数量</CardDescription>
@@ -471,7 +471,7 @@ export function WorkbenchPage() {
           </CardContent>
         </Card>
 
-        <Card data-dashboard-section="health" className="@container/card border border-border">
+        <Card data-dashboard-section="health" className="@container/card">
           <CardHeader>
             <CardTitle>设备通讯概览</CardTitle>
             <CardDescription>近24小时通讯健康状态</CardDescription>
@@ -512,7 +512,7 @@ export function WorkbenchPage() {
             )}
           </CardContent>
         </Card>
-        <Card data-dashboard-section="pipeline" className="@container/card border border-border">
+        <Card data-dashboard-section="pipeline" className="@container/card">
           <CardHeader>
             <CardTitle>数据链路健康</CardTitle>
             <CardDescription>采集到入库的全链路状态</CardDescription>
@@ -565,7 +565,7 @@ export function WorkbenchPage() {
         </Card>
       </div>
 
-      <Card data-dashboard-section="logs" className="@container/card border border-border">
+      <Card data-dashboard-section="logs" className="@container/card">
         <CardHeader>
           <CardTitle>最近系统日志</CardTitle>
           <CardDescription>系统运行、采集、存储与操作日志</CardDescription>

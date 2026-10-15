@@ -65,7 +65,7 @@ function StatCard({
   detail: string;
 }) {
   return (
-    <Card size="sm" className="min-w-0 rounded-lg border border-border bg-card shadow-xs">
+    <Card size="sm" className="min-w-0 bg-card">
       <CardContent className="flex min-h-24 items-center gap-3 py-2">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
           <Icon className="size-4" aria-hidden="true" />
@@ -149,7 +149,7 @@ export default function EdgeOperationsPage() {
   }, [totalPages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden px-4 pb-4">
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -180,7 +180,7 @@ export default function EdgeOperationsPage() {
         />
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col rounded-lg">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm font-semibold">本机设备与采集状态</CardTitle>
           <div className="flex items-center gap-3">

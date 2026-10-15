@@ -123,7 +123,7 @@ export default function EdgePointMonitorPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4 md:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}>
@@ -152,7 +152,7 @@ export default function EdgePointMonitorPage() {
         </div>
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader><CardTitle>点位监控</CardTitle><CardAction><Badge variant="outline" className={source === "local" ? "border-warning/30 bg-warning-soft text-warning" : "border-success/30 bg-success-soft text-success"}>{source === "local" ? "本机快照" : "中心数据"}</Badge></CardAction></CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
