@@ -533,6 +533,11 @@ class TDengineWriter:
 
     def _quality_fragment_for_rows(self, rows: list[dict], idxs: list[int]) -> str | None:
         """为指定行构建质量窄表 INSERT 片段；无质量则返回 None。"""
+        parts = self._quality_parts_for_rows(rows, idxs)
+        return "".join(parts) if parts is not None else None
+
+    def _quality_parts_for_rows(self, rows: list[dict], idxs: list[int]) -> tuple[str, str] | None:
+        """分块器直接使用表头和值，避免先拼完整片段再拆开。"""
         value_clauses: list[str] = []
         q_stable: str | None = None
         q_child: str | None = None
@@ -564,7 +569,7 @@ class TDengineWriter:
             f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') "
             f"(`ts`, `var_id`, `quality`) VALUES "
         )
-        return header + " ".join(value_clauses)
+        return header, " ".join(value_clauses)
 
     # ------------------------------------------------------------------
     # 写入
@@ -816,7 +821,8 @@ class TDengineWriter:
             run: list[int] = []
             columns = None
             for index in indices:
-                current = frozenset(rows[index]["columns"])
+                # flush 中的列字典只读；视图比较保留集合语义，省去每行的集合副本。
+                current = rows[index]["columns"].keys()
                 if run and current != columns:
                     yield run
                     run = []
@@ -848,14 +854,11 @@ class TDengineWriter:
         # （按 child_table 分组），所以这里是最常见的那条路径。
         if len(idxs) == 1:
             return list(rows[idxs[0]]["columns"])
-        all_cols: list[str] = []
-        seen: set[str] = set()
+        # dict.update 在内部合并列，保留首次出现顺序，不再逐点执行 Python 去重循环。
+        all_cols: dict = {}
         for i in idxs:
-            for col in rows[i]["columns"]:
-                if col not in seen:
-                    seen.add(col)
-                    all_cols.append(col)
-        return all_cols
+            all_cols.update(rows[i]["columns"])
+        return list(all_cols)
 
     def _subtable_header(self, row: dict, all_cols: list[str], col_cache: dict | None = None) -> str:
         """一句话的子表头。Sentence header for one subtable.
@@ -904,11 +907,8 @@ class TDengineWriter:
         for index in indices:
             row = rows[index]
             value = self._value_clause(row, all_cols)
-            q_fragment = self._quality_fragment_for_rows(rows, [index])
-            q_header, q_values = "", ""
-            if q_fragment:
-                q_head, q_values = q_fragment.split(" VALUES ", 1)
-                q_header = q_head + " VALUES "
+            q_parts = self._quality_parts_for_rows(rows, [index])
+            q_header, q_values = q_parts if q_parts is not None else ("", "")
             while True:
                 new_value_bytes = value_bytes + len(value.encode("utf-8")) + (1 if values else 0)
                 new_quality_header = quality_header or q_header

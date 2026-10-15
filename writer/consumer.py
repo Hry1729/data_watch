@@ -108,16 +108,22 @@ class _PreparedQuality:
 
 def _prepare_quality_fields(raw_values: dict, raw_qualities: dict, var_map: dict) -> _PreparedQuality:
     normalized = {str(key): value for key, value in raw_qualities.items()}
-    value_ids = {str(key) for key in raw_values if key in var_map}
-    quality_ids = {key for key in normalized if key in var_map}
+    # 完整对齐且全部为存储点时，用 dict 视图直接比较，省去逐点过滤和三份集合。
+    if raw_values.keys() == normalized.keys() and raw_values.keys() <= var_map.keys():
+        matched_ids = normalized
+        mismatch = None
+    else:
+        value_ids = {str(key) for key in raw_values if key in var_map}
+        quality_ids = {key for key in normalized if key in var_map}
+        matched_ids = value_ids & quality_ids
+        mismatch = (value_ids, quality_ids) if value_ids != quality_ids else None
     columns, bad = {}, []
-    for key in value_ids & quality_ids:
+    for key in matched_ids:
         code = normalized[key]
         if is_valid_quality(code):
-            columns[key] = int(code)
+            columns[key] = code  # is_valid_quality 已保证为非 bool 的原生 int。
         else:
             bad.append(key)
-    mismatch = (value_ids, quality_ids) if value_ids != quality_ids else None
     return _PreparedQuality(mismatch, columns, bad)
 
 
