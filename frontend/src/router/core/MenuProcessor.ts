@@ -15,9 +15,42 @@ import { asyncRoutes } from '../routes/asyncRoutes'
 import { RoutesAlias } from '../routesAlias'
 import { formatMenuTitle } from '@/utils'
 import { buildProjectDocsMenu } from '@/views/project-docs/docs.menu'
-import { buildMonitorScreenMenu } from '@/views/monitor-screen/screen.menu'
-import { buildLightMonitorMenu } from '@/views/monitor-light/screen.menu'
-import { buildLandingMenu } from '@/views/landing/screen.menu'
+
+type LocalMenuModule = {
+  buildMonitorScreenMenu?: () => AppRouteRecord
+  buildLightMonitorMenu?: () => AppRouteRecord
+  buildLandingMenu?: () => AppRouteRecord
+}
+
+/**
+ * 监控大屏、浅色大屏、项目首页是本地未完成页面，干净检出里可能没有目录。
+ * 必须用字面量 glob：目录缺失时结果为空。写成 import('./landing/...') 会让 Vite 构建失败。
+ * 查找键要和 glob 展开后的相对路径一致。
+ */
+const localPages = import.meta.glob('../../views/{landing,monitor-light,monitor-screen}/index.vue')
+const localMenuModules = import.meta.glob<LocalMenuModule>(
+  '../../views/{landing,monitor-light,monitor-screen}/screen.menu.ts',
+  { eager: true }
+)
+
+const LOCAL_MENU_ORDER = ['monitor-screen', 'monitor-light', 'landing'] as const
+
+/** 页面文件和菜单模块都在时才注入；缺任一文件就跳过，避免引用不存在的目录。 */
+function collectLocalMenus(): AppRouteRecord[] {
+  const menus: AppRouteRecord[] = []
+  for (const dir of LOCAL_MENU_ORDER) {
+    if (!localPages[`../../views/${dir}/index.vue`]) continue
+    const mod = localMenuModules[`../../views/${dir}/screen.menu.ts`]
+    const menu =
+      dir === 'monitor-screen'
+        ? mod?.buildMonitorScreenMenu?.()
+        : dir === 'monitor-light'
+          ? mod?.buildLightMonitorMenu?.()
+          : mod?.buildLandingMenu?.()
+    if (menu) menus.push(menu)
+  }
+  return menus
+}
 
 export class MenuProcessor {
   /**
@@ -35,13 +68,8 @@ export class MenuProcessor {
 
     // 注入前端管理的菜单项（不依赖后端 sys_menu，对所有登录用户可见）。
     // 顺序：监控大屏 → 浅色监控大屏 → 项目首页 → 后端菜单 → 项目文档。
-    menuList = [
-      buildMonitorScreenMenu(),
-      buildLightMonitorMenu(),
-      buildLandingMenu(),
-      ...menuList,
-      buildProjectDocsMenu()
-    ]
+    // 本地目录不存在时，对应项直接跳过。
+    menuList = [...collectLocalMenus(), ...menuList, buildProjectDocsMenu()]
 
     // 在规范化路径之前，验证原始路径配置
     this.validateMenuPaths(menuList)
