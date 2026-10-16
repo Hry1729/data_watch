@@ -9,4 +9,5 @@ click>=8.1,<9
 websockets>=14,<18
 cryptography>=50,<51
 packaging>=24,<27
+pymysql>=1.1,<2
 jmespath>=1,<2

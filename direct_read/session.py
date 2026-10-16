@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any, Callable
 
@@ -18,7 +19,6 @@ from direct_read.quality import (
 
 
 _CONFIG_HINTS = ("data type", "address", "bool", "dbx", "decode", "config")
-_DISCONNECT_BUDGET_S = 2.0
 
 
 async def read_once(
@@ -27,22 +27,20 @@ async def read_once(
     *,
     address: str,
     data_type: str,
-    timeout_s: float,
+    deadline: float,
 ) -> tuple[Any, int, int]:
-    """返回 (值, 质量码, 读耗时毫秒)。无论成败都断开连接。"""
+    """返回 (值, 质量码, 读耗时毫秒)。``deadline`` 是 ``time.monotonic`` 截止点，含断开。"""
     driver = factory()
     started = time.perf_counter()
     try:
         block_type = import_read_block()
         block = block_type(address, 1, data_type)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
         try:
-            await asyncio.wait_for(
-                driver.connect(connection),
-                max(0.001, deadline - loop.time()),
-            )
-            left = deadline - loop.time()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError
+            await asyncio.wait_for(driver.connect(connection), left)
+            left = deadline - time.monotonic()
             if left <= 0:
                 raise TimeoutError
             raw = await asyncio.wait_for(driver.read([block]), left)
@@ -60,7 +58,7 @@ async def read_once(
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         return value, quality, elapsed_ms
     finally:
-        await _safe_disconnect(driver)
+        await _safe_disconnect(driver, deadline)
 
 
 def interpret_sample(raw: Any, address: str) -> tuple[Any, int]:
@@ -149,13 +147,33 @@ def _map_driver_error(exc: Exception) -> DirectReadError:
     )
 
 
-async def _safe_disconnect(driver: Any) -> None:
+async def _safe_disconnect(driver: Any, deadline: float) -> None:
+    """断开只消耗截止时间里剩下的部分，不再另加预算。"""
     disconnect = getattr(driver, "disconnect", None)
     if not callable(disconnect):
         return
     try:
         result = disconnect()
-        if asyncio.iscoroutine(result):
-            await asyncio.wait_for(result, _DISCONNECT_BUDGET_S)
     except Exception:
         return
+    if not asyncio.iscoroutine(result):
+        return
+    task = asyncio.ensure_future(result)
+    try:
+        # 让已经就绪的断开协程跑完一步，瞬时假驱动能记下 disconnect。
+        await asyncio.sleep(0)
+        if task.done():
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            task.cancel()
+            return
+        await asyncio.wait_for(task, remaining)
+    except Exception:
+        if not task.done():
+            task.cancel()
+    finally:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task

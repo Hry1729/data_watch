@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional
 
 import typer
 
-from cli.errors import EXIT_USAGE, CliError
+from cli.errors import EXIT_AUTH_REQUIRED, EXIT_USAGE, CliError
 from cli.session import AuthorizedSession
 from direct_read.api import read_point
 from direct_read.audit import record_audit
@@ -52,10 +52,14 @@ def install_plc_commands(
             None, "--snapshot", help="Local topology snapshot used when MySQL is unavailable."
         ),
         endpoint: Optional[str] = typer.Option(
-            None, "--endpoint", help="Explicit PLC host or host:port."
+            None,
+            "--endpoint",
+            help="PLC host or host:port. Used only with --topology explicit.",
         ),
         address: Optional[str] = typer.Option(
-            None, "--address", help="Explicit PLC address, for example DB1.DBW0."
+            None,
+            "--address",
+            help="PLC address, for example DB1.DBW0. Used only with --topology explicit.",
         ),
         protocol: Optional[str] = typer.Option(None, "--protocol"),
         rack: Optional[int] = typer.Option(None, "--rack"),
@@ -114,7 +118,22 @@ def _read_authorized(state: Any, **kwargs: Any) -> dict[str, Any]:
                 secrets=_credential_secrets(entered),
             )
             raise
-        actor = str((user or {}).get("userName") or "").strip() or "authenticated"
+        actor = str((user or {}).get("userName") or "").strip()
+        if not actor:
+            error = CliError(
+                "auth_required",
+                "请先执行 auth login",
+                EXIT_AUTH_REQUIRED,
+            )
+            _mark_direct(error)
+            _audit_refusal(
+                error,
+                actor=None,
+                device=device,
+                point=point,
+                secrets=_credential_secrets(entered),
+            )
+            raise error
         try:
             return read_point(
                 device,

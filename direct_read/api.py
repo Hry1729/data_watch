@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -24,6 +26,21 @@ from direct_read.topology import build_sources, is_s7_protocol, resolve_chain
 DEFAULT_TIMEOUT_MS = 5000
 MAX_TIMEOUT_MS = 30_000
 
+# 测试替身只走这个私有钩子。公开参数里不提供 driver_factory，避免跳过运行时检查。
+_factory_override: contextvars.ContextVar[Callable[[], Any] | None] = contextvars.ContextVar(
+    "direct_read_driver_factory",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def _override_driver_factory(factory: Callable[[], Any] | None):
+    token = _factory_override.set(factory)
+    try:
+        yield
+    finally:
+        _factory_override.reset(token)
+
 
 def read_point(
     device: str,
@@ -40,7 +57,6 @@ def read_point(
     slot: int | None = None,
     data_type: str | None = None,
     port: int | None = None,
-    driver_factory: Callable[[], Any] | None = None,
     sources: Sequence[Any] | None = None,
     state_dir: str | Path | None = None,
     audit_path: str | Path | None = None,
@@ -66,6 +82,8 @@ def read_point(
                 "请先执行 auth login",
                 quality=QUALITY_NOT_CONNECTED,
             )
+        # 总预算从拓扑解析开始，覆盖 MySQL、读点和断开。
+        deadline = time.monotonic() + int(timeout_ms) / 1000
         chain = list(sources) if sources is not None else build_sources(
             mode=topology,
             snapshot_path=snapshot_path,
@@ -77,7 +95,12 @@ def read_point(
             data_type=data_type,
             port=port,
         )
-        resolved = resolve_chain(chain, str(device).strip(), str(point).strip())
+        resolved = resolve_chain(
+            chain,
+            str(device).strip(),
+            str(point).strip(),
+            deadline=deadline,
+        )
         topology_source = resolved.topology_source
         audit_device = resolved.device_code
         audit_point = resolved.point_name or resolved.io_address
@@ -91,8 +114,7 @@ def read_point(
                     "protocol": resolved.protocol,
                 },
             )
-        # CLI 不传入 driver_factory。未注入时先拒绝非 Windows 3.14t，再经 DriverRegistry 创建 S7。
-        factory = driver_factory
+        factory = _factory_override.get()
         if factory is None:
             ensure_mvp_runtime()
             factory = production_s7_factory
@@ -102,20 +124,29 @@ def read_point(
             min_interval_s=min_interval_s,
             max_concurrency=max_concurrency,
         )
+        endpoint_key = f"{resolved.host}:{resolved.port}"
         try:
-            permit = limiter.acquire(resolved.device_code)
+            permit = limiter.acquire(endpoint_key, device_code=resolved.device_code)
         except DirectReadError as exc:
             exc.details.setdefault("topologySource", resolved.topology_source)
             raise
         try:
             try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise DirectReadError(
+                        "timeout",
+                        "直连读取超时",
+                        quality=QUALITY_NOT_CONNECTED,
+                    )
+                read_timeout_ms = max(1, min(int(timeout_ms), int(remaining * 1000)))
                 value, quality, elapsed_ms = asyncio.run(
                     read_once(
                         factory,
-                        resolved.connection_config(int(timeout_ms)),
+                        resolved.connection_config(read_timeout_ms),
                         address=resolved.io_address,
                         data_type=resolved.data_type,
-                        timeout_s=int(timeout_ms) / 1000,
+                        deadline=deadline,
                     )
                 )
             except DirectReadError as exc:

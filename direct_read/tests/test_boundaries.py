@@ -115,23 +115,34 @@ def test_sql_constants_are_select_only() -> None:
 
 
 def test_query_uses_read_only_session_and_parameterized_points() -> None:
+    devices = [
+        {
+            "id": 7,
+            "device_code": "QC100",
+            "device_name": "桥吊100",
+            "endpoint": "10.1.2.3:1102",
+            "rack": None,
+            "slot": None,
+            "protocol": "S7",
+            "port": 102,
+        },
+        {
+            "id": 8,
+            "device_code": "QC200",
+            "device_name": "桥吊200",
+            "endpoint": "10.9.9.9",
+            "rack": 0,
+            "slot": 1,
+            "protocol": "S7",
+            "port": 102,
+        },
+    ]
     cursor = _Cursor(
         grants=[
             "GRANT USAGE ON *.* TO `ro`@`%`",
             "GRANT SELECT ON `device_watch`.* TO `ro`@`%`",
         ],
-        devices=[
-            {
-                "id": 7,
-                "device_code": "QC100",
-                "device_name": "桥吊100",
-                "endpoint": "10.1.2.3:1102",
-                "rack": None,
-                "slot": None,
-                "protocol": "S7",
-                "port": 102,
-            }
-        ],
+        devices=devices,
         points=[
             {
                 "id": 9,
@@ -143,21 +154,23 @@ def test_query_uses_read_only_session_and_parameterized_points() -> None:
         ],
     )
 
-    devices = query_topology(cursor)
+    target = query_topology(cursor, "QC100", "CraneID")
 
     assert [item[0].split()[0].upper() for item in cursor.statements[:2]] == ["SET", "SHOW"]
     assert all(
         statement[0].lstrip().upper().startswith(("SET SESSION", "SHOW ", "SELECT"))
         for statement in cursor.statements
     )
-    assert cursor.statements[-1][1] == (7,)
-    assert devices[0]["protocol"] == "s7"
-    assert devices[0]["host"] == "10.1.2.3"
-    assert devices[0]["port"] == 1102
-    assert devices[0]["rack"] == 0
-    assert devices[0]["slot"] == 1
-    assert devices[0]["points"][0]["pointName"] == "CraneID"
-    assert devices[0]["points"][0]["dataType"] == "INT"
+    point_sql = [item for item in cursor.statements if "device_variable" in item[0]]
+    assert point_sql == [(POINT_SQL, (7,))]
+    assert target.protocol == "s7"
+    assert target.host == "10.1.2.3"
+    assert target.port == 1102
+    assert target.rack == 0
+    assert target.slot == 1
+    assert target.point_name == "CraneID"
+    assert target.data_type == "INT"
+    assert target.io_address == "DB1702.DBW0"
 
 
 def test_writable_grant_stops_before_device_query() -> None:
@@ -167,7 +180,7 @@ def test_writable_grant_stops_before_device_query() -> None:
         points=[],
     )
     with pytest.raises(DirectReadError) as captured:
-        query_topology(cursor)
+        query_topology(cursor, "QC100", "CraneID")
     assert captured.value.error_type == "config_error"
     assert not any("FROM device AS" in statement[0] for statement in cursor.statements)
 
@@ -257,6 +270,86 @@ def test_limit_floors_cannot_be_weakened(tmp_path: Path) -> None:
     assert captured.value.details["limit"] == "device_interval"
 
 
+def test_windows_pid_check_uses_open_process_not_kill(monkeypatch) -> None:
+    from direct_read import limits
+
+    killed: list[tuple[int, int]] = []
+    holder: dict[str, _Kernel] = {}
+
+    def boom(pid: int, sig: int) -> None:
+        killed.append((pid, sig))
+        raise AssertionError("Windows 不能用 os.kill 探测进程")
+
+    monkeypatch.setattr(limits.sys, "platform", "win32")
+    monkeypatch.setattr(limits.os, "kill", boom)
+    monkeypatch.setattr(limits, "_kernel32", lambda: holder["kernel"])
+    monkeypatch.setattr(limits, "_last_winerror", lambda: holder["kernel"].last_error)
+
+    holder["kernel"] = _Kernel(handle=50, exit_code=259)
+    assert limits._pid_alive(4242) is True
+    assert holder["kernel"].open_access == 0x1000
+    assert holder["kernel"].closed == [50]
+
+    holder["kernel"] = _Kernel(handle=51, exit_code=0)
+    assert limits._pid_alive(4242) is False
+    assert holder["kernel"].closed == [51]
+
+    holder["kernel"] = _Kernel(handle=0, last_error=5)
+    assert limits._pid_alive(4242) is True
+
+    holder["kernel"] = _Kernel(handle=0, last_error=87)
+    assert limits._pid_alive(4242) is False
+
+    assert limits._pid_alive(0) is False
+    assert killed == []
+
+
+def test_windows_stale_slot_is_purged_without_os_kill(monkeypatch, tmp_path: Path) -> None:
+    from direct_read import limits
+
+    killed: list[tuple[int, int]] = []
+
+    def boom(pid: int, sig: int) -> None:
+        killed.append((pid, sig))
+        raise AssertionError("Windows 不能用 os.kill 探测进程")
+
+    monkeypatch.setattr(limits.sys, "platform", "win32")
+    monkeypatch.setattr(limits.os, "kill", boom)
+    monkeypatch.setattr(limits, "_lock", lambda _handle: None)
+    monkeypatch.setattr(limits, "_unlock", lambda _handle: None)
+    kernel = _Kernel(handle=7, exit_code=0)
+    monkeypatch.setattr(limits, "_kernel32", lambda: kernel)
+    monkeypatch.setattr(limits, "_last_winerror", lambda: kernel.last_error)
+    limiter = RateLimiter(tmp_path, now=lambda: 2_000.0)
+    limiter.slot_dir.mkdir(parents=True, exist_ok=True)
+    stale = limiter.slot_dir / "old.slot"
+    stale.write_text(
+        json.dumps({"pid": 99999, "started": 2_000.0}),
+        encoding="utf-8",
+    )
+
+    permit = limiter.acquire("10.0.0.8:102")
+    permit.release()
+
+    assert killed == []
+    assert kernel.open_access == 0x1000
+    assert not stale.exists()
+
+
+def test_posix_liveness_uses_os_kill(monkeypatch) -> None:
+    from direct_read import limits
+
+    calls: list[tuple[int, int]] = []
+    opened: list[int] = []
+    monkeypatch.setattr(limits.sys, "platform", "linux")
+    monkeypatch.setattr(limits.os, "kill", lambda pid, sig: calls.append((pid, sig)))
+    monkeypatch.setattr(limits, "_kernel32", lambda: opened.append(1))
+
+    assert limits._pid_alive(5) is True
+    assert calls == [(5, 0)]
+    assert opened == []
+
+
 def test_concurrency_limit(tmp_path: Path) -> None:
     clock = lambda: 1_700_000_000.0  # noqa: E731
     limiter = RateLimiter(tmp_path, now=clock, max_concurrency=1)
@@ -287,6 +380,27 @@ def test_session_never_calls_driver_write() -> None:
     source = (Path(__file__).resolve().parents[1] / "session.py").read_text(encoding="utf-8")
     assert ".write(" not in source
     assert "driver.write" not in source
+
+
+class _Kernel:
+    def __init__(self, *, handle: int, exit_code: int = 259, last_error: int = 0) -> None:
+        self.handle = handle
+        self.exit_code = exit_code
+        self.last_error = last_error
+        self.closed: list[int] = []
+        self.open_access: int | None = None
+
+    def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+        self.open_access = access
+        return self.handle
+
+    def GetExitCodeProcess(self, handle: int, out) -> int:
+        out._obj.value = self.exit_code
+        return 1
+
+    def CloseHandle(self, handle: int) -> int:
+        self.closed.append(handle)
+        return 1
 
 
 class _Cursor:

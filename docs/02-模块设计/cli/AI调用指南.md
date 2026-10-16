@@ -74,9 +74,9 @@ AI 对用户展示设备和点位的现场名称，不暴露内部 ID、`varSeq`
 
 - 命令仍要先 `auth login`。没有 JWT 会拒绝，MVP 没有本机白名单。
 - 结果里的 `source` 固定为 `direct_plc`，并带与采集相同的质量码。这不是 Redis `latest`。
-- `topologySource` 标明拓扑来自 `mysql`、`snapshot` 或 `explicit`。MySQL 只用只读账号；库不可用时才降级到本地快照或 `--endpoint` / `--address`。
+- `topologySource` 标明拓扑来自 `mysql`、`snapshot` 或 `explicit`。MySQL 只用只读账号；库不可用时才降级到本地快照。`--endpoint` / `--address` 只在 `--topology explicit` 时生效，`auto` 不会拿它们去连任意 IP。
 - MVP 只支持 S7，并且只在 Windows + Python 3.14t 上装载驱动。
-- 同一设备有最小间隔，全局并发有上限。被限流时改回 `realtime get`。
+- 同一 PLC（`host:port`）有最小间隔，全局并发有上限。总超时包含 MySQL 解析和断开。被限流时改回 `realtime get`。
 - 不要把直连结果写回平台，也不要在命令或日志里放数据库密码和 Token。
 
 ## 5. 歧义处理

@@ -1,13 +1,16 @@
-"""解析设备与点位：MySQL 只读优先，不可用时才用本地快照或显式参数。"""
+"""解析设备与点位：MySQL 只读优先，不可用时用本地快照。显式地址只在 explicit 模式使用。"""
 
 from __future__ import annotations
 
+import concurrent.futures
+import inspect
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from cli.errors import CliError
@@ -196,8 +199,8 @@ def ensure_read_only_account(grants: list[str]) -> None:
             )
 
 
-def query_topology(cursor: Any) -> list[dict[str, Any]]:
-    """只执行会话只读、查看授权和 SELECT。"""
+def query_topology(cursor: Any, device_query: str, point_query: str) -> ResolvedTarget:
+    """先确认只读账号并选出设备，再只查询这一台设备的点位。"""
     cursor.execute(_SESSION_READ_ONLY_SQL)
     cursor.execute(_SHOW_GRANTS_SQL)
     grants = [_first_value(row) for row in cursor.fetchall()]
@@ -208,10 +211,11 @@ def query_topology(cursor: Any) -> list[dict[str, Any]]:
         device = normalize_device_row(row)
         if device["deviceId"] is None or not device["deviceCode"]:
             continue
-        cursor.execute(POINT_SQL, (device["deviceId"],))
-        device["points"] = [normalize_point_row(item) for item in cursor.fetchall()]
         devices.append(device)
-    return devices
+    chosen = _select_device(_active_devices(devices), device_query)
+    cursor.execute(POINT_SQL, (chosen["deviceId"],))
+    chosen["points"] = [normalize_point_row(item) for item in cursor.fetchall()]
+    return _target_from(chosen, _select_point(chosen, point_query))
 
 
 def normalize_device_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -284,32 +288,47 @@ def build_sources(
             "topology 只能是 auto、mysql、snapshot 或 explicit",
             quality=QUALITY_NOT_CONNECTED,
         )
+    if mode_name == "explicit":
+        return [
+            ExplicitTopology(
+                endpoint=endpoint,
+                address=address,
+                protocol=protocol,
+                rack=rack,
+                slot=slot,
+                data_type=data_type,
+                port=port,
+                required=True,
+            )
+        ]
     mysql = MysqlTopology()
     snapshot = SnapshotTopology(snapshot_path)
-    explicit = ExplicitTopology(
-        endpoint=endpoint,
-        address=address,
-        protocol=protocol,
-        rack=rack,
-        slot=slot,
-        data_type=data_type,
-        port=port,
-        required=mode_name == "explicit",
-    )
     if mode_name == "mysql":
         return [mysql]
     if mode_name == "snapshot":
         return [snapshot]
-    if mode_name == "explicit":
-        return [explicit]
-    return [mysql, snapshot, explicit]
+    # auto 只在 MySQL 和本地快照之间降级。--endpoint 不能在这里变成任意 IP。
+    return [mysql, snapshot]
 
 
-def resolve_chain(sources: list[Any], device: str, point: str) -> ResolvedTarget:
+def resolve_chain(
+    sources: list[Any],
+    device: str,
+    point: str,
+    *,
+    deadline: float | None = None,
+) -> ResolvedTarget:
     attempts: list[dict[str, str]] = []
     for source in sources:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise DirectReadError(
+                "timeout",
+                "直连读取超时",
+                quality=QUALITY_NOT_CONNECTED,
+                details={"attempts": attempts},
+            )
         try:
-            resolved = source.resolve(device, point)
+            resolved = _invoke_resolve(source, device, point, deadline)
         except TopologyUnavailable as exc:
             attempts.append(
                 {"source": str(source.name), "reason": scrub_text(str(exc))}
@@ -321,7 +340,7 @@ def resolve_chain(sources: list[Any], device: str, point: str) -> ResolvedTarget
         return replace(resolved, topology_source=str(source.name))
     raise DirectReadError(
         "topology_unavailable",
-        "拓扑不可用：MySQL 无法读取，且没有可用的本地快照或显式地址",
+        "拓扑不可用：MySQL 无法读取，且没有可用的本地快照",
         quality=QUALITY_NOT_CONNECTED,
         details={"attempts": attempts},
     )
@@ -330,7 +349,13 @@ def resolve_chain(sources: list[Any], device: str, point: str) -> ResolvedTarget
 class MysqlTopology:
     name = "mysql"
 
-    def resolve(self, device: str, point: str) -> ResolvedTarget:
+    def resolve(
+        self,
+        device: str,
+        point: str,
+        *,
+        deadline: float | None = None,
+    ) -> ResolvedTarget:
         settings = mysql_settings_from_env()
         if settings is None:
             raise TopologyUnavailable(
@@ -341,32 +366,42 @@ class MysqlTopology:
             from pymysql.cursors import DictCursor
         except ImportError as exc:
             raise TopologyUnavailable("未安装 PyMySQL，无法读取 MySQL 拓扑") from exc
-        try:
-            connection = pymysql.connect(
-                host=settings.host,
-                port=settings.port,
-                user=settings.user,
-                password=settings.password,
-                database=settings.database,
-                charset="utf8mb4",
-                cursorclass=DictCursor,
-                connect_timeout=3,
-                read_timeout=5,
-                write_timeout=5,
-                autocommit=True,
-            )
-        except Exception as exc:
-            raise TopologyUnavailable(scrub_text(str(exc))) from exc
-        try:
-            with connection.cursor() as cursor:
-                devices = query_topology(cursor)
-        except DirectReadError:
-            raise
-        except Exception as exc:
-            raise TopologyUnavailable(scrub_text(str(exc))) from exc
-        finally:
-            connection.close()
-        return select_target(devices, device, point)
+        # 截止时间耗尽是超时，不能再降级到快照。
+        _raise_if_expired(deadline)
+
+        def load() -> ResolvedTarget:
+            _raise_if_expired(deadline)
+            connection = None
+            try:
+                connection = pymysql.connect(
+                    host=settings.host,
+                    port=settings.port,
+                    user=settings.user,
+                    password=settings.password,
+                    database=settings.database,
+                    charset="utf8mb4",
+                    cursorclass=DictCursor,
+                    connect_timeout=_mysql_seconds(deadline, 3),
+                    read_timeout=_mysql_seconds(deadline, 5),
+                    write_timeout=_mysql_seconds(deadline, 5),
+                    autocommit=True,
+                )
+                with connection.cursor() as cursor:
+                    return query_topology(cursor, device, point)
+            except DirectReadError:
+                raise
+            except Exception as exc:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise _timeout_error() from exc
+                raise TopologyUnavailable(scrub_text(str(exc))) from exc
+            finally:
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+
+        return _run_bounded(load, deadline)
 
 
 class SnapshotTopology:
@@ -375,7 +410,14 @@ class SnapshotTopology:
     def __init__(self, snapshot_path: str | None) -> None:
         self.snapshot_path = snapshot_path
 
-    def resolve(self, device: str, point: str) -> ResolvedTarget:
+    def resolve(
+        self,
+        device: str,
+        point: str,
+        *,
+        deadline: float | None = None,
+    ) -> ResolvedTarget:
+        _raise_if_expired(deadline)
         path = _snapshot_file(self.snapshot_path)
         if path is None:
             raise TopologyUnavailable("未配置本地拓扑快照")
@@ -423,7 +465,14 @@ class ExplicitTopology:
         self.port = port
         self.required = required
 
-    def resolve(self, device: str, point: str) -> ResolvedTarget:
+    def resolve(
+        self,
+        device: str,
+        point: str,
+        *,
+        deadline: float | None = None,
+    ) -> ResolvedTarget:
+        _raise_if_expired(deadline)
         endpoint = str(self.endpoint or "").strip()
         address = str(self.address or "").strip()
         if not endpoint or not address:
@@ -452,6 +501,56 @@ class ExplicitTopology:
             data_type=(self.data_type or "INT").strip().upper() or "INT",
             var_seq=None,
         )
+
+
+def _invoke_resolve(source: Any, device: str, point: str, deadline: float | None) -> ResolvedTarget:
+    resolve = source.resolve
+    try:
+        parameters = inspect.signature(resolve).parameters
+    except (TypeError, ValueError):
+        return resolve(device, point)
+    if "deadline" in parameters:
+        return resolve(device, point, deadline=deadline)
+    return resolve(device, point)
+
+
+def _raise_if_expired(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise _timeout_error()
+
+
+def _timeout_error() -> DirectReadError:
+    return DirectReadError(
+        "timeout",
+        "直连读取超时",
+        quality=QUALITY_NOT_CONNECTED,
+    )
+
+
+def _mysql_seconds(deadline: float | None, cap: int) -> int:
+    """PyMySQL 的超时是整数秒。亚秒由外层线程截止时间截断。"""
+    if deadline is None:
+        return cap
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _timeout_error()
+    return max(1, min(cap, int(remaining)))
+
+
+def _run_bounded(operation: Callable[[], Any], deadline: float | None) -> Any:
+    if deadline is None:
+        return operation()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _timeout_error()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(operation)
+    try:
+        return future.result(timeout=remaining)
+    except concurrent.futures.TimeoutError as exc:
+        raise _timeout_error() from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _snapshot_file(snapshot_path: str | None) -> Path | None:

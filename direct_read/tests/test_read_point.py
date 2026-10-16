@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import inspect
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from direct_read.api import read_point
+from direct_read.api import _override_driver_factory, read_point
 from direct_read.errors import DirectReadError, TopologyUnavailable
 from direct_read.quality import (
     DIRECT_SOURCE,
@@ -17,7 +19,7 @@ from direct_read.quality import (
     QUALITY_NOT_CONNECTED,
     quality_name,
 )
-from direct_read.topology import ExplicitTopology, select_target
+from direct_read.topology import select_target
 
 
 class FakeDriver:
@@ -104,22 +106,23 @@ def _read(tmp_path: Path, **kwargs):
     if created is None:
         created = []
     driver_options = kwargs.pop("driver_options", {})
+    preset = kwargs.pop("driver_factory", None)
 
     def make_driver():
         driver = FakeDriver(**driver_options)
         created.append(driver)
         return driver
 
-    result = read_point(
-        kwargs.pop("device", "QC100"),
-        kwargs.pop("point", "CraneID"),
-        actor=kwargs.pop("actor", "operator"),
-        driver_factory=kwargs.pop("driver_factory", make_driver),
-        state_dir=kwargs.pop("state_dir", tmp_path),
-        audit_path=kwargs.pop("audit_path", tmp_path / "audit.log"),
-        now=kwargs.pop("now", None),
-        **kwargs,
-    )
+    with _override_driver_factory(preset or make_driver):
+        result = read_point(
+            kwargs.pop("device", "QC100"),
+            kwargs.pop("point", "CraneID"),
+            actor=kwargs.pop("actor", "operator"),
+            state_dir=kwargs.pop("state_dir", tmp_path),
+            audit_path=kwargs.pop("audit_path", tmp_path / "audit.log"),
+            now=kwargs.pop("now", None),
+            **kwargs,
+        )
     return result, created
 
 
@@ -139,7 +142,7 @@ def test_success_returns_direct_sample_and_disconnects(tmp_path: Path) -> None:
     assert result["connection"] == {"endpoint": "10.1.2.3", "port": 102, "rack": 0, "slot": 1}
     assert drivers[0].events == ["connect", "read", "disconnect"]
     assert drivers[0].wrote is False
-    assert drivers[0].config["read_timeout_ms"] == 5000
+    assert 1 <= drivers[0].config["read_timeout_ms"] <= 5000
     assert drivers[0].config["ip"] == "10.1.2.3"
     audit = json.loads((tmp_path / "audit.log").read_text(encoding="utf-8"))
     assert audit["actor"] == "operator"
@@ -201,6 +204,8 @@ def test_rate_limit_blocks_second_read_of_same_device(tmp_path: Path) -> None:
 
     assert captured.value.error_type == "rate_limited"
     assert captured.value.details["limit"] == "device_interval"
+    assert captured.value.details["endpoint"] == "10.1.2.3:102"
+    assert captured.value.details["deviceCode"] == "QC100"
     assert captured.value.details["source"] == DIRECT_SOURCE
     assert captured.value.details["quality"] == QUALITY_NOT_CONNECTED
     assert len(created) == 1
@@ -216,15 +221,15 @@ def test_auth_refused_without_actor_does_not_touch_driver_or_topology(tmp_path: 
         raise AssertionError("未登录不能创建驱动")
 
     with pytest.raises(DirectReadError) as captured:
-        read_point(
-            "QC100",
-            "CraneID",
-            actor="  ",
-            sources=[source],
-            driver_factory=factory,
-            state_dir=tmp_path,
-            audit_path=tmp_path / "audit.log",
-        )
+        with _override_driver_factory(factory):
+            read_point(
+                "QC100",
+                "CraneID",
+                actor="  ",
+                sources=[source],
+                state_dir=tmp_path,
+                audit_path=tmp_path / "audit.log",
+            )
 
     assert captured.value.error_type == "auth_required"
     assert captured.value.details["source"] == DIRECT_SOURCE
@@ -236,7 +241,9 @@ def test_auth_refused_without_actor_does_not_touch_driver_or_topology(tmp_path: 
 
 def test_read_point_has_no_auth_bypass_parameter() -> None:
     names = set(inspect.signature(read_point).parameters)
-    assert names.isdisjoint({"allowlist", "anonymous", "skip_auth", "token", "password"})
+    assert names.isdisjoint(
+        {"allowlist", "anonymous", "skip_auth", "token", "password", "driver_factory"}
+    )
 
 
 def test_device_not_found(tmp_path: Path) -> None:
@@ -246,15 +253,15 @@ def test_device_not_found(tmp_path: Path) -> None:
         raise AssertionError("找不到设备时不能连接 PLC")
 
     with pytest.raises(DirectReadError) as captured:
-        read_point(
-            "QC999",
-            "CraneID",
-            actor="operator",
-            sources=[source],
-            driver_factory=factory,
-            state_dir=tmp_path,
-            audit_path=tmp_path / "audit.log",
-        )
+        with _override_driver_factory(factory):
+            read_point(
+                "QC999",
+                "CraneID",
+                actor="operator",
+                sources=[source],
+                state_dir=tmp_path,
+                audit_path=tmp_path / "audit.log",
+            )
 
     assert captured.value.error_type == "resource_not_found"
     assert captured.value.status == 404
@@ -274,15 +281,15 @@ def test_ambiguous_point_does_not_pick_the_first(tmp_path: Path) -> None:
         raise AssertionError("歧义时不能连接 PLC")
 
     with pytest.raises(DirectReadError) as captured:
-        read_point(
-            "QC100",
-            "Crane",
-            actor="operator",
-            sources=[source],
-            driver_factory=factory,
-            state_dir=tmp_path,
-            audit_path=tmp_path / "audit.log",
-        )
+        with _override_driver_factory(factory):
+            read_point(
+                "QC100",
+                "Crane",
+                actor="operator",
+                sources=[source],
+                state_dir=tmp_path,
+                audit_path=tmp_path / "audit.log",
+            )
 
     assert captured.value.error_type == "ambiguous_resource"
     assert captured.value.status == 409
@@ -311,26 +318,184 @@ def test_snapshot_used_only_when_mysql_unavailable(tmp_path: Path) -> None:
     assert mysql.calls == 1
 
 
-def test_explicit_used_only_after_mysql_and_snapshot_unavailable(tmp_path: Path) -> None:
-    mysql = MemorySource("mysql", error=TopologyUnavailable("数据库连不上"))
-    snapshot = MemorySource("snapshot", error=TopologyUnavailable("没有快照"))
-    explicit = ExplicitTopology(
+def test_auto_does_not_fall_back_to_explicit_endpoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("DATAWATCH_MYSQL_HOST", raising=False)
+    monkeypatch.delenv("DATAWATCH_MYSQL_USER", raising=False)
+    monkeypatch.delenv("DATAWATCH_MYSQL_DATABASE", raising=False)
+    monkeypatch.delenv("DATAWATCH_DATA_ROOT", raising=False)
+    created: list[FakeDriver] = []
+    with pytest.raises(DirectReadError) as captured:
+        _read(
+            tmp_path,
+            topology="auto",
+            endpoint="10.6.6.6",
+            address="DB1.DBW0",
+            drivers=created,
+        )
+
+    assert captured.value.error_type == "topology_unavailable"
+    assert created == []
+    assert "10.6.6.6" not in json.dumps(captured.value.details, ensure_ascii=False)
+
+
+def test_explicit_topology_reads_the_given_endpoint(tmp_path: Path) -> None:
+    result, drivers = _read(
+        tmp_path,
+        topology="explicit",
         endpoint="10.7.7.7:1102",
         address="DB1.DBW4",
         protocol="s7",
         rack=0,
         slot=2,
-        data_type="INT",
-        port=None,
-        required=False,
+        point="Speed",
     )
-    result, drivers = _read(tmp_path, sources=[mysql, snapshot, explicit], point="Speed")
 
     assert result["topologySource"] == "explicit"
     assert result["connection"] == {"endpoint": "10.7.7.7", "port": 1102, "rack": 0, "slot": 2}
     assert result["point"]["ioAddress"] == "DB1.DBW4"
     assert drivers[0].config["port"] == 1102
     assert drivers[0].config["slot"] == 2
+
+
+def test_explicit_rate_limit_is_keyed_by_host_port(tmp_path: Path) -> None:
+    clock = Clock()
+    created: list[FakeDriver] = []
+    _read(
+        tmp_path,
+        topology="explicit",
+        endpoint="10.1.2.3:1102",
+        address="DB1.DBW0",
+        device="CraneA",
+        point="Speed",
+        now=clock,
+        drivers=created,
+    )
+    with pytest.raises(DirectReadError) as captured:
+        _read(
+            tmp_path,
+            topology="explicit",
+            endpoint="10.1.2.3:1102",
+            address="DB1.DBW2",
+            device="CraneB",
+            point="Torque",
+            now=clock,
+            drivers=created,
+        )
+
+    assert captured.value.error_type == "rate_limited"
+    assert captured.value.details["limit"] == "device_interval"
+    assert captured.value.details["endpoint"] == "10.1.2.3:1102"
+    assert captured.value.details["deviceCode"] == "CraneB"
+    assert len(created) == 1
+    _read(
+        tmp_path,
+        topology="explicit",
+        endpoint="10.9.9.9:1102",
+        address="DB1.DBW0",
+        device="CraneA",
+        point="Speed",
+        now=clock,
+        drivers=created,
+    )
+    assert len(created) == 2
+
+
+def test_missing_pymysql_falls_back_to_snapshot_not_explicit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATAWATCH_MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setenv("DATAWATCH_MYSQL_USER", "ro")
+    monkeypatch.setenv("DATAWATCH_MYSQL_DATABASE", "device_watch")
+    snapshot = tmp_path / "topology.json"
+    snapshot.write_text(
+        json.dumps({"devices": [_qc100()]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    real_import = builtins.__import__
+
+    def blocked(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "pymysql" or name.startswith("pymysql."):
+            raise ImportError("pymysql missing")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    result, _drivers = _read(
+        tmp_path,
+        topology="auto",
+        snapshot_path=str(snapshot),
+        endpoint="10.6.6.6",
+        address="DB9.DBW9",
+    )
+
+    assert result["topologySource"] == "snapshot"
+    assert result["connection"]["endpoint"] == "10.1.2.3"
+    assert result["point"]["ioAddress"] == "DB1702.DBW0"
+
+
+def test_mysql_overrun_is_timeout_not_snapshot(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATAWATCH_MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setenv("DATAWATCH_MYSQL_USER", "ro")
+    monkeypatch.setenv("DATAWATCH_MYSQL_DATABASE", "device_watch")
+    snapshot = tmp_path / "topology.json"
+    snapshot.write_text(
+        json.dumps({"devices": [_qc100()]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    import sys
+    import types
+
+    fake = types.ModuleType("pymysql")
+
+    def connect(**_kwargs):
+        time.sleep(1.5)
+        return object()
+
+    fake.connect = connect
+    cursors = types.ModuleType("pymysql.cursors")
+    cursors.DictCursor = object
+    monkeypatch.setitem(sys.modules, "pymysql", fake)
+    monkeypatch.setitem(sys.modules, "pymysql.cursors", cursors)
+    started = time.monotonic()
+    with pytest.raises(DirectReadError) as captured:
+        _read(
+            tmp_path,
+            topology="auto",
+            snapshot_path=str(snapshot),
+            timeout_ms=150,
+            endpoint="10.6.6.6",
+            address="DB1.DBW0",
+        )
+    elapsed = time.monotonic() - started
+
+    assert captured.value.error_type == "timeout"
+    assert elapsed < 0.8
+
+
+def test_hung_disconnect_stays_inside_total_timeout(tmp_path: Path) -> None:
+    source = MemorySource("mysql", [_qc100()])
+    created: list[FakeDriver] = []
+
+    class Hung(FakeDriver):
+        async def disconnect(self):
+            self.events.append("disconnect")
+            await asyncio.sleep(5)
+
+    def factory():
+        driver = Hung(delay=2)
+        created.append(driver)
+        return driver
+
+    started = time.monotonic()
+    with pytest.raises(DirectReadError) as captured:
+        _read(
+            tmp_path,
+            sources=[source],
+            timeout_ms=80,
+            driver_factory=factory,
+            drivers=created,
+        )
+
+    assert captured.value.error_type == "timeout"
+    assert time.monotonic() - started < 1.0
+    assert created[0].events[-1] == "disconnect"
 
 
 def test_writable_mysql_account_does_not_fall_back(tmp_path: Path) -> None:
@@ -345,15 +510,15 @@ def test_writable_mysql_account_does_not_fall_back(tmp_path: Path) -> None:
 
     snapshot = MemorySource("snapshot", [_qc100()])
     with pytest.raises(DirectReadError) as captured:
-        read_point(
-            "QC100",
-            "CraneID",
-            actor="operator",
-            sources=[WritableMysql(), snapshot],
-            driver_factory=lambda: (_ for _ in ()).throw(AssertionError("不能连接")),
-            state_dir=tmp_path,
-            audit_path=tmp_path / "audit.log",
-        )
+        with _override_driver_factory(lambda: (_ for _ in ()).throw(AssertionError("不能连接"))):
+            read_point(
+                "QC100",
+                "CraneID",
+                actor="operator",
+                sources=[WritableMysql(), snapshot],
+                state_dir=tmp_path,
+                audit_path=tmp_path / "audit.log",
+            )
 
     assert captured.value.error_type == "config_error"
     assert snapshot.calls == 0
@@ -366,15 +531,15 @@ def test_unsupported_protocol_does_not_connect(tmp_path: Path) -> None:
         raise AssertionError("非 S7 不能创建驱动")
 
     with pytest.raises(DirectReadError) as captured:
-        read_point(
-            "QC100",
-            "CraneID",
-            actor="operator",
-            sources=[source],
-            driver_factory=factory,
-            state_dir=tmp_path,
-            audit_path=tmp_path / "audit.log",
-        )
+        with _override_driver_factory(factory):
+            read_point(
+                "QC100",
+                "CraneID",
+                actor="operator",
+                sources=[source],
+                state_dir=tmp_path,
+                audit_path=tmp_path / "audit.log",
+            )
 
     assert captured.value.error_type == "unsupported_protocol"
     assert captured.value.details["source"] == DIRECT_SOURCE

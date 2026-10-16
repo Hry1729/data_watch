@@ -167,6 +167,35 @@ def test_permission_denied_does_not_read(monkeypatch, tmp_path: Path) -> None:
     assert "planted-refresh-token-value" not in audit
 
 
+def test_missing_user_name_is_rejected(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("DATAWATCH_DATA_ROOT", str(tmp_path))
+
+    class _NoName(_Authorized):
+        def authorize(self, command: str) -> dict:
+            assert command == "plc get"
+            return {"permissions": ["device_monitor:monitor:view"], "roles": ["R_USER"]}
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("没有 userName 不能读 PLC")
+
+    monkeypatch.setattr("cli.commands.plc.AuthorizedSession", _NoName)
+    monkeypatch.setattr("cli.commands.plc.read_point", _forbidden)
+
+    result = runner.invoke(
+        main_module.app,
+        ["plc", "get", "--device", "QC100", "--point", "CraneID"],
+    )
+
+    assert result.exit_code == 3, result.stderr
+    payload = json.loads(result.stderr)
+    assert payload["error"]["type"] == "auth_required"
+    audit = (tmp_path / "direct_read" / "audit.log").read_text(encoding="utf-8")
+    assert "authenticated" not in audit
+    record = json.loads(audit)
+    assert record["actor"] is None
+    assert record["outcome"] == "auth_required"
+
+
 def test_explicit_read_on_non_mvp_runtime_is_refused(monkeypatch, tmp_path: Path) -> None:
     if mvp_runtime_supported():
         return
