@@ -22,6 +22,7 @@ type LocalMenuModule = {
   buildLandingMenu?: () => AppRouteRecord
 }
 
+
 /**
  * 监控大屏、浅色大屏、项目首页是本地未完成页面，干净检出里可能没有目录。
  * 必须用字面量 glob：目录缺失时结果为空。写成 import('./landing/...') 会让 Vite 构建失败。

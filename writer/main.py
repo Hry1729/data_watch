@@ -258,11 +258,15 @@ def _connect_mapper_connections(
         raise
     return connections
 
-async def _connect_writers(config: dict, count: int, syslog) -> list[TDengineWriter]:
+async def _connect_writers(
+    config: dict, count: int, syslog, metrics: list[WriterPerformanceMetrics] | None = None,
+) -> list[TDengineWriter]:
     writers: list[TDengineWriter] = []
     try:
-        for _ in range(count):
+        for index in range(count):
             writer = TDengineWriter(syslog=syslog)
+            if metrics is not None:
+                writer.bind_metrics(metrics[index])
             await writer.connect(config)
             writers.append(writer)
     except Exception:
@@ -561,8 +565,9 @@ async def main() -> None:
         sys.exit(1)
 
     # 每个消费分片使用独立 TDengine 连接；TDengineWriter 内部锁只保护本连接。
+    performance_metrics = [WriterPerformanceMetrics() for _ in partitions]
     try:
-        writers = await _connect_writers(config, len(partitions), syslog)
+        writers = await _connect_writers(config, len(partitions), syslog, performance_metrics)
     except Exception as exc:
         logger.error("Cannot connect to TDengine: %s", exc)
         syslog.emit(
@@ -579,7 +584,6 @@ async def main() -> None:
         sys.exit(1)
 
     mappers = [MysqlMapper(connection) for connection in mapper_connections]
-    performance_metrics: list[WriterPerformanceMetrics] = []
     base_consumer_name = str(rc["consumer_name"])
     consumers: list[StreamConsumer] = []
     consumer_tasks = []
@@ -589,8 +593,7 @@ async def main() -> None:
         worker_config = {**config, "redis": {**rc}}
         if len(partitions) > 1:
             worker_config["redis"]["consumer_name"] = f"{base_consumer_name}-{index}"
-        worker_metrics = WriterPerformanceMetrics()
-        performance_metrics.append(worker_metrics)
+        worker_metrics = performance_metrics[index - 1]
         consumer = StreamConsumer(
             worker_config,
             mapper,

@@ -65,7 +65,7 @@ function StatCard({
   detail: string;
 }) {
   return (
-    <Card size="sm" className="min-w-0 rounded-lg border border-border bg-card shadow-xs">
+    <Card size="sm" className="min-w-0 bg-card">
       <CardContent className="flex min-h-24 items-center gap-3 py-2">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
           <Icon className="size-4" aria-hidden="true" />
@@ -86,20 +86,27 @@ export default function EdgeOperationsPage() {
   const [rotatingKey, setRotatingKey] = useState(false);
   const [page, setPage] = useState(1);
   const mounted = useRef(true);
+  const requestRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     try {
       const [devices, collector, storage, uploader] = await Promise.all([
-        agentClient.getLocalDevices(),
-        agentClient.getLocalCollector(),
-        agentClient.getLocalStorage(),
-        agentClient.getLocalUploader(),
+        agentClient.getLocalDevices(controller.signal),
+        agentClient.getLocalCollector(controller.signal),
+        agentClient.getLocalStorage(controller.signal),
+        agentClient.getLocalUploader(controller.signal),
       ]);
-      if (!mounted.current) return;
+      if (!mounted.current || controller.signal.aborted) return;
       setSnapshot({ devices, collector, storage, uploader });
       setError(null);
     } catch {
-      if (mounted.current) setError("本机状态读取失败");
+      if (mounted.current && !controller.signal.aborted) setError("本机状态读取失败");
+    } finally {
+      controller.abort();
+      if (requestRef.current === controller) requestRef.current = null;
     }
   }, []);
 
@@ -114,6 +121,8 @@ export default function EdgeOperationsPage() {
     timer = setTimeout(poll, 2000);
     return () => {
       mounted.current = false;
+      requestRef.current?.abort();
+      requestRef.current = null;
       clearTimeout(timer);
     };
   }, [refresh]);
@@ -149,7 +158,7 @@ export default function EdgeOperationsPage() {
   }, [totalPages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden p-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden px-4 pb-4">
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -180,7 +189,7 @@ export default function EdgeOperationsPage() {
         />
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col rounded-lg">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm font-semibold">本机设备与采集状态</CardTitle>
           <div className="flex items-center gap-3">

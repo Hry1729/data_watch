@@ -194,6 +194,9 @@ export const mockAgent: AgentClient = {
     _edgeLocalSettings = { ...settings };
     return this.getLocalSettings();
   },
+  async getLocalMonitorScope() {
+    return (await mockBackend.deviceList("mock", { pageSize: 100 })).list.map(({ id, deviceCode, deviceType }) => ({ id, deviceCode, deviceType }));
+  },
   async getLocalMonitorDevices(query) {
     return { ...(await mockBackend.deviceList("mock", query)), source: "local" as const };
   },
@@ -706,8 +709,30 @@ export const mockBackend: BackendClient = {
       { id: 3, deviceType: "机器人", deviceCode: "ROBOT-07", deviceName: "七号装配机器人", driverName: "OPC UA", endpoint: "192.168.1.30:4840", endpointBackup: "", deviceStatus: "enabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-17 14:52:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-17 14:51:55", description: "装配工位" },
       { id: 4, deviceType: "PLC", deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", driverName: "Siemens S7", endpoint: "192.168.1.40:102", endpointBackup: "", deviceStatus: "disabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-16 11:10:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-16 11:10:00", description: "维护中" },
     ];
-    const list = rows.filter((item) => (!query.keyword || `${item.deviceCode} ${item.deviceName}`.toLowerCase().includes(query.keyword.toLowerCase())) && (!query.connectStatus || item.connectStatus === query.connectStatus) && (!query.deviceStatus || item.deviceStatus === query.deviceStatus));
-    return { list, total: list.length, pageNo: query.pageNo ?? 1, pageSize: query.pageSize ?? 20 };
+    const list = rows.filter((item) => (!query.keyword || `${item.deviceCode} ${item.deviceName}`.toLowerCase().includes(query.keyword.toLowerCase()))
+      && (!query.connectStatus || item.connectStatus === query.connectStatus)
+      && (!query.deviceStatus || item.deviceStatus === query.deviceStatus)
+      && (query.deviceIds === undefined || query.deviceIds.includes(item.id))
+      && (!query.deviceType || item.deviceType.includes(query.deviceType))
+      && (query.deviceTypeExact === undefined || item.deviceType === query.deviceTypeExact)
+      && (query.deviceCodeExact === undefined || item.deviceCode === query.deviceCodeExact));
+    const pageNo = query.pageNo ?? 1; const pageSize = query.pageSize ?? 20;
+    return { list: list.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: list.length, pageNo, pageSize };
+  },
+  async deviceTypes(token, query = {}) {
+    return [...new Set((await this.deviceList(token, { ...query, pageSize: 100 })).list.map((device) => device.deviceType))];
+  },
+  async deviceSummary(token, query) {
+    const { list } = await this.deviceList(token, { ...query, pageSize: 100 });
+    return {
+      total: list.length,
+      onlineCount: list.filter((device) => device.connectStatus === "online").length,
+      offlineCount: list.filter((device) => device.connectStatus === "offline").length,
+      unstableCount: list.filter((device) => device.connectStatus === "unstable").length,
+      disabledCount: list.filter((device) => device.deviceStatus === "disabled").length,
+      enabledOnlineCount: list.filter((device) => device.deviceStatus === "enabled" && device.connectStatus === "online").length,
+      enabledOfflineCount: list.filter((device) => device.deviceStatus === "enabled" && device.connectStatus === "offline").length,
+    };
   },
   async createDevice(_token, _payload) { await delay(120); return { id: Date.now() }; },
   async updateDevice(_token, _id, _payload) { await delay(120); return {}; },
@@ -724,13 +749,18 @@ export const mockBackend: BackendClient = {
       { id: 12, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", dataType: "REAL" as const, description: "rpm", isReadonly: true, driverName: "Siemens S7", pointStatus: "enabled" as const, updateTime: "2026-07-17 15:30:00" },
       { id: 21, deviceId: 2, deviceCode: "METER-02", varSeq: 1, pointName: "A相电压", ioAddress: "40001", dataType: "REAL" as const, description: "V", isReadonly: true, driverName: "Modbus TCP", pointStatus: "disabled" as const, updateTime: "2026-07-17 15:29:40" },
     ];
+    const allowedDevices = query.deviceType || query.connectStatus
+      ? (await this.deviceList(_token, { deviceTypeExact: query.deviceType, connectStatus: query.connectStatus, deviceIds: query.deviceIds, pageSize: 100 })).list.map((device) => device.id)
+      : query.deviceIds;
     const list = rows.filter((item) =>
       (!query.keyword || `${item.pointName} ${item.ioAddress}`.toLowerCase().includes(query.keyword.toLowerCase()))
       && (!query.deviceId || item.deviceId === query.deviceId)
+      && (allowedDevices === undefined || allowedDevices.includes(item.deviceId))
       && (!query.deviceCode || item.deviceCode.toLowerCase().includes(query.deviceCode.toLowerCase()))
       && (!query.dataType || item.dataType === query.dataType)
     );
-    return { list, total: list.length, pageNo: query.pageNo ?? 1, pageSize: query.pageSize ?? 20 };
+    const pageNo = query.pageNo ?? 1; const pageSize = query.pageSize ?? 20;
+    return { list: list.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: list.length, pageNo, pageSize };
   },
   async createPoint(_token, _payload) { await delay(120); return { id: Date.now() }; },
   async updatePoint(_token, _id, _payload) { await delay(120); return {}; },

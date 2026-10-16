@@ -21,6 +21,16 @@ writer 与 collector 无代码级耦合，二者只通过 Redis Stream 协作。
 
 入口：`writer/main.py:164`（`main()`）。
 
+### 1.1 运行时解释器：writer 是唯一仍带 GIL 的模块
+
+writer 跑在**普通 CPython 3.14.6（GIL 开启）**上，而不是 collector / ingest / edge / backend 所用的自由线程 3.14t。这不是遗漏，是被依赖卡住：
+
+- **依据**：`writer/.venv-pack/pyvenv.cfg` 的 `executable` 是 `python.exe`（无 `t`），采集侧 `.venv-pack` 用的是 `python3.14t.exe`。
+- **原因**：writer 的 TDengine 连接器 `taos-ws-py` 在自由线程构建上**构建不出来**（`backend/README.md` 记录了同一个包被 `Dockerfile` 剔除）。根子在 `vendor/taos-ws-py/Cargo.toml` 钉的 `pyo3 0.17.3`——PyO3 直到 0.23 才支持自由线程，该连接器因此既不能在 3.14t 上编译，发行 wheel 的标签也是 GIL 版 ABI（`cp37-abi3-win_amd64`）而非 `cp314t`。
+- **后果与现状**：连接器原来在阻塞式 WebSocket 调用期间**始终持有 GIL**，而 writer 的多个 worker 共用一个事件循环，原生调用期间整个进程都会停摆。既然"换无 GIL 解释器"这条路被依赖堵死，GIL 释放只能做进原生代码：writer 现在使用由 `vendor/taos-ws-py/` 打补丁重建的连接器（见 `vendor/taos-ws-py/PROVENANCE.md`、`installer/build-patched-taos-ws-py.ps1`），阻塞调用已改为 `Python::allow_threads`。
+- **边界**：writer 自身的 Python 代码（JSON 解析、拼 SQL、逐条入缓冲）**仍在 GIL 下**，与 collector 等模块不同。
+- **长期路线**：等上游把 `taos-ws-py` 升到 PyO3 0.23+（`&PyDict` → `Bound` API 是一大轮改造）；截至上游 v2.8.10（2026-07-28）仍钉在 0.17.3。
+
 ---
 
 ## 2. 设计目标与范围

@@ -28,6 +28,7 @@ import time
 from typing import Any
 from urllib.parse import quote_plus
 
+from performance import run_instrumented
 from quality_schema import (
     QUALITY_NARROW_MIGRATION_HINT,
     QualitySchemaError,
@@ -162,6 +163,8 @@ def _merge_part_status(parts: list[tuple[str, float]]) -> str:
 class TDengineWriter:
     def __init__(self, syslog=None) -> None:
         self._conn: Any = None
+        # 由 main 绑定；未绑定时只执行不观测，便于单测与临时脚本直接构造。
+        self._metrics: Any = None
         self._database: str = "device_data"
         self._lock = asyncio.Lock()
         self._col_cache: dict[str, set[str]] = {}
@@ -190,6 +193,21 @@ class TDengineWriter:
     # 生命周期
     # ------------------------------------------------------------------
 
+    def bind_metrics(self, metrics) -> None:
+        """绑定观测指标（可选）。绑定前所有计时点只执行不记录。"""
+        self._metrics = metrics
+
+    async def _run_in_executor(self, name: str, call, executor=None):
+        """执行一次阻塞调用，并把三段等待记进指标。
+
+        `name` 相同的调用共用一条汇总；三段只在 run_instrumented 里累加一次，
+        调用方不得再记一遍。
+        """
+        loop = asyncio.get_running_loop()
+        if self._metrics is None:
+            return await loop.run_in_executor(executor, call)
+        return await run_instrumented(loop, executor, self._metrics, name, call)
+
     async def connect(self, config: dict) -> None:
         """打开到 TDengine 的 WebSocket 连接（在执行器中运行 taosws.connect）。"""
         from taosws import connect  # type: ignore[import]
@@ -204,10 +222,9 @@ class TDengineWriter:
         port = td["port"]
         dsn = f"ws://{user}:{password}@{host}:{port}?read_timeout=10&conn_timeout=5"
 
-        loop = asyncio.get_running_loop()
         try:
             self._conn = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: connect(dsn)),
+                self._run_in_executor("td_connect", lambda: connect(dsn)),
                 timeout=10,
             )
             logger.info("[tdengine] connected to %s:%s db=%s", host, port, self._database)
@@ -221,8 +238,10 @@ class TDengineWriter:
     async def close(self) -> None:
         if self._conn is not None:
             try:
-                loop = asyncio.get_running_loop()
-                await asyncio.wait_for(loop.run_in_executor(None, self._conn.close), timeout=IO_TIMEOUT_SECONDS)
+                await asyncio.wait_for(
+                    self._run_in_executor("td_close", self._conn.close),
+                    timeout=IO_TIMEOUT_SECONDS,
+                )
             except Exception as exc:
                 logger.warning("[tdengine] close error: %s", exc)
             finally:
@@ -246,10 +265,12 @@ class TDengineWriter:
             if self._config is not None and not self._reconnecting:
                 await self._try_reconnect()
             return False, None
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                self._run_in_executor("td_execute", lambda: connection.execute(sql)),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
             return True, None
         except Exception as exc:
             if isinstance(exc, asyncio.TimeoutError):
@@ -272,10 +293,12 @@ class TDengineWriter:
         if self._conn is None:
             logger.error("[tdengine] not connected, cannot query SQL")
             return []
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            return await asyncio.wait_for(loop.run_in_executor(None, lambda: list(connection.query(sql))), timeout=IO_TIMEOUT_SECONDS)
+            return await asyncio.wait_for(
+                self._run_in_executor("td_query", lambda: list(connection.query(sql))),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.error("[tdengine] query failed: %s | SQL: %.200s", exc, sql)
             return []
@@ -445,10 +468,12 @@ class TDengineWriter:
             logger.error("[tdengine] not connected, cannot alter stable")
             return False
 
-        loop = asyncio.get_running_loop()
         try:
             connection = self._conn
-            await asyncio.wait_for(loop.run_in_executor(None, lambda: connection.execute(sql)), timeout=IO_TIMEOUT_SECONDS)
+            await asyncio.wait_for(
+                self._run_in_executor("td_add_column", lambda: connection.execute(sql)),
+                timeout=IO_TIMEOUT_SECONDS,
+            )
             logger.info("[tdengine] added column: %s.%s DOUBLE", stable, col)
             return True
         except Exception as exc:
@@ -508,6 +533,11 @@ class TDengineWriter:
 
     def _quality_fragment_for_rows(self, rows: list[dict], idxs: list[int]) -> str | None:
         """为指定行构建质量窄表 INSERT 片段；无质量则返回 None。"""
+        parts = self._quality_parts_for_rows(rows, idxs)
+        return "".join(parts) if parts is not None else None
+
+    def _quality_parts_for_rows(self, rows: list[dict], idxs: list[int]) -> tuple[str, str] | None:
+        """分块器直接使用表头和值，避免先拼完整片段再拆开。"""
         value_clauses: list[str] = []
         q_stable: str | None = None
         q_child: str | None = None
@@ -539,7 +569,7 @@ class TDengineWriter:
             f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') "
             f"(`ts`, `var_id`, `quality`) VALUES "
         )
-        return header + " ".join(value_clauses)
+        return header, " ".join(value_clauses)
 
     # ------------------------------------------------------------------
     # 写入
@@ -639,7 +669,6 @@ class TDengineWriter:
             ]
             chunks = self._iter_chunks(rows, self._last_local_retry_indices)
             exhausted = object()
-            loop = asyncio.get_running_loop()
             while True:
                 waiting = time.perf_counter()
 
@@ -648,7 +677,9 @@ class TDengineWriter:
                     chunk = next(chunks, exhausted)
                     return chunk, (time.perf_counter() - started) * 1000
 
-                chunk, build_ms = await loop.run_in_executor(_BUILD_EXECUTOR, next_chunk)
+                chunk, build_ms = await self._run_in_executor(
+                    "sql_build", next_chunk, _BUILD_EXECUTOR
+                )
                 self._last_build_ms += build_ms
                 self._last_build_wait_ms += max(
                     0.0, (time.perf_counter() - waiting) * 1000 - build_ms
@@ -693,9 +724,10 @@ class TDengineWriter:
         if not indices:
             return []
         if sql is None:
-            loop = asyncio.get_running_loop()
-            sql = await loop.run_in_executor(
-                _BUILD_EXECUTOR, self._build_chunk_sql, rows, indices
+            sql = await self._run_in_executor(
+                "sql_build_bisect",
+                lambda: self._build_chunk_sql(rows, indices),
+                _BUILD_EXECUTOR,
             )
 
         value_rows = (
@@ -789,7 +821,8 @@ class TDengineWriter:
             run: list[int] = []
             columns = None
             for index in indices:
-                current = frozenset(rows[index]["columns"])
+                # flush 中的列字典只读；视图比较保留集合语义，省去每行的集合副本。
+                current = rows[index]["columns"].keys()
                 if run and current != columns:
                     yield run
                     run = []
@@ -800,6 +833,11 @@ class TDengineWriter:
 
     @staticmethod
     def _format_value(raw: object) -> str:
+        # 正常消费路径已在 _convert_values 里把点转成有限 float，这里仍是唯一的
+        # 出口，所以**保留有限值检查**（不能写假值），但跳过 float()/try 的重复转换。
+        # 其它调用入口传字符串/None 时走下面的完整校验路径。
+        if type(raw) is float:
+            return repr(raw) if math.isfinite(raw) else "NULL"
         if raw is None:
             return "NULL"
         try:
@@ -812,21 +850,33 @@ class TDengineWriter:
 
     @staticmethod
     def _union_cols(rows: list[dict], idxs: list[int]) -> list[str]:
-        all_cols: list[str] = []
-        seen: set[str] = set()
+        # 单行的并集就是该行本身，跳过逐列去重的簿记。生产的每个子表各自成段
+        # （按 child_table 分组），所以这里是最常见的那条路径。
+        if len(idxs) == 1:
+            return list(rows[idxs[0]]["columns"])
+        # dict.update 在内部合并列，保留首次出现顺序，不再逐点执行 Python 去重循环。
+        all_cols: dict = {}
         for i in idxs:
-            for col in rows[i]["columns"]:
-                if col not in seen:
-                    seen.add(col)
-                    all_cols.append(col)
-        return all_cols
+            all_cols.update(rows[i]["columns"])
+        return list(all_cols)
 
-    def _subtable_header(self, row: dict, all_cols: list[str]) -> str:
+    def _subtable_header(self, row: dict, all_cols: list[str], col_cache: dict | None = None) -> str:
+        """一句话的子表头。Sentence header for one subtable.
+
+        ``col_cache`` 在一次 _iter_chunks 的生成器生命周期内存活，键是列名与顺序：
+        同型号设备的列清单完全相同，逐行重拼纯属浪费。只复用列名这一段，
+        设备名与标签仍逐行生成，批次结束即随生成器一起释放。
+        """
         db = _quote(self._database)
         tbl = _quote(row["child_table"])
         stbl = _quote(row["stable"])
         tag_val = _tag_literal(row["device_code"])
-        col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
+        key = tuple(all_cols)
+        col_list = None if col_cache is None else col_cache.get(key)
+        if col_list is None:
+            col_list = ", ".join([_quote("ts")] + [_quote(c) for c in all_cols])
+            if col_cache is not None:
+                col_cache[key] = col_list
         return f"{db}.{tbl} USING {db}.{stbl} TAGS ('{tag_val}') ({col_list}) VALUES "
 
     def _value_clause(self, row: dict, all_cols: list[str]) -> str:
@@ -840,9 +890,12 @@ class TDengineWriter:
         header = self._subtable_header(rows[idxs[0]], all_cols)
         return header + " ".join(self._value_clause(rows[i], all_cols) for i in idxs)
 
-    def _iter_table_fragments(self, rows: list[dict], indices: list[int], budget: int):
+    def _iter_table_fragments(
+        self, rows: list[dict], indices: list[int], budget: int,
+        col_cache: dict | None = None,
+    ):
         all_cols = self._union_cols(rows, indices)
-        value_header = self._subtable_header(rows[indices[0]], all_cols)
+        value_header = self._subtable_header(rows[indices[0]], all_cols, col_cache)
         value_header_bytes = len(value_header.encode("utf-8"))
         group_indices: list[int] = []
         values: list[str] = []
@@ -854,11 +907,8 @@ class TDengineWriter:
         for index in indices:
             row = rows[index]
             value = self._value_clause(row, all_cols)
-            q_fragment = self._quality_fragment_for_rows(rows, [index])
-            q_header, q_values = "", ""
-            if q_fragment:
-                q_head, q_values = q_fragment.split(" VALUES ", 1)
-                q_header = q_head + " VALUES "
+            q_parts = self._quality_parts_for_rows(rows, [index])
+            q_header, q_values = q_parts if q_parts is not None else ("", "")
             while True:
                 new_value_bytes = value_bytes + len(value.encode("utf-8")) + (1 if values else 0)
                 new_quality_header = quality_header or q_header
@@ -938,9 +988,12 @@ class TDengineWriter:
         current_indices: list[int] = []
         current_parts: list[tuple[list[int], str, int, int]] = []
         current_bytes = prefix_bytes
+        # 列名清单在这一次分块期间复用，生成器结束即释放：同型号设备的列完全
+        # 相同，逐行重拼没有意义。
+        col_cache: dict[tuple[str, ...], str] = {}
         for indices in self._column_runs(rows, by_table.values()):
             for part_indices, fragment, value_rows, quality_rows in self._iter_table_fragments(
-                rows, indices, budget
+                rows, indices, budget, col_cache
             ):
                 size = len(fragment.encode("utf-8")) if fragment is not None else 0
                 if current and (

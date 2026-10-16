@@ -1,22 +1,30 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isTauri } from "@tauri-apps/api/core";
 import { Copy, Minus, Square, X } from "lucide-react";
 import appIconUrl from "../../src-tauri/icons/128x128.png";
 
-const appWindow = getCurrentWindow();
+const appWindow = isTauri() ? getCurrentWindow() : null;
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    if (!appWindow) return;
+    const currentWindow = appWindow;
+    let active = true;
     let unlisten: (() => void) | undefined;
-    appWindow.isMaximized().then(setMaximized);
-    appWindow
-      .onResized(() => appWindow.isMaximized().then(setMaximized))
+    const updateMaximized = () => {
+      void currentWindow.isMaximized().then(value => { if (active) setMaximized(value); }).catch(() => undefined);
+    };
+    updateMaximized();
+    currentWindow
+      .onResized(updateMaximized)
       .then((fn) => {
-        unlisten = fn;
-      });
-    return () => unlisten?.();
+        if (active) unlisten = fn;
+        else fn();
+      }).catch(() => undefined);
+    return () => { active = false; unlisten?.(); };
   }, []);
 
   return (
@@ -35,7 +43,8 @@ export function TitleBar() {
       <div className="flex h-full">
         <button
           type="button"
-          onClick={() => appWindow.minimize()}
+          disabled={!appWindow}
+          onClick={() => appWindow?.minimize()}
           aria-label="最小化"
           className="flex h-full w-11 items-center justify-center transition-colors hover:bg-accent"
         >
@@ -43,7 +52,8 @@ export function TitleBar() {
         </button>
         <button
           type="button"
-          onClick={() => appWindow.toggleMaximize()}
+          disabled={!appWindow}
+          onClick={() => appWindow?.toggleMaximize()}
           aria-label="最大化"
           className="flex h-full w-11 items-center justify-center transition-colors hover:bg-accent"
         >
@@ -55,7 +65,8 @@ export function TitleBar() {
         </button>
         <button
           type="button"
-          onClick={() => appWindow.close()}
+          disabled={!appWindow}
+          onClick={() => appWindow?.close()}
           aria-label="关闭"
           className="flex h-full w-11 items-center justify-center transition-colors hover:bg-destructive hover:text-white"
         >

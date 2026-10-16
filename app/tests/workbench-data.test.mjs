@@ -10,16 +10,14 @@ test("Workbench data hook loads every dashboard panel and refreshes every 30 sec
     "dashboardTrend",
     "dashboardDeviceTypeDistribution",
     "dashboardConnectionHealth",
-    "dashboardRecentEvents",
   ]) {
     assert.match(source, new RegExp(`backendClient\\.${method}`));
   }
   assert.match(source, /30_000/);
-  assert.match(source, /clearInterval/);
+  assert.match(source, /useBackendQuery/);
 });
 
-test("Workbench data hook logs out on unauthorized dashboard responses", () => {
-  assert.match(source, /type === "unauthorized"/);
-  assert.match(source, /logoutRef\.current\(\)/);
+test("Workbench panels share the authenticated query hook", () => {
+  assert.match(source, /import \{ useBackendQuery \}/);
 });
 

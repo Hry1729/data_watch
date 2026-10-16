@@ -65,8 +65,20 @@ export interface DeviceListQuery {
   keyword?: string;
   deviceIds?: number[];
   deviceType?: string;
+  deviceTypeExact?: string;
+  deviceCodeExact?: string;
   deviceStatus?: string;
   connectStatus?: string;
+}
+
+export interface DeviceSummary {
+  total: number;
+  onlineCount: number;
+  offlineCount: number;
+  unstableCount: number;
+  disabledCount: number;
+  enabledOnlineCount: number;
+  enabledOfflineCount: number;
 }
 
 export interface DeviceForm {
@@ -114,6 +126,8 @@ export interface PointListQuery {
   deviceId?: number;
   deviceIds?: number[];
   deviceCode?: string;
+  deviceType?: string;
+  connectStatus?: string;
   dataType?: string;
   groupId?: number;
 }

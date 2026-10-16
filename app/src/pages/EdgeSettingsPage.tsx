@@ -123,7 +123,7 @@ function DatabaseCard({
 }) {
   const meta = DB_META[target];
   return (
-    <Card className="border border-border">
+    <Card>
       <CardHeader>
         <div className="min-w-0">
           <CardTitle className="flex items-center gap-2">{meta.title}{testBadge(test.status)}</CardTitle>
@@ -344,10 +344,10 @@ export default function EdgeSettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 md:p-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
       {localError && <p className="text-sm text-destructive" role="alert">{localError}</p>}
 
-      <Card className="border border-border">
+      <Card>
         <CardHeader>
           <div className="min-w-0">
             <CardTitle>节点与中心</CardTitle>
@@ -403,7 +403,7 @@ export default function EdgeSettingsPage() {
         />
       ))}
 
-      <Card className="border border-border">
+      <Card>
         <CardHeader>
           <CardTitle>本地离线队列</CardTitle>
           <CardDescription>Outbox 数据保留和维护节拍</CardDescription>

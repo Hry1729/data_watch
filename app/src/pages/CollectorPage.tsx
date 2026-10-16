@@ -23,7 +23,7 @@ import type { CollectorTaskRow } from "@/types";
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <Card className="bg-card border border-border" style={{ borderRadius: 12 }}>
+    <Card className="bg-card">
       <CardContent className="px-4 py-3">
         <p className="text-xs text-muted-foreground mb-1">{label}</p>
         <p className="text-xl font-bold text-foreground">{value}</p>
@@ -75,7 +75,7 @@ export function CollectorPage() {
   } = useModuleDbLogs("collector");
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 py-4">
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 pb-4">
       {showError && (
         <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}

@@ -10,6 +10,32 @@
 
 ## 1. 部署形态总览
 
+### 2026-10-15 配套升级说明
+
+本批包含桌面数据加载优化、请求取消、会话续期、设备目录分页，以及 Backend/Agent 的配套查询接口。升级时必须使用同批次的 Windows 角色安装包与 Backend 镜像；仅替换 App 会使新增目录查询接口返回 404。Frontend Web 镜像独立构建，也随本批更新。
+
+- 三个 Windows 包位于 `installer/Output/`，以同目录 `release-manifest.json` 和 `SHA256SUMS.txt` 校验；文件名仍为 `0.1.0`，不能单凭文件名判断是否为新版。
+- 默认离线应用镜像包为 `deploy/data-watch-images.zip`。旧包保留带日期归档；ZIP 内的清单记录镜像 ID、来源和 tar 哈希，不包含业务数据库或真实 `backend.env`。
+- 本次允许基于包含未提交修复的工作区构建。此类产物必须明确标注 `working-tree` 并记录构建输入内容哈希；基础提交号不能替代工作区来源校验。
+- 先更新中心 Backend/Frontend，再用对应角色安装包更新 Windows App/Agent；保留 ProgramData 配置、身份密钥和边缘 SQLite 数据。安装包生成不等于已经在本机或目标机安装。
+
+已有数据库的中心仅更新应用容器，在仓库根目录执行：
+
+```powershell
+$ImageDir = Join-Path $env:TEMP ("datawatch-images-" + [guid]::NewGuid().ToString('N'))
+Expand-Archive -LiteralPath .\deploy\data-watch-images.zip -DestinationPath $ImageDir
+# 先检查归档内 release-manifest.json / SHA256SUMS.txt，与实际 tar 文件哈希比对。
+Get-ChildItem -LiteralPath $ImageDir -Recurse -Filter *.tar | ForEach-Object {
+    docker load -i $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "镜像加载失败：$($_.Name)" }
+}
+docker compose --env-file .\deploy\backend.env -f .\deploy\docker-compose.yml up -d --no-deps --no-build --force-recreate backend frontend
+Invoke-RestMethod http://127.0.0.1:8000/healthz
+Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing | Select-Object StatusCode
+```
+
+`/healthz` 和首页成功仅证明服务可达，还需验证登录、设备分页、实时订阅和历史查询。应用升级不需要删除或重建数据库卷，禁止使用 `docker compose down -v`。回滚时载入上批应用镜像归档并重复上述应用容器重建命令；本批新 App 依赖新增接口，Backend 回滚时应同时回滚对应 Windows 包。
+
 ```text
 中心侧（Docker / 现场已有服务）：
   MySQL        业务配置库 device_watch（可外置，不一定由 compose 托管）
@@ -183,7 +209,7 @@ docker save redis:7.4                   -o "$ReleaseRoot\docker-images\redis.tar
 docker save tdengine/tsdb-amd64:3.4.0.9  -o "$ReleaseRoot\docker-images\tdengine.tar"
 ```
 
-> 仓库内旧的 `deploy\data-watch-images.zip` 实际只含旧版 `data-watch-backend.tar` 和 `data-watch-frontend.tar`，不含 MySQL/Redis/TDengine，也不能代替本次发布的应用镜像。目标机使用按发布指定提交重新导出的 tar。
+> `deploy\data-watch-images.zip` 是前后端应用镜像归档，不含 MySQL/Redis/TDengine。归档内的 `release-manifest.json` 必须记录本次源码提交、镜像 ID 与 tar 哈希；文件名和 `latest` 不能证明版本。旧归档不得代替按本次提交重新导出的镜像。
 
 ### 4.5 复制部署配置到发布目录
 
@@ -206,13 +232,16 @@ Copy-Item ".\deploy\stack-up.ps1"           "$ReleaseRoot\deploy\" -Force
 
 ```text
 D:\data_watch_release\
-├─ DataWatch-Setup-<版本>.exe
+├─ DataWatch-<Role>-Setup-<版本>.exe
+├─ SHA256SUMS.txt
+├─ release-manifest.json
 ├─ docker-images\
 │  ├─ data-watch-backend.tar
 │  ├─ data-watch-frontend.tar
 │  ├─ mysql.tar
 │  ├─ redis.tar
 │  └─ tdengine.tar
+│  # 此目录另含 release-manifest.json 和 SHA256SUMS.txt，记录镜像版本与 tar 哈希
 └─ deploy\
    ├─ docker-compose.yml
    ├─ taos.cfg
@@ -488,7 +517,7 @@ docker exec -it data-watch-tdengine taos -u root -p -f /tmp/tdengine-schema-repl
 ### 7.2 双根目录（中心式示例）
 
 ```text
-C:\Program Files\DataWatch\          # DATAWATCH_INSTALL_ROOT，只读安装根
+C:\Program Files\DataWatch Centralized\ # DATAWATCH_INSTALL_ROOT，只读安装根
   app\
   agent\
   collector\
@@ -556,11 +585,15 @@ agent 启动子进程时：
 - 解密 DB 密码；
 - 注入 `DATAWATCH_<DB>_<FIELD>`；
 - 设置工作目录；
-- 仅对 collector 拼接 `--config`、`--runtime-dir`、`--port-mapping` 运行参数；writer 不附加动态参数，只读 `config.toml [writer].args` 静态项；
+- 对 collector 拼接 `--config`、`--runtime-dir`、`--port-mapping`；writer 同样显式收到 `--runtime-dir`，确保停止标志目录与 Agent 一致；各模块仍保留 `config.toml` 的静态 `args`；
 - stdout/stderr 写入 runtime logs；
 - PID 文件包含 pid + create_time。
 
 停止时先写 `runtime/<name>.shutdown_flag`，超时后才强杀。
+
+Agent 在 `runtime/state/process_state.json` 原子保存用户希望运行的模块。完成引导后，Agent 重启或模块崩溃会按原意恢复运行；人工停止会清除对应意图，停止 Storage 同时清除 Collector/Uploader 的意图。恢复复用手动启动的凭据、驱动事务、proxy 和 Storage 就绪检查，失败重试间隔逐步增加至 60 秒；稳定运行 60 秒后恢复初始间隔。Agent 自身关停和驱动临时停机保留意图，恢复前清理遗留停止标志。状态文件不可作为跨机器迁移凭据，密码迁移仍遵循 DPAPI 限制。
+
+App 经 Agent 的普通请求体上限为 4 MiB；驱动安装/预览兼容最大 50 MiB ZIP 的 base64 JSON（另留 4 KiB 元数据余量），响应上限为 50 MiB，并对无长度标头的分块响应计数。超限明确提示缩小数据范围或驱动包。
 
 ### 7.5 Collector 角色的 OPC DA proxy 验收
 
@@ -634,21 +667,23 @@ pwsh -File installer\build.ps1 -Role distributed-center -Iscc "D:\path\to\ISCC.e
 
 ```powershell
 cd D:\data_watch_release\deploy
-docker compose -f .\docker-compose.yml up -d --build backend frontend
+docker load -i ..\docker-images\data-watch-backend.tar
+docker load -i ..\docker-images\data-watch-frontend.tar
+docker compose --env-file .\backend.env -f .\docker-compose.yml up -d --pull never --no-build backend frontend
 ```
 
-离线目标机：开发机重新 `docker save` → 拷贝 tar → 目标机 `docker load` → `up -d`。
+开发机按第 4 节从同一提交构建、记录镜像 ID 并导出；目标机按上述步骤加载交付镜像。发布目录不含源码，目标机不执行 `--build`。更新前保留上一批 tar 与发布记录，保留全部数据库卷。
 
 修改 `backend.env` 后无需 rebuild，但要重建容器使环境变量生效：
 
 ```powershell
-docker compose -f .\docker-compose.yml up -d --force-recreate backend
+docker compose --env-file .\backend.env -f .\docker-compose.yml up -d --pull never --no-build --force-recreate backend
 ```
 
 ### 9.2 更新 Windows 一体包
 
 1. 开发机重新打包 `installer\build.ps1`；
-2. 拷贝新的 `DataWatch-Setup-<版本>.exe` 到目标机；
+2. 拷贝对应角色的 `DataWatch-<Role>-Setup-<版本>.exe`、`SHA256SUMS.txt` 和 `release-manifest.json` 到目标机，核对文件哈希及记录的源码提交；文件名里的 `0.1.0` 不能单独证明发布批次；
 3. 管理员运行安装器覆盖安装；
 4. ProgramData 现场配置保留；
 5. 按角色检查 `DataWatchCentralizedAgent`、`DataWatchEdgeAgent` 或 `DataWatchDistributedCenterAgent`，并访问对应端口的 `/bootstrap/status`。

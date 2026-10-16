@@ -191,10 +191,7 @@ export function ModuleHeaderCard({
 }: ModuleHeaderCardProps) {
   return (
     <Card
-      className="w-full bg-card border border-border"
-      style={{
-        borderRadius: 12,
-      }}
+      className="w-full bg-card"
     >
       <CardContent className="px-6 py-5">
         <ModuleHeader name={name} status={status} loading={loading} showPid />
@@ -259,10 +256,7 @@ export function ModuleSummaryCard({
 
   return (
     <Card
-      className={cn("w-full border border-border bg-card", compact && "h-full")}
-      style={{
-        borderRadius: 12,
-      }}
+      className={cn("w-full bg-card", compact && "h-full")}
     >
       <CardHeader className={cn("pb-2", compact && "min-h-[76px] px-4 pb-1 pt-4")}>
         <ModuleHeader name={name} status={status} loading={loading} showPid={false} compact={compact} />

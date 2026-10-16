@@ -7,14 +7,17 @@ import { BUILD_ROLE } from "@/config/build-role";
 
 /** 桌面专有页：任意登录用户可见（方案 A） */
 export const DESKTOP_ALWAYS_PATHS = [
+  "/help",
   "/collection/collector",
   "/collection/writer",
 ] as const;
 export const DISTRIBUTED_CENTER_ALWAYS_PATHS = [
+  "/help",
   "/collection/ingest",
   "/collection/writer",
 ] as const;
 const EDGE_ALWAYS_PATHS = [
+  "/help",
   "/edge/operations",
   "/edge/collector",
   "/edge/storage",

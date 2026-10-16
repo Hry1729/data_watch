@@ -3,14 +3,14 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 
 from app.core.config import initialize_config_permissions, data_root, install_root, load_config, module_paths, mutate_config, resolve_runtime_dir
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
-from app.routers.admin import _collector_env, _edge_storage_url, _storage_env
+from app.routers.admin import _collector_env, _edge_storage_url, _storage_env, _require_driver_idle, start_process
 from app.services.driver_installer import DriverInstaller
 from app.services.edge_sync import EdgeSyncService
 from app.services.edge_storage_client import EdgeStorageClient
@@ -61,7 +61,7 @@ async def _stop_child_processes(pm: ProcessManager) -> None:
         ]
         for name in ordered:
             try:
-                await pm.stop(name)
+                await pm.stop(name, preserve_desired=True)
             except Exception:
                 logger.exception("Failed to stop module %s during Agent shutdown", name)
 
@@ -81,6 +81,9 @@ async def _recover_edge_storage(app: FastAPI) -> None:
         await asyncio.sleep(delay)
         try:
             async with collector_lifecycle(pm):
+                if not pm.wants_running("storage", default=True):
+                    app.state._storage_recovery_pending = False
+                    continue
                 status = pm.status("storage").status
                 if status == "crashed":
                     app.state._storage_recovery_pending = True
@@ -94,6 +97,7 @@ async def _recover_edge_storage(app: FastAPI) -> None:
                 stable_since = None
                 delay = min(60.0, delay * 2)
                 if status in {"crashed", "stopped"}:
+                    _require_driver_idle("storage", Request({"type": "http", "app": app}))
                     await pm.restart("storage", env=_storage_env())
                 await asyncio.to_thread(app.state.edge_storage.wait_ready)
                 app.state._storage_recovery_pending = False
@@ -105,8 +109,65 @@ async def _recover_edge_storage(app: FastAPI) -> None:
                 logger.warning("Edge Storage crashed and was restarted")
         except asyncio.CancelledError:
             raise
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                logger.error("Cannot recover Edge Storage: %s", exc.detail)
         except Exception:
             logger.exception("Failed to restart crashed Edge Storage")
+
+
+async def _recover_processes(app: FastAPI, interval: float = 2.0) -> None:
+    pm: ProcessManager = app.state.pm
+    request = Request({"type": "http", "app": app, "datawatch_process_recovery": True})
+    next_retry: dict[str, float] = {}
+    delays: dict[str, float] = {}
+    while True:
+        try:
+            ready = (load_config().get("agent") or {}).get("bootstrap_done", False)
+        except Exception:
+            logger.exception("Cannot read configuration for process recovery")
+            await asyncio.sleep(interval)
+            continue
+        if ready:
+            for name in pm.modules:
+                if name == "storage":
+                    continue  # Storage retains its existing readiness-aware recovery loop.
+                try:
+                    wanted = pm.wants_running(name)
+                    info = pm.status(name)
+                except Exception:
+                    logger.exception("Cannot inspect module %s for recovery", name)
+                    continue
+                if not wanted:
+                    next_retry.pop(name, None)
+                    delays.pop(name, None)
+                    continue
+                if info.status == "running":
+                    if info.uptime_seconds >= 60:
+                        delays.pop(name, None)
+                        next_retry.pop(name, None)
+                    continue
+                now = asyncio.get_running_loop().time()
+                if now < next_retry.get(name, 0):
+                    continue
+                try:
+                    # Reuse admin orchestration: fresh credentials, sidecars, driver
+                    # transaction guard, Storage ready, and log attachment.
+                    await start_process(name, request, _user="process-recovery")
+                    if pm.status(name).status == "running":
+                        pm._bump_restart_count(name)
+                        logger.warning("Automatically recovered module %s", name)
+                except asyncio.CancelledError:
+                    raise
+                except HTTPException as exc:
+                    if exc.status_code != 409:
+                        logger.error("Cannot recover module %s: %s", name, exc.detail)
+                except Exception:
+                    logger.exception("Cannot recover module %s", name)
+                delay = delays.get(name, 2.0)
+                next_retry[name] = asyncio.get_running_loop().time() + delay
+                delays[name] = min(60.0, delay * 2)
+        await asyncio.sleep(interval)
 
 
 async def _recover_drivers_sync_collector(app: FastAPI) -> None:
@@ -193,13 +254,14 @@ async def lifespan(app: FastAPI):
     if build_role() == "edge":
         app.state.edge_storage = EdgeStorageClient(_edge_storage_url(), timeout_seconds=2.0)
         try:
-            await pm.start("storage", env=_storage_env())
-            await asyncio.to_thread(app.state.edge_storage.wait_ready)
-            app.state.log_manager.attach(
-                "storage",
-                pm.log_file("storage"),
-                asyncio.get_running_loop(),
-            )
+            if pm.wants_running("storage", default=True):
+                await pm.start("storage", env=_storage_env())
+                await asyncio.to_thread(app.state.edge_storage.wait_ready)
+                app.state.log_manager.attach(
+                    "storage",
+                    pm.log_file("storage"),
+                    asyncio.get_running_loop(),
+                )
         except Exception:
             logger.exception("Edge Storage failed to start during Agent startup")
     # 崩溃补偿只属于包含 Collector 的角色。
@@ -207,6 +269,7 @@ async def lifespan(app: FastAPI):
         await _recover_drivers_sync_collector(app)
 
     health_task = asyncio.create_task(pm.health_check_loop())
+    process_recovery_task = asyncio.create_task(_recover_processes(app))
     edge_sync = None
     edge_sync_task = None
     storage_recovery_task = None
@@ -233,6 +296,11 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Agent shutting down...")
+        process_recovery_task.cancel()
+        try:
+            await process_recovery_task
+        except asyncio.CancelledError:
+            pass
         if edge_sync is not None and edge_sync_task is not None:
             edge_sync.stop()
             await edge_sync_task

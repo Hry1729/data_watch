@@ -179,6 +179,29 @@ async def test_connect_writers_closes_existing_connections_on_failure(monkeypatc
     assert created[1].closed is True
 
 
+@pytest.mark.asyncio
+async def test_connect_writers_binds_each_workers_metrics_before_connect(monkeypatch):
+    metrics = [object(), object()]
+    connected = []
+
+    class FakeWriter:
+        def __init__(self, syslog=None):
+            self.metrics = None
+
+        def bind_metrics(self, value):
+            self.metrics = value
+
+        async def connect(self, config):
+            connected.append(self.metrics)
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(main, "TDengineWriter", FakeWriter)
+    await _connect_writers({}, 2, None, metrics)
+    assert connected == metrics
+
+
 
 @pytest.mark.asyncio
 async def test_failed_consumer_shutdown_cancels_other_running_workers():

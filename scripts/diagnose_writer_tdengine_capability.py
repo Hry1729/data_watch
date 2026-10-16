@@ -30,6 +30,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import statistics
 import subprocess
@@ -47,6 +48,27 @@ MAX_FULL_FIELD_CELLS = 2_000_000
 # scripts/diagnose-test-config.example.json（仓库内只放占位值，真口令不入 Git）。
 DEFAULT_TEST_CONFIG = Path(os.environ.get("DW_DIAG_TEST_CONFIG")
                            or r"D:\python\device_alarm\dw-test-env\diagnose-test-config.json")
+
+
+def read_writer_timings(log_path: Path) -> dict:
+    """取 writer 日志里**最后一份**性能快照，供报告做阶段分解。
+
+    只匹配 `[performance]` / `[performance-aggregate]` 两种行；`main.py` 关停时会打
+    一份 `[performance]`，其中的 `workers[].timings` 含 stages_ms / executor_ms。
+    """
+    if not log_path.exists():
+        return {}
+    pattern = re.compile(r"\[performance(?:-aggregate)?\] (\{.*\})\s*$")
+    latest: dict = {}
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = pattern.search(line)
+        if not match:
+            continue
+        try:
+            latest = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+    return latest
 
 
 def exit_code_for(overall: str) -> int:
@@ -335,7 +357,8 @@ def prepare_mysql(mysql: dict, database: str, *, devices, device_type, group, po
 
 
 def write_runtime(runtime: Path, cfg: dict, *, database: str, stable: str, device_type: str,
-                  shard_count: int, group: str, consumer_workers: int) -> Path:
+                  shard_count: int, group: str, consumer_workers: int,
+                  batch_count: int) -> Path:
     runtime.mkdir(parents=True, exist_ok=True)
     (runtime / "config").mkdir(exist_ok=True)
     # 与 prepare_mysql / 采集 / 查询共用同一份配置（此前这里硬编码 perf-*，与命令行主机不一致）
@@ -382,7 +405,7 @@ database = {string(database)}
 
 [writer]
 flush_interval_ms = 100
-batch_count = 200
+batch_count = {batch_count}
 max_buffer_rows = 1000
 max_buffer_bytes = 33554432
 pending_min_idle_ms = 1000
@@ -597,6 +620,8 @@ def main() -> int:
     parser.add_argument("--period-ms", type=int, default=100)
     parser.add_argument("--shard-count", type=int, default=4)
     parser.add_argument("--consumer-workers", type=int, default=1)
+    # 每流领取条数（写进 writer 配置）。改动它只应变这一个条件，其余保持不变。
+    parser.add_argument("--batch-count", type=int, default=200)
     parser.add_argument("--timeout-seconds", type=float, default=300)
     parser.add_argument("--duration-seconds", type=float, default=0,
                         help=">0 时改为持续速率喂入（XADD-only）并测 Writer 是否能跟上")
@@ -687,7 +712,8 @@ def main() -> int:
         runtime = output.parent / f"runtime-{token}"
         settings = write_runtime(runtime, cfg, database=database, stable=stable,
                                  device_type=device_type, shard_count=args.shard_count,
-                                 group=group, consumer_workers=args.consumer_workers)
+                                 group=group, consumer_workers=args.consumer_workers,
+                                 batch_count=args.batch_count)
         report["runtime_settings"] = str(settings)
         log_path = output.parent / f"writer-{token}.log"
         # 剥离继承的 DATAWATCH_*，再显式注入本次配置（防止外部环境把测试目标改到别处）
@@ -745,6 +771,8 @@ def main() -> int:
                            "graceful_shutdown": graceful,
                            "writer_exit_code": process.returncode,
                            "writer_log": str(log_path)}
+        # writer 关停后日志已关闭，再取它的阶段分解
+        report["writer_performance"] = read_writer_timings(log_path)
         if monitored["drained_at_s"]:
             frames = report["tier"]["frames"]
             points = report["tier"]["points_total"]

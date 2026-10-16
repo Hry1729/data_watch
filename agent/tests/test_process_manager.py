@@ -14,6 +14,7 @@ import pytest
 import app.services.process_manager as process_manager_module
 
 from app.services.process_manager import ProcessInfo, ProcessManagerError
+from app.services.process_manager import ProcessManager
 
 
 async def _wait(cond, timeout=6.0, interval=0.05):
@@ -57,6 +58,67 @@ async def test_stop_graceful_removes_pid_file(make_pm):
     assert info.status == "stopped"
     assert not pm._pid_file(name).exists()
     assert pm.status(name).status == "stopped"
+
+
+async def test_agent_shutdown_preserves_intent_and_new_manager_restores(make_pm):
+    pm, name = make_pm()
+    await pm.start(name)
+    await pm.stop(name, preserve_desired=True)
+    restarted = ProcessManager(pm.runtime_dir, pm.modules)
+    assert restarted.wants_running(name)
+    # A terminated Agent may leave its shutdown marker behind.
+    restarted._flag_file(name).touch()
+    info = await restarted.start(name, recovering=True)
+    try:
+        assert info.status == "running"
+        assert not restarted._flag_file(name).exists()
+        await asyncio.sleep(0.2)
+        assert restarted.status(name).status == "running"
+    finally:
+        await restarted.stop(name)
+    assert not ProcessManager(pm.runtime_dir, pm.modules).wants_running(name)
+
+
+async def test_recovery_queued_before_manual_stop_cannot_restart_it(make_pm):
+    pm, name = make_pm()
+    await pm.start(name)
+    await pm._locks[name].acquire()
+    stop = asyncio.create_task(pm.stop(name))
+    await asyncio.sleep(0)
+    recover = asyncio.create_task(pm.start(name, recovering=True))
+    await asyncio.sleep(0)
+    pm._locks[name].release()
+    await stop
+    await recover
+    assert pm.status(name).status == "stopped"
+    assert not pm.wants_running(name)
+
+
+async def test_legacy_pid_intent_survives_shutdown_and_preserves_restart_count(make_pm):
+    pm, name = make_pm()
+    await pm.start(name)
+    pm._save_state({name: {"restart_count": 7}})
+    assert pm.wants_running(name)
+    await pm.stop(name, preserve_desired=True)
+    assert pm.wants_running(name)
+    assert pm._restart_count(name) == 7
+
+
+async def test_failed_recovery_keeps_legacy_intent_after_removing_stale_pid(make_pm, monkeypatch):
+    from app.services.managed_process_runner import ManagedProcessError
+    pm, name = make_pm(child_args=["--exit-after", "0.1"])
+    await pm.start(name)
+    assert await _wait(lambda: pm.status(name).status == "crashed")
+    pm._save_state({name: {"restart_count": 3}})
+    def fail(*args, **kwargs):
+        raise ManagedProcessError("temporarily unavailable")
+    monkeypatch.setattr(pm._runner, "launch", fail)
+    with pytest.raises(ProcessManagerError):
+        await pm.start(name, recovering=True)
+    assert not pm._pid_file(name).exists()
+    assert pm.wants_running(name)
+    assert pm._restart_count(name) == 3
+    pm._close_log_file(name)
 
 
 async def test_stop_force_kills_stubborn_child(make_pm):

@@ -360,7 +360,7 @@ export default function EdgeBootstrapPage() {
           </div>
 
           <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-            <Card className="h-fit border-border shadow-xs">
+            <Card className="h-fit">
               <CardHeader>
                 <CardTitle>配置步骤</CardTitle>
                 <CardDescription>选择步骤后在右侧完成设置</CardDescription>
@@ -392,7 +392,7 @@ export default function EdgeBootstrapPage() {
               </CardContent>
             </Card>
 
-            <Card className="min-h-[430px] border-border shadow-xs">
+            <Card className="min-h-[430px]">
               <CardHeader className="border-b">
                 <div className="flex items-start justify-between gap-4">
                   <div>

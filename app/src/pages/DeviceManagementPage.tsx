@@ -18,7 +18,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
-import { loadAllDevicePages } from "@/lib/device-catalog";
 import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { parseImportWorkbook } from "@/lib/import-workbook";
 import { saveDownload } from "@/lib/save-download";
@@ -48,23 +47,23 @@ export default function DeviceManagementPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDevices = useCallback(
-    (token: string) => backendClient.deviceList(token, {
+    (token: string, signal: AbortSignal) => backendClient.deviceList(token, {
       pageNo: page,
       pageSize,
       keyword: keyword.trim() || undefined,
       deviceType: activeType === "all" ? undefined : activeType,
       connectStatus: connectStatus === "all" ? undefined : connectStatus,
-    }),
+    }, signal),
     [activeType, connectStatus, keyword, page, pageSize],
   );
   const loadDeviceCatalog = useCallback(
-    (token: string) => loadAllDevicePages((pageNo, pageSize) => backendClient.deviceList(token, { pageNo, pageSize })),
+    (token: string, signal: AbortSignal) => backendClient.deviceTypes(token, {}, signal),
     [],
   );
-  const loadDrivers = useCallback((token: string) => backendClient.driverOptions(token), []);
+  const loadDrivers = useCallback((token: string, signal: AbortSignal) => backendClient.driverOptions(token, signal), []);
   const devices = useBackendQuery(loadDevices);
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
-  const typeTabs = useMemo(() => Array.from(new Map((deviceCatalog.data?.list ?? []).map((device) => [device.deviceType, device.deviceType])).entries()).map(([value, label]) => ({ value, label })), [deviceCatalog.data?.list]);
+  const typeTabs = useMemo(() => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })), [deviceCatalog.data]);
   const drivers = useBackendQuery(loadDrivers);
   const rows = devices.data?.list ?? [];
   const totalPages = Math.max(1, Math.ceil((devices.data?.total ?? 0) / pageSize));
@@ -147,12 +146,12 @@ export default function DeviceManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4 md:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setPage(1); }}><div className="max-w-full overflow-x-auto"><TabsList className="w-max"><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
         <div className="flex items-center gap-2"><div className="relative w-48"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="设备名称 / 编号" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div><Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select></div>
       </div>
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader><CardTitle>设备管理</CardTitle><CardAction><div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增设备</Button><Button variant="outline" size="sm" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload data-icon="inline-start" />导入</Button><Button variant="outline" size="sm" onClick={() => exportWorkbook(false)} disabled={transferring}><Download data-icon="inline-start" />导出</Button><Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}><Trash2 data-icon="inline-start" />删除</Button></div></CardAction></CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">

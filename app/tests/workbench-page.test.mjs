@@ -95,13 +95,13 @@ test("Workbench uses the blue preset chart palette instead of neutral grays", ()
 
 test("Workbench stat cards use a solid background and larger icons without changing the right inset", () => {
   assert.doesNotMatch(source, /bg-gradient-to-t|from-primary\/5/);
-  assert.match(source, /className="border border-border bg-card shadow-xs"/);
+  assert.match(source, /className="bg-card"/);
   assert.match(source, /className="flex size-10 shrink-0 items-center justify-center/);
   assert.match(source, /<Icon className="size-6" \/>/);
 });
 
-test("Workbench cards use the same explicit border as the console", () => {
-  assert.equal(source.match(/border border-border/g)?.length, 6);
+test("Workbench cards leave the surface to the shared Card component", () => {
+  assert.doesNotMatch(source, /border border-border/);
 });
 
 test("Workbench cards and controls follow the compact dashboard layout", () => {
@@ -129,12 +129,12 @@ test("Workbench renders six live pipeline stages with aggregated health colors",
   assert.match(source, /dot: "bg-red-500"/);
   assert.match(source, /<PipelineStageNode stage=\{stage\}/);
   assert.doesNotMatch(source, /data-dashboard-section="risk"|<CardTitle>风险设备<\/CardTitle>/);
-  assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth/);
-  assert.match(pipelineSource, /agentClient\.getConnectionHealth/);
+  assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth\(token,\s*signal\)/);
+  assert.match(pipelineSource, /agentClient\.getConnectionHealth\(signal\)/);
   for (const module of ["collector", "ingest", "writer"]) {
-    assert.match(pipelineSource, new RegExp(`getProcessStatus\\("${module}"\\)`));
+    assert.match(pipelineSource, new RegExp(`getProcessStatus\\("${module}",\\s*signal\\)`));
   }
-  assert.doesNotMatch(pipelineSource, /getProcessStatus\("uploader"\)/);
+  assert.doesNotMatch(pipelineSource, /getProcessStatus\("uploader"(?:,|\))/);
   assert.match(pipelineSource, /BUILD_ROLE === "distributed-center"[\s\S]*dashboardEdgePipelineHealth/);
   assert.match(pipelineSource, /edgeStage\("collector", edgeHealth\)/);
   assert.match(pipelineSource, /edgeStage\("uploader", edgeHealth\)/);

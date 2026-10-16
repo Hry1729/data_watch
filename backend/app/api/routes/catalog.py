@@ -148,6 +148,9 @@ async def device_list(
     size: str | None = None,
     keyword: str | None = None,
     deviceType: str | None = None,
+    deviceTypeExact: str | None = None,
+    deviceCodeExact: str | None = None,
+    deviceIds: list[str] | str | None = None,
     deviceCode: str | None = None,
     deviceName: str | None = None,
     deviceStatus: str | None = None,
@@ -168,6 +171,9 @@ async def device_list(
                     "size": size,
                     "keyword": keyword,
                     "deviceType": deviceType,
+                    "deviceTypeExact": deviceTypeExact,
+                    "deviceCodeExact": deviceCodeExact,
+                    "deviceIds": deviceIds,
                     "deviceCode": deviceCode,
                     "deviceName": deviceName,
                     "deviceStatus": deviceStatus,
@@ -177,6 +183,30 @@ async def device_list(
             )
         )
         return success_response(data=data)
+
+
+@router.post("/api/device-monitor/device/query")
+async def query_devices(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.list_devices(_compact_params(payload)))
+
+
+@router.get("/api/device-monitor/device/types")
+async def device_types(
+    deviceIds: list[str] | str | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.list_device_types(_compact_params({"deviceIds": deviceIds})))
 
 
 @router.get("/api/device-monitor/device/summary")
@@ -380,6 +410,8 @@ async def point_list(
     deviceId: str | None = None,
     deviceIds: list[str] | str | None = None,
     deviceCode: str | None = None,
+    deviceType: str | None = None,
+    connectStatus: str | None = None,
     groupId: str | None = None,
     varSeq: str | None = None,
     pointName: str | None = None,
@@ -402,6 +434,8 @@ async def point_list(
                     "deviceId": deviceId,
                     "deviceIds": deviceIds,
                     "deviceCode": deviceCode,
+                    "deviceType": deviceType,
+                    "connectStatus": connectStatus,
                     "groupId": groupId,
                     "varSeq": varSeq,
                     "pointName": pointName,
@@ -411,6 +445,18 @@ async def point_list(
             )
         )
         return success_response(data=data)
+
+
+@router.post("/api/device-monitor/point/query")
+async def query_points(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    await require_permissions(credentials, "device_monitor:point:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.list_points(_compact_params(payload)))
 
 
 @router.get("/api/device-monitor/point/latest")

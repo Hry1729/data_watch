@@ -68,7 +68,7 @@ test("bool trends use a visible step line with a padded binary axis", () => {
 test("realtime page loads and switches point groups without hardcoding g001", () => {
   assert.match(pageSource, /monitorClient\.realtimePointGroups/);
   assert.match(pageSource, /selectedGroupCode/);
-  assert.match(pageSource, /realtimeInit\(backendToken,\s*selectedDeviceId,\s*selectedGroupCode\)/);
+  assert.match(pageSource, /realtimeInit\(backendToken,\s*selectedDeviceId,\s*selectedGroupCode,\s*signal\)/);
   assert.match(pageSource, /groupCode:\s*selectedGroupCode/);
   assert.match(pageSource, /点位组/);
 });

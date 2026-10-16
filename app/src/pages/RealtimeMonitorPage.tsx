@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import * as XLSX from "xlsx";
 import {
   Activity,
   Download,
@@ -55,7 +54,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
 import { monitorClient } from "@/lib/monitor-client";
-import { loadAllDevicePages } from "@/lib/device-catalog";
+import { useDevicePicker } from "@/hooks/useDevicePicker";
+import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
 import { saveDownload } from "@/lib/save-download";
 import { decimateTimeSeries } from "@/components/charts/decimate-time-series";
 import type { RealtimeDataItem } from "@/types/device-monitor";
@@ -120,14 +120,18 @@ function loadSavedState(): SavedMonitorState {
 }
 
 function normalizePointValue(point: RealtimeDataItem, value: unknown) {
+  if (value == null || (typeof value === "string" && !value.trim())) return "--";
   const type = (point.dataType ?? "").toUpperCase();
   if (type === "BOOL") {
     if (typeof value === "boolean") return value;
-    return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
+    const normalized = String(value).trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    return "--";
   }
   if (["INT", "DINT", "WORD", "DWORD", "REAL", "FLOAT", "DOUBLE"].includes(type)) {
     const number = Number(value);
-    return Number.isFinite(number) ? number : String(value ?? "");
+    return Number.isFinite(number) ? number : "--";
   }
   return value as string | number | boolean;
 }
@@ -262,30 +266,27 @@ export default function RealtimeMonitorPage() {
   const [draftPoints, setDraftPoints] = useState<number[]>([]);
   const chartCardRef = useRef<HTMLDivElement>(null);
 
-  const loadDevices = useCallback(
-    (backendToken: string) => loadAllDevicePages((pageNo, pageSize) => monitorClient.deviceList(backendToken, { pageNo, pageSize })),
-    [],
-  );
   const [deviceDialogOpen, setDeviceDialogOpen] = useState(false);
   const [deviceSearch, setDeviceSearch] = useState("");
   const [draftDeviceType, setDraftDeviceType] = useState("all");
   const [draftDeviceId, setDraftDeviceId] = useState("");
-  const devices = useBackendQuery(loadDevices);
   const requestedDeviceId = Number(searchParams.get("deviceId"));
-  const availableDevices = devices.data?.list ?? [];
-  const preferredDeviceId = requestedDeviceId || savedState.deviceId || availableDevices[0]?.id || 0;
-  const selectedDevice = availableDevices.find((device) => device.id === preferredDeviceId) ?? availableDevices[0];
+  const preferredDeviceId = requestedDeviceId || savedState.deviceId || 0;
+  const loadSelectedDevice = useCallback((backendToken: string, signal: AbortSignal) => monitorClient.deviceList(backendToken, {
+    pageNo: 1, pageSize: 1, deviceIds: preferredDeviceId ? [preferredDeviceId] : undefined,
+  }, signal), [preferredDeviceId]);
+  const currentDevice = useBackendQuery(loadSelectedDevice);
+  const selectedDevice = currentDevice.data?.list.find((device) => !preferredDeviceId || device.id === preferredDeviceId);
   const selectedDeviceId = selectedDevice?.id ?? 0;
   const [selectedGroupCode, setSelectedGroupCode] = useState("g001");
-  const deviceTypes = useMemo(() => Array.from(new Set(availableDevices.map((device) => device.deviceType))), [availableDevices]);
-  const filteredDevices = useMemo(() => availableDevices.filter((device) => {
-    const matchesType = draftDeviceType === "all" || device.deviceType === draftDeviceType;
-    const keyword = deviceSearch.trim().toLowerCase();
-    return matchesType && (!keyword || `${device.deviceCode} ${device.deviceName}`.toLowerCase().includes(keyword));
-  }), [availableDevices, deviceSearch, draftDeviceType]);
+  const loadDeviceTypes = useCallback((backendToken: string, signal: AbortSignal) => monitorClient.deviceTypes(backendToken, signal), []);
+  const types = useBackendQuery(loadDeviceTypes, { enabled: deviceDialogOpen });
+  const deviceTypes = types.data ?? [];
+  const devicePicker = useDevicePicker(monitorClient, deviceSearch, draftDeviceType, deviceDialogOpen);
+  const filteredDevices = devicePicker.data?.list ?? [];
   const loadPointGroups = useCallback(
-    (backendToken: string) => selectedDevice?.deviceCode
-      ? monitorClient.realtimePointGroups(backendToken, selectedDevice.deviceCode)
+    (backendToken: string, signal: AbortSignal) => selectedDevice?.deviceCode
+      ? monitorClient.realtimePointGroups(backendToken, selectedDevice.deviceCode, signal)
       : Promise.resolve([]),
     [selectedDevice?.deviceCode],
   );
@@ -304,7 +305,7 @@ export default function RealtimeMonitorPage() {
   }, [pointGroups.data, selectedDeviceId]);
 
   const loadRealtime = useCallback(
-    (backendToken: string) => monitorClient.realtimeInit(backendToken, selectedDeviceId, selectedGroupCode),
+    (backendToken: string, signal: AbortSignal) => monitorClient.realtimeInit(backendToken, selectedDeviceId, selectedGroupCode, signal),
     [selectedDeviceId, selectedGroupCode],
   );
   const realtime = useBackendQuery(loadRealtime, { enabled: selectedDeviceId > 0 });
@@ -416,18 +417,23 @@ export default function RealtimeMonitorPage() {
     realtimeSocket.clearValues();
   }
 
-  function exportRealtimeData() {
+  async function exportRealtimeData() {
     if (!samples.length || !selectedPointItems.length) return toast.warning("暂无数据可导出");
-    const exportRows = samples.map((sample) => Object.fromEntries([
-      ["时间", sample.time],
-      ...selectedPointItems.map((point) => [`${point.pointName}(${point.varSeq})`, sample[`v${point.varSeq}`] ?? ""]),
-    ]));
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "趋势数据");
-    const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-    saveDownload(Array.from(new Uint8Array(buffer)), `${selectedDevice?.deviceName ?? "设备"}_实时监控_${timestamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    toast.success("实时数据已导出");
+    try {
+      const XLSX = await import("xlsx");
+      const exportRows = samples.map((sample) => Object.fromEntries([
+        ["时间", sample.time],
+        ...selectedPointItems.map((point) => [`${point.pointName}(${point.varSeq})`, sample[`v${point.varSeq}`] ?? ""]),
+      ]));
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows), "趋势数据");
+      const buffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+      saveDownload(Array.from(new Uint8Array(buffer)), `${selectedDevice?.deviceName ?? "设备"}_实时监控_${timestamp}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      toast.success("实时数据已导出");
+    } catch {
+      toast.error("实时数据导出失败");
+    }
   }
 
   async function toggleFullscreen() {
@@ -443,7 +449,7 @@ export default function RealtimeMonitorPage() {
   const hasData = samples.length > 0;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden p-4 md:p-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">当前设备</span>
@@ -517,8 +523,10 @@ export default function RealtimeMonitorPage() {
           <DialogHeader><DialogTitle>选择设备</DialogTitle><DialogDescription>按设备类型、设备编号或名称筛选后确认切换。</DialogDescription></DialogHeader>
           <div className="grid gap-4">
             <div className="space-y-2"><Label>设备类型</Label><Select value={draftDeviceType} onValueChange={(value) => { setDraftDeviceType(value); setDraftDeviceId(""); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem>{deviceTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></div>
-            <div className="space-y-2"><Label>设备编号</Label><Select value={draftDeviceId} onValueChange={setDraftDeviceId}><SelectTrigger><SelectValue placeholder="选择设备编号" /></SelectTrigger><SelectContent>{filteredDevices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectContent></Select></div>
+            <div className="flex flex-col gap-2"><Label>设备编号</Label><Select value={draftDeviceId} onValueChange={setDraftDeviceId} disabled={devicePicker.loading}><SelectTrigger><SelectValue placeholder={devicePicker.loading ? "加载设备中…" : "选择设备编号"} /></SelectTrigger><SelectContent><SelectGroup>{selectedDevice && !filteredDevices.some((device) => device.id === selectedDevice.id) && <SelectItem value={String(selectedDevice.id)}>{selectedDevice.deviceCode} · {selectedDevice.deviceName}</SelectItem>}{filteredDevices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
             <div className="space-y-2"><Label>搜索</Label><div className="relative"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" value={deviceSearch} onChange={(event) => setDeviceSearch(event.target.value)} placeholder="搜索设备名称或编号" /></div></div>
+            {devicePicker.error && <p role="alert" className="text-sm text-destructive">{devicePicker.error}</p>}
+            <DeviceCatalogPagination total={devicePicker.data?.total ?? 0} page={devicePicker.page} pageSize={devicePicker.pageSize} loading={devicePicker.loading} onPageChange={devicePicker.setPage} />
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setDeviceDialogOpen(false)}>取消</Button><Button onClick={confirmDeviceSelection} disabled={!draftDeviceId}>确认</Button></DialogFooter>
         </DialogContent>
