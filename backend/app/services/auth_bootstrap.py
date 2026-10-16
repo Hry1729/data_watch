@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import delete, inspect, select, text
 
 from app.core.logging import get_logger
+from app.core.password_worker import run_password_op
 from app.core.security import generate_temporary_password, hash_password, verify_password
 from app.db.mysql import get_mysql_engine, get_mysql_session_factory
 from app.models import (
@@ -463,9 +464,11 @@ async def _seed_users(
                 if is_development
                 else str(bootstrap_super_password)
             )
+            # 启动初始化同样走有界密码 worker，避免同步 PBKDF2 堵住事件循环。
+            password_hash = await run_password_op(hash_password, temporary_password)
             user = SysUser(
                 user_name=seed["user_name"],
-                password_hash=hash_password(temporary_password),
+                password_hash=password_hash,
                 token_version=0,
                 must_change_password=True,
                 nick_name=seed["nick_name"],
@@ -485,7 +488,7 @@ async def _seed_users(
         else:
             # 已有用户：只补齐空字段，不覆盖已有值
             # 兼容历史默认密码，但强制其在首次登录时完成改密。
-            if verify_password("123456", user.password_hash):
+            if await run_password_op(verify_password, "123456", user.password_hash):
                 user.must_change_password = True
             if not user.nick_name:
                 user.nick_name = seed["nick_name"]

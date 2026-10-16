@@ -8,6 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.password_worker import PasswordWorkerBusy, run_password_op
 from app.core.security import generate_temporary_password, hash_password
 from app.models import (
     SysDataPermission,
@@ -83,9 +84,14 @@ class SystemManageService:
         if await self._role_ids_include_super(role_ids) and not current_is_super:
             raise ApiError(403, "只有超级管理员可以分配超级管理员角色")
         temporary_password = generate_temporary_password()
+        # PBKDF2 离开事件循环；先算出哈希再写库，worker 繁忙时不留下半完成用户。
+        try:
+            password_hash = await run_password_op(hash_password, temporary_password)
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
         user = SysUser(
             user_name=payload.user_name,
-            password_hash=hash_password(temporary_password),
+            password_hash=password_hash,
             token_version=0,
             must_change_password=True,
             nick_name=payload.nick_name or payload.user_name,
@@ -192,7 +198,11 @@ class SystemManageService:
             raise ApiError(403, "只有超级管理员可以重置超级管理员密码")
         user = await self._get_user_or_raise(user_id)
         temporary_password = generate_temporary_password()
-        user.password_hash = hash_password(temporary_password)
+        # 与新建用户相同：哈希完成后再改密码字段，超载时不提交。
+        try:
+            user.password_hash = await run_password_op(hash_password, temporary_password)
+        except PasswordWorkerBusy as exc:
+            raise ApiError(503, "认证服务繁忙，请稍后重试") from exc
         user.must_change_password = True
         user.token_version = int(getattr(user, "token_version", 0) or 0) + 1
         user.update_by = actor
