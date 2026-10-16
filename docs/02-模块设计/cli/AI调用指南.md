@@ -51,6 +51,7 @@ AI 对用户展示设备和点位的现场名称，不暴露内部 ID、`varSeq`
 |---|---|
 | “看看桥吊100是否在线” | `devices status --device 桥吊100` |
 | “QC100 的 CraneID 现在是多少” | `realtime get --device QC100 --point CraneID` |
+| “不管平台，现场 PLC 里 QC100 的 CraneID 此刻是多少” | `plc get --device QC100 --point CraneID` |
 | “看轨道吊701陆侧 I101” | `realtime get --device 轨道吊701陆侧 --point I101` |
 | “DB1702.DBW0 最近 10 秒变化” | `realtime window --point DB1702.DBW0 --seconds 10` |
 | “AGV801 的 CraneID 9点到10点历史” | `history query --device AGV801 --point CraneID --start ... --end ...` |
@@ -66,6 +67,17 @@ AI 对用户展示设备和点位的现场名称，不暴露内部 ID、`varSeq`
 - `AGV801`。
 
 点位支持 IO 地址和名称，例如 `I101`、`DB1702.DBW0`、`CraneID`。
+
+### 现场直连（不经平台缓存）
+
+用户明确要「现场 PLC 此刻的值」，或平台实时链路不可用时，用 `plc get`。未声明现场直连时，仍用 `realtime get`，避免无故占用 PLC 连接。
+
+- 命令仍要先 `auth login`。没有 JWT 会拒绝，MVP 没有本机白名单。
+- 结果里的 `source` 固定为 `direct_plc`，并带与采集相同的质量码。这不是 Redis `latest`。
+- `topologySource` 标明拓扑来自 `mysql`、`snapshot` 或 `explicit`。MySQL 只用只读账号；库不可用时才降级到本地快照。`--endpoint` / `--address` 只在 `--topology explicit` 时生效，`auto` 不会拿它们去连任意 IP。
+- MVP 只支持 S7，并且只在 Windows + Python 3.14t 上装载驱动。
+- 同一 PLC（`host:port`）有最小间隔，全局并发有上限。总超时包含 MySQL 解析和断开。被限流时改回 `realtime get`。
+- 不要把直连结果写回平台，也不要在命令或日志里放数据库密码和 Token。
 
 ## 5. 歧义处理
 
@@ -139,7 +151,11 @@ AI 不得因为拥有 `R_SUPER` 就自行执行删除、停用、授权、密码
 | `auth_required` / `unauthorized` | 请求用户重新登录，不索取 Token |
 | `permission_denied` | 明确告知账号权限不足，不尝试绕过 CLI 直调 Backend |
 | `resource_not_found` | 核对现场称呼或时间范围 |
-| `ambiguous_resource` | 展示候选并追问 |
+| `ambiguous_resource` | 展示候选并追问，禁止默认取第一条 |
+| `rate_limited` | 停止连打 PLC，改用 `realtime get` |
+| `unsupported_runtime` | 说明直连 MVP 只支持 Windows + Python 3.14t |
+| `unsupported_protocol` | 说明当前只支持 S7 |
+| `driver_unavailable` | 说明本机没有可用的 S7 驱动包 |
 | `network_error` / `timeout` | 先执行 `doctor`，只读操作可在有界次数内重试 |
 | `confirmation_required` | 等待用户明确确认 |
 | `api_error` / `internal_error` | 保留 requestId，停止自动写操作并报告 |

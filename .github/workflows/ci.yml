@@ -1,7 +1,8 @@
 # Linux 基础 CI（HURY-6）。
 # 运行 frontend、cli，以及不依赖 Rust / Tauri 系统库的桌面端 JS 测试和构建。
 # 不运行 backend：它需要 Windows 和 free-threaded Python 3.14t。
-# 不运行 app/src-tauri 的 cargo check。依赖 Windows 的 CLI 用例由测试自行跳过。
+# 不运行 app/src-tauri 的 cargo check。
+# 依赖 Windows 的 CLI 用例在 cli-windows（windows-latest，Python 3.14t）里跑。
 # ingest job（HURY-16）：用 buildx 编 free-threaded 3.14t，再编 ingest，并做 workers=2 冒烟。
 
 name: CI
@@ -53,7 +54,7 @@ jobs:
         run: python -m pip install -r cli/requirements.txt pytest
 
       - name: Test
-        run: python -m pytest cli/tests -q
+        run: python -m pytest cli/tests direct_read/tests -q
 
   desktop:
     name: desktop
@@ -79,6 +80,25 @@ jobs:
 
       - name: Build
         run: pnpm --dir ./app build
+
+  cli-windows:
+    name: cli-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+
+      - name: Install
+        run: python -m pip install -r cli/requirements.txt pytest
+
+      - name: Test
+        run: python -m pytest cli/tests direct_read/tests -q --tb=short --junitxml=junit-cli-windows.xml
+
+      - name: Require the Windows tests to run
+        run: python -c "import xml.etree.ElementTree as ET; root=ET.parse('junit-cli-windows.xml').getroot(); suite=root if root.tag=='testsuite' else root.find('testsuite'); tests=int(suite.attrib.get('tests') or 0); skipped=int(suite.attrib.get('skipped') or 0); failed=int(suite.attrib.get('failures') or 0)+int(suite.attrib.get('errors') or 0); print('tests=%s skipped=%s failures=%s' % (tests, skipped, failed)); assert skipped==0 and failed==0 and tests>=179, (tests, skipped, failed)"
 
   ingest:
     name: ingest

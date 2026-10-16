@@ -35,6 +35,7 @@ from cli.commands.history import install_history_commands
 from cli.commands.history_manage import install_history_management
 from cli.commands.log_manage import install_log_management
 from cli.commands.node_manage import install_node_management
+from cli.commands.plc import install_plc_commands
 from cli.commands.realtime import install_realtime_commands
 from cli.commands.system_manage import install_system_management
 from cli.commands.update import install_update_commands
@@ -681,6 +682,7 @@ install_realtime_commands(
     execute_stream=_execute_stream,
     get_context=_context,
 )
+install_plc_commands(app, execute=_execute, get_context=_context)
 
 
 def _configure_standard_streams() -> None:
