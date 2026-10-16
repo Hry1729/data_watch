@@ -7,7 +7,7 @@
 - `POST /ingest`：接收同一 upload session 的有序 UploadItem 批次，返回逐项 ACK。
 - `POST /ingest/session_switch`：执行 active session CAS。
 - `GET /ingest/session/{node_uuid}`：查询中心 active session。
-- `GET /healthz`：进程健康检查，并显示 worker、控制缓存 TTL、MySQL pool 上限等**运行参数**。**注意（D21）**：`workers` 字段取自**配置值**（`settings.workers`），**不是实测进程数**，不得据此推断实际 worker 数量或作为容量证据。另：`ingest/Dockerfile` 的 `CMD ["python","-m","uvicorn","ingest.main:app",…]` **不含 `--workers`**，因此**容器入口恒为 1 个 worker**，并**绕过** `ingest/main.py` 的 `__main__` 分支（即 `INGEST_WORKERS` 公式与 `_prepare_schema_for_workers` 的 schema 门禁）。worker 公式仅在以 `python -m ingest.main` 启动时生效。
+- `GET /healthz`：进程健康检查，并显示 worker、控制缓存 TTL、MySQL pool 上限等**运行参数**。**注意（D21）**：`workers` 字段取自**配置值**（`settings.workers`），**不是实测进程数**，不得据此推断实际 worker 数量或作为容量证据。容器入口是 `python3.14t -m ingest.main`，会执行 `__main__` 分支：按 `INGEST_WORKERS`（未设置时用物理核公式）调用 `uvicorn.run("ingest.app.main:app", workers=...)`，`workers>1` 时先跑 `_prepare_schema_for_workers`。
 
 Ingest 通过 ASGI lifespan 做启动门禁：连接 MySQL 后取得 advisory lock，幂等创建或升级 DB6 分布式表，再全量重建 staging 并校验永久 `point_storage_mapping`。缺失、冲突、孤儿或物理坐标差异会保留 staging、令启动失败且不开放健康接口；校验通过后才提升缺失映射并接收流量。该流程仅随分布式中心 Ingest 执行，不影响中心式角色，也不自动执行旧 DB1-DB5 人工迁移。
 

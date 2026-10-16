@@ -129,7 +129,7 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 
 | 文件 | 作用 |
 |------|------|
-| `deploy/python314t.Dockerfile` | 构建 `data-watch-python314t:latest` 基础镜像，编译 Python 3.14.4 `--disable-gil` |
+| `deploy/python314t.Dockerfile` | 构建 `data-watch-python314t:3.14t-3.14.4` 基础镜像，编译 Python 3.14.4 `--disable-gil`。同时打 `latest` 别名，供仍写死该标签的 backend Dockerfile 使用 |
 | `backend/Dockerfile` | 构建 `data-watch-backend:latest`，复制 TDengine `libtaos.so`，运行 uvicorn |
 | `frontend/Dockerfile` | Node 22 构建 Vite，nginx 托管静态文件 |
 | `deploy/docker-compose.yml` | 定义 redis、tdengine、backend、frontend 服务 |
@@ -157,7 +157,7 @@ app 登录需要 agent token 与 backend token 都可获取。backend CORS 开�
 
 ```powershell
 cd D:\python\device_alarm\data_watch
-docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
+docker build -t data-watch-python314t:3.14t-3.14.4 -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
 ```
 
 构建 backend/frontend：
@@ -166,12 +166,24 @@ docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
 docker compose -f .\deploy\docker-compose.yml build backend frontend
 ```
 
+构建 ingest（上下文必须是仓库根目录，因为镜像要复制 `data_watch_shared`。默认 `BASE_IMAGE` 是 `data-watch-python314t:3.14t-3.14.4`，先打出这个标签）：
+
+```powershell
+docker build --build-arg BASE_IMAGE=data-watch-python314t:3.14t-3.14.4 -f .\ingest\Dockerfile -t data-watch-ingest:latest .
+```
+
 backend 镜像要点：
 
 - 基于 `data-watch-python314t:latest`；
 - 从 TDengine 镜像复制 `libtaos.so`；
 - Docker 构建中排除 `perspective-python` 与 `taos-ws-py`；
 - 以 `python3.14t -m uvicorn main:app --host 0.0.0.0 --port 8000` 启动。
+
+ingest 镜像要点：
+
+- 基于 `data-watch-python314t:3.14t-3.14.4`（free-threaded 3.14t，不是 `python:3.14-slim`；`PYTHON_GIL=0`）；
+- 构建期导入 `ingest.main` 并断言 `sys._is_gil_enabled()` 为假；
+- 以 `python3.14t -m ingest.main` 启动，内部 `uvicorn.run("ingest.app.main:app", workers=...)`，`workers>1` 时先做 schema 预热。
 
 frontend 镜像要点：
 
