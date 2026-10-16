@@ -40,6 +40,7 @@ def _row(stable: str, child: str, columns: list[str], qualities: dict | None = N
 def _writer(col_cache: dict[str, set[str]]) -> TDengineWriter:
     writer = TDengineWriter.__new__(TDengineWriter)
     writer._database = "device_data"
+    writer._metrics = None  # 未绑定观测指标：计时点只执行不记录
     writer._col_cache = col_cache
     writer._lock = __import__("asyncio").Lock()
     writer._last_local_retry_indices = set()

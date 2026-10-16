@@ -156,7 +156,7 @@ function StatCard({
   loading: boolean;
 }) {
   return (
-    <Card size="sm" className="border border-border bg-card shadow-xs">
+    <Card size="sm" className="bg-card">
       <CardContent className="flex min-h-24 items-center justify-between gap-3 py-2">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">{title}</p>
@@ -189,13 +189,13 @@ export function SystemLogPage() {
   const [tailLines, setTailLines] = useState(300);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  const loadLogs = useCallback((activeToken: string) => backendClient.systemLogList(activeToken, query), [query]);
+  const loadLogs = useCallback((activeToken: string, signal: AbortSignal) => backendClient.systemLogList(activeToken, query, signal), [query]);
   const logs = useBackendQuery(loadLogs, { enabled: mode === "system" });
-  const loadStats = useCallback((activeToken: string) => backendClient.logStats(activeToken), []);
+  const loadStats = useCallback((activeToken: string, signal: AbortSignal) => backendClient.logStats(activeToken, signal), []);
   const stats = useBackendQuery(loadStats, { intervalMs: 30_000 });
-  const loadFiles = useCallback((activeToken: string) => backendClient.tdengineLogFiles(activeToken), []);
+  const loadFiles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.tdengineLogFiles(activeToken, signal), []);
   const files = useBackendQuery(loadFiles, { enabled: mode === "db" });
-  const loadTail = useCallback((activeToken: string) => backendClient.tdengineLogTail(activeToken, selectedFile, tailLines), [selectedFile, tailLines]);
+  const loadTail = useCallback((activeToken: string, signal: AbortSignal) => backendClient.tdengineLogTail(activeToken, selectedFile, tailLines, signal), [selectedFile, tailLines]);
   const tail = useBackendQuery(loadTail, { enabled: mode === "db" && Boolean(selectedFile) });
 
   useEffect(() => {
@@ -280,13 +280,13 @@ export function SystemLogPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4 p-4 md:p-6">
+    <div className="mx-auto w-full max-w-[1680px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {statCards.map((item) => <StatCard key={item.title} {...item} loading={stats.loading} />)}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
-        <Card className="@container/card border border-border">
+        <Card className="@container/card">
           <CardHeader>
             <CardTitle>日志级别趋势</CardTitle>
             <CardDescription>最近 24 小时各级别日志数量变化</CardDescription>
@@ -343,7 +343,7 @@ export function SystemLogPage() {
           </CardContent>
         </Card>
 
-        <Card className="@container/card border border-border">
+        <Card className="@container/card">
           <CardHeader>
             <CardTitle>日志类型占比</CardTitle>
             <CardDescription>各类日志条数分布</CardDescription>
@@ -432,7 +432,7 @@ export function SystemLogPage() {
         </div>
       )}
 
-      <Card className="border border-border">
+      <Card>
         <CardHeader>
           <CardTitle>
             {mode === "system" ? "历史日志查询" : "数据库日志（TDengine 服务日志）"}

@@ -32,9 +32,9 @@ export function UserManagementPage() {
   const [confirm, setConfirm] = useState<{ type: "delete" | "reset"; user: UserListItem } | null>(null);
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
-  const loadUsers = useCallback((activeToken: string) => backendClient.userList(activeToken, query), [query]);
+  const loadUsers = useCallback((activeToken: string, signal: AbortSignal) => backendClient.userList(activeToken, query, signal), [query]);
   const users = useBackendQuery(loadUsers);
-  const loadRoles = useCallback((activeToken: string) => backendClient.roleOptions(activeToken), []);
+  const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleOptions(activeToken, signal), []);
   const roles = useBackendQuery(loadRoles);
   const currentPage = query.current ?? 1;
   const pageSize = query.size ?? 20;
@@ -93,7 +93,7 @@ export function UserManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 p-4 md:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-wrap items-center gap-2">
         <Input className="h-7 w-44" value={draft.userName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, userName: event.target.value }))} placeholder="用户名" />
         <Select value={draft.userGender || "all"} onValueChange={(value) => setDraft((current) => ({ ...current, userGender: value === "all" ? "" : value }))}>
@@ -120,7 +120,7 @@ export function UserManagementPage() {
         </div>
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
           <CardTitle>用户列表</CardTitle>
           <CardAction>

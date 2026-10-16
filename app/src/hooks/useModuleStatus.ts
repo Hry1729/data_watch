@@ -37,23 +37,34 @@ export function useModuleStatus(
 
   const mountedRef = useRef(true);
   const timerRef   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
   // 单次拉取（内部）
   const doFetch = useCallback(async () => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     try {
-      const metrics = await agentClient.getProcessMetrics(name);
-      if (!mountedRef.current) return;
+      const metrics = await agentClient.getProcessMetrics(name, controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
       setData(metrics);
       setError(null);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       const e = err as AppError;
       if (e?.type === "unauthorized") { logout(); return; }
       setError(e?.type === "agent_unreachable" ? "Agent 不可达" : "获取状态失败");
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (requestRef.current === controller) requestRef.current = null;
+      if (mountedRef.current && !controller.signal.aborted) setLoading(false);
     }
   }, [name, logout]);
+
+  const refresh = useCallback(() => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    void doFetch();
+  }, [doFetch]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -85,12 +96,14 @@ export function useModuleStatus(
 
     return () => {
       mountedRef.current = false;
+      requestRef.current?.abort();
+      requestRef.current = null;
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [doFetch, refreshVersion]);
 
-  return { data, loading, error, refresh: doFetch };
+  return { data, loading, error, refresh };
 }
 
 // ─── useProcessControl 进程控制 ────────────────────────────────────────────────────

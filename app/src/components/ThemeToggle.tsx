@@ -41,7 +41,7 @@ export function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon"
-      className="h-7 w-7"
+      className="h-9 w-9 rounded-3xl hover:bg-muted"
       onClick={handleToggle}
       aria-label={`主题：${LABEL[theme]}（点击切换）`}
       title={`主题：${LABEL[theme]}`}

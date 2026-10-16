@@ -61,11 +61,15 @@ export function useModuleRates(): UseModuleRatesResult {
     const token = backendToken;
 
     let active = true;
+    const controller = new AbortController();
+    let inFlight = false;
     let timer: ReturnType<typeof setInterval> | null = null;
 
     async function fetchOnce() {
+      if (inFlight || !active) return;
+      inFlight = true;
       try {
-        const result = await backendClient.moduleRates(token);
+        const result = await backendClient.moduleRates(token, controller.signal);
         if (!active) return;
         setData(result);
         setError(null);
@@ -78,6 +82,7 @@ export function useModuleRates(): UseModuleRatesResult {
         }
         setError(e?.type === "network_error" ? "无法连接到后端服务" : "获取速率失败");
       } finally {
+        inFlight = false;
         if (active) setLoading(false);
       }
     }
@@ -111,6 +116,7 @@ export function useModuleRates(): UseModuleRatesResult {
 
     return () => {
       active = false;
+      controller.abort();
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

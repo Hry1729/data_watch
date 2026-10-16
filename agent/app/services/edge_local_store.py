@@ -93,8 +93,21 @@ class EdgeLocalStore:
             "devices": devices,
         }
 
+    def monitor_device_scope(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        try:
+            with self._connect() as connection:
+                rows = connection.execute("SELECT device_pk, device_code, device_type FROM edge_device ORDER BY device_code").fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [{"id": int(row["device_pk"]), "deviceCode": str(row["device_code"]), "deviceType": str(row["device_type"])} for row in rows]
+
     def monitor_devices(
-        self, *, page_no: int = 1, page_size: int = 1000, keyword: str = ""
+        self, *, page_no: int = 1, page_size: int = 1000, keyword: str = "",
+        device_ids: list[int] | None = None, device_type: str = "", device_type_exact: str | None = None,
+        device_code_exact: str | None = None,
+        connect_status: str = "", device_status: str = "",
     ) -> dict[str, Any]:
         if not self.path.exists():
             return {"list": [], "total": 0, "pageNo": page_no, "pageSize": page_size}
@@ -116,13 +129,26 @@ class EdgeLocalStore:
         except sqlite3.OperationalError:
             rows = []
         needle = keyword.strip().lower()
+        requested_status = connect_status
         items = []
         for row in rows:
             device_code = str(row["device_code"])
+            if device_code_exact is not None and device_code != device_code_exact:
+                continue
+            if device_ids is not None and int(row["device_pk"]) not in device_ids:
+                continue
+            if device_type_exact is not None and str(row["device_type"]) != device_type_exact:
+                continue
+            if device_type and device_type.lower() not in str(row["device_type"]).lower():
+                continue
             if needle and needle not in f"{device_code} {row['device_type']}".lower():
                 continue
             data_updated_at = self._optional_int(row["data_updated_at"])
             connect_status = self._runtime_connect_status(row)
+            if requested_status and {1: "online", 2: "unstable"}.get(connect_status, "offline") != requested_status:
+                continue
+            if device_status and ("enabled" if bool(row["enabled"]) else "disabled") != device_status:
+                continue
             data_age_ms = self._age_ms(data_updated_at)
             items.append(
                 {
@@ -182,15 +208,23 @@ class EdgeLocalStore:
         device_code: str = "",
         keyword: str = "",
         data_type: str = "",
+        device_type: str = "",
+        connect_status: str = "",
     ) -> dict[str, Any]:
         if not self.path.exists():
             return {"list": [], "total": 0, "pageNo": page_no, "pageSize": page_size}
         conditions = []
         params: list[Any] = []
+        if device_type or connect_status:
+            matching = self.monitor_devices(
+                page_size=2**31 - 1, device_ids=device_ids,
+                device_type_exact=device_type or None, connect_status=connect_status,
+            )
+            device_ids = [device["id"] for device in matching["list"]]
         if device_id is not None:
             conditions.append("d.device_pk=?")
             params.append(device_id)
-        if device_ids:
+        if device_ids is not None:
             placeholders = ",".join("?" for _ in device_ids)
             conditions.append(f"d.device_pk IN ({placeholders})")
             params.extend(device_ids)

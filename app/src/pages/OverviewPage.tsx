@@ -106,7 +106,7 @@ export function OverviewPage() {
   const wRate = rates?.writer;
 
   return (
-    <div className="px-6 py-6 space-y-4" style={{ maxWidth: 1400 }}>
+    <div className="px-6 pb-6 space-y-4" style={{ maxWidth: 1400 }}>
       {/* 顶部：当前构建角色的两个受管模块 */}
       <div className="grid grid-cols-2 gap-4">
         {OVERVIEW_MODULES.map((name) => <ModuleSection key={name} name={name} />)}

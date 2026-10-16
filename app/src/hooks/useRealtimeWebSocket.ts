@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BUILD_ROLE } from "@/config/build-role";
 import { agentClient } from "@/lib/agent-client";
 import { getAgentAuthToken } from "@/lib/agent-auth-token";
-import { getBackendWebSocketUrl } from "@/lib/backend-client";
+import { backendClient, getBackendWebSocketUrl } from "@/lib/backend-client";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import type { AppError } from "@/types";
 import type { RealtimeWireValue } from "@/types/device-monitor";
@@ -88,21 +88,27 @@ export function useRealtimeWebSocket({
     let reconnectAttempts = 0;
     let disposed = false;
     let localPollInFlight = false;
+    let localController: AbortController | null = null;
     let authRejected = false;
+    let authRecoveryAttempted = false;
+    const authController = new AbortController();
     const edgeRole = BUILD_ROLE === "edge";
     const localOnly = edgeRole && token === getAgentAuthToken();
 
     const stopLocalPolling = () => {
       if (localPollTimer !== null) window.clearInterval(localPollTimer);
       localPollTimer = null;
+      localController?.abort();
     };
 
     const pollLocal = async () => {
       if (localPollInFlight) return;
       localPollInFlight = true;
+      const controller = new AbortController();
+      localController = controller;
       try {
-        const snapshot = await agentClient.getLocalRealtimeLatest(deviceCode, groupCode);
-        if (disposed) return;
+        const snapshot = await agentClient.getLocalRealtimeLatest(deviceCode, groupCode, controller.signal);
+        if (disposed || controller.signal.aborted) return;
         pendingRef.current = {};
         setValues(snapshot.values ?? {});
         setDeviceOffline(snapshot.deviceOffline);
@@ -112,7 +118,7 @@ export function useRealtimeWebSocket({
         setSource("local");
         setError(null);
       } catch (reason) {
-        if (disposed) return;
+        if (disposed || controller.signal.aborted) return;
         const appError = reason as AppError;
         setStatus("disconnected");
         setError(appError?.type === "unauthorized" ? "本机会话已失效" : "本机实时数据读取失败");
@@ -167,7 +173,7 @@ export function useRealtimeWebSocket({
     };
 
     function connect() {
-      if (disposed || socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
+      if (disposed || authRejected || socket?.readyState === WebSocket.CONNECTING || socket?.readyState === WebSocket.OPEN) return;
       setStatus("connecting");
       setError(null);
       try {
@@ -205,6 +211,11 @@ export function useRealtimeWebSocket({
           setError(message.message ?? "实时订阅失败");
           setStatus("error");
           if (authRejected) stopLocalPolling();
+          if (message.code === 401 && !authRecoveryAttempted) {
+            authRecoveryAttempted = true;
+            // An HTTP 401 enters the shared session refresh; the new token rebuilds this effect.
+            void backendClient.userInfo(token, authController.signal).catch(() => undefined);
+          }
           return;
         }
         if (message.type === "offline") {
@@ -248,6 +259,7 @@ export function useRealtimeWebSocket({
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       disposed = true;
+      authController.abort();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       clearTimers();
       if (socket?.readyState === WebSocket.OPEN) {

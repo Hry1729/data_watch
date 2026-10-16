@@ -16,7 +16,7 @@ from app.core.exceptions import ApiError
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import format_local_datetime, now_local, parse_local_datetime
 from app.db.tdengine import TDengineClient
-from app.services.device_activity import fetch_latest_collect_times
+from app.services.device_activity import fetch_latest_collect_times, fetch_type_latest_collect_times
 
 logger = logging.getLogger("backend.dashboard")
 _TREND_TIMEOUT_SECONDS = 10.0
@@ -1231,7 +1231,13 @@ class DashboardService:
                 if not type_codes:
                     return dict(redis_times)
                 results = await asyncio.gather(
-                    *(self._fetch_type_latest_collect_times(database_name, type_code) for type_code in type_codes),
+                    *(
+                        self._fetch_type_latest_collect_times(
+                            database_name, type_code,
+                            [self._resolve_current_child_table_name(device.device_code) for device in devices_by_type[type_code]],
+                        )
+                        for type_code in type_codes
+                    ),
                     return_exceptions=True,
                 )
         except TimeoutError:
@@ -1286,18 +1292,11 @@ class DashboardService:
         self,
         database_name: str,
         type_code: str,
+        table_names: list[str],
     ) -> dict[str, datetime]:
-        stable_name = self.tdengine.qualify_table(database_name, f"sd{type_code}")
-        rows = await self.tdengine.fetch_all(
-            f"SELECT tbname AS tbl, LAST(ts) AS last_ts FROM {stable_name} GROUP BY tbname",
-            database=database_name,
+        return await fetch_type_latest_collect_times(
+            self.tdengine, database_name, type_code, table_names,
         )
-        result: dict[str, datetime] = {}
-        for tbl, last_ts in rows:
-            latest_time = self._coerce_datetime(last_ts)
-            if tbl is not None and latest_time is not None:
-                result[str(tbl)] = latest_time
-        return result
 
     def _serialize_connection_health_item(
         self,

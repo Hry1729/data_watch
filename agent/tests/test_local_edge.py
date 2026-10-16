@@ -278,7 +278,8 @@ async def test_local_monitor_reads_catalog_latest_and_retained_history(monkeypat
     now = _seed_monitor(tmp_path / "edge" / "edge.db")
 
     devices = await local_monitor_devices(
-        page_no=1, page_size=100, keyword="", _user="u"
+        page_no=1, page_size=100, keyword="", device_ids=None, device_type="", device_type_exact=None,
+        device_code_exact=None, connect_status="", device_status="", _user="u"
     )
     points = await local_monitor_points(
         page_no=1,
@@ -288,6 +289,8 @@ async def test_local_monitor_reads_catalog_latest_and_retained_history(monkeypat
         device_code="",
         keyword="",
         data_type="",
+        device_type="",
+        connect_status="",
         _user="u",
     )
     realtime = await local_realtime(

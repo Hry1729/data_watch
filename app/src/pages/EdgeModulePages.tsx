@@ -65,7 +65,7 @@ function processLabel(status: string): string {
 
 function MetricCard({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
   return (
-    <Card className="rounded-lg border border-border bg-card">
+    <Card className="bg-card">
       <CardContent className="px-4 py-3">
         <p className="mb-1 text-xs text-muted-foreground">{label}</p>
         <p className={`truncate text-xl font-bold tabular-nums ${warning ? "text-destructive" : "text-foreground"}`}>{value}</p>
@@ -90,7 +90,7 @@ function ModulePage({
   const processStatus = status.data?.status ?? "unknown";
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-4 py-4 md:px-6">
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-4 pb-4 md:px-6">
       {showError && <p className="px-1 text-xs text-destructive" role="alert">{status.error}</p>}
       <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard label="运行状态" value={processLabel(processStatus)} warning={processStatus === "crashed"} />
@@ -157,7 +157,7 @@ export function EdgeCollectorPage() {
       }
     >
       <div className="grid h-full min-h-0 grid-rows-[260px_minmax(0,1fr)] gap-4 overflow-hidden">
-        <Card className="flex h-full min-h-0 flex-col gap-0 border border-border py-0">
+        <Card className="flex h-full min-h-0 flex-col gap-0 py-0">
           <CardHeader className="px-4 py-3">
             <CardTitle>本机设备采集任务</CardTitle>
           </CardHeader>
@@ -233,7 +233,7 @@ export function EdgeUploaderPage() {
       }
     >
       <div className="grid h-full min-h-0 grid-rows-[300px_minmax(0,1fr)] gap-4 overflow-hidden">
-        <Card className="flex h-full min-h-0 flex-col gap-0 border border-border py-0">
+        <Card className="flex h-full min-h-0 flex-col gap-0 py-0">
           <CardHeader className="px-4 py-3">
             <CardTitle>上行同步队列</CardTitle>
           </CardHeader>
@@ -316,7 +316,7 @@ export function EdgeStoragePage() {
       }
     >
       <div className="grid h-full min-h-0 grid-rows-[300px_minmax(0,1fr)] gap-4 overflow-hidden">
-        <Card className="flex h-full min-h-0 flex-col gap-0 border border-border py-0">
+        <Card className="flex h-full min-h-0 flex-col gap-0 py-0">
           <CardHeader className="px-4 py-3">
             <CardTitle>本地单写事务</CardTitle>
           </CardHeader>

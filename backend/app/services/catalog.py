@@ -20,7 +20,7 @@ from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_
 from app.core.time_utils import LOCAL_TZ, now_local, parse_local_datetime, to_local_naive
 from app.db.redis import get_redis_client
 from app.db.tdengine import TDengineClient
-from app.services.device_activity import fetch_latest_collect_times
+from app.services.device_activity import fetch_latest_collect_times, fetch_type_latest_collect_times
 
 logger = logging.getLogger("backend.catalog")
 
@@ -231,6 +231,11 @@ class CatalogService:
         if not rows:
             return []
 
+        devices = {
+            int(row["device_id"]): self._to_device_item(row)
+            for row in rows if row["device_id"] is not None
+        }
+        latest_map = await self._fetch_latest_collect_times(list(devices.values()))
         groups: OrderedDict[int, dict[str, Any]] = OrderedDict()
         for row in rows:
             group_id = int(row["group_id"])
@@ -249,7 +254,7 @@ class CatalogService:
             if row["device_id"] is None:
                 continue
 
-            device = self._to_device_item(row)
+            device = devices[int(row["device_id"])]
             group_node["children"].append(
                 {
                     "key": f"device-{device.device_id}",
@@ -258,7 +263,7 @@ class CatalogService:
                     "deviceId": device.device_id,
                     "deviceCode": device.device_code,
                     "deviceName": device.device_name,
-                    "connectStatus": self._build_connect_status_from_raw(device.device_status_raw),
+                    "connectStatus": self._build_connect_status(latest_map.get(device.device_code)),
                 }
             )
             group_node["count"] += 1
@@ -268,7 +273,7 @@ class CatalogService:
     async def list_devices(self, params: dict[str, Any]) -> dict[str, Any]:
         rows = await self._fetch_device_rows()
         devices = [self._to_device_item(row) for row in rows]
-        filtered_devices = [device for device in devices if self._matches_basic_device_filters(device, params)]
+        filtered_devices = self._filter_devices(devices, params)
 
         connect_status = self._normalize_text(params.get("connectStatus"))
         include_summary = str(params.get("includeSummary", "true")).strip().lower() not in {"false", "0"}
@@ -308,10 +313,18 @@ class CatalogService:
         result["offlineCount"] = offline_count
         return result
 
+    async def list_device_types(self, params: dict[str, Any]) -> list[str]:
+        rows = await self._fetch_device_rows()
+        devices = [self._to_device_item(row) for row in rows]
+        return sorted({
+            device.device_type or device.device_type_code or device.group_name or ""
+            for device in self._filter_devices(devices, params)
+        })
+
     async def get_device_summary(self, params: dict[str, Any]) -> dict[str, int]:
         rows = await self._fetch_device_rows()
         devices = [self._to_device_item(row) for row in rows]
-        devices = [device for device in devices if self._matches_basic_device_filters(device, params)]
+        devices = self._filter_devices(devices, params)
         latest_map = await self._fetch_latest_collect_times(devices)
         items = [self._serialize_device_item(device, latest_map.get(device.device_code)) for device in devices]
         return {
@@ -320,6 +333,8 @@ class CatalogService:
             "offlineCount": sum(item["connectStatus"] == "offline" for item in items),
             "unstableCount": sum(item["connectStatus"] == "unstable" for item in items),
             "disabledCount": sum(item["deviceStatus"] == "disabled" for item in items),
+            "enabledOnlineCount": sum(item["deviceStatus"] == "enabled" and item["connectStatus"] == "online" for item in items),
+            "enabledOfflineCount": sum(item["deviceStatus"] == "enabled" and item["connectStatus"] == "offline" for item in items),
         }
 
     async def get_device(self, device_id: int) -> dict[str, Any]:
@@ -831,8 +846,22 @@ class CatalogService:
         return list(groups.values())
 
     async def list_points(self, params: dict[str, Any]) -> dict[str, Any]:
+        if params.get("deviceType") or params.get("connectStatus"):
+            device_params = {
+                "deviceTypeExact": params.get("deviceType"),
+                "deviceIds": params.get("deviceIds"),
+            }
+            devices = [self._to_device_item(row) for row in await self._fetch_device_rows()]
+            devices = self._filter_devices(devices, device_params)
+            status = self._normalize_text(params.get("connectStatus"))
+            if status:
+                latest = await self._fetch_latest_collect_times(devices)
+                devices = [device for device in devices if self._serialize_device_item(device, latest.get(device.device_code))["connectStatus"] == status]
+            params = {**params, "deviceIds": [device.device_id for device in devices]}
         page_no = self._to_positive_int(params.get("pageNo") or params.get("current"), default=1)
         page_size = self._to_positive_int(params.get("pageSize") or params.get("size"), default=20)
+        if params.get("deviceIds") == []:
+            return {**self._build_page_payload([], 0, page_no, page_size), "recentUpdateCount": 0}
         where_clause, query_params = self._build_point_filter(params)
         total = await self._count_point_rows(where_clause, query_params)
         rows = await self._fetch_point_rows(
@@ -2488,11 +2517,7 @@ class CatalogService:
         last_collect_time: datetime | None,
     ) -> dict[str, Any]:
         description = device.group_name or device.endpoint or device.endpoint_bkp or ""
-        connect_status = (
-            self._build_connect_status(last_collect_time)
-            if last_collect_time is not None
-            else self._build_connect_status_from_raw(device.device_status_raw)
-        )
+        connect_status = self._build_connect_status(last_collect_time)
         data_status = self._build_data_status(last_collect_time) if last_collect_time is not None else "nodata"
         return {
             "id": device.device_id,
@@ -2542,11 +2567,24 @@ class CatalogService:
             "pointStatus": "enabled" if point.enabled else "disabled",
         }
 
+    def _filter_devices(self, devices: list[DeviceCatalogItem], params: dict[str, Any]) -> list[DeviceCatalogItem]:
+        raw_ids = params.get("deviceIds")
+        ids = None
+        if raw_ids is not None:
+            ids = set(self._normalize_id_list(raw_ids, field_name="deviceIds")) if raw_ids != [] else set()
+        return [device for device in devices
+                if (ids is None or device.device_id in ids) and self._matches_basic_device_filters(device, params)]
+
     def _matches_basic_device_filters(
         self,
         device: DeviceCatalogItem,
         params: dict[str, Any],
     ) -> bool:
+        exact_type = params.get("deviceTypeExact")
+        if exact_type is not None and (device.device_type or device.device_type_code or device.group_name or "") != exact_type:
+            return False
+        if params.get("deviceCodeExact") is not None and device.device_code != params["deviceCodeExact"]:
+            return False
         keyword = self._normalize_text(params.get("keyword"))
         device_type = self._normalize_text(params.get("deviceType"))
         device_code = self._normalize_text(params.get("deviceCode"))
@@ -2913,7 +2951,13 @@ class CatalogService:
         type_codes = list(devices_by_type.keys())
         results = await asyncio.gather(
             *(
-                asyncio.wait_for(self._fetch_type_latest_collect_times(database_name, type_code), timeout=5.0)
+                asyncio.wait_for(
+                    self._fetch_type_latest_collect_times(
+                        database_name, type_code,
+                        [self._resolve_current_child_table_name(device.device_code) for device in devices_by_type[type_code]],
+                    ),
+                    timeout=5.0,
+                )
                 for type_code in type_codes
             ),
             return_exceptions=True,
@@ -2939,18 +2983,11 @@ class CatalogService:
         self,
         database_name: str,
         type_code: str,
+        table_names: list[str],
     ) -> dict[str, datetime]:
-        stable_name = self.tdengine.qualify_table(database_name, f"sd{type_code}")
-        rows = await self.tdengine.fetch_all(
-            f"SELECT tbname AS tbl, LAST(ts) AS last_ts FROM {stable_name} GROUP BY tbname",
-            database=database_name,
+        return await fetch_type_latest_collect_times(
+            self.tdengine, database_name, type_code, table_names,
         )
-        result: dict[str, datetime] = {}
-        for tbl, last_ts in rows:
-            latest_time = self._coerce_datetime(last_ts)
-            if tbl is not None and latest_time is not None:
-                result[str(tbl)] = latest_time
-        return result
 
     async def _fetch_latest_point_value_map(
         self,
@@ -3069,13 +3106,6 @@ class CatalogService:
         if age_seconds <= ONLINE_MAX_AGE_SECONDS:
             return "online"
         if age_seconds <= UNSTABLE_MAX_AGE_SECONDS:
-            return "unstable"
-        return "offline"
-
-    def _build_connect_status_from_raw(self, raw_status: int) -> str:
-        if raw_status == 1:
-            return "online"
-        if raw_status == 2:
             return "unstable"
         return "offline"
 

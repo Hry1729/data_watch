@@ -120,3 +120,15 @@ docs/测试/test_scenarios.py
 docs/测试/入库诊断说明.md
 frontend/tests/history-zoom.test.ts
 frontend/tests/realtime-samples.test.ts
+
+# 本地留存的设计稿 / 参考资料 / 构建产物（仅本地保留，不入库）
+designs/
+docs/1010/
+docs/设计体系/
+docs/着陆页参考/app页面预览/
+docs/着陆页参考/app页面预览 - 副本/
+docs/着陆页参考/知识库重设计/
+app/dist-cap/
+data/exports/
+deploy/docker-images-*/
+deploy/*.zip.sha256

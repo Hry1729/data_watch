@@ -1,2 +1,7 @@
 # Preserve driver package bytes used by catalog and signature verification.
 packages/** -text
+
+# Vendored upstream source and the patch applied to it at build time: with
+# core.autocrlf the checked-out files would carry CRLF and git apply would no
+# longer match the LF patch.
+vendor/** -text

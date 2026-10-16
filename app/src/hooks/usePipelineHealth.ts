@@ -96,24 +96,24 @@ function unavailableEdgeStage(key: "collector" | "uploader"): PipelineStageHealt
 }
 
 export function usePipelineHealth() {
-  const load = useCallback(async (token: string): Promise<PipelineHealthSnapshot> => {
+  const load = useCallback(async (token: string, signal: AbortSignal): Promise<PipelineHealthSnapshot> => {
     const edgeRequest = BUILD_ROLE === "distributed-center"
-      ? backendClient.dashboardEdgePipelineHealth(token)
+      ? backendClient.dashboardEdgePipelineHealth(token, signal)
       : Promise.resolve<DashboardEdgePipelineHealth | null>(null);
     const inactiveProcess = { status: "inactive" };
     const collectorRequest = BUILD_ROLE === "centralized"
-      ? agentClient.getProcessStatus("collector")
+      ? agentClient.getProcessStatus("collector", signal)
       : Promise.resolve(inactiveProcess);
     const ingestRequest = BUILD_ROLE === "distributed-center"
-      ? agentClient.getProcessStatus("ingest")
+      ? agentClient.getProcessStatus("ingest", signal)
       : Promise.resolve(inactiveProcess);
     const [edgeResult, connectionResult, collectorResult, ingestResult, writerResult] =
       await Promise.allSettled([
         edgeRequest,
-        agentClient.getConnectionHealth(),
+        agentClient.getConnectionHealth(signal),
         collectorRequest,
         ingestRequest,
-        agentClient.getProcessStatus("writer"),
+        agentClient.getProcessStatus("writer", signal),
       ]);
 
     if (BUILD_ROLE === "distributed-center" && edgeResult.status === "rejected") {

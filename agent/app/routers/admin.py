@@ -279,6 +279,9 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     _require_driver_idle(name, request)
     pm = request.app.state.pm
     _require_known(pm, name)
+    recovering = bool(request.scope.get("datawatch_process_recovery", False)) if hasattr(request, "scope") else False
+    if recovering and not pm.wants_running(name):
+        return {}
     if pm.status(name).status == "running":
         raise HTTPException(status_code=409, detail=f"{name} is already running")
 
@@ -293,7 +296,10 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
     env = _process_env(name)
 
     try:
-        await pm.start(name, extra_args=extra_args, env=env)
+        options = {"recovering": True} if recovering else {}
+        info = await pm.start(name, extra_args=extra_args, env=env, **options)
+        if recovering and info.status != "running":
+            return {}
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     request.app.state.log_manager.attach(
@@ -313,7 +319,7 @@ async def stop_process(name: str, request: Request, _user: str = Depends(get_cur
     if name == "storage":
         request.app.state._storage_recovery_pending = False
         for dependent in ("uploader", "collector"):
-            if dependent in pm.modules and pm.status(dependent).status == "running":
+            if dependent in pm.modules:
                 await pm.stop(dependent)
                 await asyncio.to_thread(request.app.state.log_manager.detach, dependent)
                 if dependent == "collector" and request.app.state.sidecar_manager is not None:

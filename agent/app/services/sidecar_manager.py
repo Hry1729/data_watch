@@ -62,7 +62,7 @@ async def wait_for_sidecar_operation(operation):
 
 async def stop_collector_for_drivers(pm):
     async with collector_lifecycle(pm):
-        await pm.stop("collector")
+        await pm.stop("collector", preserve_desired=True)
 
 PROXY_EXE_NAME = "OpcDaProxyService.exe"
 

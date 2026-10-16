@@ -13,7 +13,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { monitorClient } from "@/lib/monitor-client";
-import { loadAllDevicePages } from "@/lib/device-catalog";
+import { useDevicePicker } from "@/hooks/useDevicePicker";
+import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
 import type { PointListItem } from "@/types/device-monitor";
 
 const DATA_TYPES = ["BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"] as const;
@@ -36,34 +37,31 @@ export default function EdgePointMonitorPage() {
   });
 
   const loadDevices = useCallback(
-    (token: string) => loadAllDevicePages((pageNo, pageSize) => monitorClient.deviceList(token, { pageNo, pageSize })),
+    (token: string, signal: AbortSignal) => monitorClient.deviceTypes(token, signal),
     [],
   );
-  const deviceCatalog = useBackendQuery(loadDevices, { intervalMs: 10_000 });
-  const devices = deviceCatalog.data?.list ?? [];
-  const activeDeviceIds = useMemo(
-    () => devices
-      .filter((device) => (activeType === "all" || device.deviceType === activeType)
-        && (connectStatus === "all" || device.connectStatus === connectStatus))
-      .map((device) => device.id),
-    [activeType, connectStatus, devices],
-  );
-  const hasDeviceFilter = activeType !== "all" || connectStatus !== "all";
-  const pointDeviceIds = hasDeviceFilter ? activeDeviceIds : undefined;
-  const pointQueryEnabled = !hasDeviceFilter || activeDeviceIds.length > 0;
+  const deviceCatalog = useBackendQuery(loadDevices);
+  const devicePicker = useDevicePicker(monitorClient, deviceCodeDraft, activeType, devicePickerOpen);
+  const pickerDevices = devicePicker.data?.list ?? [];
   const loadPoints = useCallback(
-    (token: string) => monitorClient.pointList(token, {
+    (token: string, signal: AbortSignal) => monitorClient.pointList(token, {
       pageNo: page,
       pageSize,
       keyword: keyword.trim() || undefined,
-      deviceIds: pointDeviceIds,
+      deviceType: activeType === "all" ? undefined : activeType,
+      connectStatus: connectStatus === "all" ? undefined : connectStatus,
       deviceId: deviceId === "all" ? undefined : Number(deviceId),
       deviceCode: deviceCodeFilter.trim() || undefined,
       dataType: dataTypeFilter === "all" ? undefined : dataTypeFilter,
-    }),
-    [dataTypeFilter, deviceCodeFilter, deviceId, keyword, page, pageSize, pointDeviceIds],
+    }, signal),
+    [activeType, connectStatus, dataTypeFilter, deviceCodeFilter, deviceId, keyword, page, pageSize],
   );
-  const points = useBackendQuery(loadPoints, { enabled: pointQueryEnabled, intervalMs: 5_000 });
+  const points = useBackendQuery(loadPoints, { intervalMs: 5_000 });
+  const routeDeviceCode = searchParams.get("deviceCode");
+  const loadRouteDevice = useCallback((token: string, signal: AbortSignal) => monitorClient.deviceList(token, {
+    pageNo: 1, pageSize: 1, deviceCodeExact: routeDeviceCode ?? undefined,
+  }, signal), [routeDeviceCode]);
+  const routeDevice = useBackendQuery(loadRouteDevice, { enabled: Boolean(routeDeviceCode) && !searchParams.get("deviceId") });
 
   useEffect(() => {
     const routeDeviceId = Number(searchParams.get("deviceId"));
@@ -72,39 +70,20 @@ export default function EdgePointMonitorPage() {
       setDeviceId(String(routeDeviceId));
       return;
     }
-    const matchedDevice = routeDeviceCode
-      ? devices.find((device) => device.deviceCode === routeDeviceCode)
-      : undefined;
+    const matchedDevice = routeDevice.data?.list.find((device) => device.deviceCode === routeDeviceCode);
     if (matchedDevice) {
       setDeviceId(String(matchedDevice.id));
       setDeviceCodeFilter(matchedDevice.deviceCode);
     }
-  }, [devices, searchParams]);
+  }, [routeDevice.data, searchParams]);
 
-  const activeDeviceIdSet = useMemo(() => new Set(activeDeviceIds), [activeDeviceIds]);
-  const rows = useMemo(
-    () => hasDeviceFilter
-      ? (points.data?.list ?? []).filter((row) => activeDeviceIdSet.has(row.deviceId))
-      : points.data?.list ?? [],
-    [activeDeviceIdSet, hasDeviceFilter, points.data?.list],
-  );
+  const rows = points.data?.list ?? [];
   const totalPages = Math.max(1, Math.ceil((points.data?.total ?? 0) / pageSize));
-  const source = points.data?.source ?? deviceCatalog.data?.source ?? "center";
+  const source = points.data?.source ?? devicePicker.data?.source ?? "center";
   const typeTabs = useMemo(
-    () => Array.from(new Set(devices.map((device) => device.deviceType))).map((value) => ({ value, label: value })),
-    [devices],
+    () => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })),
+    [deviceCatalog.data],
   );
-  const typeDevices = useMemo(
-    () => devices.filter((device) => activeType === "all" || device.deviceType === activeType),
-    [activeType, devices],
-  );
-  const pickerDevices = useMemo(() => {
-    const search = deviceCodeDraft.trim().toLowerCase();
-    if (!search) return typeDevices;
-    return typeDevices.filter((device) =>
-      `${device.deviceCode} ${device.deviceName}`.toLowerCase().includes(search),
-    );
-  }, [deviceCodeDraft, typeDevices]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
@@ -123,7 +102,7 @@ export default function EdgePointMonitorPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4 md:p-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4 md:px-6 md:pb-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}>
@@ -152,7 +131,7 @@ export default function EdgePointMonitorPage() {
         </div>
       </div>
 
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader><CardTitle>点位监控</CardTitle><CardAction><Badge variant="outline" className={source === "local" ? "border-warning/30 bg-warning-soft text-warning" : "border-success/30 bg-success-soft text-success"}>{source === "local" ? "本机快照" : "中心数据"}</Badge></CardAction></CardHeader>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
@@ -168,7 +147,8 @@ export default function EdgePointMonitorPage() {
       <Dialog open={devicePickerOpen} onOpenChange={setDevicePickerOpen}>
         <DialogContent className="flex max-h-[85vh] w-[min(600px,90vw)] max-w-none flex-col gap-3 sm:max-w-none">
           <DialogHeader><DialogTitle>选择设备号</DialogTitle><DialogDescription>{activeType === "all" ? "可手打设备号，或从本机设备中选择。" : `可手打设备号，或从「${activeType}」类型设备中选择。`}</DialogDescription></DialogHeader>
-          <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="relative shrink-0"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="手打或搜索设备号 / 名称" value={deviceCodeDraft} onChange={(event) => setDeviceCodeDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyDeviceCode(deviceCodeDraft.trim()); }} /></div><div className="h-[300px] max-h-[40vh] overflow-y-auto rounded-md border p-2.5">{pickerDevices.length ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">{pickerDevices.map((device) => <button key={device.id} type="button" className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-card px-2 py-2 text-left transition-colors hover:bg-muted" onClick={() => applyDeviceCode(device.deviceCode, device.id)}><span className="truncate text-sm font-medium">{device.deviceCode}</span><span className="truncate text-xs text-muted-foreground">{device.deviceName}</span></button>)}</div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{typeDevices.length ? "没有匹配的设备号" : "当前类型下暂无设备"}</div>}</div></div>
+          <div className="flex min-h-0 flex-1 flex-col gap-3"><div className="relative shrink-0"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="手打或搜索设备号 / 名称" value={deviceCodeDraft} onChange={(event) => setDeviceCodeDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") applyDeviceCode(deviceCodeDraft.trim()); }} /></div><div className="h-[300px] max-h-[40vh] overflow-y-auto rounded-md border p-2.5">{devicePicker.loading ? <Skeleton className="h-full w-full" /> : pickerDevices.length ? <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">{pickerDevices.map((device) => <button key={device.id} type="button" className="flex min-w-0 flex-col gap-0.5 rounded-md border bg-card px-2 py-2 text-left transition-colors hover:bg-muted" onClick={() => applyDeviceCode(device.deviceCode, device.id)}><span className="truncate text-sm font-medium">{device.deviceCode}</span><span className="truncate text-xs text-muted-foreground">{device.deviceName}</span></button>)}</div> : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{devicePicker.error ?? "没有匹配的设备号"}</div>}</div></div>
+          <DeviceCatalogPagination total={devicePicker.data?.total ?? 0} page={devicePicker.page} pageSize={devicePicker.pageSize} loading={devicePicker.loading} onPageChange={devicePicker.setPage} />
           <DialogFooter className="sm:justify-between"><Button type="button" variant="ghost" onClick={() => applyDeviceCode("")}>清空</Button><div className="flex gap-2"><Button type="button" variant="outline" onClick={() => setDevicePickerOpen(false)}>取消</Button><Button type="button" onClick={() => applyDeviceCode(deviceCodeDraft.trim())}>确定</Button></div></DialogFooter>
         </DialogContent>
       </Dialog>

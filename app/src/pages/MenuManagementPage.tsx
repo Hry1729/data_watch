@@ -34,7 +34,7 @@ function flattenMenus(items: MenuTreeItem[], expanded: Set<number>, depth = 0): 
 export function MenuManagementPage() {
   const { auth } = useAuth();
   const token = auth?.backendToken;
-  const loadMenus = useCallback((activeToken: string) => backendClient.adminMenus(activeToken), []);
+  const loadMenus = useCallback((activeToken: string, signal: AbortSignal) => backendClient.adminMenus(activeToken, signal), []);
   const menus = useBackendQuery(loadMenus);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -105,8 +105,8 @@ export function MenuManagementPage() {
   function toggleExpanded(id: number) { setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 p-4 md:p-6">
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
           <CardTitle>菜单列表</CardTitle>
           <CardAction>

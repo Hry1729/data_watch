@@ -223,7 +223,7 @@ export function BootstrapPage() {
           </div>
 
           <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
-            <Card className="h-fit border-border shadow-xs">
+            <Card className="h-fit">
               <CardHeader>
                 <CardTitle>服务清单</CardTitle>
                 <CardDescription>选择服务后在右侧完成配置</CardDescription>
@@ -254,7 +254,7 @@ export function BootstrapPage() {
               </CardContent>
             </Card>
 
-            <Card className="min-h-[430px] border-border shadow-xs">
+            <Card className="min-h-[430px]">
               <CardHeader className="border-b">
                 <div className="flex items-start justify-between gap-4">
                   <div>

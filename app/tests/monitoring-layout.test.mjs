@@ -52,7 +52,7 @@ for (const panel of ["LogPanel", "ModuleDbLogPanel"]) {
   });
 }
 
-test("the three large monitoring panels rely on one shared radius and border", async () => {
+test("the three large monitoring panels rely on the shared card surface", async () => {
   const trendSource = await readFile(
     new URL("../src/components/TrendChart.tsx", import.meta.url),
     "utf8",
@@ -64,6 +64,6 @@ test("the three large monitoring panels rely on one shared radius and border", a
       new URL(`../src/pages/${page}.tsx`, import.meta.url),
       "utf8",
     );
-    assert.equal(source.match(/style=\{\{ borderRadius: 12 \}\}/g)?.length, 1);
+    assert.doesNotMatch(source, /style=\{\{ borderRadius: 12 \}\}/);
   }
 });

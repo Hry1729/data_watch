@@ -1,4 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { invokeHttp, isAbortError } from "@/lib/desktop-request";
+import { withBackendSession, type BackendTokens } from "@/lib/backend-session";
 import type {
   AppError,
   AuthUserInfo,
@@ -20,6 +22,7 @@ import type {
   DeviceListItem,
   DeviceListQuery,
   DeviceRealtimeStatus,
+  DeviceSummary,
   DeviceTypeItem,
   RealtimePointGroup,
   DriverListItem,
@@ -109,32 +112,32 @@ export interface BackendClient {
     mustChangePassword?: boolean;
   }>;
   /** 查询 DB system_log（需 backend token 鉴权），返回行数组 */
-  logList(token: string, query: LogListQuery): Promise<WriterLogRow[]>;
+  logList(token: string, query: LogListQuery, signal?: AbortSignal): Promise<WriterLogRow[]>;
   /** 采集页一期即时指标 */
-  collectorMetrics(token: string): Promise<CollectorModuleMetrics>;
+  collectorMetrics(token: string, signal?: AbortSignal): Promise<CollectorModuleMetrics>;
   /** 入库页一期即时指标 */
-  writerMetrics(token: string): Promise<WriterModuleMetrics>;
+  writerMetrics(token: string, signal?: AbortSignal): Promise<WriterModuleMetrics>;
   /** 二期：采集/入库速率与趋势（同源，一个接口出两侧） */
-  moduleRates(token: string): Promise<ModuleRates>;
+  moduleRates(token: string, signal?: AbortSignal): Promise<ModuleRates>;
   /** collector 运行参数配置（stream_maxlen 等，存 MySQL collector_setting） */
-  getCollectorConfig(token: string): Promise<CollectorConfig>;
+  getCollectorConfig(token: string, signal?: AbortSignal): Promise<CollectorConfig>;
   updateCollectorConfig(token: string, streamMaxlen: number): Promise<CollectorConfig>;
-  dashboardOverview(token: string): Promise<DashboardOverview>;
-  dashboardTrend(token: string, rangeType: "today" | "last24h" | "last7d"): Promise<DashboardTrend>;
-  dashboardDeviceTypeDistribution(token: string): Promise<DashboardDeviceTypeDistribution>;
-  dashboardConnectionHealth(token: string): Promise<DashboardConnectionHealth>;
-  dashboardEdgePipelineHealth(token: string): Promise<DashboardEdgePipelineHealth>;
-  dashboardRecentEvents(token: string): Promise<DashboardRecentEventList>;
-  distributedNodes(token: string): Promise<DistributedNode[]>;
+  dashboardOverview(token: string, signal?: AbortSignal): Promise<DashboardOverview>;
+  dashboardTrend(token: string, rangeType: "today" | "last24h" | "last7d", signal?: AbortSignal): Promise<DashboardTrend>;
+  dashboardDeviceTypeDistribution(token: string, signal?: AbortSignal): Promise<DashboardDeviceTypeDistribution>;
+  dashboardConnectionHealth(token: string, signal?: AbortSignal): Promise<DashboardConnectionHealth>;
+  dashboardEdgePipelineHealth(token: string, signal?: AbortSignal): Promise<DashboardEdgePipelineHealth>;
+  dashboardRecentEvents(token: string, signal?: AbortSignal): Promise<DashboardRecentEventList>;
+  distributedNodes(token: string, signal?: AbortSignal): Promise<DistributedNode[]>;
   syncDistributedNodeDeviceStatuses(token: string): Promise<DeviceStatusSyncResult>;
   createNodeRegistrationCode(token: string, nodeName: string, expiresMinutes: number): Promise<RegistrationCodeResult>;
   updateDistributedNodeStatus(token: string, nodeUuid: string, status: "approved" | "revoked"): Promise<unknown>;
   updateDistributedNodeSettings(token: string, nodeUuid: string, readTimeoutMs: number | null): Promise<unknown>;
-  distributedNodeAssignments(token: string, nodeUuid: string): Promise<NodeAssignment[]>;
-  distributedAssignmentOccupancy(token: string): Promise<AssignmentOccupancy[]>;
+  distributedNodeAssignments(token: string, nodeUuid: string, signal?: AbortSignal): Promise<NodeAssignment[]>;
+  distributedAssignmentOccupancy(token: string, signal?: AbortSignal): Promise<AssignmentOccupancy[]>;
   assignDistributedNodeDevices(token: string, nodeUuid: string, deviceIds: number[]): Promise<AssignmentUpdateResult>;
-  driverList(token: string, query: { pageNo?: number; pageSize?: number; keyword?: string }): Promise<PaginatedResult<DriverListItem>>;
-  driverOptions(token: string): Promise<{ driverName: string; driverDesc: string }[]>;
+  driverList(token: string, query: { pageNo?: number; pageSize?: number; keyword?: string }, signal?: AbortSignal): Promise<PaginatedResult<DriverListItem>>;
+  driverOptions(token: string, signal?: AbortSignal): Promise<{ driverName: string; driverDesc: string }[]>;
   registerDriver(
     token: string,
     payload: {
@@ -151,8 +154,10 @@ export interface BackendClient {
     token: string,
     payload: { protocol: string; driverId?: string },
   ): Promise<{ protocol: string; status: string; catalogDeleted?: boolean; driverId?: string }>;
-  deviceGroupTree(token: string): Promise<DeviceGroupTreeNode[]>;
-  deviceList(token: string, query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
+  deviceGroupTree(token: string, signal?: AbortSignal): Promise<DeviceGroupTreeNode[]>;
+  deviceList(token: string, query: DeviceListQuery, signal?: AbortSignal): Promise<PaginatedResult<DeviceListItem>>;
+  deviceTypes(token: string, query?: Pick<DeviceListQuery, "deviceIds">, signal?: AbortSignal): Promise<string[]>;
+  deviceSummary(token: string, query: DeviceListQuery, signal?: AbortSignal): Promise<DeviceSummary>;
   createDevice(token: string, payload: DeviceForm): Promise<{ id: number }>;
   updateDevice(token: string, id: number, payload: DeviceForm): Promise<unknown>;
   updateDeviceStatus(token: string, id: number, enabled: boolean): Promise<unknown>;
@@ -160,8 +165,8 @@ export interface BackendClient {
   batchDeleteDevices(token: string, ids: number[]): Promise<{ count: number }>;
   exportDevices(token: string, query: DeviceListQuery, template?: boolean): Promise<{ bytes: number[]; fileName: string }>;
   importDevices(token: string, rows: Record<string, unknown>[]): Promise<ImportResult>;
-  pointDeviceTree(token: string): Promise<PointDeviceTreeNode[]>;
-  pointList(token: string, query: PointListQuery): Promise<PaginatedResult<PointListItem>>;
+  pointDeviceTree(token: string, signal?: AbortSignal): Promise<PointDeviceTreeNode[]>;
+  pointList(token: string, query: PointListQuery, signal?: AbortSignal): Promise<PaginatedResult<PointListItem>>;
   createPoint(token: string, payload: PointForm): Promise<{ id: number }>;
   updatePoint(token: string, id: number, payload: PointForm): Promise<unknown>;
   updatePointStatus(token: string, id: number, enabled: boolean, locator?: { deviceId?: number; varSeq?: number }): Promise<unknown>;
@@ -170,46 +175,46 @@ export interface BackendClient {
   exportPoints(token: string, query: PointListQuery, template?: boolean): Promise<{ bytes: number[]; fileName: string }>;
   importPoints(token: string, rows: Record<string, unknown>[]): Promise<ImportResult>;
   importPointsFromTemplate(token: string, deviceId: number): Promise<ImportResult>;
-  realtimeInit(token: string, deviceId: number, groupCode?: string): Promise<DeviceRealtimeStatus>;
-  realtimePointGroups(token: string, deviceCode: string): Promise<RealtimePointGroup[]>;
-  historyDevices(token: string): Promise<HistoryDeviceItem[]>;
-  historyDeviceTypes(token: string): Promise<DeviceTypeItem[]>;
-  historyPoints(token: string, deviceId: number): Promise<HistoryPointItem[]>;
-  historyChart(token: string, query: HistoryQuery): Promise<HistoryChartResponse>;
-  historyRawMatrix(token: string, query: HistoryQuery & { alignGranularity?: "100ms" | "500ms" | "1s"; pageSize?: number; cursorTs?: string }): Promise<HistoryRawMatrixResponse>;
-  historyExport(token: string, payload: HistoryExportPayload): Promise<{ taskId: string }>;
-  historyExportStatus(token: string, taskId: string): Promise<HistoryExportStatus>;
-  historyExportDownload(token: string, taskId: string): Promise<{ bytes: number[]; fileName: string }>;
-  systemLogList(token: string, query: SystemLogQuery): Promise<SystemLogPageResult>;
-  logStats(token: string): Promise<SystemLogStats>;
+  realtimeInit(token: string, deviceId: number, groupCode?: string, signal?: AbortSignal): Promise<DeviceRealtimeStatus>;
+  realtimePointGroups(token: string, deviceCode: string, signal?: AbortSignal): Promise<RealtimePointGroup[]>;
+  historyDevices(token: string, signal?: AbortSignal): Promise<HistoryDeviceItem[]>;
+  historyDeviceTypes(token: string, signal?: AbortSignal): Promise<DeviceTypeItem[]>;
+  historyPoints(token: string, deviceId: number, signal?: AbortSignal): Promise<HistoryPointItem[]>;
+  historyChart(token: string, query: HistoryQuery, signal?: AbortSignal): Promise<HistoryChartResponse>;
+  historyRawMatrix(token: string, query: HistoryQuery & { alignGranularity?: "100ms" | "500ms" | "1s"; pageSize?: number; cursorTs?: string }, signal?: AbortSignal): Promise<HistoryRawMatrixResponse>;
+  historyExport(token: string, payload: HistoryExportPayload, signal?: AbortSignal): Promise<{ taskId: string }>;
+  historyExportStatus(token: string, taskId: string, signal?: AbortSignal): Promise<HistoryExportStatus>;
+  historyExportDownload(token: string, taskId: string, signal?: AbortSignal): Promise<{ bytes: number[]; fileName: string }>;
+  systemLogList(token: string, query: SystemLogQuery, signal?: AbortSignal): Promise<SystemLogPageResult>;
+  logStats(token: string, signal?: AbortSignal): Promise<SystemLogStats>;
   toggleLogDebug(token: string, payload: { enabled: boolean; durationMinutes?: number; reason?: string }): Promise<unknown>;
   cleanupLogs(token: string, payload: LogCleanupPayload): Promise<LogCleanupResult>;
-  tdengineLogFiles(token: string): Promise<TdengineLogFile[]>;
-  tdengineLogTail(token: string, file: string, lines?: number): Promise<TdengineLogTail>;
-  userList(token: string, query: UserQuery): Promise<UserPageResult>;
+  tdengineLogFiles(token: string, signal?: AbortSignal): Promise<TdengineLogFile[]>;
+  tdengineLogTail(token: string, file: string, lines?: number, signal?: AbortSignal): Promise<TdengineLogTail>;
+  userList(token: string, query: UserQuery, signal?: AbortSignal): Promise<UserPageResult>;
   /** 当前登录用户信息（角色 / 按钮权限） */
-  userInfo(token: string): Promise<AuthUserInfo>;
-  roleOptions(token: string): Promise<RoleOption[]>;
+  userInfo(token: string, signal?: AbortSignal): Promise<AuthUserInfo>;
+  roleOptions(token: string, signal?: AbortSignal): Promise<RoleOption[]>;
   createUser(token: string, payload: UserPayload): Promise<UserPasswordProvisionResult>;
   updateUser(token: string, id: number, payload: UserPayload): Promise<{ id: number }>;
   updateUserStatus(token: string, id: number, status: string): Promise<{ id: number }>;
   resetUserPassword(token: string, id: number): Promise<UserPasswordProvisionResult>;
   changePassword(token: string, oldPassword: string, newPassword: string): Promise<boolean>;
   deleteUser(token: string, id: number): Promise<{ id: number }>;
-  roleList(token: string, query: RoleQuery): Promise<RolePageResult>;
+  roleList(token: string, query: RoleQuery, signal?: AbortSignal): Promise<RolePageResult>;
   createRole(token: string, payload: RolePayload): Promise<{ id: number }>;
   updateRole(token: string, id: number, payload: RolePayload): Promise<{ id: number }>;
   updateRoleStatus(token: string, id: number, enabled: boolean): Promise<{ id: number }>;
   deleteRole(token: string, id: number): Promise<{ id: number }>;
-  roleGrant(token: string, id: number): Promise<RoleGrant>;
+  roleGrant(token: string, id: number, signal?: AbortSignal): Promise<RoleGrant>;
   updateRoleGrant(token: string, id: number, payload: RoleGrant): Promise<{ id: number }>;
-  adminMenus(token: string): Promise<MenuTreeItem[]>;
+  adminMenus(token: string, signal?: AbortSignal): Promise<MenuTreeItem[]>;
   /** 当前用户可见菜单树（已按角色过滤） */
-  currentUserMenus(token: string): Promise<MenuTreeItem[]>;
+  currentUserMenus(token: string, signal?: AbortSignal): Promise<MenuTreeItem[]>;
   createMenu(token: string, payload: MenuPayload): Promise<{ id: number }>;
   updateMenu(token: string, id: number, payload: MenuPayload): Promise<{ id: number }>;
   deleteMenu(token: string, id: number): Promise<{ id: number }>;
-  menuPermissions(token: string, menuId: number): Promise<PermissionItem[]>;
+  menuPermissions(token: string, menuId: number, signal?: AbortSignal): Promise<PermissionItem[]>;
   createMenuPermission(token: string, menuId: number, payload: PermissionPayload): Promise<{ id: number }>;
   updateMenuPermission(token: string, menuId: number, permissionId: number, payload: PermissionPayload): Promise<{ id: number }>;
   deleteMenuPermission(token: string, menuId: number, permissionId: number): Promise<{ id: number }>;
@@ -255,7 +260,24 @@ async function backendFetch<T>(
   method: string,
   path: string,
   body?: object,
-  token?: string
+  token?: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  return withBackendSession(token,
+    (activeToken) => backendFetchOnce<T>(method, path, body, activeToken, signal),
+    refreshBackendSession, signal);
+}
+
+function refreshBackendSession(refreshToken: string, signal: AbortSignal) {
+  return backendFetchOnce<BackendTokens>("POST", "/api/auth/refresh", { refreshToken }, undefined, signal);
+}
+
+async function backendFetchOnce<T>(
+  method: string,
+  path: string,
+  body?: object,
+  token?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (!_backendBaseUrl) {
     // 地址未就绪（运行期配置尚未注入或引导未完成）
@@ -277,14 +299,15 @@ async function backendFetch<T>(
       throw new Error("backend request body is too large");
     }
     // 经 Tauri Rust 转发，桌面 app 不再受浏览器 CORS 限制。
-    result = await invoke<[number, string]>("backend_request", {
+    result = await invokeHttp<[number, string]>("backend_request", {
       baseUrl: _backendBaseUrl,
       method,
       path,
       body: serializedBody,
       authorization,
-    });
-  } catch {
+    }, signal);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
     throw {
       type: "network_error",
       message: "无法连接到后端服务",
@@ -327,7 +350,13 @@ async function backendFetch<T>(
   return json.data as T; // 后端统一格式：{ code, msg, data }
 }
 
-async function backendDownload(path: string, token: string) {
+async function backendDownload(path: string, token: string, signal?: AbortSignal) {
+  return withBackendSession(token,
+    (activeToken) => backendDownloadOnce(path, activeToken ?? token, signal),
+    refreshBackendSession, signal);
+}
+
+async function backendDownloadOnce(path: string, token: string, signal?: AbortSignal) {
   if (!_backendBaseUrl) {
     throw { type: "network_error", message: "后端地址未配置" } satisfies AppError;
   }
@@ -336,12 +365,13 @@ async function backendDownload(path: string, token: string) {
   try {
     await _backendOriginReady;
     if (!isAllowedBackendPath(path)) throw new Error("backend download path is not allowed");
-    result = await invoke<[number, number[], string | null]>("backend_download", {
+    result = await invokeHttp<[number, number[], string | null]>("backend_download", {
       baseUrl: _backendBaseUrl,
       path,
       authorization,
-    });
-  } catch {
+    }, signal);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
     throw { type: "network_error", message: "无法连接到后端服务" } satisfies AppError;
   }
 
@@ -381,7 +411,7 @@ const realBackend: BackendClient = {
     );
   },
 
-  async logList(token, query) {
+  async logList(token, query, signal) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) {
       if (v !== undefined && v !== null && v !== "") qs.append(k, String(v));
@@ -390,43 +420,43 @@ const realBackend: BackendClient = {
       "GET",
       `/api/device-monitor/log/list?${qs.toString()}`,
       undefined,
-      token
+      token, signal
     );
     return page?.list ?? [];
   },
 
-  collectorMetrics(token) {
+  collectorMetrics(token, signal) {
     return backendFetch<CollectorModuleMetrics>(
       "GET",
       "/api/device-monitor/module-monitor/collector",
       undefined,
-      token
+      token, signal
     );
   },
 
-  writerMetrics(token) {
+  writerMetrics(token, signal) {
     return backendFetch<WriterModuleMetrics>(
       "GET",
       "/api/device-monitor/module-monitor/writer",
       undefined,
-      token
+      token, signal
     );
   },
 
-  moduleRates(token) {
+  moduleRates(token, signal) {
     return backendFetch<ModuleRates>(
       "GET",
       "/api/device-monitor/module-monitor/rates",
       undefined,
-      token
+      token, signal
     );
   },
-  getCollectorConfig(token) {
+  getCollectorConfig(token, signal) {
     return backendFetch<CollectorConfig>(
       "GET",
       "/api/device-monitor/collector-config",
       undefined,
-      token
+      token, signal
     );
   },
   updateCollectorConfig(token, streamMaxlen) {
@@ -437,63 +467,63 @@ const realBackend: BackendClient = {
       token
     );
   },
-  dashboardOverview(token) {
+  dashboardOverview(token, signal) {
     return backendFetch<DashboardOverview>(
       "GET",
       "/api/device-monitor/dashboard/overview",
       undefined,
-      token
+      token, signal
     );
   },
-  dashboardTrend(token, rangeType) {
+  dashboardTrend(token, rangeType, signal) {
     const qs = new URLSearchParams({ rangeType, granularity: "auto" });
     ["collectCount", "alarmCount", "onlineDeviceCount"].forEach((key) => qs.append("metricKeys", key));
     return backendFetch<DashboardTrend>(
       "GET",
       `/api/device-monitor/dashboard/trend?${qs.toString()}`,
       undefined,
-      token
+      token, signal
     );
   },
-  dashboardDeviceTypeDistribution(token) {
+  dashboardDeviceTypeDistribution(token, signal) {
     return backendFetch<DashboardDeviceTypeDistribution>(
       "GET",
       "/api/device-monitor/dashboard/device-type-distribution?topN=10",
       undefined,
-      token
+      token, signal
     );
   },
-  dashboardConnectionHealth(token) {
+  dashboardConnectionHealth(token, signal) {
     return backendFetch<DashboardConnectionHealth>(
       "GET",
       "/api/device-monitor/dashboard/device-connection-health?statRange=last24h&topN=8&includeOffline=true",
       undefined,
-      token
+      token, signal
     );
   },
-  dashboardEdgePipelineHealth(token) {
+  dashboardEdgePipelineHealth(token, signal) {
     return backendFetch<DashboardEdgePipelineHealth>(
       "GET",
       "/api/device-monitor/dashboard/edge-pipeline-health",
       undefined,
-      token,
+      token, signal,
     );
   },
 
-  dashboardRecentEvents(token) {
+  dashboardRecentEvents(token, signal) {
     return backendFetch<DashboardRecentEventList>(
       "GET",
       "/api/device-monitor/dashboard/recent-events?limit=8&eventType=alarm",
       undefined,
-      token
+      token, signal
     );
   },
-  async distributedNodes(token) {
+  async distributedNodes(token, signal) {
     const data = await backendFetch<{ items: DistributedNode[] }>(
       "GET",
       "/api/distributed/nodes",
       undefined,
-      token,
+      token, signal,
     );
     return data.items;
   },
@@ -529,21 +559,21 @@ const realBackend: BackendClient = {
       token,
     );
   },
-  async distributedNodeAssignments(token, nodeUuid) {
+  async distributedNodeAssignments(token, nodeUuid, signal) {
     const data = await backendFetch<{ items: NodeAssignment[] }>(
       "GET",
       `/api/distributed/nodes/${nodeUuid}/assignments`,
       undefined,
-      token,
+      token, signal,
     );
     return data.items;
   },
-  async distributedAssignmentOccupancy(token) {
+  async distributedAssignmentOccupancy(token, signal) {
     const data = await backendFetch<{ items: AssignmentOccupancy[] }>(
       "GET",
       "/api/distributed/assignments/occupancy",
       undefined,
-      token,
+      token, signal,
     );
     return data.items;
   },
@@ -555,11 +585,11 @@ const realBackend: BackendClient = {
       token,
     );
   },
-  driverList(token, query) {
-    return backendFetch("GET", `/api/device-monitor/driver/list?${toQuery(query)}`, undefined, token);
+  driverList(token, query, signal) {
+    return backendFetch("GET", `/api/device-monitor/driver/list?${toQuery(query)}`, undefined, token, signal);
   },
-  driverOptions(token) {
-    return backendFetch("GET", "/api/device-monitor/driver/options", undefined, token);
+  driverOptions(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/driver/options", undefined, token, signal);
   },
   registerDriver(token, payload) {
     return backendFetch("POST", "/api/device-monitor/driver/register", payload, token);
@@ -567,11 +597,18 @@ const realBackend: BackendClient = {
   uninstallDriver(token, payload) {
     return backendFetch("POST", "/api/device-monitor/driver/uninstall", payload, token);
   },
-  deviceGroupTree(token) {
-    return backendFetch("GET", "/api/device-monitor/device/group-tree", undefined, token);
+  deviceGroupTree(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/device/group-tree", undefined, token, signal);
   },
-  deviceList(token, query) {
-    return backendFetch("GET", `/api/device-monitor/device/list?${toQuery(query)}`, undefined, token);
+  deviceList(token, query, signal) {
+    if (query.deviceIds) return backendFetch("POST", "/api/device-monitor/device/query", { ...query, includeSummary: false }, token, signal);
+    return backendFetch("GET", `/api/device-monitor/device/list?${toQuery({ ...query, includeSummary: false })}`, undefined, token, signal);
+  },
+  deviceTypes(token, query = {}, signal) {
+    return backendFetch("GET", `/api/device-monitor/device/types?${toQuery(query)}`, undefined, token, signal);
+  },
+  deviceSummary(token, query, signal) {
+    return backendFetch("GET", `/api/device-monitor/device/summary?${toQuery(query)}`, undefined, token, signal);
   },
   createDevice(token, payload) {
     return backendFetch("POST", "/api/device-monitor/device", payload, token);
@@ -596,11 +633,12 @@ const realBackend: BackendClient = {
     assertImportRequestSize(body);
     return backendFetch("POST", "/api/device-monitor/device/import", body, token);
   },
-  pointDeviceTree(token) {
-    return backendFetch("GET", "/api/device-monitor/point/device-tree", undefined, token);
+  pointDeviceTree(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/point/device-tree", undefined, token, signal);
   },
-  pointList(token, query) {
-    return backendFetch("GET", `/api/device-monitor/point/list?${toQuery(query)}`, undefined, token);
+  pointList(token, query, signal) {
+    if (query.deviceIds) return backendFetch("POST", "/api/device-monitor/point/query", query, token, signal);
+    return backendFetch("GET", `/api/device-monitor/point/list?${toQuery(query)}`, undefined, token, signal);
   },
   createPoint(token, payload) {
     return backendFetch("POST", "/api/device-monitor/point", payload, token);
@@ -637,41 +675,41 @@ const realBackend: BackendClient = {
   importPointsFromTemplate(token, deviceId) {
     return backendFetch("POST", "/api/device-monitor/point/import/template", { deviceId }, token);
   },
-  realtimeInit(token, deviceId, groupCode = "g001") {
-    return backendFetch("GET", `/api/device-monitor/monitor/realtime-init?${toQuery({ deviceId, groupCode })}`, undefined, token);
+  realtimeInit(token, deviceId, groupCode = "g001", signal) {
+    return backendFetch("GET", `/api/device-monitor/monitor/realtime-init?${toQuery({ deviceId, groupCode })}`, undefined, token, signal);
   },
-  realtimePointGroups(token, deviceCode) {
-    return backendFetch("GET", `/api/device-monitor/device/${encodeURIComponent(deviceCode)}/point-groups`, undefined, token);
+  realtimePointGroups(token, deviceCode, signal) {
+    return backendFetch("GET", `/api/device-monitor/device/${encodeURIComponent(deviceCode)}/point-groups`, undefined, token, signal);
   },
-  historyDevices(token) {
-    return backendFetch("GET", "/api/device-monitor/history/devices", undefined, token);
+  historyDevices(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/history/devices", undefined, token, signal);
   },
-  historyDeviceTypes(token) {
-    return backendFetch("GET", "/api/device-monitor/history/device-types", undefined, token);
+  historyDeviceTypes(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/history/device-types", undefined, token, signal);
   },
-  historyPoints(token, deviceId) {
-    return backendFetch("GET", `/api/device-monitor/history/points?deviceId=${deviceId}`, undefined, token);
+  historyPoints(token, deviceId, signal) {
+    return backendFetch("GET", `/api/device-monitor/history/points?deviceId=${deviceId}`, undefined, token, signal);
   },
-  historyChart(token, query) {
-    return backendFetch("GET", `/api/device-monitor/history/chart?${toQuery(query)}`, undefined, token);
+  historyChart(token, query, signal) {
+    return backendFetch("GET", `/api/device-monitor/history/chart?${toQuery(query)}`, undefined, token, signal);
   },
-  historyRawMatrix(token, query) {
-    return backendFetch("GET", `/api/device-monitor/history/raw-matrix?${toQuery(query)}`, undefined, token);
+  historyRawMatrix(token, query, signal) {
+    return backendFetch("GET", `/api/device-monitor/history/raw-matrix?${toQuery(query)}`, undefined, token, signal);
   },
-  historyExport(token, payload) {
-    return backendFetch("POST", "/api/device-monitor/history/export", payload, token);
+  historyExport(token, payload, signal) {
+    return backendFetch("POST", "/api/device-monitor/history/export", payload, token, signal);
   },
-  historyExportStatus(token, taskId) {
-    return backendFetch("GET", `/api/device-monitor/history/export/${taskId}/status`, undefined, token);
+  historyExportStatus(token, taskId, signal) {
+    return backendFetch("GET", `/api/device-monitor/history/export/${taskId}/status`, undefined, token, signal);
   },
-  historyExportDownload(token, taskId) {
-    return backendDownload(`/api/device-monitor/history/export/${taskId}/download`, token);
+  historyExportDownload(token, taskId, signal) {
+    return backendDownload(`/api/device-monitor/history/export/${taskId}/download`, token, signal);
   },
-  systemLogList(token, query) {
-    return backendFetch("GET", `/api/device-monitor/log/list?${toQuery(query)}`, undefined, token);
+  systemLogList(token, query, signal) {
+    return backendFetch("GET", `/api/device-monitor/log/list?${toQuery(query)}`, undefined, token, signal);
   },
-  logStats(token) {
-    return backendFetch("GET", "/api/device-monitor/log/stats", undefined, token);
+  logStats(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/log/stats", undefined, token, signal);
   },
   toggleLogDebug(token, payload) {
     return backendFetch("POST", "/api/device-monitor/log/debug", payload, token);
@@ -679,15 +717,15 @@ const realBackend: BackendClient = {
   cleanupLogs(token, payload) {
     return backendFetch("POST", "/api/device-monitor/log/cleanup", payload, token);
   },
-  tdengineLogFiles(token) {
-    return backendFetch("GET", "/api/device-monitor/log/tdengine/files", undefined, token);
+  tdengineLogFiles(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/log/tdengine/files", undefined, token, signal);
   },
-  tdengineLogTail(token, file, lines = 300) {
-    return backendFetch("GET", `/api/device-monitor/log/tdengine/tail?${toQuery({ file, lines })}`, undefined, token);
+  tdengineLogTail(token, file, lines = 300, signal) {
+    return backendFetch("GET", `/api/device-monitor/log/tdengine/tail?${toQuery({ file, lines })}`, undefined, token, signal);
   },
-  userList(token, query) { return backendFetch("GET", `/api/user/list?${toQuery(query)}`, undefined, token); },
-  userInfo(token) { return backendFetch("GET", "/api/user/info", undefined, token); },
-  roleOptions(token) { return backendFetch("GET", "/api/role/options", undefined, token); },
+  userList(token, query, signal) { return backendFetch("GET", `/api/user/list?${toQuery(query)}`, undefined, token, signal); },
+  userInfo(token, signal) { return backendFetch("GET", "/api/user/info", undefined, token, signal); },
+  roleOptions(token, signal) { return backendFetch("GET", "/api/role/options", undefined, token, signal); },
   createUser(token, payload) {
     const requestPayload = stripClientPassword(payload);
     return backendFetch<UserPasswordProvisionResult>("POST", "/api/user", requestPayload, token);
@@ -699,19 +737,19 @@ const realBackend: BackendClient = {
     return backendFetch<boolean>("POST", "/api/user/password/change", { oldPassword, newPassword }, token);
   },
   deleteUser(token, id) { return backendFetch("DELETE", `/api/user/${id}`, undefined, token); },
-  roleList(token, query) { return backendFetch("GET", `/api/role/list?${toQuery(query)}`, undefined, token); },
+  roleList(token, query, signal) { return backendFetch("GET", `/api/role/list?${toQuery(query)}`, undefined, token, signal); },
   createRole(token, payload) { return backendFetch("POST", "/api/role", payload, token); },
   updateRole(token, id, payload) { return backendFetch("PUT", `/api/role/${id}`, payload, token); },
   updateRoleStatus(token, id, enabled) { return backendFetch("PATCH", `/api/role/${id}/status`, { enabled }, token); },
   deleteRole(token, id) { return backendFetch("DELETE", `/api/role/${id}`, undefined, token); },
-  roleGrant(token, id) { return backendFetch("GET", `/api/role/${id}/grant`, undefined, token); },
+  roleGrant(token, id, signal) { return backendFetch("GET", `/api/role/${id}/grant`, undefined, token, signal); },
   updateRoleGrant(token, id, payload) { return backendFetch("PUT", `/api/role/${id}/grant`, payload, token); },
-  adminMenus(token) { return backendFetch("GET", "/api/v3/system/menus/admin", undefined, token); },
-  currentUserMenus(token) { return backendFetch("GET", "/api/v3/system/menus", undefined, token); },
+  adminMenus(token, signal) { return backendFetch("GET", "/api/v3/system/menus/admin", undefined, token, signal); },
+  currentUserMenus(token, signal) { return backendFetch("GET", "/api/v3/system/menus", undefined, token, signal); },
   createMenu(token, payload) { return backendFetch("POST", "/api/v3/system/menu", payload, token); },
   updateMenu(token, id, payload) { return backendFetch("PUT", `/api/v3/system/menu/${id}`, payload, token); },
   deleteMenu(token, id) { return backendFetch("DELETE", `/api/v3/system/menu/${id}`, undefined, token); },
-  menuPermissions(token, menuId) { return backendFetch("GET", `/api/v3/system/menu/${menuId}/permissions`, undefined, token); },
+  menuPermissions(token, menuId, signal) { return backendFetch("GET", `/api/v3/system/menu/${menuId}/permissions`, undefined, token, signal); },
   createMenuPermission(token, menuId, payload) { return backendFetch("POST", `/api/v3/system/menu/${menuId}/permissions`, payload, token); },
   updateMenuPermission(token, menuId, permissionId, payload) { return backendFetch("PUT", `/api/v3/system/menu/${menuId}/permissions/${permissionId}`, payload, token); },
   deleteMenuPermission(token, menuId, permissionId) { return backendFetch("DELETE", `/api/v3/system/menu/${menuId}/permissions/${permissionId}`, undefined, token); },
@@ -735,68 +773,70 @@ export const backendClient: BackendClient = {
     const c = await _implPromise;
     return c.login(userName, password);
   },
-  async logList(token, query) {
+  async logList(token, query, signal) {
     const c = await _implPromise;
-    return c.logList(token, query);
+    return c.logList(token, query, signal);
   },
-  async collectorMetrics(token) {
+  async collectorMetrics(token, signal) {
     const c = await _implPromise;
-    return c.collectorMetrics(token);
+    return c.collectorMetrics(token, signal);
   },
-  async writerMetrics(token) {
+  async writerMetrics(token, signal) {
     const c = await _implPromise;
-    return c.writerMetrics(token);
+    return c.writerMetrics(token, signal);
   },
-  async moduleRates(token) {
+  async moduleRates(token, signal) {
     const c = await _implPromise;
-    return c.moduleRates(token);
+    return c.moduleRates(token, signal);
   },
-  async getCollectorConfig(token) {
+  async getCollectorConfig(token, signal) {
     const c = await _implPromise;
-    return c.getCollectorConfig(token);
+    return c.getCollectorConfig(token, signal);
   },
   async updateCollectorConfig(token, streamMaxlen) {
     const c = await _implPromise;
     return c.updateCollectorConfig(token, streamMaxlen);
   },
-  async dashboardOverview(token) {
+  async dashboardOverview(token, signal) {
     const c = await _implPromise;
-    return c.dashboardOverview(token);
+    return c.dashboardOverview(token, signal);
   },
-  async dashboardTrend(token, rangeType) {
+  async dashboardTrend(token, rangeType, signal) {
     const c = await _implPromise;
-    return c.dashboardTrend(token, rangeType);
+    return c.dashboardTrend(token, rangeType, signal);
   },
-  async dashboardDeviceTypeDistribution(token) {
+  async dashboardDeviceTypeDistribution(token, signal) {
     const c = await _implPromise;
-    return c.dashboardDeviceTypeDistribution(token);
+    return c.dashboardDeviceTypeDistribution(token, signal);
   },
-  async dashboardConnectionHealth(token) {
+  async dashboardConnectionHealth(token, signal) {
     const c = await _implPromise;
-    return c.dashboardConnectionHealth(token);
+    return c.dashboardConnectionHealth(token, signal);
   },
-  async dashboardEdgePipelineHealth(token) {
+  async dashboardEdgePipelineHealth(token, signal) {
     const c = await _implPromise;
-    return c.dashboardEdgePipelineHealth(token);
+    return c.dashboardEdgePipelineHealth(token, signal);
   },
-  async dashboardRecentEvents(token) {
+  async dashboardRecentEvents(token, signal) {
     const c = await _implPromise;
-    return c.dashboardRecentEvents(token);
+    return c.dashboardRecentEvents(token, signal);
   },
-  async distributedNodes(token) { const c = await _implPromise; return c.distributedNodes(token); },
+  async distributedNodes(token, signal) { const c = await _implPromise; return c.distributedNodes(token, signal); },
   async syncDistributedNodeDeviceStatuses(token) { const c = await _implPromise; return c.syncDistributedNodeDeviceStatuses(token); },
   async createNodeRegistrationCode(token, nodeName, expiresMinutes) { const c = await _implPromise; return c.createNodeRegistrationCode(token, nodeName, expiresMinutes); },
   async updateDistributedNodeStatus(token, nodeUuid, status) { const c = await _implPromise; return c.updateDistributedNodeStatus(token, nodeUuid, status); },
   async updateDistributedNodeSettings(token, nodeUuid, readTimeoutMs) { const c = await _implPromise; return c.updateDistributedNodeSettings(token, nodeUuid, readTimeoutMs); },
-  async distributedNodeAssignments(token, nodeUuid) { const c = await _implPromise; return c.distributedNodeAssignments(token, nodeUuid); },
-  async distributedAssignmentOccupancy(token) { const c = await _implPromise; return c.distributedAssignmentOccupancy(token); },
+  async distributedNodeAssignments(token, nodeUuid, signal) { const c = await _implPromise; return c.distributedNodeAssignments(token, nodeUuid, signal); },
+  async distributedAssignmentOccupancy(token, signal) { const c = await _implPromise; return c.distributedAssignmentOccupancy(token, signal); },
   async assignDistributedNodeDevices(token, nodeUuid, deviceIds) { const c = await _implPromise; return c.assignDistributedNodeDevices(token, nodeUuid, deviceIds); },
-  async driverList(token, query) { const c = await _implPromise; return c.driverList(token, query); },
-  async driverOptions(token) { const c = await _implPromise; return c.driverOptions(token); },
+  async driverList(token, query, signal) { const c = await _implPromise; return c.driverList(token, query, signal); },
+  async driverOptions(token, signal) { const c = await _implPromise; return c.driverOptions(token, signal); },
   async registerDriver(token, payload) { const c = await _implPromise; return c.registerDriver(token, payload); },
   async uninstallDriver(token, payload) { const c = await _implPromise; return c.uninstallDriver(token, payload); },
-  async deviceGroupTree(token) { const c = await _implPromise; return c.deviceGroupTree(token); },
-  async deviceList(token, query) { const c = await _implPromise; return c.deviceList(token, query); },
+  async deviceGroupTree(token, signal) { const c = await _implPromise; return c.deviceGroupTree(token, signal); },
+  async deviceList(token, query, signal) { const c = await _implPromise; return c.deviceList(token, query, signal); },
+  async deviceTypes(token, query, signal) { const c = await _implPromise; return c.deviceTypes(token, query, signal); },
+  async deviceSummary(token, query, signal) { const c = await _implPromise; return c.deviceSummary(token, query, signal); },
   async createDevice(token, payload) { const c = await _implPromise; return c.createDevice(token, payload); },
   async updateDevice(token, id, payload) { const c = await _implPromise; return c.updateDevice(token, id, payload); },
   async updateDeviceStatus(token, id, enabled) { const c = await _implPromise; return c.updateDeviceStatus(token, id, enabled); },
@@ -804,8 +844,8 @@ export const backendClient: BackendClient = {
   async batchDeleteDevices(token, ids) { const c = await _implPromise; return c.batchDeleteDevices(token, ids); },
   async exportDevices(token, query, template) { const c = await _implPromise; return c.exportDevices(token, query, template); },
   async importDevices(token, rows) { const c = await _implPromise; return c.importDevices(token, rows); },
-  async pointDeviceTree(token) { const c = await _implPromise; return c.pointDeviceTree(token); },
-  async pointList(token, query) { const c = await _implPromise; return c.pointList(token, query); },
+  async pointDeviceTree(token, signal) { const c = await _implPromise; return c.pointDeviceTree(token, signal); },
+  async pointList(token, query, signal) { const c = await _implPromise; return c.pointList(token, query, signal); },
   async createPoint(token, payload) { const c = await _implPromise; return c.createPoint(token, payload); },
   async updatePoint(token, id, payload) { const c = await _implPromise; return c.updatePoint(token, id, payload); },
   async updatePointStatus(token, id, enabled, locator) { const c = await _implPromise; return c.updatePointStatus(token, id, enabled, locator); },
@@ -814,44 +854,44 @@ export const backendClient: BackendClient = {
   async exportPoints(token, query, template) { const c = await _implPromise; return c.exportPoints(token, query, template); },
   async importPoints(token, rows) { const c = await _implPromise; return c.importPoints(token, rows); },
   async importPointsFromTemplate(token, deviceId) { const c = await _implPromise; return c.importPointsFromTemplate(token, deviceId); },
-  async realtimeInit(token, deviceId, groupCode) { const c = await _implPromise; return c.realtimeInit(token, deviceId, groupCode); },
-  async realtimePointGroups(token, deviceCode) { const c = await _implPromise; return c.realtimePointGroups(token, deviceCode); },
-  async historyDevices(token) { const c = await _implPromise; return c.historyDevices(token); },
-  async historyDeviceTypes(token) { const c = await _implPromise; return c.historyDeviceTypes(token); },
-  async historyPoints(token, deviceId) { const c = await _implPromise; return c.historyPoints(token, deviceId); },
-  async historyChart(token, query) { const c = await _implPromise; return c.historyChart(token, query); },
-  async historyRawMatrix(token, query) { const c = await _implPromise; return c.historyRawMatrix(token, query); },
-  async historyExport(token, payload) { const c = await _implPromise; return c.historyExport(token, payload); },
-  async historyExportStatus(token, taskId) { const c = await _implPromise; return c.historyExportStatus(token, taskId); },
-  async historyExportDownload(token, taskId) { const c = await _implPromise; return c.historyExportDownload(token, taskId); },
-  async systemLogList(token, query) { const c = await _implPromise; return c.systemLogList(token, query); },
-  async logStats(token) { const c = await _implPromise; return c.logStats(token); },
+  async realtimeInit(token, deviceId, groupCode, signal) { const c = await _implPromise; return c.realtimeInit(token, deviceId, groupCode, signal); },
+  async realtimePointGroups(token, deviceCode, signal) { const c = await _implPromise; return c.realtimePointGroups(token, deviceCode, signal); },
+  async historyDevices(token, signal) { const c = await _implPromise; return c.historyDevices(token, signal); },
+  async historyDeviceTypes(token, signal) { const c = await _implPromise; return c.historyDeviceTypes(token, signal); },
+  async historyPoints(token, deviceId, signal) { const c = await _implPromise; return c.historyPoints(token, deviceId, signal); },
+  async historyChart(token, query, signal) { const c = await _implPromise; return c.historyChart(token, query, signal); },
+  async historyRawMatrix(token, query, signal) { const c = await _implPromise; return c.historyRawMatrix(token, query, signal); },
+  async historyExport(token, payload, signal) { const c = await _implPromise; return c.historyExport(token, payload, signal); },
+  async historyExportStatus(token, taskId, signal) { const c = await _implPromise; return c.historyExportStatus(token, taskId, signal); },
+  async historyExportDownload(token, taskId, signal) { const c = await _implPromise; return c.historyExportDownload(token, taskId, signal); },
+  async systemLogList(token, query, signal) { const c = await _implPromise; return c.systemLogList(token, query, signal); },
+  async logStats(token, signal) { const c = await _implPromise; return c.logStats(token, signal); },
   async toggleLogDebug(token, payload) { const c = await _implPromise; return c.toggleLogDebug(token, payload); },
   async cleanupLogs(token, payload) { const c = await _implPromise; return c.cleanupLogs(token, payload); },
-  async tdengineLogFiles(token) { const c = await _implPromise; return c.tdengineLogFiles(token); },
-  async tdengineLogTail(token, file, lines) { const c = await _implPromise; return c.tdengineLogTail(token, file, lines); },
-  async userList(token, query) { const c = await _implPromise; return c.userList(token, query); },
-  async userInfo(token) { const c = await _implPromise; return c.userInfo(token); },
-  async roleOptions(token) { const c = await _implPromise; return c.roleOptions(token); },
+  async tdengineLogFiles(token, signal) { const c = await _implPromise; return c.tdengineLogFiles(token, signal); },
+  async tdengineLogTail(token, file, lines, signal) { const c = await _implPromise; return c.tdengineLogTail(token, file, lines, signal); },
+  async userList(token, query, signal) { const c = await _implPromise; return c.userList(token, query, signal); },
+  async userInfo(token, signal) { const c = await _implPromise; return c.userInfo(token, signal); },
+  async roleOptions(token, signal) { const c = await _implPromise; return c.roleOptions(token, signal); },
   async createUser(token, payload) { const c = await _implPromise; return c.createUser(token, payload); },
   async updateUser(token, id, payload) { const c = await _implPromise; return c.updateUser(token, id, payload); },
   async updateUserStatus(token, id, status) { const c = await _implPromise; return c.updateUserStatus(token, id, status); },
   async resetUserPassword(token, id) { const c = await _implPromise; return c.resetUserPassword(token, id); },
   async changePassword(token, oldPassword, newPassword) { const c = await _implPromise; return c.changePassword(token, oldPassword, newPassword); },
   async deleteUser(token, id) { const c = await _implPromise; return c.deleteUser(token, id); },
-  async roleList(token, query) { const c = await _implPromise; return c.roleList(token, query); },
+  async roleList(token, query, signal) { const c = await _implPromise; return c.roleList(token, query, signal); },
   async createRole(token, payload) { const c = await _implPromise; return c.createRole(token, payload); },
   async updateRole(token, id, payload) { const c = await _implPromise; return c.updateRole(token, id, payload); },
   async updateRoleStatus(token, id, enabled) { const c = await _implPromise; return c.updateRoleStatus(token, id, enabled); },
   async deleteRole(token, id) { const c = await _implPromise; return c.deleteRole(token, id); },
-  async roleGrant(token, id) { const c = await _implPromise; return c.roleGrant(token, id); },
+  async roleGrant(token, id, signal) { const c = await _implPromise; return c.roleGrant(token, id, signal); },
   async updateRoleGrant(token, id, payload) { const c = await _implPromise; return c.updateRoleGrant(token, id, payload); },
-  async adminMenus(token) { const c = await _implPromise; return c.adminMenus(token); },
-  async currentUserMenus(token) { const c = await _implPromise; return c.currentUserMenus(token); },
+  async adminMenus(token, signal) { const c = await _implPromise; return c.adminMenus(token, signal); },
+  async currentUserMenus(token, signal) { const c = await _implPromise; return c.currentUserMenus(token, signal); },
   async createMenu(token, payload) { const c = await _implPromise; return c.createMenu(token, payload); },
   async updateMenu(token, id, payload) { const c = await _implPromise; return c.updateMenu(token, id, payload); },
   async deleteMenu(token, id) { const c = await _implPromise; return c.deleteMenu(token, id); },
-  async menuPermissions(token, menuId) { const c = await _implPromise; return c.menuPermissions(token, menuId); },
+  async menuPermissions(token, menuId, signal) { const c = await _implPromise; return c.menuPermissions(token, menuId, signal); },
   async createMenuPermission(token, menuId, payload) { const c = await _implPromise; return c.createMenuPermission(token, menuId, payload); },
   async updateMenuPermission(token, menuId, permissionId, payload) { const c = await _implPromise; return c.updateMenuPermission(token, menuId, permissionId, payload); },
   async deleteMenuPermission(token, menuId, permissionId) { const c = await _implPromise; return c.deleteMenuPermission(token, menuId, permissionId); },

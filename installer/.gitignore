@@ -7,6 +7,7 @@
 !build.ps1
 !roles.json
 !build-roles.ps1
+!build-patched-taos-ws-py.ps1
 !DataWatchRole.iss
 !DataWatchCentralized.iss
 !DataWatchEdge.iss

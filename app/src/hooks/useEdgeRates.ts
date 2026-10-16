@@ -63,11 +63,12 @@ export function useEdgeRates() {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setInterval> | null = null;
 
     async function sample() {
       try {
-        const outbox = await agentClient.getLocalOutbox();
+        const outbox = await agentClient.getLocalOutbox(controller.signal);
         if (!active) return;
         const now = Date.now();
         const counters: CounterSnapshot = {
@@ -128,6 +129,7 @@ export function useEdgeRates() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       active = false;
+      controller.abort();
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

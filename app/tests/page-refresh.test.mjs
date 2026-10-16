@@ -36,7 +36,7 @@ test("shared data hooks respond to the current-page refresh version", async () =
       "utf8",
     );
     assert.match(source, /usePageRefresh/, `${filename} must consume PageRefreshContext`);
-    assert.match(source, /refreshVersion/, `${filename} must observe the refresh version`);
+    assert.match(source, filename === "useDashboardData.ts" ? /useBackendQuery/ : /refreshVersion/, `${filename} must observe refresh directly or through useBackendQuery`);
   }
 });
 

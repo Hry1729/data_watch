@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Ban,
   Check,
@@ -34,7 +34,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import { backendClient } from "@/lib/backend-client";
-import type { DeviceListItem } from "@/types/device-monitor";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
+import { useDevicePicker } from "@/hooks/useDevicePicker";
+import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
 import type { AssignmentOccupancy, DistributedNode, RegistrationCodeResult } from "@/types/distributed";
 
 function errorMessage(reason: unknown): string {
@@ -89,31 +91,47 @@ export default function DistributedNodesPage() {
   const [expiresMinutes, setExpiresMinutes] = useState("30");
   const [registration, setRegistration] = useState<RegistrationCodeResult | null>(null);
   const [assignmentNode, setAssignmentNode] = useState<DistributedNode | null>(null);
-  const [devices, setDevices] = useState<DeviceListItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [assignmentOwners, setAssignmentOwners] = useState<Map<number, AssignmentOccupancy>>(new Map());
   const [assignmentType, setAssignmentType] = useState("all");
+  const [assignmentSearch, setAssignmentSearch] = useState("");
   const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [settingsNode, setSettingsNode] = useState<DistributedNode | null>(null);
   const [readTimeoutMs, setReadTimeoutMs] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const nodesRequestRef = useRef<AbortController | null>(null);
+  const assignmentRequestRef = useRef<AbortController | null>(null);
+  const devicePicker = useDevicePicker(backendClient, assignmentSearch, assignmentType, Boolean(assignmentNode) && !assignmentLoading);
+  const loadDeviceTypes = useCallback((backendToken: string, signal: AbortSignal) => backendClient.deviceTypes(backendToken, {}, signal), []);
+  const deviceTypes = useBackendQuery(loadDeviceTypes, { enabled: Boolean(assignmentNode) });
 
-  const loadNodes = useCallback(async () => {
+  const loadNodes = useCallback(async (force = false) => {
     if (!token) return;
+    if (nodesRequestRef.current && !force) return;
+    nodesRequestRef.current?.abort();
+    const controller = new AbortController();
+    nodesRequestRef.current = controller;
     try {
-      setNodes(await backendClient.distributedNodes(token));
+      const nextNodes = await backendClient.distributedNodes(token, controller.signal);
+      if (!controller.signal.aborted) setNodes(nextNodes);
     } catch (reason) {
-      toast.error(errorMessage(reason));
+      if (!controller.signal.aborted) toast.error(errorMessage(reason));
     } finally {
-      setLoading(false);
+      if (nodesRequestRef.current === controller) nodesRequestRef.current = null;
+      if (!controller.signal.aborted) setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
     void loadNodes();
     const timer = window.setInterval(() => void loadNodes(), 10_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      nodesRequestRef.current?.abort();
+      nodesRequestRef.current = null;
+      assignmentRequestRef.current?.abort();
+    };
   }, [loadNodes]);
 
   const totals = useMemo(() => ({
@@ -125,15 +143,10 @@ export default function DistributedNodesPage() {
     () => nodes.slice((page - 1) * pageSize, page * pageSize),
     [nodes, page, pageSize],
   );
-  const assignmentTypes = useMemo(
-    () => Array.from(new Set(devices.map((device) => device.deviceType))),
-    [devices],
-  );
+  const assignmentTypes = deviceTypes.data ?? [];
   const visibleAssignmentDevices = useMemo(
-    () => assignmentType === "all"
-      ? devices
-      : devices.filter((device) => device.deviceType === assignmentType),
-    [assignmentType, devices],
+    () => (devicePicker.data?.list ?? []).filter((device) => device.deviceStatus === "enabled" || selectedIds.has(device.id)),
+    [devicePicker.data, selectedIds],
   );
 
   useEffect(() => {
@@ -163,7 +176,7 @@ export default function DistributedNodesPage() {
     try {
       await backendClient.updateDistributedNodeStatus(token, node.nodeUuid, status);
       toast.success(status === "approved" ? "节点已批准" : "节点已吊销");
-      await loadNodes();
+      await loadNodes(true);
     } catch (reason) {
       toast.error(errorMessage(reason));
     } finally {
@@ -192,7 +205,7 @@ export default function DistributedNodesPage() {
       );
       toast.success(timeout === null ? "已恢复协议驱动默认超时" : "节点读取超时已更新");
       setSettingsNode(null);
-      await loadNodes();
+      await loadNodes(true);
     } catch (reason) {
       toast.error(errorMessage(reason));
     } finally {
@@ -206,7 +219,7 @@ export default function DistributedNodesPage() {
     try {
       const result = await backendClient.syncDistributedNodeDeviceStatuses(token);
       toast.success(`已通知 ${result.updatedNodeCount} 个边缘节点同步设备状态`);
-      await loadNodes();
+      await loadNodes(true);
     } catch (reason) {
       toast.error(errorMessage(reason));
     } finally {
@@ -216,28 +229,29 @@ export default function DistributedNodesPage() {
 
   async function openAssignments(node: DistributedNode) {
     if (!token) return;
+    assignmentRequestRef.current?.abort();
+    const controller = new AbortController();
+    assignmentRequestRef.current = controller;
     setAssignmentNode(node);
     setAssignmentType("all");
+    setAssignmentSearch("");
     setAssignmentLoading(true);
     try {
-      const [devicePage, assignments, occupancy] = await Promise.all([
-        backendClient.deviceList(token, { pageNo: 1, pageSize: 500 }),
-        backendClient.distributedNodeAssignments(token, node.nodeUuid),
-        backendClient.distributedAssignmentOccupancy(token),
+      const [assignments, occupancy] = await Promise.all([
+        backendClient.distributedNodeAssignments(token, node.nodeUuid, controller.signal),
+        backendClient.distributedAssignmentOccupancy(token, controller.signal),
       ]);
+      if (controller.signal.aborted) return;
       const assignedIds = new Set(assignments.map((item) => item.deviceId));
       setAssignmentOwners(new Map(occupancy.map((item) => [item.deviceId, item])));
-      setDevices(
-        devicePage.list.filter(
-          (device) => device.deviceStatus === "enabled" || assignedIds.has(device.id),
-        ),
-      );
       setSelectedIds(assignedIds);
     } catch (reason) {
-      toast.error(errorMessage(reason));
-      setAssignmentNode(null);
+      if (!controller.signal.aborted) {
+        toast.error(errorMessage(reason));
+        setAssignmentNode(null);
+      }
     } finally {
-      setAssignmentLoading(false);
+      if (!controller.signal.aborted) setAssignmentLoading(false);
     }
   }
 
@@ -253,7 +267,7 @@ export default function DistributedNodesPage() {
       const scheduled = result.migratedDeviceIds.length + result.removedDeviceIds.length;
       toast.success(scheduled > 0 ? "已创建 " + scheduled + " 个切换计划" : "设备分配已保存");
       setAssignmentNode(null);
-      await loadNodes();
+      await loadNodes(true);
     } catch (reason) {
       toast.error(errorMessage(reason));
     } finally {
@@ -263,8 +277,8 @@ export default function DistributedNodesPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="flex h-full min-h-0 w-full flex-col p-4 md:p-6">
-      <Card className="flex min-h-0 flex-1 flex-col border border-border">
+    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 md:px-6 md:pb-6">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
           <CardTitle className="flex items-center gap-3">
             边缘节点
@@ -385,7 +399,7 @@ export default function DistributedNodesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(assignmentNode)} onOpenChange={(open) => { if (!open) setAssignmentNode(null); }}>
+      <Dialog open={Boolean(assignmentNode)} onOpenChange={(open) => { if (!open) { assignmentRequestRef.current?.abort(); setAssignmentNode(null); } }}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <div className="flex items-center justify-between gap-4">
@@ -401,8 +415,9 @@ export default function DistributedNodesPage() {
             </div>
             <DialogDescription>{assignmentNode?.nodeName}</DialogDescription>
           </DialogHeader>
+          <Input aria-label="搜索待分配设备" placeholder="搜索设备名称或编号" value={assignmentSearch} onChange={(event) => setAssignmentSearch(event.target.value)} />
           <div className="max-h-80 overflow-auto border border-border">
-            {assignmentLoading ? (
+            {assignmentLoading || devicePicker.loading ? (
               <div className="p-4"><Skeleton className="h-10 w-full" /></div>
             ) : (
               <Table>
@@ -456,7 +471,7 @@ export default function DistributedNodesPage() {
                   }) : (
                     <TableRow>
                       <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                        暂无该分类设备
+                        {devicePicker.error ?? "暂无该分类设备"}
                       </TableCell>
                     </TableRow>
                   )}
@@ -464,6 +479,7 @@ export default function DistributedNodesPage() {
               </Table>
             )}
           </div>
+          <DeviceCatalogPagination total={devicePicker.data?.total ?? 0} page={devicePicker.page} pageSize={devicePicker.pageSize} loading={devicePicker.loading || assignmentLoading} onPageChange={devicePicker.setPage} />
           <DialogFooter><Button onClick={() => void saveAssignments()} disabled={busy || assignmentLoading}>保存分配</Button></DialogFooter>
         </DialogContent>
       </Dialog>

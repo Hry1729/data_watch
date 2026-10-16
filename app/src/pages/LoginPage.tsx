@@ -146,7 +146,7 @@ export function LoginPage() {
 
   return (
     <div className="flex h-full items-center justify-center overflow-auto bg-muted/20 px-5 py-8">
-      <Card className="w-full max-w-[430px] border-border shadow-sm">
+      <Card className="w-full max-w-[430px]">
         <CardHeader className="space-y-5 px-7 pt-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">

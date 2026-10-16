@@ -5,7 +5,7 @@ import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import type { AppError } from "@/types";
 
 export function useBackendQuery<T>(
-  load: (token: string) => Promise<T>,
+  load: (token: string, signal: AbortSignal) => Promise<T>,
   options: { enabled?: boolean; intervalMs?: number } = {},
 ) {
   const { auth, logout } = useAuth();
@@ -32,13 +32,14 @@ export function useBackendQuery<T>(
     const activeToken = token;
     let active = true;
     let inFlight = false;
+    const controller = new AbortController();
 
     async function fetchOnce() {
       if (inFlight) return;
       inFlight = true;
       try {
-        const result = await load(activeToken);
-        if (!active) return;
+        const result = await load(activeToken, controller.signal);
+        if (!active || controller.signal.aborted) return;
         setData(result);
         setError(null);
       } catch (reason) {
@@ -56,11 +57,30 @@ export function useBackendQuery<T>(
     }
 
     setLoading(true);
-    void fetchOnce();
-    const timer = options.intervalMs ? setInterval(() => void fetchOnce(), options.intervalMs) : null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    function stopTimer() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    }
+    function onVisibilityChange() {
+      stopTimer();
+      if (!document.hidden) {
+        void fetchOnce();
+        if (options.intervalMs) timer = setInterval(() => void fetchOnce(), options.intervalMs);
+      }
+    }
+    // One-shot queries still run immediately; only periodic refreshes follow visibility.
+    if (options.intervalMs) {
+      onVisibilityChange();
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    } else {
+      void fetchOnce();
+    }
     return () => {
       active = false;
-      if (timer) clearInterval(timer);
+      controller.abort();
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [enabled, load, options.intervalMs, refreshVersion, token, version]);
 

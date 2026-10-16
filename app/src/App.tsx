@@ -124,6 +124,7 @@ const RoleManagementPage = __DATAWATCH_ROLE__ !== "edge"
 const MenuManagementPage = __DATAWATCH_ROLE__ !== "edge"
   ? lazy(() => import("@/pages/MenuManagementPage"))
   : null;
+const HelpPage = lazy(() => import("@/pages/HelpPage"));
 
 const DistributedNodesPage = __DATAWATCH_ROLE__ === "distributed-center"
   ? lazy(() => import("@/pages/DistributedNodesPage"))
@@ -158,16 +159,13 @@ function AppStartup({ children }: { children: ReactNode }) {
   const [deciding, setDeciding] = useState(true);
 
   useEffect(() => {
-    withStartupTimeout(agentClient.getBootstrapStatus())
-      .then(async ({ in_bootstrap }) => {
-        // 运行期后端地址：从 Agent 读取并注入 backend-client（替代打包写死的 VITE_BACKEND_URL）。
-        // 拉取失败不阻断启动，登录时会再暴露问题。
-        try {
-          const { backend_base_url } = await withStartupTimeout(agentClient.getRuntimeConfig());
-          setBackendBaseUrl(backend_base_url);
-        } catch {
-          // ignore：后端地址不可得时由登录流程报错
-        }
+    Promise.all([
+      withStartupTimeout(agentClient.getBootstrapStatus()),
+      // 配置与 Bootstrap 状态独立；配置失败仍由登录流程报告。
+      withStartupTimeout(agentClient.getRuntimeConfig()).catch(() => null),
+    ])
+      .then(([{ in_bootstrap }, config]) => {
+        if (config) setBackendBaseUrl(config.backend_base_url);
         if (in_bootstrap) navigate("/bootstrap", { replace: true });
         // else: 由 AuthGuard 跳 /login
       })
@@ -332,6 +330,7 @@ export default function App() {
                 </>
               )}
               {SettingsPage && <Route path="/settings" element={<SettingsPage />} />}
+              <Route path="/help" element={<HelpPage />} />
               {DistributedNodesPage && <Route path="/distributed/nodes" element={<DistributedNodesPage />} />}
 
               {placeholderPages.map(({ path, title }) => (

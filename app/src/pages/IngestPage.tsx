@@ -13,7 +13,7 @@ import { useWebSocketLog } from "@/hooks/useWebSocketLog";
 
 function MetricCard({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
   return (
-    <Card className="rounded-lg border border-border bg-card">
+    <Card className="bg-card">
       <CardContent className="px-4 py-3">
         <p className="mb-1 text-xs text-muted-foreground">{label}</p>
         <p className={`truncate text-xl font-bold tabular-nums ${warning ? "text-destructive" : "text-foreground"}`}>{value}</p>
@@ -39,7 +39,7 @@ export function IngestPage() {
   const { lines, wsStatus, clear } = useWebSocketLog("ingest");
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 py-4">
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 pb-4">
       {showError && <p className="px-1 text-xs text-destructive" role="alert">{error}</p>}
 
       <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
