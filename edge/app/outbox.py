@@ -25,8 +25,9 @@ SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploa
 DEAD_RETENTION_DAYS_DEFAULT = 30
 DEAD_MAX_BYTES_DEFAULT = 512 * 1024 * 1024
 DEAD_EXPORT_SCHEMA_VERSION = 1
-# 70% / 85% / 95% 都是磁盘告警。告警时先自动导出，本轮不删。
+# 70% / 85% / 95% 都是磁盘告警。告警或超过字节上限时只自动导出，不提前删除。
 _DISK_ALARM_WATERMARKS = frozenset({"warning", "critical", "overflow"})
+_DEAD_EXPORT_PAGE_SIZE = 64
 _DEAD_EXPORT_META_FIELDS = (
     "batch_id",
     "upload_session_id",
@@ -872,32 +873,29 @@ class OutboxStore:
     ) -> dict[str, Any]:
         """按设备、dead_at 时间范围和 last_error 筛选，流式写出 JSONL 或 CSV。
 
-        先把临时文件 fsync 再 rename，成功后在同一事务里给对应行写 ``exported_at``。
+        文件只能写到库旁的 ``dead-exports``（即 ``<data_root>/edge/dead-exports``），
+        拒绝目录穿越、符号链接和已存在的文件。分页读出后在事务外写盘并 fsync，
+        再开短事务，只给仍然是 dead 且载荷未变的行写 ``exported_at``。
         JSONL 含 ``payload_b64``，可以无损还原；CSV 只有元数据和 payload 的 sha256。
         """
         if fmt not in {"jsonl", "csv"}:
             raise ValueError("format must be jsonl or csv")
-        destination = Path(dest)
-        if destination.exists() and destination.is_dir():
-            raise ValueError("out path is a directory")
         where_sql, params = self._dead_where(
             device_code=device_code,
             since_ms=since_ms,
             until_ms=until_ms,
             last_error=last_error,
         )
-        with self._transaction() as connection:
-            return self._write_dead_export(
-                connection,
-                destination,
-                fmt=fmt,
-                where_sql=where_sql,
-                params=params,
-                node_uuid=self._resolve_node_uuid(node_uuid),
-                actor_role=actor_role,
-                action="export_batch",
-                now_ms=self._clock_ms(),
-            )
+        return self._export_dead_rows(
+            Path(dest),
+            fmt=fmt,
+            where_sql=where_sql,
+            params=params,
+            node_uuid=self._resolve_node_uuid(node_uuid),
+            actor_role=actor_role,
+            action="export_batch",
+            now_ms=self._clock_ms(),
+        )
 
     def replay_dead(
         self,
@@ -935,8 +933,32 @@ class OutboxStore:
                 tuple(params),
             ).fetchone()
             if row is None:
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=batch_id,
+                    session=upload_session_id,
+                    local_seq=None if local_seq is None else int(local_seq),
+                    result="not_found",
+                    file_path=None,
+                    sha256=None,
+                )
                 return {"replayed": False, "reason": "not_found"}
             if row["state"] != "dead":
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="not_dead",
+                    file_path=None,
+                    sha256=hashlib.sha256(bytes(row["payload"] or b"")).hexdigest(),
+                )
                 return {"replayed": False, "reason": "not_dead", "state": row["state"]}
             raw = bytes(row["payload"] or b"")
             digest = hashlib.sha256(raw).hexdigest()
@@ -1059,11 +1081,6 @@ class OutboxStore:
                 "SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(payload)), 0) AS bytes "
                 "FROM outbox WHERE state='dead'"
             ).fetchone()
-            dead_bytes_now = int(dead_before["bytes"] or 0)
-            pressure = (
-                dead_bytes_now > max_bytes
-                or disk_now["watermark"] in _DISK_ALARM_WATERMARKS
-            )
             unpreserved = int(
                 connection.execute(
                     "SELECT COUNT(*) AS value FROM outbox WHERE state='dead' "
@@ -1071,25 +1088,30 @@ class OutboxStore:
                 ).fetchone()["value"]
                 or 0
             )
-            # 超字节上限或磁盘告警：本轮只自动导出并 fsync，不删。下一轮再删已保全的行。
-            just_exported = False
-            if pressure and unpreserved:
-                written = self._write_dead_export(
-                    connection,
-                    self._auto_export_destination(now),
-                    fmt="jsonl",
-                    where_sql=(
-                        "state='dead' AND exported_at IS NULL AND replayed_at IS NULL"
-                    ),
-                    params=[],
-                    node_uuid=self._resolve_node_uuid(node_uuid),
-                    actor_role=actor_role,
-                    action="auto_export",
-                    now_ms=now,
-                )
-                auto_exported = int(written["count"])
+        dead_bytes_now = int(dead_before["bytes"] or 0)
+        pressure = (
+            dead_bytes_now > max_bytes
+            or disk_now["watermark"] in _DISK_ALARM_WATERMARKS
+        )
+        # 超字节上限或磁盘告警：只自动导出并标记 exported_at。写文件不占写事务。
+        # 已导出或已重放的行仍要 dead_at 早于保留期截止才删，两条删除路径都看这个条件。
+        if pressure and unpreserved:
+            written = self._export_dead_rows(
+                self._auto_export_destination(now),
+                fmt="jsonl",
+                where_sql=(
+                    "state='dead' AND exported_at IS NULL AND replayed_at IS NULL"
+                ),
+                params=[],
+                node_uuid=self._resolve_node_uuid(node_uuid),
+                actor_role=actor_role,
+                action="auto_export",
+                now_ms=now,
+            )
+            auto_exported = int(written["count"])
+            if auto_exported:
                 auto_export_path = str(written["path"])
-                just_exported = auto_exported > 0
+        with self._transaction() as connection:
             sent_cursor = connection.execute(
                 """
                 DELETE FROM outbox
@@ -1098,9 +1120,29 @@ class OutboxStore:
                 (sent_cutoff,),
             )
             deleted_terminal = int(sent_cursor.rowcount or 0)
-            dead_purged = 0
-            if not just_exported:
-                dead_cursor = connection.execute(
+            doomed = connection.execute(
+                """
+                SELECT batch_id, upload_session_id, local_seq, payload FROM outbox
+                WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?
+                  AND (exported_at IS NOT NULL OR replayed_at IS NOT NULL)
+                """,
+                (dead_cutoff,),
+            ).fetchall()
+            for row in doomed:
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="purge",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="deleted",
+                    file_path=None,
+                    sha256=hashlib.sha256(bytes(row["payload"] or b"")).hexdigest(),
+                )
+            if doomed:
+                connection.execute(
                     """
                     DELETE FROM outbox
                     WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?
@@ -1108,12 +1150,8 @@ class OutboxStore:
                     """,
                     (dead_cutoff,),
                 )
-                dead_purged = int(dead_cursor.rowcount or 0)
-                if pressure:
-                    dead_purged += self._reclaim_preserved_dead(
-                        connection, max_bytes, disk_now
-                    )
-                deleted_terminal += dead_purged
+            dead_purged = len(doomed)
+            deleted_terminal += dead_purged
             oldest = connection.execute(
                 """
                 SELECT MIN(created_at) AS value FROM outbox
@@ -1209,10 +1247,10 @@ class OutboxStore:
         }
 
     def _auto_export_destination(self, now_ms: int) -> Path:
-        """``<db 所在目录>/dead-exports/auto-YYYYMMDD.jsonl``。
+        """``<db 所在目录>/dead-exports/auto-YYYYMMDD.jsonl``。日期是 UTC。
 
-        库在 ``<data_root>/edge/edge.db`` 时，这就是计划里的
-        ``<data_root>/edge/dead-exports/``。同一天再次导出时另起文件，避免重写大文件。
+        库在 ``<data_root>/edge/edge.db`` 时，这就是
+        ``<data_root>/edge/dead-exports/``。同一天再次导出时另起文件，不覆盖已有文件。
         """
         directory = self.path.parent / "dead-exports"
         day = time.strftime("%Y%m%d", time.gmtime(now_ms / 1000.0))
@@ -1261,9 +1299,36 @@ class OutboxStore:
             params.append(last_error)
         return " AND ".join(clauses), params
 
-    def _write_dead_export(
+    def _export_root(self) -> Path:
+        """导出目录：库文件旁边的 ``dead-exports``，不接受符号链接。"""
+        link = self.path.parent / "dead-exports"
+        if link.is_symlink():
+            raise ValueError("dead-exports directory must not be a symlink")
+        link.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or not link.is_dir():
+            raise ValueError("dead-exports directory must not be a symlink")
+        return link.resolve()
+
+    def _validated_export_destination(self, dest: Path) -> Path:
+        """只允许 ``<data_root>/edge/dead-exports/<文件名>``，拒绝穿越、符号链接和已有文件。"""
+        root = self._export_root()
+        raw = Path(dest)
+        candidate = raw if raw.is_absolute() else root / raw
+        if candidate.name in {"", ".", ".."}:
+            raise ValueError("export file name is invalid")
+        if candidate.is_symlink() or candidate.parent.is_symlink():
+            raise ValueError("export path must not be a symlink")
+        if candidate.parent.resolve() != root:
+            raise ValueError("export path must stay inside dead-exports")
+        final = root / candidate.name
+        if final.is_symlink():
+            raise ValueError("export path must not be a symlink")
+        if final.exists():
+            raise ValueError("export file already exists")
+        return final
+
+    def _export_dead_rows(
         self,
-        connection: sqlite3.Connection,
         dest: Path,
         *,
         fmt: str,
@@ -1274,18 +1339,74 @@ class OutboxStore:
         action: str,
         now_ms: int,
     ) -> dict[str, Any]:
-        """在调用方的事务里把匹配的 dead 行写到文件并标记 ``exported_at``。"""
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        temporary = dest.with_name(dest.name + f".{uuid4().hex}.tmp")
-        file_digest = hashlib.sha256()
-        identities: list[tuple[str, str, int, str]] = []
+        destination = self._validated_export_destination(dest)
+        identities, file_sha, written_path = self._stream_dead_export_file(
+            destination,
+            fmt=fmt,
+            where_sql=where_sql,
+            params=params,
+            node_uuid=node_uuid,
+        )
+        marked = self._mark_exported_snapshot(
+            identities,
+            dest=written_path,
+            actor_role=actor_role,
+            action=action,
+            now_ms=now_ms,
+        )
+        return {
+            "count": marked,
+            "path": str(written_path) if written_path is not None else str(destination),
+            "sha256": file_sha,
+            "format": fmt,
+            "schema_version": DEAD_EXPORT_SCHEMA_VERSION,
+            "node_uuid": node_uuid,
+        }
+
+    def _snapshot_dead_page(
+        self,
+        where_sql: str,
+        params: list[Any],
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
         columns = ", ".join(_DEAD_EXPORT_META_FIELDS)
         query = (
             f"SELECT {columns}, payload FROM outbox WHERE {where_sql} "
-            "ORDER BY dead_at IS NULL, dead_at ASC"
+            "ORDER BY dead_at IS NULL, dead_at ASC, batch_id ASC LIMIT ? OFFSET ?"
         )
+        with self._transaction() as connection:
+            fetched = connection.execute(query, (*params, limit, offset)).fetchall()
+            copied: list[dict[str, Any]] = []
+            for row in fetched:
+                item = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
+                item["payload"] = bytes(row["payload"] or b"")
+                copied.append(item)
+            return copied
+
+    def _stream_dead_export_file(
+        self,
+        dest: Path,
+        *,
+        fmt: str,
+        where_sql: str,
+        params: list[Any],
+        node_uuid: str,
+    ) -> tuple[list[tuple[str, str, int, str]], str, Path | None]:
+        """分页读取，事务松开后再写盘。没有匹配行时仍写出只含文件头的新文件。"""
+        offset = 0
+        first = self._snapshot_dead_page(
+            where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
+        )
+        temporary = dest.with_name(dest.name + f".{uuid4().hex}.tmp")
+        file_digest = hashlib.sha256()
+        identities: list[tuple[str, str, int, str]] = []
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
-            with temporary.open("wb") as handle:
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+
                 def emit(chunk: bytes) -> None:
                     handle.write(chunk)
                     file_digest.update(chunk)
@@ -1308,103 +1429,111 @@ class OutboxStore:
                         )
                     )
                     emit(self._csv_line([*_DEAD_EXPORT_META_FIELDS, "payload_sha256"]))
-                for row in connection.execute(query, tuple(params)):
-                    raw = bytes(row["payload"] or b"")
-                    digest = hashlib.sha256(raw).hexdigest()
-                    if fmt == "jsonl":
-                        record = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
-                        record["payload_sha256"] = digest
-                        record["payload_b64"] = base64.b64encode(raw).decode("ascii")
-                        emit(msgspec.json.encode(record) + b"\n")
-                    else:
-                        values = ["" if row[name] is None else row[name] for name in _DEAD_EXPORT_META_FIELDS]
-                        values.append(digest)
-                        emit(self._csv_line(values))
-                    identities.append(
-                        (
-                            str(row["batch_id"]),
-                            str(row["upload_session_id"]),
-                            int(row["local_seq"]),
-                            digest,
+                page = first
+                while page:
+                    for row in page:
+                        raw = bytes(row["payload"] or b"")
+                        digest = hashlib.sha256(raw).hexdigest()
+                        if fmt == "jsonl":
+                            record = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
+                            record["payload_sha256"] = digest
+                            record["payload_b64"] = base64.b64encode(raw).decode("ascii")
+                            emit(msgspec.json.encode(record) + b"\n")
+                        else:
+                            values = [
+                                "" if row[name] is None else row[name]
+                                for name in _DEAD_EXPORT_META_FIELDS
+                            ]
+                            values.append(digest)
+                            emit(self._csv_line(values))
+                        identities.append(
+                            (
+                                str(row["batch_id"]),
+                                str(row["upload_session_id"]),
+                                int(row["local_seq"]),
+                                digest,
+                            )
                         )
+                    if len(page) < _DEAD_EXPORT_PAGE_SIZE:
+                        break
+                    offset += len(page)
+                    page = self._snapshot_dead_page(
+                        where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
                     )
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, dest)
+                self._fsync_export_handle(handle)
+            self._publish_export_file(temporary, dest)
         except Exception:
+            if descriptor >= 0:
+                os.close(descriptor)
             temporary.unlink(missing_ok=True)
             raise
-        file_sha = file_digest.hexdigest()
-        for batch_id, session, seq, digest in identities:
-            connection.execute(
-                "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
-                (now_ms, batch_id),
-            )
-            self._insert_dead_audit(
-                connection,
-                ts=now_ms,
-                actor_role=actor_role,
-                action=action,
-                batch_id=batch_id,
-                session=session,
-                local_seq=seq,
-                result="ok",
-                file_path=str(dest),
-                sha256=digest,
-            )
-        return {
-            "count": len(identities),
-            "path": str(dest),
-            "sha256": file_sha,
-            "format": fmt,
-            "schema_version": DEAD_EXPORT_SCHEMA_VERSION,
-            "node_uuid": node_uuid,
-        }
+        return identities, file_digest.hexdigest(), dest
+
+    def _fsync_export_handle(self, handle) -> None:
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    @staticmethod
+    def _publish_export_file(temporary: Path, dest: Path) -> None:
+        """硬链接到目标名。目标已存在或是符号链接时失败，不覆盖。"""
+        if dest.is_symlink() or dest.exists():
+            raise ValueError("export file already exists")
+        try:
+            os.link(temporary, dest)
+        except FileExistsError as exc:
+            raise ValueError("export file already exists") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _mark_exported_snapshot(
+        self,
+        identities: list[tuple[str, str, int, str]],
+        *,
+        dest: Path | None,
+        actor_role: str,
+        action: str,
+        now_ms: int,
+    ) -> int:
+        if not identities or dest is None:
+            return 0
+        marked = 0
+        file_path = str(dest)
+        with self._transaction() as connection:
+            for batch_id, session, seq, digest in identities:
+                row = connection.execute(
+                    "SELECT state, payload FROM outbox WHERE batch_id=?",
+                    (batch_id,),
+                ).fetchone()
+                if row is None or row["state"] != "dead":
+                    continue
+                if hashlib.sha256(bytes(row["payload"] or b"")).hexdigest() != digest:
+                    continue
+                cursor = connection.execute(
+                    "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
+                    (now_ms, batch_id),
+                )
+                if int(cursor.rowcount or 0) != 1:
+                    continue
+                self._insert_dead_audit(
+                    connection,
+                    ts=now_ms,
+                    actor_role=actor_role,
+                    action=action,
+                    batch_id=batch_id,
+                    session=session,
+                    local_seq=seq,
+                    result="ok",
+                    file_path=file_path,
+                    sha256=digest,
+                )
+                marked += 1
+        return marked
 
     @staticmethod
     def _csv_line(values: list[Any]) -> bytes:
         buffer = io.StringIO()
         csv.writer(buffer, lineterminator="\n").writerow(values)
         return buffer.getvalue().encode("utf-8")
-
-    def _reclaim_preserved_dead(
-        self,
-        connection: sqlite3.Connection,
-        max_bytes: int,
-        disk: dict[str, Any],
-    ) -> int:
-        """删除已经导出或重放的 dead，直到低于字节上限。
-
-        磁盘告警时，已保全的 dead 在这一轮全部删除。未导出且未重放的行不在删除范围内。
-        """
-        alarm = disk["watermark"] in _DISK_ALARM_WATERMARKS
-        remaining = int(
-            connection.execute(
-                "SELECT COALESCE(SUM(LENGTH(payload)), 0) AS value FROM outbox WHERE state='dead'"
-            ).fetchone()["value"]
-            or 0
-        )
-        if remaining <= max_bytes and not alarm:
-            return 0
-        rows = connection.execute(
-            """
-            SELECT batch_id, LENGTH(payload) AS nbytes FROM outbox
-            WHERE state='dead' AND (exported_at IS NOT NULL OR replayed_at IS NOT NULL)
-            ORDER BY dead_at IS NULL, dead_at ASC
-            """
-        ).fetchall()
-        deleted = 0
-        for row in rows:
-            if remaining <= max_bytes and not alarm:
-                break
-            cursor = connection.execute(
-                "DELETE FROM outbox WHERE batch_id=? AND state='dead'",
-                (str(row["batch_id"]),),
-            )
-            if int(cursor.rowcount or 0):
-                deleted += 1
-                remaining -= int(row["nbytes"] or 0)
-        return deleted
 
     def _assignment_allows_replay(self, connection: sqlite3.Connection, row: sqlite3.Row) -> bool:
         """载荷 config_version 与当前设备分配仍然一致时才允许重新入队。"""

@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -52,6 +53,10 @@ def _seed_dead(store: OutboxStore, *, count: int = 1):
     for record in records:
         store.mark_dead(record, "U1", "protocol_reject")
     return records
+
+
+def _export_path(store: OutboxStore, name: str) -> Path:
+    return store.path.parent / "dead-exports" / name
 
 
 def _states(store: OutboxStore) -> list[str]:
@@ -176,6 +181,15 @@ def test_replay_dead_reports_missing_identity(tmp_path) -> None:
 
     assert result["replayed"] is False
     assert result["reason"] == "not_found"
+    with store._lock:
+        audit = store._connection.execute(
+            "SELECT action, batch_id, session, local_seq, result FROM dead_audit"
+        ).fetchone()
+    assert audit["action"] == "replay"
+    assert audit["result"] == "not_found"
+    assert audit["batch_id"] == "missing"
+    assert audit["session"] == "session"
+    assert audit["local_seq"] == 1
 
 
 def test_refused_replay_does_not_record_success(tmp_path) -> None:
@@ -305,6 +319,18 @@ def test_unexported_dead_past_cutoff_is_kept_until_exported(tmp_path, monkeypatc
     assert "dead_records_purged_requires_export" in purged["capacity_alerts"]
     assert _states(store) == []
     assert store.dead_backlog()["records"] == 0
+    with store._lock:
+        purge = store._connection.execute(
+            "SELECT action, result, sha256 FROM dead_audit WHERE action='purge'"
+        ).fetchone()
+        blob = " ".join(
+            "" if value is None else str(value)
+            for row in store._connection.execute("SELECT * FROM dead_audit").fetchall()
+            for value in tuple(row)
+        )
+    assert purge["result"] == "deleted"
+    assert purge["sha256"] == hashlib.sha256(record.payload).hexdigest()
+    assert record.payload.decode("utf-8") not in blob
 
 
 def test_dead_alerts_do_not_hijack_the_degraded_flag(tmp_path) -> None:
@@ -319,8 +345,8 @@ def test_dead_alerts_do_not_hijack_the_degraded_flag(tmp_path) -> None:
     assert "disk_overflow" not in result["degraded_reasons"]
 
 
-def test_byte_cap_auto_exports_then_deletes_on_the_next_round(tmp_path, monkeypatch) -> None:
-    """超过字节上限时本轮只自动导出，下一轮再删已经保全的行。"""
+def test_pressure_auto_exports_but_keeps_exported_rows_inside_retention(tmp_path, monkeypatch) -> None:
+    """字节上限或磁盘告警只自动导出。窗口内已导出的行，压力还在也不删。"""
     store = _store(tmp_path)
     _pin_disk(store, monkeypatch)
     record = _seed_dead(store)[0]
@@ -340,9 +366,28 @@ def test_byte_cap_auto_exports_then_deletes_on_the_next_round(tmp_path, monkeypa
 
     second = store.maintenance(retention_days=7, dead_max_bytes=1)
 
-    assert second["dead_purged"] == 1
-    assert store.dead_backlog()["records"] == 0
-    assert path.read_bytes()  # 删除数据库行之后，导出文件还在
+    assert second["dead_purged"] == 0
+    assert second["dead_auto_exported"] == 0
+    assert store.dead_backlog()["records"] == 1
+    assert _states(store) == ["dead"]
+    assert path.read_bytes()
+
+    monkeypatch.setattr(
+        store,
+        "_disk_status",
+        lambda: {
+            "disk_total_bytes": 1000,
+            "disk_free_bytes": 200,
+            "disk_used_percent": 80.0,
+            "watermark": "warning",
+        },
+    )
+    under_disk_alarm = store.maintenance(retention_days=7)
+
+    assert under_disk_alarm["dead_purged"] == 0
+    assert under_disk_alarm["dead_auto_exported"] == 0
+    assert store.dead_backlog()["records"] == 1
+    assert _states(store) == ["dead"]
 
 
 def test_jsonl_round_trip_matches_payload_and_csv_omits_it(tmp_path, monkeypatch) -> None:
@@ -376,8 +421,8 @@ def test_jsonl_round_trip_matches_payload_and_csv_omits_it(tmp_path, monkeypatch
     assert extra
     store.mark_dead(extra[0], "U1", "skip-me")
 
-    jsonl_path = tmp_path / "dead.jsonl"
-    csv_path = tmp_path / "dead.csv"
+    jsonl_path = _export_path(store, "dead.jsonl")
+    csv_path = _export_path(store, "dead.csv")
     exported = store.export_dead_batch(
         jsonl_path,
         fmt="jsonl",
@@ -420,6 +465,127 @@ def test_jsonl_round_trip_matches_payload_and_csv_omits_it(tmp_path, monkeypatch
     assert "payload_b64" not in csv_text
     assert b"PAYLOADSENTINEL9f3a" not in csv_path.read_bytes()
     assert hashlib.sha256(extra[0].payload).hexdigest() in csv_text
+
+
+def test_export_path_stays_inside_dead_exports_and_refuses_existing_files(tmp_path) -> None:
+    """目标必须是 dead-exports 下的新文件：穿越、符号链接和已有文件都拒绝。"""
+    store = _store(tmp_path)
+    _seed_dead(store)
+    outside = tmp_path / "escape.jsonl"
+    with pytest.raises(ValueError, match="dead-exports"):
+        store.export_dead_batch(outside, fmt="jsonl")
+    with pytest.raises(ValueError, match="dead-exports"):
+        store.export_dead_batch(tmp_path / "dead-exports" / ".." / "escape.jsonl", fmt="jsonl")
+    assert not outside.exists()
+
+    exported = store.export_dead_batch(_export_path(store, "once.jsonl"), fmt="jsonl")
+    assert exported["count"] == 1
+    with pytest.raises(ValueError, match="already exists"):
+        store.export_dead_batch(_export_path(store, "once.jsonl"), fmt="jsonl")
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("keep", encoding="utf-8")
+    link = _export_path(store, "via-link.jsonl")
+    link.symlink_to(secret)
+    with pytest.raises(ValueError, match="symlink"):
+        store.export_dead_batch(link, fmt="jsonl")
+    assert secret.read_text(encoding="utf-8") == "keep"
+
+    jumped = tmp_path / "jumped"
+    jumped.mkdir()
+    alias = _export_path(store, "alias")
+    alias.symlink_to(jumped, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        store.export_dead_batch(alias / "out.jsonl", fmt="jsonl")
+    assert not (jumped / "out.jsonl").exists()
+
+
+def test_export_does_not_hold_the_write_lock_across_fsync(tmp_path, monkeypatch) -> None:
+    import edge.app.outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_DEAD_EXPORT_PAGE_SIZE", 1)
+    store = _store(tmp_path)
+    _seed_dead(store, count=2)
+    released = threading.Event()
+
+    def fsync_and_probe(handle) -> None:
+        handle.flush()
+        os.fsync(handle.fileno())
+
+        def other() -> None:
+            with store._transaction() as connection:
+                connection.execute("SELECT 1")
+            released.set()
+
+        worker = threading.Thread(target=other)
+        worker.start()
+        worker.join(timeout=2)
+        assert released.is_set()
+
+    monkeypatch.setattr(store, "_fsync_export_handle", fsync_and_probe)
+    result = store.export_dead_batch(_export_path(store, "paged.jsonl"), fmt="jsonl")
+
+    assert result["count"] == 2
+    assert released.is_set()
+
+
+def test_export_does_not_mark_a_row_whose_payload_changed(tmp_path, monkeypatch) -> None:
+    store = _store(tmp_path)
+    record = _seed_dead(store)[0]
+    real_mark = store._mark_exported_snapshot
+
+    def change_then_mark(identities, **kwargs):
+        with store._lock:
+            store._connection.execute(
+                "UPDATE outbox SET payload=? WHERE batch_id=?",
+                (b"changed-payload", record.batch_id),
+            )
+            store._connection.commit()
+        return real_mark(identities, **kwargs)
+
+    monkeypatch.setattr(store, "_mark_exported_snapshot", change_then_mark)
+    result = store.export_dead_batch(_export_path(store, "stale.jsonl"), fmt="jsonl")
+
+    assert result["count"] == 0
+    with store._lock:
+        exported_at = store._connection.execute(
+            "SELECT exported_at, state FROM outbox WHERE batch_id=?",
+            (record.batch_id,),
+        ).fetchone()
+    assert exported_at["exported_at"] is None
+    assert exported_at["state"] == "dead"
+
+
+def test_replay_audits_not_dead(tmp_path) -> None:
+    store = _store(tmp_path)
+    store.configure_assignment("QC100", 7, 100, 1)
+    pending = store.append_envelope(
+        device_code="QC100",
+        device_type="qc",
+        group_code="g001",
+        scan_rate_ms=100,
+        ts=1721800000000,
+        config_version=12,
+        values={"1": "alive"},
+        qualities={"1": 192},
+    )
+
+    result = store.replay_dead(pending.batch_id, pending.upload_session_id, pending.local_seq)
+
+    assert result["reason"] == "not_dead"
+    with store._lock:
+        audit = store._connection.execute(
+            "SELECT action, result, sha256 FROM dead_audit"
+        ).fetchone()
+        blob = " ".join(
+            "" if value is None else str(value)
+            for row in store._connection.execute("SELECT * FROM dead_audit").fetchall()
+            for value in tuple(row)
+        )
+    assert audit["action"] == "replay"
+    assert audit["result"] == "not_dead"
+    assert audit["sha256"] == hashlib.sha256(pending.payload).hexdigest()
+    assert pending.payload.decode("utf-8") not in blob
 
 
 def test_assignment_change_refuses_replay_and_keeps_the_row(tmp_path) -> None:
@@ -629,7 +795,7 @@ def test_dead_admin_uses_the_operator_token(tmp_path, monkeypatch) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     monkeypatch.setenv("DATAWATCH_EDGE_STORAGE_URL", f"http://127.0.0.1:{server.server_port}")
-    destination = tmp_path / "all.jsonl"
+    destination = tmp_path / "dead-exports" / "all.jsonl"
     try:
         assert main(["list"]) == 0
         assert main(["replay", "--all", "--dry-run"]) == 0
