@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 import json
+from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
@@ -80,7 +81,13 @@ async def test_fetch_latest_collect_times_uses_all_point_groups(monkeypatch):
     assert connected is True
     assert list(result) == ["QC01"]
     assert isinstance(result["QC01"], datetime)
-    assert int(result["QC01"].timestamp() * 1000) == 1_721_800_001_000
+    # parse_local_datetime 返回 Asia/Shanghai 墙钟的 naive datetime。
+    # 直接 .timestamp() 会按机器本地时区折算，UTC 环境下会偏 8 小时。
+    expected = datetime.fromtimestamp(
+        1_721_800_001,
+        tz=ZoneInfo("Asia/Shanghai"),
+    ).replace(tzinfo=None)
+    assert result["QC01"] == expected
 
 
 @pytest.mark.asyncio
