@@ -310,10 +310,97 @@ class EdgeStorageClient:
     def current_session_id(self) -> str:
         return str(self._command("session.current"))
 
-    def maintenance(self, retention_days: int, sent_retention_ms: int | None = None) -> dict[str, Any]:
+    def maintenance(
+        self,
+        retention_days: int,
+        sent_retention_ms: int | None = None,
+        dead_retention_days: int | None = None,
+        dead_max_bytes: int | None = None,
+        *,
+        node_uuid: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "retention_days": retention_days,
+            "sent_retention_ms": sent_retention_ms,
+        }
+        if dead_retention_days is not None:
+            payload["dead_retention_days"] = int(dead_retention_days)
+        if dead_max_bytes is not None:
+            payload["dead_max_bytes"] = int(dead_max_bytes)
+        if node_uuid:
+            payload["node_uuid"] = node_uuid
+        return dict(self._command("maintenance", payload))
+
+    def list_dead(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        device_code: str | None = None,
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {"limit": limit, "offset": offset}
+        if device_code:
+            payload["device_code"] = device_code
+        data = self._command("outbox.dead_list", payload)
+        return list(data or [])
+
+    def export_dead(
+        self,
+        batch_id: str,
+        upload_session_id: str,
+        local_seq: int,
+    ) -> dict[str, Any]:
         return dict(
-            self._command("maintenance", {"retention_days": retention_days, "sent_retention_ms": sent_retention_ms})
+            self._command(
+                "outbox.dead_export",
+                {
+                    "batch_id": batch_id,
+                    "upload_session_id": upload_session_id,
+                    "local_seq": local_seq,
+                },
+            )
         )
+
+    def export_dead_batch(
+        self,
+        dest: str | Path,
+        *,
+        fmt: str,
+        device_code: str | None = None,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        last_error: str | None = None,
+        node_uuid: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"out": str(dest), "format": fmt}
+        if device_code:
+            payload["device_code"] = device_code
+        if since_ms is not None:
+            payload["since_ms"] = int(since_ms)
+        if until_ms is not None:
+            payload["until_ms"] = int(until_ms)
+        if last_error is not None:
+            payload["last_error"] = last_error
+        if node_uuid:
+            payload["node_uuid"] = node_uuid
+        return dict(self._command("outbox.dead_export_batch", payload))
+
+    def replay_dead(
+        self,
+        batch_id: str,
+        upload_session_id: str | None = None,
+        local_seq: int | None = None,
+        *,
+        window_ms: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"batch_id": batch_id}
+        if upload_session_id is not None:
+            payload["upload_session_id"] = upload_session_id
+        if local_seq is not None:
+            payload["local_seq"] = int(local_seq)
+        if window_ms is not None:
+            payload["window_ms"] = window_ms
+        return dict(self._command("outbox.dead_replay", payload))
 
     def revision(self) -> int:
         return int(self._command("config.revision"))

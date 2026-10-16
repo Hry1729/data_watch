@@ -19,7 +19,14 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
 from ingest.app.security import canonical_json, signing_message
 
-from .outbox import OutboxCompletion, OutboxRecord, OutboxStore, SessionSwitchState
+from .outbox import (
+    DEAD_MAX_BYTES_DEFAULT,
+    DEAD_RETENTION_DAYS_DEFAULT,
+    OutboxCompletion,
+    OutboxRecord,
+    OutboxStore,
+    SessionSwitchState,
+)
 from .storage_client import EdgeStorageClient, StorageUnavailable
 
 
@@ -45,6 +52,9 @@ class UploaderSettings:
     retry_max_ms: int = 30_000
     max_attempts: int = 10
     max_offline_retention_days: int = 7
+    # dead 保留和离线 backlog 分开，默认 30 天 / 512MB。
+    dead_retention_days: int = DEAD_RETENTION_DAYS_DEFAULT
+    dead_max_bytes: int = DEAD_MAX_BYTES_DEFAULT
     maintenance_interval_seconds: float = 60.0
     sent_retention_ms: int = 24 * 60 * 60 * 1000
 
@@ -181,6 +191,9 @@ class Uploader:
             self._store.maintenance,
             self._settings.max_offline_retention_days,
             self._settings.sent_retention_ms,
+            self._settings.dead_retention_days,
+            self._settings.dead_max_bytes,
+            node_uuid=self._settings.node_uuid,
         )
         if maintenance.get("degraded"):
             logger.error(

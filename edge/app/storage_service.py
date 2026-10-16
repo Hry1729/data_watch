@@ -70,12 +70,18 @@ IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
             "session.complete",
             "session.current",
             "maintenance",
-            # B6：dead 载荷的恢复入口（只给 uploader；agent/collector 不得取回或重放载荷）。
+            # 容量视图仍留给 uploader。取回载荷和重放改由 operator 角色持有。
             "outbox.dead_backlog",
+            "status",
+        }
+    ),
+    # 本机运维入口。不开放 maintenance，避免操作员令牌把未处置的 dead 删掉。
+    "operator": frozenset(
+        {
             "outbox.dead_list",
             "outbox.dead_export",
+            "outbox.dead_export_batch",
             "outbox.dead_replay",
-            "status",
         }
     ),
     "agent": frozenset(
@@ -138,6 +144,30 @@ def _restrict_token_file_acl(path: Path) -> None:
 _TOKEN_ACL_HARDENED: set[str] = set()
 
 
+def _ensure_missing_role_tokens(path: Path) -> None:
+    """给令牌文件补上尚未出现的角色，已有角色的令牌保持不变。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return
+    tokens = data.get("tokens") if isinstance(data, dict) else None
+    if not isinstance(tokens, dict):
+        return
+    missing = [role for role in IPC_ROLE_ACTIONS if role not in tokens]
+    if not missing:
+        return
+    for role in missing:
+        tokens[role] = secrets.token_hex(32)
+    data["tokens"] = {role: tokens[role] for role in IPC_ROLE_ACTIONS if role in tokens}
+    temporary = path.with_name(path.name + f".roles-{os.getpid()}")
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(json.dumps(data, indent=2).encode("utf-8"))
+    os.replace(temporary, path)
+    _restrict_token_file_acl(path)
+    _TOKEN_ACL_HARDENED.add(str(path))
+
+
 def _harden_existing_token_file(path: Path) -> None:
     """B50/S3：**既有**令牌文件也要收敛 ACL。
 
@@ -172,6 +202,8 @@ def ensure_token_file(path: Path | None = None, *, rotate: bool = False) -> Path
         # 宽松授权（尤其显式 `BUILTIN\Users:RX`）不会因为"文件已存在"而消失；旧实现直接
         # `return target` 会让这些权限永久保留。进程内每路径只做一次（见该函数注释）。
         _harden_existing_token_file(target)
+        # 新增角色（operator）补一把令牌，不轮换已经发出的 collector/uploader/agent。
+        _ensure_missing_role_tokens(target)
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     if rotate:
@@ -457,8 +489,14 @@ class StorageEngine:
             outbox.close()
 
     def _commit_frame_commands(self, outbox: OutboxStore, commands: list[_Command]) -> None:
+        # 批量提交不经过 _dispatch，鉴权层写入的 _actor_role 不能进 outbox 信封。
+        frames = []
+        for command in commands:
+            frame = dict(command.payload)
+            frame.pop("_actor_role", None)
+            frames.append(frame)
         try:
-            results = outbox.commit_frames([command.payload for command in commands])
+            results = outbox.commit_frames(frames)
         except Exception as exc:
             logger.exception("Storage frame group commit failed")
             results = [exc] * len(commands)
@@ -484,6 +522,9 @@ class StorageEngine:
         action: str,
         payload: dict[str, Any],
     ) -> Any:
+        # 角色由鉴权层写入，调用方自己带的同名字段不能冒充。
+        payload = dict(payload)
+        actor_role = str(payload.pop("_actor_role", "") or "storage")
         if action == "frame.commit":
             record = outbox.commit_frame(**payload)
             point_count = len(payload.get("values") or {})
@@ -551,9 +592,19 @@ class StorageEngine:
         if action == "session.current":
             return outbox.current_session_id()
         if action == "maintenance":
-            return outbox.maintenance(int(payload["retention_days"]), payload.get("sent_retention_ms"))
-        # B6：dead 载荷的恢复入口（查看/导出/受控重放）。只授予 uploader 角色：
-        # 没有这些入口时，运维无法取回即将被 maintenance 删除的唯一载荷。
+            sent_retention = payload.get("sent_retention_ms")
+            dead_days = payload.get("dead_retention_days")
+            dead_max = payload.get("dead_max_bytes")
+            return outbox.maintenance(
+                int(payload["retention_days"]),
+                None if sent_retention is None else int(sent_retention),
+                None if dead_days is None else int(dead_days),
+                None if dead_max is None else int(dead_max),
+                node_uuid=None if payload.get("node_uuid") is None else str(payload.get("node_uuid")),
+                actor_role=actor_role,
+            )
+        # B6：dead 载荷的恢复入口。operator 可列出、导出、批量导出和重放；
+        # uploader 只保留 dead_backlog。审计里的 actor_role 来自已鉴权的角色。
         if action == "outbox.dead_backlog":
             return outbox.dead_backlog()
         if action == "outbox.dead_list":
@@ -567,16 +618,37 @@ class StorageEngine:
                 str(payload["batch_id"]),
                 str(payload["upload_session_id"]),
                 int(payload["local_seq"]),
+                actor_role=actor_role,
             )
             if record is None:
                 raise ValueError("no dead record matches the given identity")
             return record
+        if action == "outbox.dead_export_batch":
+            export_format = str(payload.get("format") or "")
+            destination = payload.get("out")
+            if not destination:
+                raise ValueError("out path is required")
+            since_ms = payload.get("since_ms")
+            until_ms = payload.get("until_ms")
+            return outbox.export_dead_batch(
+                str(destination),
+                fmt=export_format,
+                device_code=payload.get("device_code"),
+                since_ms=None if since_ms is None else int(since_ms),
+                until_ms=None if until_ms is None else int(until_ms),
+                last_error=payload.get("last_error"),
+                node_uuid=None if payload.get("node_uuid") is None else str(payload.get("node_uuid")),
+                actor_role=actor_role,
+            )
         if action == "outbox.dead_replay":
+            session_id = payload.get("upload_session_id")
+            local_seq = payload.get("local_seq")
             return outbox.replay_dead(
                 str(payload["batch_id"]),
-                str(payload["upload_session_id"]),
-                int(payload["local_seq"]),
+                None if session_id is None else str(session_id),
+                None if local_seq is None else int(local_seq),
                 window_ms=payload.get("window_ms"),
+                actor_role=actor_role,
             )
         if action == "config.revision":
             return config.revision()
@@ -679,7 +751,9 @@ class StorageRequestHandler(BaseHTTPRequestHandler):
                 {"ok": False, "error": f"role {role!r} is not permitted to run action {action!r}"},
             )
             return
-        self._execute(action, payload)
+        authorized = dict(payload)
+        authorized["_actor_role"] = role
+        self._execute(action, authorized)
 
     def _execute(self, action: str, payload: dict[str, Any]) -> None:
         try:
