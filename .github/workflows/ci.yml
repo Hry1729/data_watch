@@ -3,6 +3,7 @@
 # 不运行 backend：它需要 Windows 和 free-threaded Python 3.14t。
 # 不运行 app/src-tauri 的 cargo check。
 # 依赖 Windows 的 CLI 用例在 cli-windows（windows-latest，Python 3.14t）里跑。
+# ingest job（HURY-16）：用 buildx 编 free-threaded 3.14t，再编 ingest，并做 workers=2 冒烟。
 
 name: CI
 
@@ -98,3 +99,103 @@ jobs:
 
       - name: Require the Windows tests to run
         run: python -c "import xml.etree.ElementTree as ET; root=ET.parse('junit-cli-windows.xml').getroot(); suite=root if root.tag=='testsuite' else root.find('testsuite'); tests=int(suite.attrib.get('tests') or 0); skipped=int(suite.attrib.get('skipped') or 0); failed=int(suite.attrib.get('failures') or 0)+int(suite.attrib.get('errors') or 0); print('tests=%s skipped=%s failures=%s' % (tests, skipped, failed)); assert skipped==0 and failed==0 and tests>=179, (tests, skipped, failed)"
+
+  ingest:
+    name: ingest
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ciingest
+          MYSQL_DATABASE: device_watch
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pciingest --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build free-threaded Python 3.14t
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy
+          file: deploy/python314t.Dockerfile
+          tags: data-watch-python314t:3.14t-3.14.4
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=python314t
+          cache-to: type=gha,mode=max,scope=python314t,ignore-error=true
+
+      - name: Build ingest
+        run: |
+          docker build \
+            --build-arg BASE_IMAGE=data-watch-python314t:3.14t-3.14.4 \
+            -f ingest/Dockerfile \
+            -t data-watch-ingest:ci .
+
+      - name: Assert GIL stays off
+        run: |
+          docker run --rm data-watch-ingest:ci \
+            python3.14t -c "import os, sys; assert os.environ.get('PYTHON_GIL') == '0'; assert not sys._is_gil_enabled(), sys._is_gil_enabled()"
+
+      - name: Prepare MySQL tables required by schema warm-up
+        run: |
+          docker run --rm --network host \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
+            -e MYSQL_USER=root \
+            -e MYSQL_PASSWORD=ciingest \
+            -e MYSQL_DATABASE=device_watch \
+            data-watch-ingest:ci \
+            python3.14t /app/ingest/ci/smoke_upload.py prepare
+
+      - name: Start ingest with two workers
+        run: |
+          docker run -d --name data-watch-ingest-ci --network host \
+            -e INGEST_WORKERS=2 \
+            -e INGEST_HOST=0.0.0.0 \
+            -e INGEST_PORT=8010 \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
+            -e MYSQL_USER=root \
+            -e MYSQL_PASSWORD=ciingest \
+            -e MYSQL_DATABASE=device_watch \
+            -e INGEST_REDIS_URL=redis://127.0.0.1:6379/0 \
+            data-watch-ingest:ci
+
+      - name: Smoke schema warm-up, healthz, and one upload ACK
+        run: |
+          set -euo pipefail
+          if ! docker run --rm --network host \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
+            -e MYSQL_USER=root \
+            -e MYSQL_PASSWORD=ciingest \
+            -e MYSQL_DATABASE=device_watch \
+            -e INGEST_REDIS_URL=redis://127.0.0.1:6379/0 \
+            -e INGEST_URL=http://127.0.0.1:8010 \
+            data-watch-ingest:ci \
+            python3.14t /app/ingest/ci/smoke_upload.py verify
+          then
+            docker logs data-watch-ingest-ci || true
+            exit 1
+          fi
+          docker logs data-watch-ingest-ci > /tmp/ingest-ci.log 2>&1
+          grep -q "Started parent process" /tmp/ingest-ci.log
+          test "$(grep -c "Application startup complete" /tmp/ingest-ci.log)" -eq 2
