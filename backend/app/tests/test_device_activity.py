@@ -5,9 +5,27 @@ from datetime import datetime
 import json
 
 import pytest
+import pytest_asyncio
 
 from app.core import request_metrics
 from app.services import device_activity
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_activity_cache():
+    device_activity._cache.clear()
+    device_activity._inflight.clear()
+    device_activity._last_failed.clear()
+    device_activity._retry_after.clear()
+    device_activity._key_cache = None
+    device_activity._key_inflight = None
+    yield
+    tasks = list(device_activity._inflight.values())
+    if device_activity._key_inflight is not None:
+        tasks.append(device_activity._key_inflight)
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class FakePipeline:
@@ -20,7 +38,7 @@ class FakePipeline:
         return self
 
     async def execute(self):
-        return [self.values[key] for key in self.keys]
+        return [self.values[key] if key in self.values else self.values[key.encode()] for key in self.keys]
 
 
 class FakeRedis:
@@ -208,6 +226,61 @@ async def test_background_refresh_does_not_inherit_request_metrics(monkeypatch):
         request_metrics._current.reset(token)
 
     assert seen_contexts == [metrics, None]
+
+
+@pytest.mark.asyncio
+async def test_different_device_requests_share_key_discovery(monkeypatch):
+    redis = FakeRedis({
+        "rt:latest:QC300:g001": {"1": json.dumps({"t": 1_721_800_000_000})},
+        "rt:latest:qc301:g002": {"2": json.dumps({"t": 1_721_800_001_000})},
+    })
+    monkeypatch.setattr(device_activity, "get_redis_client", lambda: _async_value(redis))
+
+    first, second = await asyncio.gather(
+        device_activity.fetch_latest_collect_times(["QC300"]),
+        device_activity.fetch_latest_collect_times(["QC301"]),
+    )
+    assert redis.scan_calls == 1
+    assert list(first[0]) == ["QC300"]
+    assert list(second[0]) == ["QC301"]
+
+
+@pytest.mark.asyncio
+async def test_key_discovery_refresh_finds_new_device_and_point_group(monkeypatch):
+    redis = FakeRedis({
+        b"rt:latest:qc302:g001": {"1": json.dumps({"t": 1_721_800_000_000})},
+    })
+    clock = [100.0]
+    monkeypatch.setattr(device_activity, "get_redis_client", lambda: _async_value(redis))
+    monkeypatch.setattr(device_activity, "monotonic", lambda: clock[0])
+    first, connected = await device_activity.fetch_latest_collect_times(["QC302"])
+    assert connected
+    redis.values["rt:latest:QC302:g002"] = {"2": json.dumps({"t": 1_721_800_001_000})}
+    redis.values["rt:latest:qc303:g003"] = {"3": json.dumps({"t": 1_721_800_002_000})}
+    assert await device_activity.fetch_latest_collect_times(["QC303"]) == ({}, True)
+
+    clock[0] += 3.0
+    refreshed, connected = await device_activity.fetch_latest_collect_times(["QC302", "QC303"])
+    assert connected
+    assert redis.scan_calls == 2
+    assert refreshed["QC302"] > first["QC302"]
+    assert refreshed["QC303"] > refreshed["QC302"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_key_discovery_does_not_drop_devices(monkeypatch):
+    redis = FakeRedis({
+        "rt:latest:QC304:g001": {"1": json.dumps({"t": 1_721_800_000_000})},
+        "rt:latest:QC305:g002": {"2": json.dumps({"t": 1_721_800_001_000})},
+    })
+    monkeypatch.setattr(device_activity, "get_redis_client", lambda: _async_value(redis))
+    monkeypatch.setattr(device_activity, "_KEY_CACHE_MAX_KEYS", 1)
+
+    result, connected = await device_activity.fetch_latest_collect_times(["QC305"])
+    assert connected
+    assert list(result) == ["QC305"]
+    assert redis.scan_calls == 2
+    assert device_activity._key_cache[1] is None
 
 
 async def _async_value(value):
