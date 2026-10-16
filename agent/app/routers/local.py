@@ -94,11 +94,23 @@ async def local_devices(_user: str = Depends(get_current_user)):
 
 
 
+@router.get("/monitor/device-scope")
+async def local_monitor_device_scope(_user: str = Depends(get_current_user)):
+    _require_edge()
+    return await asyncio.to_thread(_store().monitor_device_scope)
+
+
 @router.get("/monitor/devices")
 async def local_monitor_devices(
     page_no: int = Query(1, alias="pageNo", ge=1),
     page_size: int = Query(1000, alias="pageSize", ge=1, le=5000),
     keyword: str = Query(""),
+    device_ids: list[int] | None = Query(None, alias="deviceIds"),
+    device_type: str = Query("", alias="deviceType"),
+    device_type_exact: str | None = Query(None, alias="deviceTypeExact"),
+    device_code_exact: str | None = Query(None, alias="deviceCodeExact"),
+    connect_status: str = Query("", alias="connectStatus"),
+    device_status: str = Query("", alias="deviceStatus"),
     _user: str = Depends(get_current_user),
 ):
     _require_edge()
@@ -107,6 +119,12 @@ async def local_monitor_devices(
         page_no=page_no,
         page_size=page_size,
         keyword=keyword,
+        device_ids=device_ids,
+        device_type=device_type,
+        device_type_exact=device_type_exact,
+        device_code_exact=device_code_exact,
+        connect_status=connect_status,
+        device_status=device_status,
     )
 
 
@@ -119,6 +137,8 @@ async def local_monitor_points(
     device_code: str = Query("", alias="deviceCode"),
     keyword: str = Query(""),
     data_type: str = Query("", alias="dataType"),
+    device_type: str = Query("", alias="deviceType"),
+    connect_status: str = Query("", alias="connectStatus"),
     _user: str = Depends(get_current_user),
 ):
     _require_edge()
@@ -131,6 +151,8 @@ async def local_monitor_points(
         device_code=device_code,
         keyword=keyword,
         data_type=data_type,
+        device_type=device_type,
+        connect_status=connect_status,
     )
 
 
