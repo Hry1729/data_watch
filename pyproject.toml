@@ -15,7 +15,7 @@ dependencies = [
     "openpyxl>=3.1,<4",
     "packaging>=24,<27",
     "pymysql>=1.1,<2",
-    "pywin32>=311; sys_platform == 'win32'",
+    # pywin32 没有 cp314t wheel，不能作为基础依赖。Windows 凭据库由 keyring 的 pywin32-ctypes 提供。
     "rich>=13.7,<15",
     "typer>=0.16,<1",
     "click>=8.1,<9",

@@ -373,6 +373,8 @@ class MysqlTopology:
             _raise_if_expired(deadline)
             connection = None
             try:
+                # 套接字超时用剩余预算（小数秒）。外层线程等不到时，连接会在同一截止时间自己结束。
+                socket_timeout = _mysql_timeout(deadline, 3)
                 connection = pymysql.connect(
                     host=settings.host,
                     port=settings.port,
@@ -381,9 +383,9 @@ class MysqlTopology:
                     database=settings.database,
                     charset="utf8mb4",
                     cursorclass=DictCursor,
-                    connect_timeout=_mysql_seconds(deadline, 3),
-                    read_timeout=_mysql_seconds(deadline, 5),
-                    write_timeout=_mysql_seconds(deadline, 5),
+                    connect_timeout=socket_timeout,
+                    read_timeout=_mysql_timeout(deadline, 5),
+                    write_timeout=_mysql_timeout(deadline, 5),
                     autocommit=True,
                 )
                 with connection.cursor() as cursor:
@@ -527,17 +529,18 @@ def _timeout_error() -> DirectReadError:
     )
 
 
-def _mysql_seconds(deadline: float | None, cap: int) -> int:
-    """PyMySQL 的超时是整数秒。亚秒由外层线程截止时间截断。"""
+def _mysql_timeout(deadline: float | None, cap: float) -> float:
+    """PyMySQL 接受小数秒。超时取剩余预算和上限中较小的那个，避免放弃等待后线程还多活。"""
     if deadline is None:
-        return cap
+        return float(cap)
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise _timeout_error()
-    return max(1, min(cap, int(remaining)))
+    return min(float(cap), remaining)
 
 
 def _run_bounded(operation: Callable[[], Any], deadline: float | None) -> Any:
+    """在截止时间内等待。超时后不杀线程，连接会在自己的套接字超时（已设成剩余预算）上结束。"""
     if deadline is None:
         return operation()
     remaining = deadline - time.monotonic()

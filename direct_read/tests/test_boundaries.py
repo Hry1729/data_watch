@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -334,6 +335,52 @@ def test_windows_stale_slot_is_purged_without_os_kill(monkeypatch, tmp_path: Pat
     assert killed == []
     assert kernel.open_access == 0x1000
     assert not stale.exists()
+
+
+def test_mysql_socket_timeout_follows_remaining_deadline(monkeypatch) -> None:
+    import sys
+    import time
+    import types
+
+    from direct_read.errors import TopologyUnavailable
+    from direct_read.topology import MysqlTopology, _mysql_timeout
+
+    deadline = time.monotonic() + 0.4
+    timeout = _mysql_timeout(deadline, 3)
+    assert 0 < timeout <= 0.4
+    assert _mysql_timeout(None, 3) == 3.0
+
+    monkeypatch.setenv("DATAWATCH_MYSQL_HOST", "127.0.0.1")
+    monkeypatch.setenv("DATAWATCH_MYSQL_USER", "ro")
+    monkeypatch.setenv("DATAWATCH_MYSQL_DATABASE", "device_watch")
+    seen: dict[str, object] = {}
+
+    def connect(**kwargs):
+        seen.update(kwargs)
+        raise OSError("refused")
+
+    fake = types.ModuleType("pymysql")
+    fake.connect = connect
+    cursors = types.ModuleType("pymysql.cursors")
+    cursors.DictCursor = object
+    monkeypatch.setitem(sys.modules, "pymysql", fake)
+    monkeypatch.setitem(sys.modules, "pymysql.cursors", cursors)
+
+    with pytest.raises(TopologyUnavailable):
+        MysqlTopology().resolve("QC100", "CraneID", deadline=time.monotonic() + 0.4)
+
+    assert 0 < float(seen["connect_timeout"]) < 1
+    assert float(seen["connect_timeout"]) <= 0.4
+    assert 0 < float(seen["read_timeout"]) <= 0.4
+    assert 0 < float(seen["write_timeout"]) <= 0.4
+
+
+def test_real_pid_liveness_does_not_signal_current_process() -> None:
+    """不打桩。当前进程必须仍被判为存活。Windows 上若误用 os.kill，测试进程会被结束。"""
+    from direct_read import limits
+
+    assert limits._pid_alive(os.getpid()) is True
+    assert limits._pid_alive(2_147_000_001) is False
 
 
 def test_posix_liveness_uses_os_kill(monkeypatch) -> None:

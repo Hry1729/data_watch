@@ -1,7 +1,8 @@
 httpx>=0.27,<1
 keyring>=25,<26
 openpyxl>=3.1,<4
-pywin32>=311; sys_platform == "win32"
+# 不直接依赖 pywin32：它没有 Windows CPython 3.14t 的包，基础安装会失败。
+# keyring 在 Windows 上用 pywin32-ctypes 访问凭据库，不需要 pywin32。
 rich>=13.7,<15
 typer>=0.16,<1
 # schema.py 直接 import click；当前 typer 不再声明 click 依赖
