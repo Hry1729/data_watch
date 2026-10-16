@@ -277,6 +277,8 @@ export default function HistoryDataPage() {
   const matrixAlignRef = useRef<AlignGranularity>(matrixAlign);
   const queryVersionRef = useRef(0);
   const matrixVersionRef = useRef(0);
+  const chartRequestRef = useRef<AbortController | null>(null);
+  const matrixRequestRef = useRef<AbortController | null>(null);
   useEffect(() => {
     ++queryVersionRef.current;
     ++matrixVersionRef.current;
@@ -285,12 +287,14 @@ export default function HistoryDataPage() {
     return () => {
       ++queryVersionRef.current;
       ++matrixVersionRef.current;
+      chartRequestRef.current?.abort();
+      matrixRequestRef.current?.abort();
     };
   }, [deviceId, selectedPoints, startTime, endTime, interval, aggregate, token]);
 
-  const loadDevices = useCallback((backendToken: string) => monitorClient.historyDevices(backendToken), []);
-  const loadTypes = useCallback((backendToken: string) => monitorClient.historyDeviceTypes(backendToken), []);
-  const loadPoints = useCallback((backendToken: string) => monitorClient.historyPoints(backendToken, deviceId), [deviceId]);
+  const loadDevices = useCallback((backendToken: string, signal: AbortSignal) => monitorClient.historyDevices(backendToken, signal), []);
+  const loadTypes = useCallback((backendToken: string, signal: AbortSignal) => monitorClient.historyDeviceTypes(backendToken, signal), []);
+  const loadPoints = useCallback((backendToken: string, signal: AbortSignal) => monitorClient.historyPoints(backendToken, deviceId, signal), [deviceId]);
   const devices = useBackendQuery(loadDevices);
   const types = useBackendQuery(loadTypes);
   const points = useBackendQuery(loadPoints, { enabled: deviceId > 0 });
@@ -326,27 +330,34 @@ export default function HistoryDataPage() {
 
   useEffect(() => {
     const snapshot = lastQueryRef.current;
-    if (!token || !snapshot || refreshVersion === 0 || loading) return;
+    if (!token || !snapshot || refreshVersion === 0) return;
     let active = true;
+    chartRequestRef.current?.abort();
+    matrixRequestRef.current?.abort();
+    const chartController = new AbortController();
+    const matrixController = new AbortController();
+    chartRequestRef.current = chartController;
+    matrixRequestRef.current = matrixController;
     const queryVersion = ++queryVersionRef.current;
     const matrixVersion = ++matrixVersionRef.current;
     setLoading(true);
     setMatrixLoading(true);
     Promise.all([
-      monitorClient.historyChart(token, snapshot.query),
+      monitorClient.historyChart(token, snapshot.query, chartController.signal).then((nextChart) => {
+        if (active && queryVersion === queryVersionRef.current) setChart(nextChart);
+      }),
       monitorClient.historyRawMatrix(token, {
         ...snapshot.query,
         alignGranularity: matrixAlignRef.current,
         pageSize: 200,
+      }, matrixController.signal).then((nextMatrix) => {
+        if (active && queryVersion === queryVersionRef.current && matrixVersion === matrixVersionRef.current) setMatrix(nextMatrix);
+      }).catch((reason) => {
+        if (!matrixController.signal.aborted) throw reason;
       }),
     ])
-      .then(([nextChart, nextMatrix]) => {
-        if (!active || queryVersion !== queryVersionRef.current) return;
-        setChart(nextChart);
-        if (matrixVersion === matrixVersionRef.current) setMatrix(nextMatrix);
-      })
       .catch((reason) => {
-        if (!active || queryVersion !== queryVersionRef.current) return;
+        if (!active || chartController.signal.aborted || queryVersion !== queryVersionRef.current) return;
         if ((reason as { type?: string })?.type === "unauthorized") logout();
         else toast.error(historyErrorMessage(reason, "历史数据刷新失败"));
       })
@@ -355,7 +366,11 @@ export default function HistoryDataPage() {
         setLoading(false);
         if (matrixVersion === matrixVersionRef.current) setMatrixLoading(false);
       });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      chartController.abort();
+      matrixController.abort();
+    };
   }, [logout, refreshVersion, token]);
 
   useEffect(() => {
@@ -421,10 +436,13 @@ export default function HistoryDataPage() {
     if (!token || !effectiveQuery?.varSeqs.length) return;
     const matrixVersion = ++matrixVersionRef.current;
     const queryVersion = queryVersionRef.current;
-    const isCurrent = () => matrixVersion === matrixVersionRef.current && queryVersion === queryVersionRef.current;
+    matrixRequestRef.current?.abort();
+    const controller = new AbortController();
+    matrixRequestRef.current = controller;
+    const isCurrent = () => !controller.signal.aborted && matrixVersion === matrixVersionRef.current && queryVersion === queryVersionRef.current;
     setMatrixLoading(true);
     try {
-      const result = await monitorClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs });
+      const result = await monitorClient.historyRawMatrix(token, { ...effectiveQuery, alignGranularity: granularity, pageSize: 200, cursorTs }, controller.signal);
       if (!isCurrent()) return;
       setMatrix((current) => reset || !current ? result : { ...result, rows: [...current.rows, ...result.rows] });
     } catch (reason) {
@@ -441,16 +459,20 @@ export default function HistoryDataPage() {
     const query = buildQuery();
     const queryVersion = ++queryVersionRef.current;
     ++matrixVersionRef.current;
-    const isCurrent = () => queryVersion === queryVersionRef.current;
+    chartRequestRef.current?.abort();
+    matrixRequestRef.current?.abort();
+    const controller = new AbortController();
+    chartRequestRef.current = controller;
+    const isCurrent = () => !controller.signal.aborted && queryVersion === queryVersionRef.current;
     setLoading(true);
     setChart(null);
     setMatrix(null);
     try {
-      const result = await monitorClient.historyChart(token, query);
+      const result = await monitorClient.historyChart(token, query, controller.signal);
       if (!isCurrent()) return;
       lastQueryRef.current = { query };
       setChart(result);
-      await loadMatrix(matrixAlign, true, undefined, query);
+      void loadMatrix(matrixAlign, true, undefined, query);
     } catch (reason) {
       if (!isCurrent()) return;
       if ((reason as { type?: string })?.type === "unauthorized") logout();

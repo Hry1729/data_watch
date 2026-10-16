@@ -32,9 +32,9 @@ export function UserManagementPage() {
   const [confirm, setConfirm] = useState<{ type: "delete" | "reset"; user: UserListItem } | null>(null);
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
-  const loadUsers = useCallback((activeToken: string) => backendClient.userList(activeToken, query), [query]);
+  const loadUsers = useCallback((activeToken: string, signal: AbortSignal) => backendClient.userList(activeToken, query, signal), [query]);
   const users = useBackendQuery(loadUsers);
-  const loadRoles = useCallback((activeToken: string) => backendClient.roleOptions(activeToken), []);
+  const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleOptions(activeToken, signal), []);
   const roles = useBackendQuery(loadRoles);
   const currentPage = query.current ?? 1;
   const pageSize = query.size ?? 20;

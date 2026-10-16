@@ -1,4 +1,8 @@
-use std::sync::{Mutex, OnceLock};
+use std::collections::HashMap;
+use std::future::{poll_fn, Future};
+use std::pin::pin;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Poll, Waker};
 use std::time::Duration;
 
 use reqwest::{header::CONTENT_DISPOSITION, redirect::Policy, Client, Url};
@@ -10,6 +14,77 @@ const MAX_AGENT_DRIVER_REQUEST_BYTES: usize = 4 * ((50 * 1024 * 1024 + 2) / 3) +
 
 #[derive(Default)]
 pub struct BackendOriginState(pub Mutex<Option<String>>);
+
+#[derive(Default)]
+pub struct HttpRequestState(Mutex<HashMap<String, Arc<RequestCancellation>>>);
+
+#[derive(Default)]
+struct RequestCancellation(Mutex<(bool, Option<Waker>)>);
+
+#[tauri::command]
+pub fn register_http_request(request_id: String, state: State<'_, HttpRequestState>) -> Result<(), String> {
+    if request_id.is_empty() || request_id.len() > 128 {
+        return Err("invalid request id".to_string());
+    }
+    let mut requests = state.0.lock().map_err(|_| "request state is unavailable".to_string())?;
+    if requests.contains_key(&request_id) {
+        return Err("request id is already registered".to_string());
+    }
+    requests.insert(request_id, Arc::new(RequestCancellation::default()));
+    Ok(())
+}
+
+fn cancel_request(request_id: &str, state: &HttpRequestState) -> Result<(), String> {
+    let request = state.0.lock().map_err(|_| "request state is unavailable".to_string())?.remove(request_id);
+    if let Some(request) = request {
+        let mut cancellation = request.0.lock().map_err(|_| "request state is unavailable".to_string())?;
+        cancellation.0 = true;
+        if let Some(waker) = cancellation.1.take() { waker.wake(); }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_http_request(request_id: String, state: State<'_, HttpRequestState>) -> Result<(), String> {
+    cancel_request(&request_id, &state)
+}
+
+struct RequestRegistration<'a> {
+    id: String,
+    cancellation: Arc<RequestCancellation>,
+    state: &'a HttpRequestState,
+}
+
+impl Drop for RequestRegistration<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut requests) = self.state.0.lock() {
+            if requests.get(&self.id).is_some_and(|value| Arc::ptr_eq(value, &self.cancellation)) {
+                requests.remove(&self.id);
+            }
+        }
+    }
+}
+
+async fn run_cancellable<T>(
+    request_id: Option<String>,
+    state: &HttpRequestState,
+    request: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let Some(id) = request_id else { return request.await; };
+    let cancellation = state.0.lock().map_err(|_| "request state is unavailable".to_string())?
+        .get(&id).cloned().ok_or_else(|| "request_cancelled".to_string())?;
+    let registration = RequestRegistration { id, cancellation, state };
+    let mut request = pin!(request);
+    poll_fn(|cx| {
+        {
+            let mut cancellation = registration.cancellation.0.lock().unwrap();
+            if cancellation.0 { return Poll::Ready(Err("request_cancelled".to_string())); }
+            cancellation.1 = Some(cx.waker().clone());
+        }
+        // Dropping this future on cancellation aborts both sending and streaming the body.
+        request.as_mut().poll(cx)
+    }).await
+}
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 
@@ -174,7 +249,10 @@ pub async fn agent_request(
     body: Option<String>,
     token: Option<String>,
     timeout_secs: Option<u64>,
+    request_id: Option<String>,
+    requests: State<'_, HttpRequestState>,
 ) -> Result<(u16, String), String> {
+    run_cancellable(request_id, &requests, async {
     let url = build_local_agent_url(port, &path)?;
     validate_agent_body(&method, &path, body.as_ref())?;
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(5).max(1));
@@ -207,6 +285,7 @@ pub async fn agent_request(
         .map_err(|_| "agent_response_invalid_utf8".to_string())?;
 
     Ok((status, text))
+    }).await
 }
 
 #[tauri::command]
@@ -215,7 +294,10 @@ pub async fn backend_download(
     path: String,
     authorization: Option<String>,
     state: State<'_, BackendOriginState>,
+    request_id: Option<String>,
+    requests: State<'_, HttpRequestState>,
 ) -> Result<(u16, Vec<u8>, Option<String>), String> {
+    run_cancellable(request_id, &requests, async {
     let base = ensure_backend_origin(&base_url, &state)?;
     validate_backend_path(&path)?;
 
@@ -238,6 +320,7 @@ pub async fn backend_download(
     let bytes = read_limited_bytes(resp, MAX_BACKEND_RESPONSE_BYTES).await?;
 
     Ok((status, bytes, disposition))
+    }).await
 }
 
 #[tauri::command]
@@ -248,7 +331,10 @@ pub async fn backend_request(
     body: Option<String>,
     authorization: Option<String>,
     state: State<'_, BackendOriginState>,
+    request_id: Option<String>,
+    requests: State<'_, HttpRequestState>,
 ) -> Result<(u16, String), String> {
+    run_cancellable(request_id, &requests, async {
     let base = ensure_backend_origin(&base_url, &state)?;
     validate_backend_method(&method)?;
     validate_backend_path(&path)?;
@@ -281,6 +367,7 @@ pub async fn backend_request(
     let text = read_limited_text(resp).await?;
 
     Ok((status, text))
+    }).await
 }
 
 #[cfg(test)]
@@ -290,6 +377,72 @@ mod tests {
         validate_backend_path, validate_request_body, MAX_BACKEND_REQUEST_BYTES,
         MAX_BACKEND_RESPONSE_BYTES,
     };
+
+    #[test]
+    fn cancellation_before_dispatch_does_not_start_the_request_or_affect_another_request() {
+        use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+        let state = super::HttpRequestState::default();
+        for id in ["cancelled", "normal"] {
+            state.0.lock().unwrap().insert(id.to_string(), Arc::new(super::RequestCancellation::default()));
+        }
+        super::cancel_request("cancelled", &state).unwrap();
+        let started = AtomicBool::new(false);
+        tauri::async_runtime::block_on(async {
+            let error = super::run_cancellable(Some("cancelled".into()), &state, async {
+                started.store(true, Ordering::SeqCst);
+                Ok(())
+            }).await.unwrap_err();
+            assert_eq!(error, "request_cancelled");
+            assert!(!started.load(Ordering::SeqCst));
+            assert_eq!(super::run_cancellable(Some("normal".into()), &state, async { Ok(42) }).await, Ok(42));
+        });
+        assert!(state.0.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancellation_closes_the_http_connection_while_waiting_for_headers_or_body() {
+        use std::io::{ErrorKind, Read, Write};
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        for body_started in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let (ready, waiting) = mpsc::channel();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut request = [0u8; 4096];
+                socket.read(&mut request).unwrap();
+                if body_started {
+                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nx").unwrap();
+                }
+                ready.send(()).unwrap();
+                match socket.read(&mut request) {
+                    Ok(0) => (),
+                    Err(error) if matches!(error.kind(), ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted) => (),
+                    result => panic!("cancelled HTTP connection remained open: {result:?}"),
+                }
+            });
+            let state = Arc::new(super::HttpRequestState::default());
+            state.0.lock().unwrap().insert("slow".into(), Arc::new(super::RequestCancellation::default()));
+            let cancellation_state = state.clone();
+            let cancel = std::thread::spawn(move || {
+                waiting.recv_timeout(Duration::from_secs(3)).unwrap();
+                super::cancel_request("slow", &cancellation_state).unwrap();
+            });
+            tauri::async_runtime::block_on(async {
+                let result = super::run_cancellable(Some("slow".into()), &state, async {
+                    let response = super::shared_client().unwrap().get(format!("http://{address}/"))
+                        .timeout(Duration::from_secs(10)).send().await.map_err(|error| error.to_string())?;
+                    super::read_limited_text(response).await
+                }).await;
+                assert_eq!(result, Err("request_cancelled".into()));
+            });
+            cancel.join().unwrap();
+            server.join().unwrap();
+            assert!(state.0.lock().unwrap().is_empty());
+        }
+    }
 
     #[test]
     fn shared_pool_keeps_timeouts_per_request() {

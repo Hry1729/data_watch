@@ -86,20 +86,27 @@ export default function EdgeOperationsPage() {
   const [rotatingKey, setRotatingKey] = useState(false);
   const [page, setPage] = useState(1);
   const mounted = useRef(true);
+  const requestRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     try {
       const [devices, collector, storage, uploader] = await Promise.all([
-        agentClient.getLocalDevices(),
-        agentClient.getLocalCollector(),
-        agentClient.getLocalStorage(),
-        agentClient.getLocalUploader(),
+        agentClient.getLocalDevices(controller.signal),
+        agentClient.getLocalCollector(controller.signal),
+        agentClient.getLocalStorage(controller.signal),
+        agentClient.getLocalUploader(controller.signal),
       ]);
-      if (!mounted.current) return;
+      if (!mounted.current || controller.signal.aborted) return;
       setSnapshot({ devices, collector, storage, uploader });
       setError(null);
     } catch {
-      if (mounted.current) setError("本机状态读取失败");
+      if (mounted.current && !controller.signal.aborted) setError("本机状态读取失败");
+    } finally {
+      controller.abort();
+      if (requestRef.current === controller) requestRef.current = null;
     }
   }, []);
 
@@ -114,6 +121,8 @@ export default function EdgeOperationsPage() {
     timer = setTimeout(poll, 2000);
     return () => {
       mounted.current = false;
+      requestRef.current?.abort();
+      requestRef.current = null;
       clearTimeout(timer);
     };
   }, [refresh]);

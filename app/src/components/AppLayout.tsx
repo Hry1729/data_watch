@@ -2,13 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Bell,
   ChevronDown,
   CircleHelp,
   LogOut,
   Power,
   RefreshCw,
-  Search,
   Settings,
   UserRound,
 } from "lucide-react";
@@ -28,6 +26,7 @@ import { ConnectionStatusBar } from "@/components/ConnectionStatusBar";
 import { OverlayScrollArea } from "@/components/layout/overlay-scroll-area";
 import { SegmentedPills } from "@/components/layout/segmented-pills";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TopbarTools } from "@/components/TopbarTools";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { filterNavigationGroups } from "@/lib/navigation-access";
@@ -232,26 +231,7 @@ export function AppLayout() {
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-3xl text-sidebar-foreground hover:bg-muted"
-              disabled
-              aria-label="搜索（待实现）"
-              title="搜索（待实现）"
-            >
-              <Search className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 rounded-3xl text-sidebar-foreground hover:bg-muted"
-              disabled
-              aria-label="通知（待实现）"
-              title="通知（待实现）"
-            >
-              <Bell className="h-4 w-4" />
-            </Button>
+            <TopbarTools />
           </div>
         </div>
 

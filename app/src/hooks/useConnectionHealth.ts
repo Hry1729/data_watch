@@ -33,15 +33,19 @@ export function useConnectionHealth(): UseConnectionHealthResult {
 
   const mountedRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
   const doFetch = useCallback(async () => {
+    if (requestRef.current) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
     try {
-      const health = await agentClient.getConnectionHealth();
-      if (!mountedRef.current) return;
+      const health = await agentClient.getConnectionHealth(controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
       setData(health);
       setError(null);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       const e = err as AppError;
       if (e?.type === "unauthorized") {
         logout();
@@ -49,9 +53,16 @@ export function useConnectionHealth(): UseConnectionHealthResult {
       }
       setError(e?.type === "agent_unreachable" ? "Agent 不可达" : "获取连接状态失败");
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (requestRef.current === controller) requestRef.current = null;
+      if (mountedRef.current && !controller.signal.aborted) setLoading(false);
     }
   }, [logout]);
+
+  const refresh = useCallback(() => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    void doFetch();
+  }, [doFetch]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -81,17 +92,19 @@ export function useConnectionHealth(): UseConnectionHealthResult {
       doFetch();
       startTimer();
     }
-    const onRequestedRefresh = () => { void doFetch(); };
+    const onRequestedRefresh = refresh;
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener(CONNECTION_HEALTH_REFRESH_EVENT, onRequestedRefresh);
 
     return () => {
       mountedRef.current = false;
+      requestRef.current?.abort();
+      requestRef.current = null;
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener(CONNECTION_HEALTH_REFRESH_EVENT, onRequestedRefresh);
     };
-  }, [doFetch, refreshVersion]);
+  }, [doFetch, refresh, refreshVersion]);
 
-  return { data, loading, error, refresh: doFetch };
+  return { data, loading, error, refresh };
 }

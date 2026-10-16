@@ -284,7 +284,7 @@ export function WorkbenchPage() {
   const [logPage, setLogPage] = useState(1);
   const [logPageSize, setLogPageSize] = useState(10);
   const loadRecentLogs = useCallback(
-    (token: string) => backendClient.systemLogList(token, { pageNo: logPage, pageSize: logPageSize }),
+    (token: string, signal: AbortSignal) => backendClient.systemLogList(token, { pageNo: logPage, pageSize: logPageSize }, signal),
     [logPage, logPageSize],
   );
   const recentLogs = useBackendQuery(loadRecentLogs, { intervalMs: 30_000 });
@@ -434,7 +434,7 @@ export function WorkbenchPage() {
               </ComposedChart>
             </ChartContainer>
           ) : (
-            <PanelFallback loading={dashboard.loading} error={dashboard.errors.trend} onRetry={dashboard.refresh} />
+            <PanelFallback loading={dashboard.panelLoading.trend} error={dashboard.errors.trend} onRetry={dashboard.refresh} />
           )}
         </CardContent>
       </Card>
@@ -466,7 +466,7 @@ export function WorkbenchPage() {
                 </BarChart>
               </ChartContainer>
             ) : (
-              <PanelFallback loading={dashboard.loading} error={dashboard.errors.distribution} onRetry={dashboard.refresh} />
+              <PanelFallback loading={dashboard.panelLoading.distribution} error={dashboard.errors.distribution} onRetry={dashboard.refresh} />
             )}
           </CardContent>
         </Card>
@@ -508,7 +508,7 @@ export function WorkbenchPage() {
                 </Legend>
               </div>
             ) : (
-              <PanelFallback loading={dashboard.loading} error={dashboard.errors.health} onRetry={dashboard.refresh} />
+              <PanelFallback loading={dashboard.panelLoading.health} error={dashboard.errors.health} onRetry={dashboard.refresh} />
             )}
           </CardContent>
         </Card>

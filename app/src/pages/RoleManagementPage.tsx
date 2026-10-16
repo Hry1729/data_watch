@@ -38,9 +38,9 @@ export function RoleManagementPage() {
   const [grant, setGrant] = useState<RoleGrant>({ menuIds: [], permissionIds: [], dataScopes: [] });
   const [grantLoading, setGrantLoading] = useState(false);
 
-  const loadRoles = useCallback((activeToken: string) => backendClient.roleList(activeToken, query), [query]);
+  const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleList(activeToken, query, signal), [query]);
   const roles = useBackendQuery(loadRoles);
-  const loadMenus = useCallback((activeToken: string) => backendClient.adminMenus(activeToken), []);
+  const loadMenus = useCallback((activeToken: string, signal: AbortSignal) => backendClient.adminMenus(activeToken, signal), []);
   const menus = useBackendQuery(loadMenus);
   const currentPage = query.current ?? 1;
   const pageSize = query.size ?? 20;

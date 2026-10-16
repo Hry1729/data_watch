@@ -211,11 +211,12 @@ test("device and point management build type tabs from current system devices", 
 
   assert.match(deviceSource, /deviceType: activeType === "all" \? undefined : activeType/);
   assert.match(pointSource, /backendClient\.deviceList/);
-  assert.match(pointSource, /activeDeviceIds/);
-  assert.match(pointSource, /filteredRows/);
+  assert.match(pointSource, /connectStatus: connectStatus === "all" \? undefined : connectStatus/);
+  assert.match(pointSource, /useDevicePicker/);
   assert.match(pointSource, /activeType === "all"/);
   assert.match(deviceSource, /const loadDeviceCatalog = useCallback/);
-  assert.match(deviceSource, /loadAllDevicePages/);
+  assert.doesNotMatch(deviceSource, /loadAllDevicePages/);
+  assert.match(deviceSource, /backendClient\.deviceTypes/);
   assert.match(deviceSource, /backendClient\.deviceList/);
   assert.match(deviceSource, /const typeTabs = useMemo/);
   assert.doesNotMatch(deviceSource, /historyDeviceTypes/);
@@ -243,14 +244,15 @@ test("device and point lists keep filters outside the card and size pages from t
     assert.ok(source.indexOf("<Tabs") < source.indexOf('<Card className="flex min-h-0 flex-1 flex-col">'));
   }
 });
-test("point management uses server pagination and passes the selected device ids to the catalog API", async () => {
+test("point management pages and filters devices on the server before counting points", async () => {
   const pointSource = await readFile(new URL("../src/pages/PointManagementPage.tsx", import.meta.url), "utf8");
   const pointTypes = await readFile(new URL("../src/types/device-monitor.ts", import.meta.url), "utf8");
   const routerSource = await readFile(new URL("../../backend/app/api/routes/catalog.py", import.meta.url), "utf8");
   const serviceSource = await readFile(new URL("../../backend/app/services/catalog.py", import.meta.url), "utf8");
   assert.doesNotMatch(pointSource, /pointList\(token, \{[^}]*pageSize:\s*1000/);
   assert.match(pointSource, /pageNo:\s*page/);
-  assert.match(pointSource, /deviceIds:\s*pointDeviceIds/);
+  assert.match(pointSource, /deviceType: activeType === "all" \? undefined : activeType/);
+  assert.match(pointSource, /connectStatus: connectStatus === "all" \? undefined : connectStatus/);
   assert.match(pointTypes, /deviceIds\?: number\[\]/);
   assert.match(routerSource, /deviceIds: list\[str\] \| str \| None/);
   assert.match(routerSource, /"deviceIds": deviceIds/);

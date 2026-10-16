@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeHttp, isAbortError } from "@/lib/desktop-request";
 import { getAgentAuthToken } from "@/lib/agent-auth-token";
 import { AGENT_PORT } from "@/config/build-role";
 import type {
@@ -187,45 +187,46 @@ export interface AgentClient {
   getEdgeBootstrapStatus(): Promise<EdgeBootstrapStatus>;
   registerEdge(req: EdgeBootstrapRegisterPayload): Promise<{ nodeUuid: string; status: string }>;
   agentLogin(u: string, p: string): Promise<{ token: string; roles: string[] }>;
-  getViewerStatus():       Promise<{ agent: string }>;
-  getLocalDevices():      Promise<EdgeLocalDevices>;
-  getLocalCollector():    Promise<EdgeProcessStatus>;
-  getLocalOutbox():       Promise<EdgeOutboxStatus>;
-  getLocalUploader():     Promise<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>;
-  getLocalStorage():      Promise<EdgeProcessStatus & { storage: EdgeStorageStatus }>;
-  getLocalSettings():     Promise<EdgeLocalSettings>;
+  getViewerStatus(signal?: AbortSignal):       Promise<{ agent: string }>;
+  getLocalDevices(signal?: AbortSignal):      Promise<EdgeLocalDevices>;
+  getLocalCollector(signal?: AbortSignal):    Promise<EdgeProcessStatus>;
+  getLocalOutbox(signal?: AbortSignal):       Promise<EdgeOutboxStatus>;
+  getLocalUploader(signal?: AbortSignal):     Promise<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>;
+  getLocalStorage(signal?: AbortSignal):      Promise<EdgeProcessStatus & { storage: EdgeStorageStatus }>;
+  getLocalSettings(signal?: AbortSignal):     Promise<EdgeLocalSettings>;
   updateLocalSettings(settings: EdgeLocalSettingsUpdate): Promise<EdgeLocalSettings>;
-  getLocalMonitorDevices(query: DeviceListQuery): Promise<PaginatedResult<DeviceListItem>>;
-  getLocalMonitorPoints(query: PointListQuery): Promise<PaginatedResult<PointListItem>>;
-  getLocalRealtimeGroups(deviceCode: string): Promise<RealtimePointGroup[]>;
-  getLocalRealtime(deviceId: number, groupCode: string): Promise<DeviceRealtimeStatus>;
-  getLocalRealtimeLatest(deviceCode: string, groupCode: string): Promise<{
+  getLocalMonitorScope(signal?: AbortSignal): Promise<Pick<DeviceListItem, "id" | "deviceCode" | "deviceType">[]>;
+  getLocalMonitorDevices(query: DeviceListQuery, signal?: AbortSignal): Promise<PaginatedResult<DeviceListItem>>;
+  getLocalMonitorPoints(query: PointListQuery, signal?: AbortSignal): Promise<PaginatedResult<PointListItem>>;
+  getLocalRealtimeGroups(deviceCode: string, signal?: AbortSignal): Promise<RealtimePointGroup[]>;
+  getLocalRealtime(deviceId: number, groupCode: string, signal?: AbortSignal): Promise<DeviceRealtimeStatus>;
+  getLocalRealtimeLatest(deviceCode: string, groupCode: string, signal?: AbortSignal): Promise<{
     values: Record<string, RealtimeWireValue>;
     deviceOffline: boolean;
   }>;
-  getLocalHistoryDevices(): Promise<HistoryDeviceItem[]>;
-  getLocalHistoryDeviceTypes(): Promise<DeviceTypeItem[]>;
-  getLocalHistoryPoints(deviceId: number): Promise<HistoryPointItem[]>;
-  getLocalHistoryChart(query: HistoryQuery): Promise<HistoryChartResponse>;
+  getLocalHistoryDevices(signal?: AbortSignal): Promise<HistoryDeviceItem[]>;
+  getLocalHistoryDeviceTypes(signal?: AbortSignal): Promise<DeviceTypeItem[]>;
+  getLocalHistoryPoints(deviceId: number, signal?: AbortSignal): Promise<HistoryPointItem[]>;
+  getLocalHistoryChart(query: HistoryQuery, signal?: AbortSignal): Promise<HistoryChartResponse>;
   getLocalHistoryMatrix(query: HistoryQuery & {
     alignGranularity?: "100ms" | "500ms" | "1s";
     pageSize?: number;
     cursorTs?: string;
-  }): Promise<HistoryRawMatrixResponse>;
+  }, signal?: AbortSignal): Promise<HistoryRawMatrixResponse>;
   rotateEdgeIdentity():     Promise<{ keyVersion: number; uploaderRestarted: boolean; warning?: string }>;
-  getConnectionHealth():    Promise<ConnectionHealth>;
-  getProcessMetrics(name: ModuleName): Promise<ModuleStatus>;
-  getProcessStatus(name: ModuleName): Promise<{ status: string }>;
+  getConnectionHealth(signal?: AbortSignal):    Promise<ConnectionHealth>;
+  getProcessMetrics(name: ModuleName, signal?: AbortSignal): Promise<ModuleStatus>;
+  getProcessStatus(name: ModuleName, signal?: AbortSignal): Promise<{ status: string }>;
   startProcess(name: ModuleName): Promise<void>;
   stopProcess(name: ModuleName): Promise<void>;
   restartProcess(name: ModuleName): Promise<void>;
-  getConfig():   Promise<ConnectionConfig>;
+  getConfig(signal?: AbortSignal):   Promise<ConnectionConfig>;
   putConfig(cfg: Partial<ConnectionConfig>): Promise<void>;
   checkHealth(
     target: "redis" | "mysql" | "tdengine",
     config?: Partial<DbConfig>
   ): Promise<{ success: boolean; message?: string }>;
-  listDrivers(): Promise<AgentDriverInfo[]>;
+  listDrivers(signal?: AbortSignal): Promise<AgentDriverInfo[]>;
   previewDriver(input: { package_base64?: string; restore_id?: string }): Promise<{ driver: { id: string; name: string; version: string; sha256: string } }>;
   restoreDriver(driverId: string): Promise<{ driver: AgentDriverInfo }>;
   installDriver(packageBase64: string): Promise<{ driver: AgentDriverInfo }>;
@@ -272,6 +273,7 @@ async function agentFetch<T>(
   body?: object,
   token?: string,
   timeoutSecs?: number,
+  signal?: AbortSignal,
 ): Promise<T> {
   // 序列化原始 body 用于实际请求；脱敏版本仅用于开发日志，不发送给 Agent
   const bodyStr = body ? JSON.stringify(body) : undefined;
@@ -282,15 +284,16 @@ async function agentFetch<T>(
 
   let result: [number, string];
   try {
-    result = await invoke<[number, string]>("agent_request", {
+    result = await invokeHttp<[number, string]>("agent_request", {
       method,
       path,
       port: AGENT_PORT,
       body: bodyStr,
       token: token ?? getAgentAuthToken() ?? undefined,
       timeoutSecs: timeoutSecs ?? null,
-    });
+    }, signal);
   } catch (error) {
+    if (isAbortError(error)) throw error;
     const message = String(error);
     if (message.includes("agent_request_too_large") || message.includes("response_body_too_large")) {
       throw { type: "api_error", status: 413, message: "请求或响应数据过大，请缩小数据范围或驱动包" } satisfies AppError;
@@ -353,82 +356,84 @@ function makeRealAgent(): AgentClient {
         password: p,
       }),
 
-    getViewerStatus: () =>
-      agentFetch<{ agent: string }>("GET", "/viewer/status"),
+    getViewerStatus: (signal) =>
+      agentFetch<{ agent: string }>("GET", "/viewer/status", undefined, undefined, undefined, signal),
 
-    getLocalDevices: () =>
-      agentFetch<EdgeLocalDevices>("GET", "/local/devices"),
+    getLocalDevices: (signal) =>
+      agentFetch<EdgeLocalDevices>("GET", "/local/devices", undefined, undefined, undefined, signal),
 
-    getLocalCollector: () =>
-      agentFetch<EdgeProcessStatus>("GET", "/local/collector"),
+    getLocalCollector: (signal) =>
+      agentFetch<EdgeProcessStatus>("GET", "/local/collector", undefined, undefined, undefined, signal),
 
-    getLocalOutbox: () =>
-      agentFetch<EdgeOutboxStatus>("GET", "/local/outbox"),
+    getLocalOutbox: (signal) =>
+      agentFetch<EdgeOutboxStatus>("GET", "/local/outbox", undefined, undefined, undefined, signal),
 
-    getLocalUploader: () =>
-      agentFetch<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>("GET", "/local/uploader"),
+    getLocalUploader: (signal) =>
+      agentFetch<EdgeProcessStatus & { outbox: EdgeOutboxStatus }>("GET", "/local/uploader", undefined, undefined, undefined, signal),
 
-    getLocalStorage: () =>
-      agentFetch<EdgeProcessStatus & { storage: EdgeStorageStatus }>("GET", "/local/storage"),
+    getLocalStorage: (signal) =>
+      agentFetch<EdgeProcessStatus & { storage: EdgeStorageStatus }>("GET", "/local/storage", undefined, undefined, undefined, signal),
 
-    getLocalSettings: () =>
-      agentFetch<EdgeLocalSettings>("GET", "/local/settings"),
+    getLocalSettings: (signal) =>
+      agentFetch<EdgeLocalSettings>("GET", "/local/settings", undefined, undefined, undefined, signal),
 
     updateLocalSettings: (settings) =>
       agentFetch<EdgeLocalSettings>("PUT", "/local/settings", settings),
-    getLocalMonitorDevices: (query) =>
-      agentFetch<PaginatedResult<DeviceListItem>>("GET", `/local/monitor/devices?${toAgentQuery(query)}`),
+    getLocalMonitorScope: (signal) =>
+      agentFetch<Pick<DeviceListItem, "id" | "deviceCode" | "deviceType">[]>("GET", "/local/monitor/device-scope", undefined, undefined, undefined, signal),
+    getLocalMonitorDevices: (query, signal) =>
+      agentFetch<PaginatedResult<DeviceListItem>>("GET", `/local/monitor/devices?${toAgentQuery(query)}`, undefined, undefined, undefined, signal),
 
-    getLocalMonitorPoints: (query) =>
-      agentFetch<PaginatedResult<PointListItem>>("GET", `/local/monitor/points?${toAgentQuery(query)}`),
+    getLocalMonitorPoints: (query, signal) =>
+      agentFetch<PaginatedResult<PointListItem>>("GET", `/local/monitor/points?${toAgentQuery(query)}`, undefined, undefined, undefined, signal),
 
-    getLocalRealtimeGroups: (deviceCode) =>
-      agentFetch<RealtimePointGroup[]>("GET", `/local/monitor/realtime/groups?${toAgentQuery({ deviceCode })}`),
+    getLocalRealtimeGroups: (deviceCode, signal) =>
+      agentFetch<RealtimePointGroup[]>("GET", `/local/monitor/realtime/groups?${toAgentQuery({ deviceCode })}`, undefined, undefined, undefined, signal),
 
-    getLocalRealtime: (deviceId, groupCode) =>
-      agentFetch<DeviceRealtimeStatus>("GET", `/local/monitor/realtime?${toAgentQuery({ deviceId, groupCode })}`),
+    getLocalRealtime: (deviceId, groupCode, signal) =>
+      agentFetch<DeviceRealtimeStatus>("GET", `/local/monitor/realtime?${toAgentQuery({ deviceId, groupCode })}`, undefined, undefined, undefined, signal),
 
-    getLocalRealtimeLatest: (deviceCode, groupCode) =>
+    getLocalRealtimeLatest: (deviceCode, groupCode, signal) =>
       agentFetch<{ values: Record<string, RealtimeWireValue>; deviceOffline: boolean }>(
         "GET",
-        `/local/monitor/realtime/latest?${toAgentQuery({ deviceCode, groupCode })}`,
+        `/local/monitor/realtime/latest?${toAgentQuery({ deviceCode, groupCode })}`, undefined, undefined, undefined, signal,
       ),
 
-    getLocalHistoryDevices: () =>
-      agentFetch<HistoryDeviceItem[]>("GET", "/local/monitor/history/devices"),
+    getLocalHistoryDevices: (signal) =>
+      agentFetch<HistoryDeviceItem[]>("GET", "/local/monitor/history/devices", undefined, undefined, undefined, signal),
 
-    getLocalHistoryDeviceTypes: () =>
-      agentFetch<DeviceTypeItem[]>("GET", "/local/monitor/history/device-types"),
+    getLocalHistoryDeviceTypes: (signal) =>
+      agentFetch<DeviceTypeItem[]>("GET", "/local/monitor/history/device-types", undefined, undefined, undefined, signal),
 
-    getLocalHistoryPoints: (deviceId) =>
-      agentFetch<HistoryPointItem[]>("GET", `/local/monitor/history/points?${toAgentQuery({ deviceId })}`),
+    getLocalHistoryPoints: (deviceId, signal) =>
+      agentFetch<HistoryPointItem[]>("GET", `/local/monitor/history/points?${toAgentQuery({ deviceId })}`, undefined, undefined, undefined, signal),
 
-    getLocalHistoryChart: (query) =>
-      agentFetch<HistoryChartResponse>("POST", "/local/monitor/history/chart", query),
+    getLocalHistoryChart: (query, signal) =>
+      agentFetch<HistoryChartResponse>("POST", "/local/monitor/history/chart", query, undefined, undefined, signal),
 
-    getLocalHistoryMatrix: (query) =>
-      agentFetch<HistoryRawMatrixResponse>("POST", "/local/monitor/history/matrix", query),
+    getLocalHistoryMatrix: (query, signal) =>
+      agentFetch<HistoryRawMatrixResponse>("POST", "/local/monitor/history/matrix", query, undefined, undefined, signal),
     rotateEdgeIdentity: () =>
       agentFetch<{ keyVersion: number; uploaderRestarted: boolean; warning?: string }>(
         "POST",
         "/local/identity/rotate",
       ),
 
-    getConnectionHealth: () =>
-      agentFetch<ConnectionHealth>("GET", "/viewer/health"),
+    getConnectionHealth: (signal) =>
+      agentFetch<ConnectionHealth>("GET", "/viewer/health", undefined, undefined, undefined, signal),
 
-    getProcessMetrics: (name) =>
-      agentFetch<ModuleStatus>("GET", `/viewer/processes/${name}/metrics`),
+    getProcessMetrics: (name, signal) =>
+      agentFetch<ModuleStatus>("GET", `/viewer/processes/${name}/metrics`, undefined, undefined, undefined, signal),
 
-    getProcessStatus: (name) =>
-      agentFetch<{ status: string }>("GET", `/viewer/processes/${name}/status`),
+    getProcessStatus: (name, signal) =>
+      agentFetch<{ status: string }>("GET", `/viewer/processes/${name}/status`, undefined, undefined, undefined, signal),
 
     startProcess:   (name) => agentFetch<void>("POST", `/admin/processes/${name}/start`),
     stopProcess:    (name) => agentFetch<void>("POST", `/admin/processes/${name}/stop`, undefined, undefined, 60),
     restartProcess: (name) => agentFetch<void>("POST", `/admin/processes/${name}/restart`, undefined, undefined, 120),
 
-    getConfig: () =>
-      agentFetch<ConnectionConfig>("GET", "/admin/config"),
+    getConfig: (signal) =>
+      agentFetch<ConnectionConfig>("GET", "/admin/config", undefined, undefined, undefined, signal),
 
     putConfig: (cfg) =>
       agentFetch<void>("PUT", "/admin/config", cfg),
@@ -438,8 +443,8 @@ function makeRealAgent(): AgentClient {
         "POST", "/admin/health/check", config ? { target, config } : { target }
       ),
 
-    listDrivers: async () => {
-      const data = await agentFetch<{ drivers: AgentDriverInfo[] }>("GET", "/admin/drivers");
+    listDrivers: async (signal) => {
+      const data = await agentFetch<{ drivers: AgentDriverInfo[] }>("GET", "/admin/drivers", undefined, undefined, undefined, signal);
       return data.drivers ?? [];
     },
 
@@ -499,35 +504,36 @@ export const agentClient: AgentClient = {
   getEdgeBootstrapStatus:      ()        => via((c) => c.getEdgeBootstrapStatus()),
   registerEdge:                (req)     => via((c) => c.registerEdge(req)),
   agentLogin:                  (u, p)    => via((c) => c.agentLogin(u, p)),
-  getViewerStatus:             ()        => via((c) => c.getViewerStatus()),
-  getLocalDevices:             ()        => via((c) => c.getLocalDevices()),
-  getLocalCollector:           ()        => via((c) => c.getLocalCollector()),
-  getLocalOutbox:              ()        => via((c) => c.getLocalOutbox()),
-  getLocalUploader:            ()        => via((c) => c.getLocalUploader()),
-  getLocalStorage:             ()        => via((c) => c.getLocalStorage()),
-  getLocalSettings:             ()        => via((c) => c.getLocalSettings()),
+  getViewerStatus:             (signal)        => via((c) => c.getViewerStatus(signal)),
+  getLocalDevices:             (signal)        => via((c) => c.getLocalDevices(signal)),
+  getLocalCollector:           (signal)        => via((c) => c.getLocalCollector(signal)),
+  getLocalOutbox:              (signal)        => via((c) => c.getLocalOutbox(signal)),
+  getLocalUploader:            (signal)        => via((c) => c.getLocalUploader(signal)),
+  getLocalStorage:             (signal)        => via((c) => c.getLocalStorage(signal)),
+  getLocalSettings:             (signal)        => via((c) => c.getLocalSettings(signal)),
   updateLocalSettings:          (settings) => via((c) => c.updateLocalSettings(settings)),
-  getLocalMonitorDevices:       (query)    => via((c) => c.getLocalMonitorDevices(query)),
-  getLocalMonitorPoints:        (query)    => via((c) => c.getLocalMonitorPoints(query)),
-  getLocalRealtimeGroups:       (code)     => via((c) => c.getLocalRealtimeGroups(code)),
-  getLocalRealtime:             (id, group) => via((c) => c.getLocalRealtime(id, group)),
-  getLocalRealtimeLatest:       (code, group) => via((c) => c.getLocalRealtimeLatest(code, group)),
-  getLocalHistoryDevices:       ()         => via((c) => c.getLocalHistoryDevices()),
-  getLocalHistoryDeviceTypes:   ()         => via((c) => c.getLocalHistoryDeviceTypes()),
-  getLocalHistoryPoints:        (id)       => via((c) => c.getLocalHistoryPoints(id)),
-  getLocalHistoryChart:         (query)    => via((c) => c.getLocalHistoryChart(query)),
-  getLocalHistoryMatrix:        (query)    => via((c) => c.getLocalHistoryMatrix(query)),
+  getLocalMonitorScope:         (signal)   => via((c) => c.getLocalMonitorScope(signal)),
+  getLocalMonitorDevices:       (query, signal)    => via((c) => c.getLocalMonitorDevices(query, signal)),
+  getLocalMonitorPoints:        (query, signal)    => via((c) => c.getLocalMonitorPoints(query, signal)),
+  getLocalRealtimeGroups:       (code, signal)     => via((c) => c.getLocalRealtimeGroups(code, signal)),
+  getLocalRealtime:             (id, group, signal) => via((c) => c.getLocalRealtime(id, group, signal)),
+  getLocalRealtimeLatest:       (code, group, signal) => via((c) => c.getLocalRealtimeLatest(code, group, signal)),
+  getLocalHistoryDevices:       (signal)         => via((c) => c.getLocalHistoryDevices(signal)),
+  getLocalHistoryDeviceTypes:   (signal)         => via((c) => c.getLocalHistoryDeviceTypes(signal)),
+  getLocalHistoryPoints:        (id, signal)       => via((c) => c.getLocalHistoryPoints(id, signal)),
+  getLocalHistoryChart:         (query, signal)    => via((c) => c.getLocalHistoryChart(query, signal)),
+  getLocalHistoryMatrix:        (query, signal)    => via((c) => c.getLocalHistoryMatrix(query, signal)),
   rotateEdgeIdentity:           ()         => via((c) => c.rotateEdgeIdentity()),
-  getConnectionHealth:         ()        => via((c) => c.getConnectionHealth()),
-  getProcessMetrics:           (name)    => via((c) => c.getProcessMetrics(name)),
-  getProcessStatus:            (name)    => via((c) => c.getProcessStatus(name)),
+  getConnectionHealth:         (signal)        => via((c) => c.getConnectionHealth(signal)),
+  getProcessMetrics:           (name, signal)    => via((c) => c.getProcessMetrics(name, signal)),
+  getProcessStatus:            (name, signal)    => via((c) => c.getProcessStatus(name, signal)),
   startProcess:                (name)    => via((c) => c.startProcess(name)),
   stopProcess:                 (name)    => via((c) => c.stopProcess(name)),
   restartProcess:              (name)    => via((c) => c.restartProcess(name)),
-  getConfig:                   ()        => via((c) => c.getConfig()),
+  getConfig:                   (signal)        => via((c) => c.getConfig(signal)),
   putConfig:                   (cfg)     => via((c) => c.putConfig(cfg)),
   checkHealth:                 (target, config) => via((c) => c.checkHealth(target, config)),
-  listDrivers:                 ()        => via((c) => c.listDrivers()),
+  listDrivers:                 (signal)        => via((c) => c.listDrivers(signal)),
   previewDriver:               (input)   => via((c) => c.previewDriver(input)),
   restoreDriver:               (id)      => via((c) => c.restoreDriver(id)),
   installDriver:               (b64)     => via((c) => c.installDriver(b64)),

@@ -129,12 +129,12 @@ test("Workbench renders six live pipeline stages with aggregated health colors",
   assert.match(source, /dot: "bg-red-500"/);
   assert.match(source, /<PipelineStageNode stage=\{stage\}/);
   assert.doesNotMatch(source, /data-dashboard-section="risk"|<CardTitle>风险设备<\/CardTitle>/);
-  assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth/);
-  assert.match(pipelineSource, /agentClient\.getConnectionHealth/);
+  assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth\(token,\s*signal\)/);
+  assert.match(pipelineSource, /agentClient\.getConnectionHealth\(signal\)/);
   for (const module of ["collector", "ingest", "writer"]) {
-    assert.match(pipelineSource, new RegExp(`getProcessStatus\\("${module}"\\)`));
+    assert.match(pipelineSource, new RegExp(`getProcessStatus\\("${module}",\\s*signal\\)`));
   }
-  assert.doesNotMatch(pipelineSource, /getProcessStatus\("uploader"\)/);
+  assert.doesNotMatch(pipelineSource, /getProcessStatus\("uploader"(?:,|\))/);
   assert.match(pipelineSource, /BUILD_ROLE === "distributed-center"[\s\S]*dashboardEdgePipelineHealth/);
   assert.match(pipelineSource, /edgeStage\("collector", edgeHealth\)/);
   assert.match(pipelineSource, /edgeStage\("uploader", edgeHealth\)/);

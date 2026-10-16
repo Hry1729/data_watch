@@ -34,7 +34,7 @@ function flattenMenus(items: MenuTreeItem[], expanded: Set<number>, depth = 0): 
 export function MenuManagementPage() {
   const { auth } = useAuth();
   const token = auth?.backendToken;
-  const loadMenus = useCallback((activeToken: string) => backendClient.adminMenus(activeToken), []);
+  const loadMenus = useCallback((activeToken: string, signal: AbortSignal) => backendClient.adminMenus(activeToken, signal), []);
   const menus = useBackendQuery(loadMenus);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [menuOpen, setMenuOpen] = useState(false);

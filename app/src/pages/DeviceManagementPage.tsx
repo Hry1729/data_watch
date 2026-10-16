@@ -18,7 +18,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
-import { loadAllDevicePages } from "@/lib/device-catalog";
 import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { parseImportWorkbook } from "@/lib/import-workbook";
 import { saveDownload } from "@/lib/save-download";
@@ -48,23 +47,23 @@ export default function DeviceManagementPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDevices = useCallback(
-    (token: string) => backendClient.deviceList(token, {
+    (token: string, signal: AbortSignal) => backendClient.deviceList(token, {
       pageNo: page,
       pageSize,
       keyword: keyword.trim() || undefined,
       deviceType: activeType === "all" ? undefined : activeType,
       connectStatus: connectStatus === "all" ? undefined : connectStatus,
-    }),
+    }, signal),
     [activeType, connectStatus, keyword, page, pageSize],
   );
   const loadDeviceCatalog = useCallback(
-    (token: string) => loadAllDevicePages((pageNo, pageSize) => backendClient.deviceList(token, { pageNo, pageSize })),
+    (token: string, signal: AbortSignal) => backendClient.deviceTypes(token, {}, signal),
     [],
   );
-  const loadDrivers = useCallback((token: string) => backendClient.driverOptions(token), []);
+  const loadDrivers = useCallback((token: string, signal: AbortSignal) => backendClient.driverOptions(token, signal), []);
   const devices = useBackendQuery(loadDevices);
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
-  const typeTabs = useMemo(() => Array.from(new Map((deviceCatalog.data?.list ?? []).map((device) => [device.deviceType, device.deviceType])).entries()).map(([value, label]) => ({ value, label })), [deviceCatalog.data?.list]);
+  const typeTabs = useMemo(() => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })), [deviceCatalog.data]);
   const drivers = useBackendQuery(loadDrivers);
   const rows = devices.data?.list ?? [];
   const totalPages = Math.max(1, Math.ceil((devices.data?.total ?? 0) / pageSize));

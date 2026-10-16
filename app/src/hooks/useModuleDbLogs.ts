@@ -55,11 +55,12 @@ export function useModuleDbLogs(
     };
 
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
 
     backendClient
-      .logList(backendToken, query)
+      .logList(backendToken, query, controller.signal)
       .then((data) => {
         if (!cancelled) setRows(data);
       })
@@ -79,6 +80,7 @@ export function useModuleDbLogs(
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // logout 经 ref 调用，故意不入依赖
     // eslint-disable-next-line react-hooks/exhaustive-deps

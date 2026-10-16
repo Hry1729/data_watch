@@ -49,9 +49,9 @@ test("distributed assignment locks devices owned by other nodes and filters by t
     readFile(new URL("../src/pages/DistributedNodesPage.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/lib/backend-client.ts", import.meta.url), "utf8"),
   ]);
-  assert.ok(pageSource.includes('deviceList(token, { pageNo: 1, pageSize: 500 })'));
-  assert.ok(pageSource.includes('device.deviceStatus === "enabled" || assignedIds.has(device.id)'));
-  assert.ok(pageSource.includes("distributedAssignmentOccupancy(token)"));
+  assert.ok(pageSource.includes('useDevicePicker(backendClient, assignmentSearch, assignmentType'));
+  assert.ok(pageSource.includes('device.deviceStatus === "enabled" || selectedIds.has(device.id)'));
+  assert.ok(pageSource.includes("distributedAssignmentOccupancy(token, controller.signal)"));
   assert.ok(pageSource.includes("assignedElsewhere"));
   assert.ok(pageSource.includes("disabled={locked}"));
   assert.ok(pageSource.includes('assignedElsewhere ? "已分配"'));

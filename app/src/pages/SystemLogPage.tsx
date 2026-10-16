@@ -189,13 +189,13 @@ export function SystemLogPage() {
   const [tailLines, setTailLines] = useState(300);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
-  const loadLogs = useCallback((activeToken: string) => backendClient.systemLogList(activeToken, query), [query]);
+  const loadLogs = useCallback((activeToken: string, signal: AbortSignal) => backendClient.systemLogList(activeToken, query, signal), [query]);
   const logs = useBackendQuery(loadLogs, { enabled: mode === "system" });
-  const loadStats = useCallback((activeToken: string) => backendClient.logStats(activeToken), []);
+  const loadStats = useCallback((activeToken: string, signal: AbortSignal) => backendClient.logStats(activeToken, signal), []);
   const stats = useBackendQuery(loadStats, { intervalMs: 30_000 });
-  const loadFiles = useCallback((activeToken: string) => backendClient.tdengineLogFiles(activeToken), []);
+  const loadFiles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.tdengineLogFiles(activeToken, signal), []);
   const files = useBackendQuery(loadFiles, { enabled: mode === "db" });
-  const loadTail = useCallback((activeToken: string) => backendClient.tdengineLogTail(activeToken, selectedFile, tailLines), [selectedFile, tailLines]);
+  const loadTail = useCallback((activeToken: string, signal: AbortSignal) => backendClient.tdengineLogTail(activeToken, selectedFile, tailLines, signal), [selectedFile, tailLines]);
   const tail = useBackendQuery(loadTail, { enabled: mode === "db" && Boolean(selectedFile) });
 
   useEffect(() => {

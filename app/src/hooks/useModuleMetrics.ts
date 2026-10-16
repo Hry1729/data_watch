@@ -52,14 +52,18 @@ export function useModuleMetrics(
     const token = backendToken; // 收窄为 string，供下方异步闭包使用
 
     let active = true;
+    const controller = new AbortController();
+    let inFlight = false;
     let timer: ReturnType<typeof setInterval> | null = null;
 
     async function fetchOnce() {
+      if (inFlight || !active) return;
+      inFlight = true;
       try {
         const result =
           name === "collector"
-            ? await backendClient.collectorMetrics(token)
-            : await backendClient.writerMetrics(token);
+            ? await backendClient.collectorMetrics(token, controller.signal)
+            : await backendClient.writerMetrics(token, controller.signal);
         if (!active) return;
         setData(result);
         setError(null);
@@ -72,6 +76,7 @@ export function useModuleMetrics(
         }
         setError(e?.type === "network_error" ? "无法连接到后端服务" : "获取指标失败");
       } finally {
+        inFlight = false;
         if (active) setLoading(false);
       }
     }
@@ -106,6 +111,7 @@ export function useModuleMetrics(
 
     return () => {
       active = false;
+      controller.abort();
       stopTimer();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

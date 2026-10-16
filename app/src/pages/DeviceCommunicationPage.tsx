@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
-import { loadAllDevicePages } from "@/lib/device-catalog";
+import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
 import { cn } from "@/lib/utils";
 
 const DEVICE_TYPE_LABELS: Record<string, string> = {
@@ -65,30 +65,36 @@ export default function DeviceCommunicationPage() {
   const [keyword, setKeyword] = useState("");
   const [deviceType, setDeviceType] = useState("all");
   const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
+  const pageSize = 150;
   const load = useCallback(
-    (token: string) => loadAllDevicePages((pageNo, pageSize) => backendClient.deviceList(token, { pageNo, pageSize, keyword: keyword.trim() || undefined })),
-    [keyword],
+    (token: string, signal: AbortSignal) => backendClient.deviceList(token, {
+      pageNo: page, pageSize, keyword: keyword.trim() || undefined,
+      deviceTypeExact: deviceType === "all" ? undefined : deviceType,
+      connectStatus: status === "all" || status === "disabled" ? undefined : status,
+      deviceStatus: status === "disabled" ? "disabled" : undefined,
+    }, signal),
+    [deviceType, keyword, page, status],
   );
   const query = useBackendQuery(load, { intervalMs: 30_000 });
   const devices = query.data?.list ?? [];
-
-  const filtered = useMemo(
-    () => devices.filter((device) => (deviceType === "all" || device.deviceType === deviceType) && (status === "all" || device.connectStatus === status || (status === "disabled" && device.deviceStatus === "disabled"))),
-    [deviceType, devices, status],
-  );
+  const loadSummary = useCallback((token: string, signal: AbortSignal) => backendClient.deviceSummary(token, { keyword: keyword.trim() || undefined }, signal), [keyword]);
+  const summary = useBackendQuery(loadSummary, { intervalMs: 30_000 });
+  const loadTypes = useCallback((token: string, signal: AbortSignal) => backendClient.deviceTypes(token, {}, signal), []);
+  const typeCatalog = useBackendQuery(loadTypes);
   const groups = useMemo(() => {
-    const grouped = filtered.reduce<Record<string, typeof filtered>>((result, device) => {
+    const grouped = devices.reduce<Record<string, typeof devices>>((result, device) => {
       const type = device.deviceType || "其他";
       (result[type] ??= []).push(device);
       return result;
     }, {});
     return Object.entries(grouped);
-  }, [filtered]);
-  const total = query.data?.total ?? devices.length;
-  const online = devices.filter((device) => device.connectStatus === "online" && device.deviceStatus === "enabled").length;
-  const offline = devices.filter((device) => device.connectStatus === "offline" && device.deviceStatus === "enabled").length;
-  const disabled = devices.filter((device) => device.deviceStatus === "disabled").length;
-  const types = [...new Set(devices.map((device) => device.deviceType))];
+  }, [devices]);
+  const total = summary.data?.total ?? 0;
+  const online = summary.data?.enabledOnlineCount ?? 0;
+  const offline = summary.data?.enabledOfflineCount ?? 0;
+  const disabled = summary.data?.disabledCount ?? 0;
+  const types = typeCatalog.data ?? [];
 
   return (
     <div className="flex w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
@@ -104,12 +110,11 @@ export default function DeviceCommunicationPage() {
             </div>
           </CardContent>
         </Card>
-        <RateCard title="在线比例" value={query.data?.truncated ? null : total ? online / total * 100 : 0} variant="success" />
-        <RateCard title="离线比例" value={query.data?.truncated ? null : total ? offline / total * 100 : 0} variant="destructive" />
-        <RateCard title="未用比例" value={query.data?.truncated ? null : total ? disabled / total * 100 : 0} variant="warning" />
+        <RateCard title="在线比例" value={!summary.data ? null : total ? online / total * 100 : 0} variant="success" />
+        <RateCard title="离线比例" value={!summary.data ? null : total ? offline / total * 100 : 0} variant="destructive" />
+        <RateCard title="未用比例" value={!summary.data ? null : total ? disabled / total * 100 : 0} variant="warning" />
       </div>
 
-      {query.data?.truncated && <p className="text-xs text-warning">设备超过选择器安全上限 {devices.length} 台，已加载前 {devices.length} 台；请使用关键字缩小范围。</p>}
       <Card>
         <CardHeader className="flex flex-row items-center gap-3">
           <div className="flex shrink-0 items-center gap-4">
@@ -124,9 +129,9 @@ export default function DeviceCommunicationPage() {
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
             <div className="relative w-32 shrink-0">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input className="pl-9" placeholder="编号 / 名称" value={keyword} onChange={(event) => setKeyword(event.target.value)} />
+              <Input className="pl-9" placeholder="编号 / 名称" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
             </div>
-            <Select value={deviceType} onValueChange={setDeviceType}>
+            <Select value={deviceType} onValueChange={(value) => { setDeviceType(value); setPage(1); }}>
               <SelectTrigger className="w-24"><SelectValue placeholder="全部类型" /></SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -135,7 +140,7 @@ export default function DeviceCommunicationPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Select value={status} onValueChange={setStatus}>
+            <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
               <SelectTrigger className="w-24"><SelectValue placeholder="全部状态" /></SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -147,7 +152,7 @@ export default function DeviceCommunicationPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={() => { setKeyword(""); setDeviceType("all"); setStatus("all"); }}>重置</Button>
+            <Button variant="outline" size="sm" onClick={() => { setKeyword(""); setDeviceType("all"); setStatus("all"); setPage(1); }}>重置</Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -189,6 +194,7 @@ export default function DeviceCommunicationPage() {
           ) : (
             <p className="py-16 text-center text-sm text-muted-foreground">暂无设备数据</p>
           )}
+          <DeviceCatalogPagination total={query.data?.total ?? 0} page={page} pageSize={pageSize} loading={query.loading} onPageChange={setPage} />
         </CardContent>
       </Card>
     </div>

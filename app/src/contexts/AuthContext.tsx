@@ -1,12 +1,15 @@
 import {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
 } from "react";
 import type { ReactNode } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { setAgentAuthToken } from "@/lib/agent-auth-token";
+import { clearBackendSession, setBackendSession } from "@/lib/backend-session";
 import { canAccessPath, pickFallbackPath } from "@/lib/navigation-access";
 import type { AuthStore } from "@/types";
 
@@ -32,6 +35,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState<AuthStore | null>(null);
   const navigate = useNavigate();
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  useEffect(() => () => clearBackendSession(), []);
   /**
    * 防止并发 401 触发多次跳转（spec plan §5.3）。
    * login() 时重置为 false，使新一轮 logout 可以正常工作。
@@ -41,17 +47,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function login(store: AuthStore) {
     isLoggingOutRef.current = false; // 重置，以便下次 logout 可触发
     setAgentAuthToken(store.agentToken);
+    setBackendSession({ token: store.backendToken, refreshToken: store.backendRefreshToken }, (tokens) => {
+      setAuth((current) => current ? {
+        ...current,
+        backendToken: tokens.token,
+        backendRefreshToken: tokens.refreshToken,
+        mustChangePassword: tokens.mustChangePassword ?? current.mustChangePassword,
+      } : current);
+    });
     setAuth(store);
   }
 
-  function logout() {
+  const logout = useCallback(() => {
     // 幂等：已在 logout 中则直接返回
     if (isLoggingOutRef.current) return;
     isLoggingOutRef.current = true;
     setAgentAuthToken(null);
+    clearBackendSession();
     setAuth(null);
-    navigate("/login", { replace: true });
-  }
+    navigateRef.current("/login", { replace: true });
+  }, []);
 
   function clearMustChangePassword() {
     setAuth((current) => current ? { ...current, mustChangePassword: false } : current);
