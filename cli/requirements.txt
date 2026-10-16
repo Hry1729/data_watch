@@ -4,6 +4,8 @@ openpyxl>=3.1,<4
 pywin32>=311; sys_platform == "win32"
 rich>=13.7,<15
 typer>=0.16,<1
+# schema.py 直接 import click；当前 typer 不再声明 click 依赖
+click>=8.1,<9
 websockets>=14,<18
 cryptography>=50,<51
 packaging>=24,<27
