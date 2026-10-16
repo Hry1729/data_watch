@@ -8,6 +8,7 @@ import signal
 import sys
 from pathlib import Path
 
+from edge.app.outbox import DEAD_MAX_BYTES_DEFAULT, DEAD_RETENTION_DAYS_DEFAULT
 from edge.app.paths import edge_database_path
 from edge.app.storage_client import EdgeStorageClient
 from edge.app.uploader import (
@@ -62,6 +63,12 @@ def settings_from_env() -> tuple[UploaderSettings, RequestSigner]:
         lock_path=lock_path,
         max_offline_retention_days=_positive_int_env(
             "DATAWATCH_MAX_OFFLINE_RETENTION_DAYS", 7
+        ),
+        dead_retention_days=_positive_int_env(
+            "DATAWATCH_DEAD_RETENTION_DAYS", DEAD_RETENTION_DAYS_DEFAULT
+        ),
+        dead_max_bytes=_positive_int_env(
+            "DATAWATCH_DEAD_MAX_BYTES", DEAD_MAX_BYTES_DEFAULT
         ),
         maintenance_interval_seconds=float(
             _positive_int_env("DATAWATCH_OUTBOX_MAINTENANCE_SECONDS", 60)

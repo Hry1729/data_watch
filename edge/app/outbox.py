@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import base64
+import csv
+import hashlib
+import io
+import os
 import shutil
 import sqlite3
 import threading
@@ -17,6 +21,31 @@ from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
 
 
 SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploader 传入 24h 参数
+# dead 保留与离线 backlog 分开：后者仍是 DATAWATCH_MAX_OFFLINE_RETENTION_DAYS（默认 7）。
+DEAD_RETENTION_DAYS_DEFAULT = 30
+DEAD_MAX_BYTES_DEFAULT = 512 * 1024 * 1024
+DEAD_EXPORT_SCHEMA_VERSION = 1
+# 70% / 85% / 95% 都是磁盘告警。告警或超过字节上限时只自动导出，不提前删除。
+_DISK_ALARM_WATERMARKS = frozenset({"warning", "critical", "overflow"})
+_DEAD_EXPORT_PAGE_SIZE = 64
+_DEAD_EXPORT_META_FIELDS = (
+    "batch_id",
+    "upload_session_id",
+    "local_seq",
+    "device_code",
+    "group_code",
+    "assignment_epoch",
+    "config_version",
+    "ts",
+    "attempt_count",
+    "reject_count",
+    "dead_at",
+    "http_status",
+    "last_error",
+    "exported_at",
+    "replayed_at",
+    "replay_ref",
+)
 logger = logging.getLogger("edge.outbox")
 
 # B6：坏数据隔离预算（``reject_count``）只由「中心给出了协议级裁决」的失败消耗。
@@ -53,6 +82,9 @@ CREATE TABLE IF NOT EXISTS outbox (
     lease_until INTEGER,
     acked_at INTEGER,
     dead_at INTEGER,
+    exported_at INTEGER,
+    replayed_at INTEGER,
+    replay_ref TEXT,
     created_at INTEGER NOT NULL,
     UNIQUE (upload_session_id, local_seq)
 );
@@ -94,6 +126,19 @@ CREATE TABLE IF NOT EXISTS local_latest_frame (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (device_code, group_code)
 ) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS dead_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    actor_role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    batch_id TEXT,
+    session TEXT,
+    local_seq INTEGER,
+    result TEXT NOT NULL,
+    file_path TEXT,
+    sha256 TEXT
+);
 """
 
 
@@ -184,6 +229,15 @@ class OutboxStore:
             connection.execute(
                 "ALTER TABLE outbox ADD COLUMN reject_count INTEGER NOT NULL DEFAULT 0"
             )
+        # B6：导出/重放标记。只 ADD COLUMN，不改已有行；旧 dead 的这两列为 NULL，
+        # maintenance 因此不会把尚未处置的载荷删掉。
+        for name, ddl in (
+            ("exported_at", "ALTER TABLE outbox ADD COLUMN exported_at INTEGER"),
+            ("replayed_at", "ALTER TABLE outbox ADD COLUMN replayed_at INTEGER"),
+            ("replay_ref", "ALTER TABLE outbox ADD COLUMN replay_ref TEXT"),
+        ):
+            if name not in columns:
+                connection.execute(ddl)
 
     def configure_assignment(
         self,
@@ -713,12 +767,12 @@ class OutboxStore:
         return {str(row["state"]): int(row["count"]) for row in rows}
 
     # ── B6：dead 载荷的查看 / 导出 / 受控重放 ──────────────────────────────────
-    # 背景：maintenance() 会按 retention_days 删除 dead 行。在这些入口存在之前，运维
-    # **没有任何途径**查看或取回即将被删除的唯一载荷——即"没有恢复入口却自动删除"。
-    # 现在先可恢复（查看/导出）、再有条件地重放，删除权限不被自动放大。
+    # 未导出且未重放的 dead 一律不删。重放不改原行状态，而是用原载荷重新入队
+    # （当前 session、新 local_seq），原行只记 replayed_at / replay_ref。
+    # 超过时间窗只允许导出。删除权限不覆盖尚未处置的载荷。
 
-    # 重放时间窗：dead 超过该时长后只允许**导出**，不在原位重放
-    # （避免把久远的历史帧混入当前 session 的序列与幂等边界）。
+    # 重放时间窗：dead 超过该时长后只允许导出，不再重新入队。
+    # 窗口内的重放走新行，避免把旧 session 的序号原地改回可发送状态。
     DEAD_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
     def dead_backlog(self) -> dict[str, int]:
@@ -745,6 +799,7 @@ class OutboxStore:
         query = (
             "SELECT batch_id, upload_session_id, local_seq, device_code, group_code, "
             "assignment_epoch, attempt_count, reject_count, dead_at, http_status, last_error, "
+            "exported_at, replayed_at, replay_ref, "
             "LENGTH(payload) AS payload_bytes FROM outbox WHERE state='dead'"
         )
         params: list[Any] = []
@@ -762,105 +817,341 @@ class OutboxStore:
         batch_id: str,
         upload_session_id: str,
         local_seq: int,
+        *,
+        actor_role: str = "operator",
     ) -> dict[str, Any] | None:
-        """导出单条 dead 记录的**完整载荷**（base64）；非 dead 或不存在返回 None。"""
+        """导出单条 dead 记录的完整载荷（base64）；非 dead 或不存在返回 None。
+
+        成功返回后把 ``exported_at`` 记上，并写一条不含载荷的审计。
+        """
         with self._transaction() as connection:
             row = connection.execute(
                 "SELECT batch_id, upload_session_id, local_seq, device_code, group_code, "
-                "assignment_epoch, attempt_count, reject_count, dead_at, http_status, last_error, "
-                "payload FROM outbox "
+                "assignment_epoch, config_version, ts, attempt_count, reject_count, dead_at, "
+                "http_status, last_error, exported_at, replayed_at, replay_ref, payload FROM outbox "
                 "WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'",
                 (batch_id, upload_session_id, local_seq),
             ).fetchone()
-        if row is None:
-            return None
-        payload = dict(row)
-        raw = payload.pop("payload")
-        payload["payload_b64"] = base64.b64encode(bytes(raw or b"")).decode("ascii")
+            if row is None:
+                return None
+            raw = bytes(row["payload"] or b"")
+            now = self._clock_ms()
+            digest = hashlib.sha256(raw).hexdigest()
+            connection.execute(
+                "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
+                (now, batch_id),
+            )
+            self._insert_dead_audit(
+                connection,
+                ts=now,
+                actor_role=actor_role,
+                action="export",
+                batch_id=str(row["batch_id"]),
+                session=str(row["upload_session_id"]),
+                local_seq=int(row["local_seq"]),
+                result="ok",
+                file_path=None,
+                sha256=digest,
+            )
+        payload = {key: row[key] for key in row.keys() if key != "payload"}
+        payload["exported_at"] = now
+        payload["payload_sha256"] = digest
+        payload["payload_b64"] = base64.b64encode(raw).decode("ascii")
         return payload
+
+    def export_dead_batch(
+        self,
+        dest: str | Path,
+        *,
+        fmt: str,
+        device_code: str | None = None,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        last_error: str | None = None,
+        node_uuid: str | None = None,
+        actor_role: str = "operator",
+    ) -> dict[str, Any]:
+        """按设备、dead_at 时间范围和 last_error 筛选，流式写出 JSONL 或 CSV。
+
+        文件只能写到库旁的 ``dead-exports``（即 ``<data_root>/edge/dead-exports``），
+        拒绝目录穿越、符号链接和已存在的文件。分页读出后在事务外写盘并 fsync，
+        再开短事务，只给仍然是 dead 且载荷未变的行写 ``exported_at``。
+        JSONL 含 ``payload_b64``，可以无损还原；CSV 只有元数据和 payload 的 sha256。
+        """
+        if fmt not in {"jsonl", "csv"}:
+            raise ValueError("format must be jsonl or csv")
+        where_sql, params = self._dead_where(
+            device_code=device_code,
+            since_ms=since_ms,
+            until_ms=until_ms,
+            last_error=last_error,
+        )
+        return self._export_dead_rows(
+            Path(dest),
+            fmt=fmt,
+            where_sql=where_sql,
+            params=params,
+            node_uuid=self._resolve_node_uuid(node_uuid),
+            actor_role=actor_role,
+            action="export_batch",
+            now_ms=self._clock_ms(),
+        )
 
     def replay_dead(
         self,
         batch_id: str,
-        upload_session_id: str,
-        local_seq: int,
+        upload_session_id: str | None = None,
+        local_seq: int | None = None,
         *,
         window_ms: int | None = None,
+        actor_role: str = "operator",
     ) -> dict[str, Any]:
-        """检查 dead 恢复请求；无法证明身份仍可提交时保留载荷并明确拒绝。
+        """把 dead 载荷重新入队为一条新 outbox 行，原行保持 dead。
 
-        约束（缺一不可）：
-        - **幂等**：只改动 ``state='dead'`` 的行；重复调用返回 ``replayed=False`` +
-          ``reason='not_dead'``，既不报错也不重复计数；
-        - **时间窗**：``dead_at`` 早于窗口的只允许导出、不原位重放（``outside_time_window``）；
-        - **身份**：旧会话或已被中心消费的序号不能靠修改本地状态重放。当前没有中心
-          身份核对/新身份分配协议，故窗口内也返回 ``identity_requires_reconciliation``；
-          保持 dead、预算及审计不变，运维应导出载荷并人工核对。
-        - **权限**：由 IPC 层保证——``outbox.dead_replay`` 只授予 uploader 角色。
+        不在原 session 上改状态：旧序号可能已被中心消费。新行使用当前 session
+        和新的 ``local_seq``，载荷字节保持原样。``replayed_at`` 已有时直接返回
+        原来的 ``replay_ref``，不再生成第二行。分配或载荷里的 config_version
+        不再有效时返回 ``assignment_changed``，只允许导出。
         """
         window = window_ms if window_ms is not None else self.DEAD_REPLAY_WINDOW_MS
         if window < 0:
             raise ValueError("window_ms must be >= 0")
         now = self._clock_ms()
         with self._transaction() as connection:
+            where = "batch_id=?"
+            params: list[Any] = [batch_id]
+            if upload_session_id is not None:
+                where += " AND upload_session_id=?"
+                params.append(upload_session_id)
+            if local_seq is not None:
+                where += " AND local_seq=?"
+                params.append(int(local_seq))
             row = connection.execute(
-                "SELECT state, dead_at FROM outbox "
-                "WHERE batch_id=? AND upload_session_id=? AND local_seq=?",
-                (batch_id, upload_session_id, local_seq),
+                "SELECT batch_id, upload_session_id, local_seq, device_code, group_code, "
+                "assignment_epoch, config_version, ts, payload, state, dead_at, "
+                "replayed_at, replay_ref FROM outbox WHERE " + where,
+                tuple(params),
             ).fetchone()
             if row is None:
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=batch_id,
+                    session=upload_session_id,
+                    local_seq=None if local_seq is None else int(local_seq),
+                    result="not_found",
+                    file_path=None,
+                    sha256=None,
+                )
                 return {"replayed": False, "reason": "not_found"}
             if row["state"] != "dead":
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="not_dead",
+                    file_path=None,
+                    sha256=hashlib.sha256(bytes(row["payload"] or b"")).hexdigest(),
+                )
                 return {"replayed": False, "reason": "not_dead", "state": row["state"]}
+            raw = bytes(row["payload"] or b"")
+            digest = hashlib.sha256(raw).hexdigest()
+            if row["replayed_at"] is not None:
+                ref = row["replay_ref"]
+                existing = self._replay_target(connection, ref)
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="already_replayed",
+                    file_path=None,
+                    sha256=digest,
+                )
+                return {
+                    "replayed": False,
+                    "reason": "already_replayed",
+                    "replay_ref": ref,
+                    **existing,
+                }
             dead_at = row["dead_at"]
             if dead_at is not None and now - int(dead_at) > window:
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="outside_time_window",
+                    file_path=None,
+                    sha256=digest,
+                )
                 return {
                     "replayed": False,
                     "reason": "outside_time_window",
                     "dead_at": int(dead_at),
                     "window_ms": window,
                 }
-            return {"replayed": False, "reason": "identity_requires_reconciliation",
-                    "state": "dead", "recovery": "export_and_reconcile"}
+            if not self._assignment_allows_replay(connection, row):
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="replay",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="assignment_changed",
+                    file_path=None,
+                    sha256=digest,
+                )
+                return {
+                    "replayed": False,
+                    "reason": "assignment_changed",
+                    "recovery": "export_only",
+                }
+            new_batch_id, session_id, new_seq = self._enqueue_replay_copy(connection, row, now)
+            self._insert_dead_audit(
+                connection,
+                ts=now,
+                actor_role=actor_role,
+                action="replay",
+                batch_id=str(row["batch_id"]),
+                session=str(row["upload_session_id"]),
+                local_seq=int(row["local_seq"]),
+                result="replayed",
+                file_path=None,
+                sha256=digest,
+            )
+            return {
+                "replayed": True,
+                "reason": "reenqueued",
+                "replay_ref": new_batch_id,
+                "upload_session_id": session_id,
+                "local_seq": new_seq,
+            }
 
     def maintenance(
         self,
         retention_days: int,
         sent_retention_ms: int | None = None,
+        dead_retention_days: int | None = None,
+        dead_max_bytes: int | None = None,
+        *,
+        node_uuid: str | None = None,
+        actor_role: str = "maintenance",
     ) -> dict[str, Any]:
         if retention_days < 1:
             raise ValueError("retention_days must be positive")
+        dead_days = (
+            DEAD_RETENTION_DAYS_DEFAULT
+            if dead_retention_days is None
+            else int(dead_retention_days)
+        )
+        if dead_days < 1:
+            raise ValueError("dead_retention_days must be positive")
+        max_bytes = DEAD_MAX_BYTES_DEFAULT if dead_max_bytes is None else int(dead_max_bytes)
+        if max_bytes < 1:
+            raise ValueError("dead_max_bytes must be positive")
         now = self._clock_ms()
         actual_sent_retention = sent_retention_ms if sent_retention_ms is not None else SENT_RETENTION_MS
         sent_cutoff = now - actual_sent_retention
+        # 离线 backlog 仍看 retention_days。dead 用单独的 dead_days，默认 30。
         retention_cutoff = now - retention_days * 24 * 60 * 60 * 1000
+        dead_cutoff = now - dead_days * 24 * 60 * 60 * 1000
         dropped_records = 0
         session_switched = False
+        auto_exported = 0
+        auto_export_path: str | None = None
+        disk_now = self._disk_status()
         with self._transaction() as connection:
-            # B6：清理**之前**先量化 dead 的"当前积压"与"即将被删"，让运维在载荷仍存在时
-            # 就得到可观测信号。恢复入口（dead_list/export/replay）存在之后，删除仍可能是
-            # 无声的——容量告警补上这一环。
+            # 清理前先量化 dead 积压。未导出且未重放的行不会进入删除。
             dead_before = connection.execute(
                 "SELECT COUNT(*) AS records, COALESCE(SUM(LENGTH(payload)), 0) AS bytes "
                 "FROM outbox WHERE state='dead'"
             ).fetchone()
-            dead_purged = int(
+            unpreserved = int(
                 connection.execute(
-                    "SELECT COUNT(*) AS value FROM outbox "
-                    "WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?",
-                    (retention_cutoff,),
+                    "SELECT COUNT(*) AS value FROM outbox WHERE state='dead' "
+                    "AND exported_at IS NULL AND replayed_at IS NULL"
                 ).fetchone()["value"]
                 or 0
             )
-            terminal = connection.execute(
+        dead_bytes_now = int(dead_before["bytes"] or 0)
+        pressure = (
+            dead_bytes_now > max_bytes
+            or disk_now["watermark"] in _DISK_ALARM_WATERMARKS
+        )
+        # 超字节上限或磁盘告警：只自动导出并标记 exported_at。写文件不占写事务。
+        # 已导出或已重放的行仍要 dead_at 早于保留期截止才删，两条删除路径都看这个条件。
+        if pressure and unpreserved:
+            written = self._export_dead_rows(
+                self._auto_export_destination(now),
+                fmt="jsonl",
+                where_sql=(
+                    "state='dead' AND exported_at IS NULL AND replayed_at IS NULL"
+                ),
+                params=[],
+                node_uuid=self._resolve_node_uuid(node_uuid),
+                actor_role=actor_role,
+                action="auto_export",
+                now_ms=now,
+            )
+            auto_exported = int(written["count"])
+            if auto_exported:
+                auto_export_path = str(written["path"])
+        with self._transaction() as connection:
+            sent_cursor = connection.execute(
                 """
                 DELETE FROM outbox
-                WHERE (state='sent' AND acked_at IS NOT NULL AND acked_at < ?)
-                   OR (state='dead' AND dead_at IS NOT NULL AND dead_at < ?)
+                WHERE state='sent' AND acked_at IS NOT NULL AND acked_at < ?
                 """,
-                (sent_cutoff, retention_cutoff),
+                (sent_cutoff,),
             )
-            deleted_terminal = int(terminal.rowcount or 0)
+            deleted_terminal = int(sent_cursor.rowcount or 0)
+            doomed = connection.execute(
+                """
+                SELECT batch_id, upload_session_id, local_seq, payload FROM outbox
+                WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?
+                  AND (exported_at IS NOT NULL OR replayed_at IS NOT NULL)
+                """,
+                (dead_cutoff,),
+            ).fetchall()
+            for row in doomed:
+                self._insert_dead_audit(
+                    connection,
+                    ts=now,
+                    actor_role=actor_role,
+                    action="purge",
+                    batch_id=str(row["batch_id"]),
+                    session=str(row["upload_session_id"]),
+                    local_seq=int(row["local_seq"]),
+                    result="deleted",
+                    file_path=None,
+                    sha256=hashlib.sha256(bytes(row["payload"] or b"")).hexdigest(),
+                )
+            if doomed:
+                connection.execute(
+                    """
+                    DELETE FROM outbox
+                    WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?
+                      AND (exported_at IS NOT NULL OR replayed_at IS NOT NULL)
+                    """,
+                    (dead_cutoff,),
+                )
+            dead_purged = len(doomed)
+            deleted_terminal += dead_purged
             oldest = connection.execute(
                 """
                 SELECT MIN(created_at) AS value FROM outbox
@@ -923,17 +1214,16 @@ class OutboxStore:
             capacity_alerts.append("dead_backlog_present_export_or_replay")
             logger.error(
                 "Edge outbox holds %d dead record(s) / %d bytes; export or replay them "
-                "(outbox.dead_list / dead_export / dead_replay) before retention purges them",
+                "before retention can purge them. Unexported and unreplayed rows are kept",
                 dead_records,
                 dead_bytes,
             )
         if dead_purged > 0:
             capacity_alerts.append("dead_records_purged_requires_export")
             logger.error(
-                "Edge outbox purged %d dead record(s) under retention_days=%d; "
-                "if those payloads were still needed they must be exported beforehand",
+                "Edge outbox purged %d preserved dead record(s) under dead_retention_days=%d",
                 dead_purged,
-                retention_days,
+                dead_days,
             )
 
         return {
@@ -946,12 +1236,433 @@ class OutboxStore:
             "dead_records": dead_records,
             "dead_bytes": dead_bytes,
             "dead_purged": dead_purged,
+            "dead_auto_exported": auto_exported,
+            "dead_auto_export_path": auto_export_path,
+            "dead_retention_days": dead_days,
             "backlog_expired": backlog_expired,
             "backlog_count": backlog_count,
             "checkpoint": checkpoint,
             "reclaimed_pages": reclaimed_pages,
             **self._disk_status(),
         }
+
+    def _auto_export_destination(self, now_ms: int) -> Path:
+        """``<db 所在目录>/dead-exports/auto-YYYYMMDD.jsonl``。日期是 UTC。
+
+        库在 ``<data_root>/edge/edge.db`` 时，这就是
+        ``<data_root>/edge/dead-exports/``。同一天再次导出时另起文件，不覆盖已有文件。
+        """
+        directory = self.path.parent / "dead-exports"
+        day = time.strftime("%Y%m%d", time.gmtime(now_ms / 1000.0))
+        primary = directory / f"auto-{day}.jsonl"
+        if not primary.exists():
+            return primary
+        stamp = time.strftime("%H%M%S", time.gmtime(now_ms / 1000.0))
+        secondary = directory / f"auto-{day}-{stamp}.jsonl"
+        if not secondary.exists():
+            return secondary
+        return directory / f"auto-{day}-{stamp}-{uuid4().hex[:8]}.jsonl"
+
+    def _resolve_node_uuid(self, node_uuid: str | None) -> str:
+        if node_uuid:
+            return str(node_uuid)
+        configured = os.environ.get("DATAWATCH_NODE_UUID", "").strip()
+        if configured:
+            return configured
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT value FROM metadata WHERE key='node_uuid'"
+            ).fetchone()
+        return str(row["value"]) if row else ""
+
+    @staticmethod
+    def _dead_where(
+        *,
+        device_code: str | None = None,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        last_error: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        clauses = ["state='dead'"]
+        params: list[Any] = []
+        if device_code:
+            clauses.append("device_code=?")
+            params.append(device_code)
+        if since_ms is not None:
+            clauses.append("dead_at IS NOT NULL AND dead_at>=?")
+            params.append(int(since_ms))
+        if until_ms is not None:
+            clauses.append("dead_at IS NOT NULL AND dead_at<=?")
+            params.append(int(until_ms))
+        if last_error is not None:
+            clauses.append("last_error=?")
+            params.append(last_error)
+        return " AND ".join(clauses), params
+
+    def _export_root(self) -> Path:
+        """导出目录：库文件旁边的 ``dead-exports``，不接受符号链接。"""
+        link = self.path.parent / "dead-exports"
+        if link.is_symlink():
+            raise ValueError("dead-exports directory must not be a symlink")
+        link.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or not link.is_dir():
+            raise ValueError("dead-exports directory must not be a symlink")
+        return link.resolve()
+
+    def _validated_export_destination(self, dest: Path) -> Path:
+        """只允许 ``<data_root>/edge/dead-exports/<文件名>``，拒绝穿越、符号链接和已有文件。"""
+        root = self._export_root()
+        raw = Path(dest)
+        candidate = raw if raw.is_absolute() else root / raw
+        if candidate.name in {"", ".", ".."}:
+            raise ValueError("export file name is invalid")
+        if candidate.is_symlink() or candidate.parent.is_symlink():
+            raise ValueError("export path must not be a symlink")
+        if candidate.parent.resolve() != root:
+            raise ValueError("export path must stay inside dead-exports")
+        final = root / candidate.name
+        if final.is_symlink():
+            raise ValueError("export path must not be a symlink")
+        if final.exists():
+            raise ValueError("export file already exists")
+        return final
+
+    def _export_dead_rows(
+        self,
+        dest: Path,
+        *,
+        fmt: str,
+        where_sql: str,
+        params: list[Any],
+        node_uuid: str,
+        actor_role: str,
+        action: str,
+        now_ms: int,
+    ) -> dict[str, Any]:
+        destination = self._validated_export_destination(dest)
+        identities, file_sha, written_path = self._stream_dead_export_file(
+            destination,
+            fmt=fmt,
+            where_sql=where_sql,
+            params=params,
+            node_uuid=node_uuid,
+        )
+        marked = self._mark_exported_snapshot(
+            identities,
+            dest=written_path,
+            actor_role=actor_role,
+            action=action,
+            now_ms=now_ms,
+        )
+        return {
+            "count": marked,
+            "path": str(written_path) if written_path is not None else str(destination),
+            "sha256": file_sha,
+            "format": fmt,
+            "schema_version": DEAD_EXPORT_SCHEMA_VERSION,
+            "node_uuid": node_uuid,
+        }
+
+    def _snapshot_dead_page(
+        self,
+        where_sql: str,
+        params: list[Any],
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[dict[str, Any]]:
+        columns = ", ".join(_DEAD_EXPORT_META_FIELDS)
+        query = (
+            f"SELECT {columns}, payload FROM outbox WHERE {where_sql} "
+            "ORDER BY dead_at IS NULL, dead_at ASC, batch_id ASC LIMIT ? OFFSET ?"
+        )
+        with self._transaction() as connection:
+            fetched = connection.execute(query, (*params, limit, offset)).fetchall()
+            copied: list[dict[str, Any]] = []
+            for row in fetched:
+                item = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
+                item["payload"] = bytes(row["payload"] or b"")
+                copied.append(item)
+            return copied
+
+    def _stream_dead_export_file(
+        self,
+        dest: Path,
+        *,
+        fmt: str,
+        where_sql: str,
+        params: list[Any],
+        node_uuid: str,
+    ) -> tuple[list[tuple[str, str, int, str]], str, Path | None]:
+        """分页读取，事务松开后再写盘。没有匹配行时仍写出只含文件头的新文件。"""
+        offset = 0
+        first = self._snapshot_dead_page(
+            where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
+        )
+        temporary = dest.with_name(dest.name + f".{uuid4().hex}.tmp")
+        file_digest = hashlib.sha256()
+        identities: list[tuple[str, str, int, str]] = []
+        descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                descriptor = -1
+
+                def emit(chunk: bytes) -> None:
+                    handle.write(chunk)
+                    file_digest.update(chunk)
+
+                if fmt == "jsonl":
+                    emit(
+                        msgspec.json.encode(
+                            {
+                                "kind": "header",
+                                "schema_version": DEAD_EXPORT_SCHEMA_VERSION,
+                                "node_uuid": node_uuid,
+                            }
+                        )
+                        + b"\n"
+                    )
+                else:
+                    emit(
+                        f"# schema_version={DEAD_EXPORT_SCHEMA_VERSION} node_uuid={node_uuid}\n".encode(
+                            "utf-8"
+                        )
+                    )
+                    emit(self._csv_line([*_DEAD_EXPORT_META_FIELDS, "payload_sha256"]))
+                page = first
+                while page:
+                    for row in page:
+                        raw = bytes(row["payload"] or b"")
+                        digest = hashlib.sha256(raw).hexdigest()
+                        if fmt == "jsonl":
+                            record = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
+                            record["payload_sha256"] = digest
+                            record["payload_b64"] = base64.b64encode(raw).decode("ascii")
+                            emit(msgspec.json.encode(record) + b"\n")
+                        else:
+                            values = [
+                                "" if row[name] is None else row[name]
+                                for name in _DEAD_EXPORT_META_FIELDS
+                            ]
+                            values.append(digest)
+                            emit(self._csv_line(values))
+                        identities.append(
+                            (
+                                str(row["batch_id"]),
+                                str(row["upload_session_id"]),
+                                int(row["local_seq"]),
+                                digest,
+                            )
+                        )
+                    if len(page) < _DEAD_EXPORT_PAGE_SIZE:
+                        break
+                    offset += len(page)
+                    page = self._snapshot_dead_page(
+                        where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
+                    )
+                self._fsync_export_handle(handle)
+            self._publish_export_file(temporary, dest)
+        except Exception:
+            if descriptor >= 0:
+                os.close(descriptor)
+            temporary.unlink(missing_ok=True)
+            raise
+        return identities, file_digest.hexdigest(), dest
+
+    def _fsync_export_handle(self, handle) -> None:
+        handle.flush()
+        os.fsync(handle.fileno())
+
+    @staticmethod
+    def _publish_export_file(temporary: Path, dest: Path) -> None:
+        """硬链接到目标名。目标已存在或是符号链接时失败，不覆盖。"""
+        if dest.is_symlink() or dest.exists():
+            raise ValueError("export file already exists")
+        try:
+            os.link(temporary, dest)
+        except FileExistsError as exc:
+            raise ValueError("export file already exists") from exc
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def _mark_exported_snapshot(
+        self,
+        identities: list[tuple[str, str, int, str]],
+        *,
+        dest: Path | None,
+        actor_role: str,
+        action: str,
+        now_ms: int,
+    ) -> int:
+        if not identities or dest is None:
+            return 0
+        marked = 0
+        file_path = str(dest)
+        with self._transaction() as connection:
+            for batch_id, session, seq, digest in identities:
+                row = connection.execute(
+                    "SELECT state, payload FROM outbox WHERE batch_id=?",
+                    (batch_id,),
+                ).fetchone()
+                if row is None or row["state"] != "dead":
+                    continue
+                if hashlib.sha256(bytes(row["payload"] or b"")).hexdigest() != digest:
+                    continue
+                cursor = connection.execute(
+                    "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
+                    (now_ms, batch_id),
+                )
+                if int(cursor.rowcount or 0) != 1:
+                    continue
+                self._insert_dead_audit(
+                    connection,
+                    ts=now_ms,
+                    actor_role=actor_role,
+                    action=action,
+                    batch_id=batch_id,
+                    session=session,
+                    local_seq=seq,
+                    result="ok",
+                    file_path=file_path,
+                    sha256=digest,
+                )
+                marked += 1
+        return marked
+
+    @staticmethod
+    def _csv_line(values: list[Any]) -> bytes:
+        buffer = io.StringIO()
+        csv.writer(buffer, lineterminator="\n").writerow(values)
+        return buffer.getvalue().encode("utf-8")
+
+    def _assignment_allows_replay(self, connection: sqlite3.Connection, row: sqlite3.Row) -> bool:
+        """载荷 config_version 与当前设备分配仍然一致时才允许重新入队。"""
+        try:
+            decoded = msgspec.json.decode(bytes(row["payload"] or b""))
+        except Exception:
+            return False
+        if not isinstance(decoded, dict):
+            return False
+        try:
+            payload_version = int(decoded.get("config_version"))
+        except (TypeError, ValueError):
+            return False
+        if payload_version != int(row["config_version"]):
+            return False
+        device_code = str(row["device_code"])
+        assignment = connection.execute(
+            "SELECT assignment_epoch, enabled FROM device_assignment WHERE device_code=?",
+            (device_code,),
+        ).fetchone()
+        if assignment is None or int(assignment["enabled"]) != 1:
+            return False
+        if int(assignment["assignment_epoch"]) != int(row["assignment_epoch"]):
+            return False
+        device = connection.execute(
+            """
+            SELECT config_version, assignment_epoch, enabled
+            FROM edge_device WHERE device_code=?
+            """,
+            (device_code,),
+        ).fetchone()
+        if device is None:
+            # 只有分配表时，分配行本身就是有效性依据（单测与尚未下发快照的节点）。
+            return True
+        if int(device["enabled"]) != 1:
+            return False
+        if int(device["assignment_epoch"]) != int(row["assignment_epoch"]):
+            return False
+        return int(device["config_version"]) == payload_version
+
+    def _enqueue_replay_copy(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        now: int,
+    ) -> tuple[str, str, int]:
+        """用原载荷插入一条新的 pending 行，并在原 dead 行记下 replay_ref。"""
+        raw = bytes(row["payload"] or b"")
+        session_id = self._metadata(connection, "upload_session_id")
+        connection.execute(
+            "UPDATE metadata SET value = CAST(value AS INTEGER) + 1 WHERE key = 'last_seq'"
+        )
+        local_seq = int(self._metadata(connection, "last_seq"))
+        new_batch_id = str(uuid4())
+        connection.execute(
+            """
+            INSERT INTO outbox(
+                batch_id, upload_session_id, local_seq,
+                device_code, group_code, assignment_epoch,
+                config_version, ts, payload, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_batch_id,
+                session_id,
+                local_seq,
+                str(row["device_code"]),
+                str(row["group_code"]),
+                int(row["assignment_epoch"]),
+                int(row["config_version"]),
+                int(row["ts"]),
+                raw,
+                now,
+            ),
+        )
+        connection.execute(
+            "UPDATE outbox SET replayed_at=?, replay_ref=? WHERE batch_id=?",
+            (now, new_batch_id, str(row["batch_id"])),
+        )
+        return new_batch_id, session_id, local_seq
+
+    @staticmethod
+    def _replay_target(connection: sqlite3.Connection, replay_ref: str | None) -> dict[str, Any]:
+        if not replay_ref:
+            return {"upload_session_id": None, "local_seq": None}
+        found = connection.execute(
+            "SELECT upload_session_id, local_seq FROM outbox WHERE batch_id=?",
+            (str(replay_ref),),
+        ).fetchone()
+        if found is None:
+            return {"upload_session_id": None, "local_seq": None}
+        return {
+            "upload_session_id": str(found["upload_session_id"]),
+            "local_seq": int(found["local_seq"]),
+        }
+
+    @staticmethod
+    def _insert_dead_audit(
+        connection: sqlite3.Connection,
+        *,
+        ts: int,
+        actor_role: str,
+        action: str,
+        batch_id: str | None,
+        session: str | None,
+        local_seq: int | None,
+        result: str,
+        file_path: str | None,
+        sha256: str | None,
+    ) -> None:
+        # 审计只记身份和结果，不写载荷，也不写 token。
+        connection.execute(
+            """
+            INSERT INTO dead_audit(
+                ts, actor_role, action, batch_id, session, local_seq, result, file_path, sha256
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(ts),
+                str(actor_role or ""),
+                str(action),
+                batch_id,
+                session,
+                local_seq,
+                str(result),
+                file_path,
+                sha256,
+            ),
+        )
 
     def _ensure_disk_writable(self) -> None:
         if self._disk_status()["watermark"] == "overflow":

@@ -231,6 +231,7 @@ def test_overflow_rejects_new_durable_frame_without_touching_existing_rows(
 
 def test_maintenance_keeps_dead_for_retention_but_removes_sent_after_sixty_seconds(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     now = [1_721_800_000_000]
     store = OutboxStore(tmp_path / "edge.db", clock_ms=lambda: now[0])
@@ -246,6 +247,18 @@ def test_maintenance_keeps_dead_for_retention_but_removes_sent_after_sixty_secon
     )
     store.mark_sent(claimed[0], "owner-1")
     store.mark_dead(claimed[1], "owner-1", "invalid mapping")
+    # 钉住正常水位，避免磁盘告警把 dead 自动导出，干扰这条离线保留期断言：
+    # sent 到期即删，未导出的 dead 过了 7 天也不删。
+    monkeypatch.setattr(
+        store,
+        "_disk_status",
+        lambda: {
+            "disk_total_bytes": 1000,
+            "disk_free_bytes": 800,
+            "disk_used_percent": 20.0,
+            "watermark": "normal",
+        },
+    )
 
     now[0] += 60_001
     result = store.maintenance(7)
@@ -254,8 +267,8 @@ def test_maintenance_keeps_dead_for_retention_but_removes_sent_after_sixty_secon
 
     now[0] += 7 * 24 * 60 * 60 * 1000
     result = store.maintenance(7)
-    assert result["deleted_terminal"] == 1
-    assert store.stats() == {}
+    assert result["deleted_terminal"] == 0
+    assert store.stats() == {"dead": 1}
     store.close()
 
 
