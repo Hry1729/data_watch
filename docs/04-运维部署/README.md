@@ -10,6 +10,32 @@
 
 ## 1. 部署形态总览
 
+### 2026-10-15 配套升级说明
+
+本批包含桌面数据加载优化、请求取消、会话续期、设备目录分页，以及 Backend/Agent 的配套查询接口。升级时必须使用同批次的 Windows 角色安装包与 Backend 镜像；仅替换 App 会使新增目录查询接口返回 404。Frontend Web 镜像独立构建，也随本批更新。
+
+- 三个 Windows 包位于 `installer/Output/`，以同目录 `release-manifest.json` 和 `SHA256SUMS.txt` 校验；文件名仍为 `0.1.0`，不能单凭文件名判断是否为新版。
+- 默认离线应用镜像包为 `deploy/data-watch-images.zip`。旧包保留带日期归档；ZIP 内的清单记录镜像 ID、来源和 tar 哈希，不包含业务数据库或真实 `backend.env`。
+- 本次允许基于包含未提交修复的工作区构建。此类产物必须明确标注 `working-tree` 并记录构建输入内容哈希；基础提交号不能替代工作区来源校验。
+- 先更新中心 Backend/Frontend，再用对应角色安装包更新 Windows App/Agent；保留 ProgramData 配置、身份密钥和边缘 SQLite 数据。安装包生成不等于已经在本机或目标机安装。
+
+已有数据库的中心仅更新应用容器，在仓库根目录执行：
+
+```powershell
+$ImageDir = Join-Path $env:TEMP ("datawatch-images-" + [guid]::NewGuid().ToString('N'))
+Expand-Archive -LiteralPath .\deploy\data-watch-images.zip -DestinationPath $ImageDir
+# 先检查归档内 release-manifest.json / SHA256SUMS.txt，与实际 tar 文件哈希比对。
+Get-ChildItem -LiteralPath $ImageDir -Recurse -Filter *.tar | ForEach-Object {
+    docker load -i $_.FullName
+    if ($LASTEXITCODE -ne 0) { throw "镜像加载失败：$($_.Name)" }
+}
+docker compose --env-file .\deploy\backend.env -f .\deploy\docker-compose.yml up -d --no-deps --no-build --force-recreate backend frontend
+Invoke-RestMethod http://127.0.0.1:8000/healthz
+Invoke-WebRequest http://127.0.0.1:8080/ -UseBasicParsing | Select-Object StatusCode
+```
+
+`/healthz` 和首页成功仅证明服务可达，还需验证登录、设备分页、实时订阅和历史查询。应用升级不需要删除或重建数据库卷，禁止使用 `docker compose down -v`。回滚时载入上批应用镜像归档并重复上述应用容器重建命令；本批新 App 依赖新增接口，Backend 回滚时应同时回滚对应 Windows 包。
+
 ```text
 中心侧（Docker / 现场已有服务）：
   MySQL        业务配置库 device_watch（可外置，不一定由 compose 托管）
