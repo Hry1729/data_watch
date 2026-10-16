@@ -102,7 +102,7 @@ M2_B_COMMAND_POLICIES = _permission_policies(
     *HISTORY_VIEW,
 ) + _permission_policies(
     ("realtime tree", "realtime get", "realtime window", "realtime watch"), *MONITOR_VIEW
-)
+) + _permission_policies(("plc get",), *MONITOR_VIEW)
 
 M2_C_COMMAND_POLICIES = (
     CommandPolicy(

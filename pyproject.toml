@@ -28,5 +28,5 @@ data-watch = "cli.main:main"
 version = {attr = "cli.version.CLI_VERSION"}
 
 [tool.setuptools.packages.find]
-include = ["cli*"]
-exclude = ["cli.tests*"]
+include = ["cli*", "direct_read*"]
+exclude = ["cli.tests*", "direct_read.tests*"]
