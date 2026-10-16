@@ -140,12 +140,24 @@ docker build -t data-watch-python314t:latest -f .\deploy\python314t.Dockerfile .
 docker compose -f .\deploy\docker-compose.yml build backend frontend
 ```
 
+构建 ingest（上下文必须是仓库根目录，因为镜像要复制 `data_watch_shared`；先有上面的 `data-watch-python314t:latest`）：
+
+```powershell
+docker build -f .\ingest\Dockerfile -t data-watch-ingest:latest .
+```
+
 backend 镜像要点：
 
 - 基于 `data-watch-python314t:latest`；
 - 从 TDengine 镜像复制 `libtaos.so`；
 - Docker 构建中排除 `perspective-python` 与 `taos-ws-py`；
 - 以 `python3.14t -m uvicorn main:app --host 0.0.0.0 --port 8000` 启动。
+
+ingest 镜像要点：
+
+- 基于同一个 `data-watch-python314t:latest`（free-threaded 3.14t，不是 `python:3.14-slim`）；
+- 构建期导入 `ingest.main` 并断言 `sys._is_gil_enabled()` 为假；
+- 以 `python3.14t -m ingest.main` 启动，内部 `uvicorn.run("ingest.app.main:app", workers=...)`，`workers>1` 时先做 schema 预热。
 
 frontend 镜像要点：
 
