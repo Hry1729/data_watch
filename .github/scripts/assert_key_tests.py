@@ -52,6 +52,18 @@ def platform_name() -> str:
     return "windows" if os.name == "nt" else "linux"
 
 
+def _use_utf8_stdio() -> None:
+    """Windows 控制台默认编码写不出中文。失败信息里有用例 id，必须能打出来。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (OSError, ValueError):
+            continue
+
+
 def junit_identity(nodeid: str) -> tuple[str, str]:
     """把 pytest node id 折成 junit 的 (classname, name)，与 mangle_test_address 一致。"""
     path, bracket, params = nodeid.partition("[")
@@ -140,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("junit", type=Path)
     parser.add_argument("--platform", choices=tuple(EXPECTED_IDS), default=None)
     args = parser.parse_args(argv)
+    _use_utf8_stdio()
     platform = args.platform or platform_name()
     expected = EXPECTED_IDS[platform]
     print(f"platform={platform}")
