@@ -181,11 +181,13 @@ def test_timeout_disconnects_and_sets_not_connected(tmp_path: Path) -> None:
 def test_timeout_still_disconnects(tmp_path: Path) -> None:
     source = MemorySource("mysql", [_qc100()])
     created: list[FakeDriver] = []
+    # 总预算从拓扑解析就开始算。50ms 在慢的 Windows runner 上会在创建驱动前耗尽，
+    # 这条用例就看不到「读超时之后仍然断开」。1000ms 仍小于驱动的 2 秒延迟，超时点不变。
     with pytest.raises(DirectReadError):
         _read(
             tmp_path,
             sources=[source],
-            timeout_ms=50,
+            timeout_ms=1000,
             driver_options={"delay": 2},
             drivers=created,
         )
