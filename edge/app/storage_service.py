@@ -145,7 +145,12 @@ _TOKEN_ACL_HARDENED: set[str] = set()
 
 
 def _ensure_missing_role_tokens(path: Path) -> None:
-    """给令牌文件补上尚未出现的角色，已有角色的令牌保持不变。"""
+    """给令牌文件补上尚未出现的角色，已有令牌（含未知角色）全部原样保留。
+
+    只增不删：文件里的角色可能来自更新的版本，或不归本进程管理；丢弃它们等于吊销
+    现场正在使用的令牌。这里也不做 ACL 加固——重写后的文件会继承目录权限，加固必须由
+    调用方在**补完之后**对最终文件执行一次（见 ``ensure_token_file``）。
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeError):
@@ -158,14 +163,14 @@ def _ensure_missing_role_tokens(path: Path) -> None:
         return
     for role in missing:
         tokens[role] = secrets.token_hex(32)
-    data["tokens"] = {role: tokens[role] for role in IPC_ROLE_ACTIONS if role in tokens}
+    data["tokens"] = tokens
     temporary = path.with_name(path.name + f".roles-{os.getpid()}")
     descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(json.dumps(data, indent=2).encode("utf-8"))
     os.replace(temporary, path)
-    _restrict_token_file_acl(path)
-    _TOKEN_ACL_HARDENED.add(str(path))
+    # 文件被换掉了：新文件的 ACL 继承自目录，之前若加固过也必须重做。
+    _TOKEN_ACL_HARDENED.discard(str(path))
 
 
 def _harden_existing_token_file(path: Path) -> None:
@@ -201,9 +206,11 @@ def ensure_token_file(path: Path | None = None, *, rotate: bool = False) -> Path
         # B50/S3：**既有**文件也必须收敛 ACL。覆盖升级后，旧版本或安装器 `/T` 递归授权留下的
         # 宽松授权（尤其显式 `BUILTIN\Users:RX`）不会因为"文件已存在"而消失；旧实现直接
         # `return target` 会让这些权限永久保留。进程内每路径只做一次（见该函数注释）。
-        _harden_existing_token_file(target)
-        # 新增角色（operator）补一把令牌，不轮换已经发出的 collector/uploader/agent。
+        #
+        # 顺序很关键：先补缺失角色（会重写文件、丢掉加固），再对**最终**文件加固一次。
+        # 反过来做等于加固了个即将被替换掉的旧文件。
         _ensure_missing_role_tokens(target)
+        _harden_existing_token_file(target)
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
     if rotate:

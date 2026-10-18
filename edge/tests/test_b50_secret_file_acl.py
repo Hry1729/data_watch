@@ -145,6 +145,79 @@ def test_ensure_token_file_hardens_existing_file(
     assert calls == [token_file], "同进程内不应重复加固"
 
 
+def test_missing_roles_are_added_without_dropping_existing_ones(
+    token_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """补角色只增不删：已有角色（含本进程不认识的）必须原样保留。"""
+    token_file.write_text(
+        '{"version":1,"tokens":{"dummy":"DUMMY","legacy":"LEGACY"}}', encoding="utf-8"
+    )
+    storage_service._TOKEN_ACL_HARDENED.clear()
+
+    hardened: list[Path] = []
+    monkeypatch.setattr(
+        storage_service, "_restrict_token_file_acl", lambda path: hardened.append(Path(path))
+    )
+
+    storage_service.ensure_token_file(token_file)
+
+    tokens = storage_service.read_role_tokens(token_file)
+    assert tokens["dummy"] == "DUMMY", "已有角色不应被轮换"
+    assert tokens["legacy"] == "LEGACY", "未知角色不应被丢弃"
+    for role in storage_service.IPC_ROLE_ACTIONS:
+        assert tokens[role], f"缺失角色 {role} 应被补上"
+
+
+def test_rewritten_token_file_is_hardened_afterwards(
+    token_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """补角色会重写文件，重写后的最终文件必须重新加固且只加固一次。"""
+    assert _icacls(str(token_file), "/grant", "*S-1-5-32-545:RX") == 0
+    assert _has_broad_grant(token_file)
+    storage_service._TOKEN_ACL_HARDENED.clear()
+
+    order: list[str] = []
+    real_harden = storage_service._restrict_token_file_acl
+
+    def _tracking(path: Path) -> None:
+        order.append(Path(path).read_text(encoding="utf-8"))
+        real_harden(path)
+
+    monkeypatch.setattr(storage_service, "_restrict_token_file_acl", _tracking)
+
+    storage_service.ensure_token_file(token_file)
+
+    assert len(order) == 1, f"应恰好加固一次，实际 {len(order)} 次"
+    # 加固时看到的文件内容必须已经包含补上的角色，否则说明加固发生在重写之前。
+    for role in storage_service.IPC_ROLE_ACTIONS:
+        assert role in order[0], f"加固发生在补角色之前：{role} 不在被加固的内容里"
+    assert not _has_broad_grant(token_file)
+
+
+def test_rewrite_invalidates_the_hardened_marker(
+    token_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """文件被重写过就必须重新加固，哪怕该路径此前已加固过（标记已存在）。
+
+    这是"重写会丢掉 ACL"的核心防护：只补不清标记，重写后的文件就永久失去白名单。
+    """
+    assert _icacls(str(token_file), "/grant", "*S-1-5-32-545:RX") == 0
+    assert _has_broad_grant(token_file)
+
+    storage_service._TOKEN_ACL_HARDENED.clear()
+    # 模拟"本进程此前已经加固过这个路径"：补角色仍会重写文件，因此必须重新加固。
+    storage_service._TOKEN_ACL_HARDENED.add(str(token_file))
+
+    calls: list[Path] = []
+    monkeypatch.setattr(
+        storage_service, "_restrict_token_file_acl", lambda path: calls.append(Path(path))
+    )
+
+    storage_service.ensure_token_file(token_file)
+
+    assert calls == [token_file], "重写后必须重新加固，旧标记不能让它跳过"
+
+
 def test_ensure_token_file_creates_and_hardens_new_file(tmp_path: Path) -> None:
     storage_service._TOKEN_ACL_HARDENED.clear()
     path = tmp_path / "new" / "storage-ipc-tokens.json"
