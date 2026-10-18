@@ -184,9 +184,10 @@ async def test_hash_yields_event_loop_within_50ms(monkeypatch) -> None:
             current_user_roles=["R_SUPER"],
         )
     )
-    for _ in range(200):
-        if entered.is_set():
-            break
+    # 只等工作线程被调度到并进入哈希。50ms 的断言在下面，量的是进入之后
+    # sleep(0) 会不会被阻塞型哈希堵住，不把线程启动时间算进去。
+    deadline = time.perf_counter() + 2.0
+    while not entered.is_set() and time.perf_counter() < deadline:
         await asyncio.sleep(0)
     assert entered.is_set()
     started = time.perf_counter()
