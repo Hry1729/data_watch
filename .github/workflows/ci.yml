@@ -130,6 +130,57 @@ jobs:
           PYTHON_GIL: "0"
         run: python -Xgil=0 -m pytest app/tests -q --tb=short
 
+  # edge 在此之前没有任何 CI 覆盖，HURY-18 的令牌角色回归因此漏到了 main。
+  # 测试自己会把 REPO_ROOT 和 collector/ 插进 sys.path，所以按仓库根目录运行。
+  edge:
+    name: edge (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # CI 里符号链接用例必须真跑，"没有权限"不允许静默跳过。
+      # Windows runner 是管理员账户；Linux runner 无需额外权限。
+      DATAWATCH_REQUIRE_SYMLINK_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r edge/requirements.txt pytest pytest-asyncio
+
+      - name: Test
+        run: python -m pytest edge/tests -q --tb=short --junitxml=junit-edge.xml
+
+      - name: Require the platform tests to run
+        shell: python
+        run: |
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("junit-edge.xml").getroot()
+          suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+          tests = sum(int(s.attrib.get("tests") or 0) for s in suites)
+          skipped = sum(int(s.attrib.get("skipped") or 0) for s in suites)
+          failed = sum(
+              int(s.attrib.get("failures") or 0) + int(s.attrib.get("errors") or 0)
+              for s in suites
+          )
+          print(f"tests={tests} skipped={skipped} failures={failed}")
+          # 唯一按设计跳过的只有 B50/S3 的 icacls 用例：整个模块 Windows-only（8 个）。
+          # Windows 上必须 0 跳过：符号链接用例在 CI 里是真跑的。
+          expected_skipped = 0 if os.name == "nt" else 8
+          assert failed == 0, f"{failed} 个用例失败"
+          assert skipped == expected_skipped, f"跳过数应为 {expected_skipped}，实际 {skipped}"
+          assert tests >= 156, f"用例数不足：{tests}"
+
   ingest:
     name: ingest
     runs-on: ubuntu-latest

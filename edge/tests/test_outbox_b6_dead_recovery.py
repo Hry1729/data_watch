@@ -467,6 +467,27 @@ def test_jsonl_round_trip_matches_payload_and_csv_omits_it(tmp_path, monkeypatch
     assert hashlib.sha256(extra[0].payload).hexdigest() in csv_text
 
 
+def _require_symlink_support(tmp_path: Path) -> None:
+    """符号链接在 Windows 上需要管理员权限或开发者模式。
+
+    本机没有权限时跳过；CI 设置 ``DATAWATCH_REQUIRE_SYMLINK_TESTS=1``，此时改为直接失败，
+    避免"没有权限"把这条漏洞防护用例静默跳过。
+    """
+    probe = tmp_path / ".symlink-probe"
+    target = tmp_path / ".symlink-target"
+    target.write_text("probe", encoding="utf-8")
+    try:
+        probe.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        if os.environ.get("DATAWATCH_REQUIRE_SYMLINK_TESTS") == "1":
+            pytest.fail(f"CI 要求符号链接用例真跑，但本机无法创建符号链接: {exc}")
+        pytest.skip(f"本机无法创建符号链接（需管理员或开发者模式）: {exc}")
+    else:
+        probe.unlink(missing_ok=True)
+    finally:
+        target.unlink(missing_ok=True)
+
+
 def test_export_path_stays_inside_dead_exports_and_refuses_existing_files(tmp_path) -> None:
     """目标必须是 dead-exports 下的新文件：穿越、符号链接和已有文件都拒绝。"""
     store = _store(tmp_path)
@@ -482,6 +503,8 @@ def test_export_path_stays_inside_dead_exports_and_refuses_existing_files(tmp_pa
     assert exported["count"] == 1
     with pytest.raises(ValueError, match="already exists"):
         store.export_dead_batch(_export_path(store, "once.jsonl"), fmt="jsonl")
+
+    _require_symlink_support(tmp_path)
 
     secret = tmp_path / "secret.txt"
     secret.write_text("keep", encoding="utf-8")
