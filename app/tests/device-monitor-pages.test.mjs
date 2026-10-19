@@ -236,8 +236,8 @@ test("device list keeps filters inside the card and sizes pages from the table v
     assert.match(source, /ref=\{tableViewportRef\}/);
     assert.match(source, /Input className="h-8 pl-9"/);
     assert.match(source, /SelectTrigger className="!h-8 w-24"/);
-    assert.match(source, /\[&_\[data-slot=table-container\]\]:h-full/);
-    assert.match(source, /<Table className="h-full w-full table-fixed"/);
+    assert.match(source, /<Table className="w-full table-fixed"/);
+    assert.match(source, /<TableRow key=\{row\.id\} className="h-10"/);
     assert.match(source, /<div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4">/);
     assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col">[\s\S]*?<Tabs/);
     assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col">[\s\S]*?ref=\{tableViewportRef\}/);
