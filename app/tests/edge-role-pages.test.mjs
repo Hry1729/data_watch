@@ -90,7 +90,7 @@ test("edge build exposes center-first device monitoring with local SQLite fallba
   assert.ok(edgeBootstrap.includes("postBootstrapTestConnection"));
 });
 test("edge database diagnostics apply successful values and refresh shell health", () => {
-  assert.ok(layout.includes("<ConnectionStatusBar vertical={sidebarCollapsed} />"));
+  assert.ok(layout.includes("createPortal(<ConnectionStatusBar />, titlebarStatusSlot)"));
   assert.ok(!layout.includes('BUILD_ROLE !== "edge" && ('));
   assert.ok(settings.includes("agentClient.checkHealth(target, payload)"));
   assert.ok(settings.includes("配置已应用"));
