@@ -46,7 +46,8 @@ def _use_fake_session(monkeypatch) -> None:
     monkeypatch.setattr(common_module, "AuthorizedSession", FakeAuthorizedSession)
 
 
-def test_node_assign_merges_existing_assignments(monkeypatch) -> None:
+def test_node_assign_sends_incremental_add(monkeypatch) -> None:
+    # M4：不再先 GET 现有分配再整体 PUT（读-改-写会丢失并发更新），改为增量字段。
     _use_fake_session(monkeypatch)
     node_uuid = "11111111-1111-1111-1111-111111111111"
 
@@ -65,11 +66,10 @@ def test_node_assign_merges_existing_assignments(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert FakeAuthorizedSession.requests == [
-        ("GET", f"/api/distributed/nodes/{node_uuid}/assignments", None),
         (
             "PUT",
             f"/api/distributed/nodes/{node_uuid}/assignments",
-            {"deviceIds": [3, 7]},
+            {"addDeviceIds": [7]},
         ),
     ]
 
@@ -232,11 +232,13 @@ def test_node_unassign_removes_only_requested_devices(monkeypatch) -> None:
     )
 
     assert result.exit_code == 0
-    assert FakeAuthorizedSession.requests[-1] == (
-        "PUT",
-        f"/api/distributed/nodes/{node_uuid}/assignments",
-        {"deviceIds": [3]},
-    )
+    assert FakeAuthorizedSession.requests == [
+        (
+            "PUT",
+            f"/api/distributed/nodes/{node_uuid}/assignments",
+            {"removeDeviceIds": [7]},
+        )
+    ]
 
 
 def test_node_assign_set_replaces_all_assignments(monkeypatch) -> None:
