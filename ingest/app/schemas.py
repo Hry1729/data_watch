@@ -70,9 +70,10 @@ class UploadItem:
             if "latest_timestamps" in payload:
                 latest_timestamps = _int_map(payload["latest_timestamps"], "latest_timestamps")
             # 高-3：坏质量且无值的点只出现在 latest_qualities / latest_timestamps（仅更新质量），
-            # 因此要求 latest_values 的键是它们的子集，且两者键集合一致。
-            # 缺一边或键不一致时只记到本条 envelope_error，并丢掉 latest 映射，
+            # 因此要求 latest_values 的键是它们的子集，且两者都给出时键集合一致。
+            # 只给 latest_timestamps，或两边键不一致时，只记到本条 envelope_error，并丢掉 latest 映射，
             # 避免 redis_store 在 latest_updates[var_id] 上 KeyError 把整批打成 500。
+            # 只给 latest_qualities、不给时间戳是既有合法载荷，不在这里拒绝。
             mismatch = _latest_key_mismatch_message(latest_qualities, latest_timestamps)
             if mismatch:
                 latest_values = None
@@ -239,12 +240,14 @@ def _latest_key_mismatch_message(
     qualities: dict[str, int] | None,
     timestamps: dict[str, int] | None,
 ) -> str | None:
-    """两边都缺省时不比较。缺一边，或键集合不同，都算出点名。"""
-    if qualities is None and timestamps is None:
+    """没给时间戳时不比较（只给质量是既有合法载荷）。
+    给了时间戳却缺质量，或两边键集合不同，都算出点名。
+    """
+    if timestamps is None:
         return None
     quality_keys = set(qualities or {})
-    timestamp_keys = set(timestamps or {})
-    if qualities is not None and timestamps is not None and quality_keys == timestamp_keys:
+    timestamp_keys = set(timestamps)
+    if qualities is not None and quality_keys == timestamp_keys:
         return None
     missing_quality = sorted(timestamp_keys - quality_keys)
     extra_quality = sorted(quality_keys - timestamp_keys)
