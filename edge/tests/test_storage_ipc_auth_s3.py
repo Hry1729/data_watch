@@ -328,7 +328,8 @@ def test_uploader_role_can_run_its_own_commands_only(ipc: _Ipc) -> None:
 
         assert uploader.maintenance(7, 60_000)["deleted_terminal"] == 0
         # The session switch re-queues unconfirmed rows; none of them went terminal.
-        assert uploader.status()["counts"] == {"sent": 1, "pending": 1}
+        # Backoff survives the switch (Edge 2/15), so the retry_wait row stays retry_wait.
+        assert uploader.status()["counts"] == {"sent": 1, "retry_wait": 1}
     finally:
         agent.close()
         uploader.close()
