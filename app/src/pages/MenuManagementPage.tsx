@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, KeyRound, Pencil, Plus, Trash2 } from "lucide-react";
+import { Activity, BriefcaseBusiness, Cable, ChevronDown, Cpu, Database, FileText, Gauge, HardDriveDownload, History, KeyRound, LayoutDashboard, MapPin, Menu, Monitor, Network, Pencil, Plus, Puzzle, Radio, Settings2, Shield, Trash2, Users, type LucideIcon } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,16 +20,25 @@ import type { MenuPayload, MenuTreeItem, PermissionItem, PermissionPayload } fro
 const emptyMenu: MenuPayload = { name: "", path: "", component: "", titleKey: "", icon: "", menuType: "menu", sort: 1, enabled: true, keepAlive: false, isHide: false, isHideTab: false };
 const emptyPermission: PermissionPayload = { permissionCode: "", permissionName: "", permissionType: "action", authMark: "", sort: 1, enabled: true };
 
-interface FlatMenu { menu: MenuTreeItem; depth: number; }
+interface FlatMenu { menu: MenuTreeItem; depth: number; last: boolean; guides: boolean[]; }
 
-function flattenMenus(items: MenuTreeItem[], expanded: Set<number>, depth = 0): FlatMenu[] {
+function flattenMenus(items: MenuTreeItem[], expanded: Set<number>, depth = 0, guides: boolean[] = []): FlatMenu[] {
   const rows: FlatMenu[] = [];
-  for (const menu of items) {
-    rows.push({ menu, depth });
-    if (menu.children?.length && expanded.has(menu.id)) rows.push(...flattenMenus(menu.children, expanded, depth + 1));
-  }
+  items.forEach((menu, index) => {
+    const last = index === items.length - 1;
+    rows.push({ menu, depth, last, guides });
+    if (menu.children?.length && expanded.has(menu.id)) rows.push(...flattenMenus(menu.children, expanded, depth + 1, depth === 0 ? [] : [...guides, !last]));
+  });
   return rows;
 }
+
+// 菜单 meta.icon（lucide 名）→ 图标；未登记的名字不显示图标
+const menuIcons: Record<string, LucideIcon> = { LayoutDashboard, BriefcaseBusiness, Gauge, Database, Activity, Network, HardDriveDownload, MonitorCog: Monitor, Monitor, Cable, Puzzle, Cpu, MapPin, Radio, History, Settings2, FileText, Users, Shield, Menu };
+// 概念稿尺寸：表头 40px、行 46px、正文 13px
+const thCls = "h-10 px-2.5 text-[13px] font-medium text-muted-foreground";
+const tdCls = "h-[46px] px-2.5 py-0";
+const iconBtnCls = "size-7 text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-3.5";
+const guideCls = "relative w-[22px] shrink-0 self-stretch before:absolute before:left-[11px] before:-top-[23px] before:border-l before:border-dashed before:border-border";
 
 export function MenuManagementPage() {
   const { auth } = useAuth();
@@ -106,74 +115,85 @@ export function MenuManagementPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
-        <div className="flex flex-wrap items-center justify-end gap-2 px-4 pt-4">
-          <Button size="sm" onClick={() => openAdd()}><Plus data-icon="inline-start" />添加菜单</Button>
+      <Card className="flex max-h-full min-h-0 flex-col gap-0 py-0">
+        <div className="flex items-center justify-end gap-2 px-5 pt-5">
+          <Button className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90 [&_svg:not([class*='size-'])]:size-3.5" onClick={() => openAdd()}><Plus data-icon="inline-start" />添加菜单</Button>
         </div>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col px-5 pt-4 pb-5">
           {/* 由外层统一横纵滚动，避免 Table 内层 overflow 把底栏滚到表格最底部 */}
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:overflow-visible">
-            <Table className="min-w-[1280px]">
-              <TableHeader className="sticky top-0 z-10 bg-muted/50">
-                <TableRow>
-                  <TableHead className="min-w-64 text-center">菜单名称</TableHead>
-                  <TableHead className="min-w-20 text-center">类型</TableHead>
-                  <TableHead className="min-w-44 text-center">路由</TableHead>
-                  <TableHead className="min-w-52 text-center">组件</TableHead>
-                  <TableHead className="min-w-16 text-center">排序</TableHead>
-                  <TableHead className="min-w-20 text-center">状态</TableHead>
-                  <TableHead className="min-w-72 text-center">按钮权限</TableHead>
-                  <TableHead className="min-w-40 text-center">操作</TableHead>
+          <div className="min-h-0 flex-1 overflow-auto rounded-[10px] border [&_[data-slot=table-container]]:overflow-visible">
+            <Table className="min-w-[1040px] text-[13px]">
+              <TableHeader className="sticky top-0 z-10 bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className={`${thCls} min-w-[210px]`}>菜单名称</TableHead>
+                  <TableHead className={thCls}>类型</TableHead>
+                  <TableHead className={thCls}>路由</TableHead>
+                  <TableHead className={thCls}>组件</TableHead>
+                  <TableHead className={`${thCls} text-right`}>排序</TableHead>
+                  <TableHead className={thCls}>状态</TableHead>
+                  <TableHead className={`${thCls} min-w-[240px]`}>按钮权限</TableHead>
+                  <TableHead className={thCls}>操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {menus.loading && Array.from({ length: 6 }, (_, index) => <TableRow key={index}><TableCell colSpan={8}><Skeleton className="h-8 w-full" /></TableCell></TableRow>)}
-                {!menus.loading && rows.map(({ menu, depth }) => (
-                  <TableRow key={menu.id}>
-                    <TableCell>
-                      <div className="flex items-center" style={{ paddingLeft: `${depth * 22}px` }}>
-                        {menu.children?.length ? (
-                          <Button size="icon" variant="ghost" className="mr-1 size-7" title={expanded.has(menu.id) ? "收起子菜单" : "展开子菜单"} onClick={() => toggleExpanded(menu.id)}>
-                            {expanded.has(menu.id) ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                          </Button>
-                        ) : (
-                          <span className="mr-1 inline-block size-7" />
-                        )}
-                        <span className="font-medium">{menu.meta.title || menu.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={menu.menuType === "directory" ? "secondary" : menu.menuType === "button" ? "destructive" : "default"}>
-                        {menu.menuType === "directory" ? "目录" : menu.menuType === "button" ? "按钮" : "菜单"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{menu.path || "-"}</TableCell>
-                    <TableCell className="font-mono text-xs">{menu.component || "-"}</TableCell>
-                    <TableCell>{menu.sort ?? 1}</TableCell>
-                    <TableCell>
-                      <Badge variant={menu.enabled ? "outline" : "destructive"}>{menu.enabled ? "启用" : "禁用"}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex max-w-80 flex-wrap gap-1">
-                        {(menu.meta.authList ?? []).map((permission) => (
-                          <span key={permission.id} className="inline-flex items-center rounded-md border bg-muted/30">
-                            <button type="button" className="px-2 py-1 text-xs" title="编辑权限" onClick={() => void openPermission(menu, permission)}>{permission.title || permission.authMark}</button>
-                            <button type="button" className="border-l px-1.5 py-1 text-muted-foreground hover:text-destructive" title="删除权限" onClick={() => setConfirm({ type: "permission", menu, permission })}>×</button>
-                          </span>
-                        ))}
-                        {!menu.meta.authList?.length && <span className="text-muted-foreground">-</span>}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" title="新增子菜单" onClick={() => openAdd(menu)}><Plus className="size-4" /></Button>
-                        <Button size="icon" variant="ghost" title="新增按钮权限" onClick={() => void openPermission(menu)}><KeyRound className="size-4" /></Button>
-                        <Button size="icon" variant="ghost" title="编辑菜单" onClick={() => openEdit(menu)}><Pencil className="size-4" /></Button>
-                        <Button size="icon" variant="ghost" title="删除菜单" onClick={() => setConfirm({ type: "menu", menu })}><Trash2 className="size-4" /></Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {menus.loading && Array.from({ length: 6 }, (_, index) => <TableRow key={index}><TableCell colSpan={8} className="h-[46px] px-2.5"><Skeleton className="h-7 w-full" /></TableCell></TableRow>)}
+                {!menus.loading && rows.map(({ menu, depth, last, guides }) => {
+                  const Icon = menu.meta.icon ? menuIcons[menu.meta.icon] : undefined;
+                  const disabled = menu.enabled === false;
+                  const top = depth === 0;
+                  const fade = disabled ? "opacity-60" : "";
+                  return (
+                    <TableRow key={menu.id} className={top ? "bg-[color-mix(in_oklab,var(--muted)_22%,transparent)]" : ""}>
+                      <TableCell className={`${tdCls} ${fade}`}>
+                        <div className="flex min-h-[46px] items-center gap-1.5">
+                          {guides.map((show, index) => <span key={index} className={`${guideCls} ${show ? "before:-bottom-[23px]" : "before:hidden"}`} />)}
+                          {!top && <span className={`${guideCls} ${last ? "before:bottom-1/2" : "before:-bottom-[23px]"} after:absolute after:top-1/2 after:right-0 after:left-[11px] after:border-t after:border-dashed after:border-border`} />}
+                          {menu.children?.length ? (
+                            <button type="button" className={`grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-transform hover:bg-accent hover:text-foreground ${expanded.has(menu.id) ? "" : "-rotate-90"}`} title={expanded.has(menu.id) ? "收起子菜单" : "展开子菜单"} onClick={() => toggleExpanded(menu.id)}>
+                              <ChevronDown className="size-3.5" />
+                            </button>
+                          ) : (
+                            <span className="inline-block size-6 shrink-0" />
+                          )}
+                          <span className="grid w-[18px] shrink-0 place-items-center text-muted-foreground">{Icon && <Icon className="size-3.5" />}</span>
+                          <span className={top ? "font-semibold" : ""}>{menu.meta.title || menu.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className={`${tdCls} ${fade}`}>
+                        <Badge variant="secondary" className={`h-5 rounded-md px-2 text-xs ${menu.menuType === "directory" ? "bg-muted text-muted-foreground" : menu.menuType === "button" ? "bg-destructive-soft text-destructive" : "bg-brand-soft text-brand"}`}>
+                          {menu.menuType === "directory" ? "目录" : menu.menuType === "button" ? "按钮" : "菜单"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className={`${tdCls} font-mono text-xs ${fade}`}>{menu.path || "-"}</TableCell>
+                      <TableCell className={`${tdCls} font-mono text-xs text-muted-foreground ${fade}`}>{menu.component || "-"}</TableCell>
+                      <TableCell className={`${tdCls} text-right tabular-nums ${fade}`}>{menu.sort ?? 1}</TableCell>
+                      <TableCell className={`${tdCls} ${fade}`}>
+                        {menu.enabled
+                          ? <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success"><span className="size-1.5 rounded-full bg-success" />启用</span>
+                          : <Badge variant="destructive" className="h-5 rounded-md bg-destructive-soft px-2 text-xs">禁用</Badge>}
+                      </TableCell>
+                      <TableCell className={`${tdCls} ${fade}`}>
+                        <div className="flex max-w-[280px] flex-wrap gap-1 py-1.5 whitespace-normal">
+                          {(menu.meta.authList ?? []).map((permission) => (
+                            <span key={permission.id} className="inline-flex h-6 items-center overflow-hidden rounded-md border bg-[color-mix(in_oklab,var(--muted)_40%,transparent)] text-xs">
+                              <button type="button" className="h-full px-2 transition-colors hover:bg-brand-soft hover:text-brand" title="编辑权限" onClick={() => void openPermission(menu, permission)}>{permission.title || permission.authMark}</button>
+                              <button type="button" className="h-full border-l px-1.5 text-muted-foreground transition-colors hover:bg-destructive-soft hover:text-destructive" title="删除权限" onClick={() => setConfirm({ type: "permission", menu, permission })}>×</button>
+                            </span>
+                          ))}
+                          {!menu.meta.authList?.length && <span className="text-muted-foreground">-</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className={tdCls}>
+                        <div className="flex gap-0.5">
+                          <Button size="icon" variant="ghost" className={iconBtnCls} title="新增子菜单" onClick={() => openAdd(menu)}><Plus /></Button>
+                          <Button size="icon" variant="ghost" className={iconBtnCls} title="新增按钮权限" onClick={() => void openPermission(menu)}><KeyRound /></Button>
+                          <Button size="icon" variant="ghost" className={iconBtnCls} title="编辑菜单" onClick={() => openEdit(menu)}><Pencil /></Button>
+                          <Button size="icon" variant="ghost" className={`${iconBtnCls} hover:bg-destructive-soft hover:text-destructive`} title="删除菜单" onClick={() => setConfirm({ type: "menu", menu })}><Trash2 /></Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
                 {!menus.loading && !rows.length && <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{menus.error ?? "暂无菜单"}</TableCell></TableRow>}
               </TableBody>
             </Table>
