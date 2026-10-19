@@ -26,8 +26,8 @@ const delay = (ms = Math.random() * 500 + 300) =>
   new Promise<void>((r) => setTimeout(r, ms));
 
 // ─── 可变内部状态 ─────────────────────────────────────────────────────────────
+
 let _inBootstrap = true;
-let _inBootstrap = import.meta.env.VITE_MOCK_SKIP_BOOTSTRAP !== "true"; // LOCAL-ONLY
 let _edgeBootstrap = {
   nodeUuid: "",
   nodeName: "",
