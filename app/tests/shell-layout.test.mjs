@@ -25,7 +25,11 @@ test("title bar and sidebar share one continuous surface with the floating conte
   assert.match(source, /刷新当前页面[\s\S]{0,200}titlebarSlot,/);
   assert.doesNotMatch(source, /border-[bt] border-sidebar-border/);
   assert.doesNotMatch(source, /ChevronUp/);
-  assert.match(source, /<ConnectionStatusBar vertical=\{sidebarCollapsed\} \/>[\s\S]*aria-label="设置"[\s\S]{0,200}<ThemeToggle \/>/);
+  assert.match(source, /createPortal\(<ConnectionStatusBar \/>, titlebarStatusSlot\)/);
+  assert.match(titleBarSource, /id=\{TITLEBAR_STATUS_SLOT_ID\}/);
+  assert.doesNotMatch(titleBarSource, /Data Watch Console/);
+  assert.doesNotMatch(source, /aria-label="设置"/);
+  assert.match(source, /<ThemeToggle \/>/);
   assert.match(source, /flex h-full min-w-0 overflow-hidden bg-sidebar/);
   assert.ok(source.includes('sidebarCollapsed ? "w-16" : "w-60"'));
   assert.match(source, /readSidebarCollapsed/);
