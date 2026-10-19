@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
@@ -17,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ConnectionStatusBar } from "@/components/ConnectionStatusBar";
 import { TopbarTools } from "@/components/TopbarTools";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TITLEBAR_SLOT_ID } from "@/components/TitleBar";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { getPageMeta } from "@/config/navigation";
@@ -63,6 +63,10 @@ export function AppLayout() {
   } | null>(null);
   const flyoutCloseTimerRef = useRef<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [titlebarSlot, setTitlebarSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setTitlebarSlot(document.getElementById(TITLEBAR_SLOT_ID));
+  }, []);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const pageMeta = getPageMeta(location.pathname);
   const isSettingsRoute = location.pathname === "/settings";
@@ -156,77 +160,60 @@ export function AppLayout() {
     });
   }
 
-  const headerActions = (
-    <div className="flex shrink-0 items-center gap-1.5">
-      <div className="mr-2 hidden xl:block">
-        <ConnectionStatusBar />
-      </div>
+  const titlebarControls = titlebarSlot && createPortal(
+    <>
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8"
+        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        onClick={() => updateSidebarCollapsed(!sidebarCollapsed)}
+        aria-label={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
+        title={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
+      >
+        {sidebarCollapsed ? (
+          <PanelLeftOpen className="h-4 w-4" />
+        ) : (
+          <PanelLeftClose className="h-4 w-4" />
+        )}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-7 w-7 text-muted-foreground hover:text-foreground"
         onClick={refreshCurrentPage}
         aria-label="刷新当前页面"
         title="刷新当前页面"
       >
         <RefreshCw className="h-4 w-4" />
       </Button>
-      <div
-        className="flex h-8 w-8 items-center justify-center rounded-md bg-muted text-muted-foreground"
-        title={auth?.user?.userName ?? "本地用户"}
-        aria-label={auth?.user?.userName ?? "本地用户"}
-      >
-        <UserRound className="h-4 w-4" />
-      </div>
-      {canOpenSettings && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => navigate(settingsPath)}
-          aria-label="设置"
-          title="设置"
-        >
-          <Settings className="h-4 w-4" />
-        </Button>
-      )}
-      <TopbarTools />
-      <ThemeToggle />
-    </div>
+    </>,
+    titlebarSlot,
   );
 
   return (
     <div className="flex h-full min-w-0 overflow-hidden bg-sidebar">
+      {titlebarControls}
       <aside
         className={[
           "flex shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200",
           sidebarCollapsed ? "w-16" : "w-60",
         ].join(" ")}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-sidebar-border px-3">
+        <div
+          className={[
+            "flex shrink-0 items-center px-3",
+            sidebarCollapsed ? "h-auto flex-col gap-1 py-2" : "h-14 justify-between",
+          ].join(" ")}
+        >
           {!sidebarCollapsed && (
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-sidebar-foreground">Data Watch</p>
               <p className="truncate text-xs text-muted-foreground">工业数据平台</p>
             </div>
           )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className={[
-              "h-8 w-8 shrink-0 text-sidebar-foreground",
-              sidebarCollapsed ? "mx-auto" : "ml-auto",
-            ].join(" ")}
-            onClick={() => updateSidebarCollapsed(!sidebarCollapsed)}
-            aria-label={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
-            title={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
-          >
-            {sidebarCollapsed ? (
-              <PanelLeftOpen className="h-4 w-4" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" />
-            )}
-          </Button>
+          <div className={["flex shrink-0 items-center gap-0.5", sidebarCollapsed ? "flex-col" : "ml-auto"].join(" ")}>
+            <TopbarTools />
+          </div>
         </div>
 
         <nav
@@ -356,7 +343,10 @@ export function AppLayout() {
           )}
         </nav>
 
-        <div className="shrink-0 border-t border-sidebar-border p-2">
+        <div className="shrink-0 p-2">
+          <div className={["mb-1 flex", sidebarCollapsed ? "justify-center" : "px-1"].join(" ")}>
+            <ConnectionStatusBar vertical={sidebarCollapsed} />
+          </div>
           <div ref={userMenuRef} className="relative">
             {userMenuOpen && (
               <div
@@ -392,31 +382,50 @@ export function AppLayout() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => setUserMenuOpen((open) => !open)}
-              title={sidebarCollapsed ? (auth?.user?.userName ?? "本地用户") : undefined}
-              aria-expanded={userMenuOpen}
+            <div
               className={[
-                "flex h-11 w-full items-center rounded-md transition-colors hover:bg-sidebar-accent",
-                sidebarCollapsed ? "justify-center px-0" : "gap-2.5 px-2",
+                "flex items-center",
+                sidebarCollapsed ? "flex-col gap-1" : "gap-1",
               ].join(" ")}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                <UserRound className="h-4 w-4" />
-              </span>
-              {!sidebarCollapsed && (
-                <>
+              <button
+                type="button"
+                onClick={() => setUserMenuOpen((open) => !open)}
+                title={sidebarCollapsed ? (auth?.user?.userName ?? "本地用户") : undefined}
+                aria-expanded={userMenuOpen}
+                className={[
+                  "flex h-11 min-w-0 items-center rounded-md transition-colors hover:bg-sidebar-accent",
+                  sidebarCollapsed ? "w-full justify-center px-0" : "flex-1 gap-2.5 px-2",
+                ].join(" ")}
+              >
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                  <UserRound className="h-4 w-4" />
+                </span>
+                {!sidebarCollapsed && (
                   <span className="min-w-0 flex-1 text-left">
                     <span className="block truncate text-sm font-medium">{auth?.user?.userName ?? "本地用户"}</span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {auth?.user?.roles?.length ? auth.user.roles.join(" · ") : "已登录"}
                     </span>
                   </span>
-                  <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-                </>
-              )}
-            </button>
+                )}
+              </button>
+              <div className={["flex shrink-0 items-center gap-0.5", sidebarCollapsed ? "flex-col" : ""].join(" ")}>
+                {canOpenSettings && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 rounded-3xl hover:bg-muted"
+                    onClick={() => navigate(settingsPath)}
+                    aria-label="设置"
+                    title="设置"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
+                )}
+                <ThemeToggle />
+              </div>
+            </div>
           </div>
         </div>
       </aside>
@@ -456,8 +465,8 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="m-2 ml-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
-        <header className="flex h-14 shrink-0 items-center border-b border-border bg-transparent px-4">
+      <section className="mb-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+        <header className="flex h-12 shrink-0 items-center bg-transparent px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>
@@ -477,10 +486,9 @@ export function AppLayout() {
               </>
             )}
           </div>
-          <div className="ml-auto">{headerActions}</div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto p-4">
+        <main className="min-h-0 flex-1 overflow-auto px-4 pb-4">
           <Outlet />
         </main>
       </section>
