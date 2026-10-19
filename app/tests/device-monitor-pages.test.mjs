@@ -29,6 +29,19 @@ test("device-monitor pages contain their approved operational regions", async ()
   }
 });
 
+test("realtime and history value tiles share one PointValueTile component", async () => {
+  const tile = await readFile(new URL("../src/components/PointValueTile.tsx", import.meta.url), "utf8");
+  assert.match(tile, /rounded-\[10px\] bg-muted\/55 px-3 py-2\.5/);
+  assert.match(tile, /overflow-x-auto overflow-y-hidden pb-1 \[scrollbar-width:thin\]/);
+  assert.match(tile, /grid grid-flow-col auto-cols-/);
+  assert.match(tile, /刚刚切换/);
+  for (const file of ["RealtimeMonitorPage.tsx", "HistoryDataPage.tsx"]) {
+    const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
+    assert.match(source, /import \{ PointValueTile, PointValueTileRow \} from "@\/components\/PointValueTile"/, file);
+    assert.doesNotMatch(source, /bg-muted\/55 px-3/, file);
+  }
+});
+
 test("realtime and history pages use shadcn chart containers", async () => {
   for (const file of ["RealtimeMonitorPage.tsx", "HistoryDataPage.tsx"]) {
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
@@ -41,7 +54,6 @@ test("realtime monitor uses the requested four-section operational layout", asyn
 
   assert.match(source, /realtimePointGroups/);
   assert.doesNotMatch(source, /点位分组/);
-  assert.match(source, /overflow-x-auto/);
   assert.match(source, /groupCode: selectedGroupCode/);
   assert.match(source, /chartType === "status"/);
   assert.match(source, /deviceDialogOpen/);
@@ -53,9 +65,9 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /max-w-56/);
   assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
   // 点位数值卡：灰底圆角卡片，始终单行，多了横向滚动（细滚动条）
-  assert.match(source, /rounded-\[10px\] bg-muted\/55 px-3 py-2\.5/);
-  assert.match(source, /overflow-x-auto overflow-y-hidden pb-1 \[scrollbar-width:thin\]/);
-  assert.match(source, /grid grid-flow-col auto-cols-/);
+  assert.match(source, /<PointValueTileRow /);
+  assert.match(source, /<PointValueTile key=\{point\.varSeq\}[^>]*previous=/);
+  assert.doesNotMatch(source, /function LiveTile/);
   assert.doesNotMatch(source, /grid-cols-6/);
   assert.match(source, /flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0/);
   assert.match(source, /border-b px-5 py-3\.5/);
@@ -77,8 +89,9 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /快捷时间范围/);
   assert.match(source, /setRecentRange\(Number\(value\), setStartTime, setEndTime\)/);
   assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
-  // 已选点位：单行胶囊，多了横向滚动；不再显示 最小/平均/最大
-  assert.match(source, /flex gap-2 overflow-x-auto overflow-y-hidden pb-1 \[scrollbar-width:thin\]/);
+  // 已选点位：与实时监控共用同一数值卡组件（单行，多了横向滚动），值为查询区间最新值；不再显示 最小/平均/最大
+  assert.match(source, /<PointValueTileRow /);
+  assert.match(source, /<PointValueTile key=\{point\.varSeq\}[^>]*value=\{latest\?\.value \?\? null\}/);
   assert.doesNotMatch(source, /"最小"/);
   // 图表卡撑满剩余高度；Bool 点位用状态泳道
   assert.match(source, /<Card className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0">/);
@@ -105,10 +118,12 @@ test("device communication drops KPI cards and shows status counts in the card l
   for (const [label, value] of [["总数", "total"], ["在线", "online"], ["离线", "offline"], ["异常", "unstable"], ["未启用", "disabled"]]) {
     assert.match(source, new RegExp(`<LegendCount[^>]*label="${label}" value=\\{summary\\.data \\? ${value} : null\\}`));
   }
-  // 色块墙按可视区估算每页数量
-  assert.match(source, /function estimatePageSize/);
-  assert.match(source, /new ResizeObserver\(update\)/);
-  assert.match(source, /\[deviceType, keyword, page, pageSize, status\]/);
+  // 不分页：一次显示全部设备，色块墙在卡内滚动；底部无分页栏和分隔线
+  assert.doesNotMatch(source, /estimatePageSize|DeviceCatalogPagination|setPage|ResizeObserver/);
+  assert.doesNotMatch(source, /border-t border-border/);
+  assert.match(source, /pageSize: FETCH_PAGE_SIZE/);
+  assert.match(source, /\[deviceType, keyword, status\]/);
+  assert.match(source, /min-h-0 flex-1 overflow-auto/);
 });
 
 test("device communication renders grouped full-width auto-fill square status tiles", async () => {
