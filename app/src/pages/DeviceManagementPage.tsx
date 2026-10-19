@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,21 @@ import { saveDownload } from "@/lib/save-download";
 import type { DeviceForm, DeviceListItem, ImportResult } from "@/types/device-monitor";
 
 const EMPTY_FORM: DeviceForm = { deviceType: "PLC", deviceCode: "", deviceName: "", driverName: "", deviceStatus: "enabled", endpoint: "", endpointBackup: "", description: "" };
+
+function KpiCard({ label, value, unit, detail }: { label: string; value: string; unit?: string; detail: string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="px-4 py-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-2 truncate text-2xl font-semibold leading-none tabular-nums">
+          {value}
+          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
+        </p>
+        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function DeviceManagementPage() {
   const { auth } = useAuth();
@@ -65,7 +80,17 @@ export default function DeviceManagementPage() {
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
   const typeTabs = useMemo(() => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })), [deviceCatalog.data]);
   const drivers = useBackendQuery(loadDrivers);
+  const loadSummary = useCallback(
+    (token: string, signal: AbortSignal) => backendClient.deviceSummary(token, { keyword: keyword.trim() || undefined }, signal),
+    [keyword],
+  );
+  const summary = useBackendQuery(loadSummary);
   const rows = devices.data?.list ?? [];
+  const total = summary.data?.total ?? 0;
+  const online = summary.data?.enabledOnlineCount ?? 0;
+  const unstable = summary.data?.unstableCount ?? 0;
+  const offline = summary.data?.enabledOfflineCount ?? 0;
+  const disabled = summary.data?.disabledCount ?? 0;
   const totalPages = Math.max(1, Math.ceil((devices.data?.total ?? 0) / pageSize));
 
   useEffect(() => {
@@ -146,14 +171,53 @@ export default function DeviceManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setPage(1); }}><div className="max-w-full overflow-x-auto"><TabsList className="w-max"><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
-        <div className="flex items-center gap-2"><div className="relative w-48"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="设备名称 / 编号" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div><Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select></div>
+    <div className="flex h-full min-h-0 w-full flex-col gap-4">
+      <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <KpiCard
+          label="设备总数"
+          value={summary.data ? String(total) : "—"}
+          unit="台"
+          detail={typeTabs.length ? `${typeTabs.length} 类设备` : "—"}
+        />
+        <KpiCard
+          label="在线"
+          value={summary.data ? String(online) : "—"}
+          unit="台"
+          detail={summary.data ? `在线率 ${(total ? online / total * 100 : 0).toFixed(1)}%` : "—"}
+        />
+        <KpiCard
+          label="不稳定"
+          value={summary.data ? String(unstable) : "—"}
+          unit="台"
+          detail="通讯时断时续"
+        />
+        <KpiCard
+          label="离线"
+          value={summary.data ? String(offline) : "—"}
+          unit="台"
+          detail="通讯中断"
+        />
+        <KpiCard
+          label="已停用"
+          value={summary.data ? String(disabled) : "—"}
+          unit="台"
+          detail="不参与采集"
+        />
       </div>
       <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader><CardTitle>设备管理</CardTitle><CardAction><div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增设备</Button><Button variant="outline" size="sm" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload data-icon="inline-start" />导入</Button><Button variant="outline" size="sm" onClick={() => exportWorkbook(false)} disabled={transferring}><Download data-icon="inline-start" />导出</Button><Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}><Trash2 data-icon="inline-start" />删除</Button></div></CardAction></CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4">
+          <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setPage(1); }}><div className="max-w-full overflow-x-auto"><TabsList className="w-max"><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <div className="relative w-44"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="设备名称 / 编号" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div>
+            <Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select>
+            {selectedIds.length > 0 && <span className="text-xs text-muted-foreground">已选 {selectedIds.length} 台</span>}
+            <Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增设备</Button>
+            <Button variant="outline" size="sm" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload data-icon="inline-start" />导入</Button>
+            <Button variant="outline" size="sm" onClick={() => exportWorkbook(false)} disabled={transferring}><Download data-icon="inline-start" />导出</Button>
+            <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}><Trash2 data-icon="inline-start" />删除</Button>
+          </div>
+        </div>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
             <Table className="h-full w-full table-fixed"><TableHeader><TableRow className="bg-muted/50"><TableHead className="w-12 text-center"><Checkbox aria-label="选择全部设备" checked={allSelected ? true : selectedIds.length ? "indeterminate" : false} onCheckedChange={(checked) => toggleAll(checked === true)} /></TableHead><TableHead className="w-[13%] text-center">设备编号</TableHead><TableHead className="text-center">设备名称</TableHead><TableHead className="w-[12%] text-center">类型</TableHead><TableHead className="w-[14%] text-center">关联驱动</TableHead><TableHead className="w-[12%] text-center">通讯状态</TableHead><TableHead className="w-[11%] text-center">数据状态</TableHead><TableHead className="w-40 text-center">操作</TableHead></TableRow></TableHeader><TableBody>{devices.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={8}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : rows.length ? rows.map((row) => <TableRow key={row.id} className="h-10" data-state={selectedIds.includes(row.id) ? "selected" : undefined}><TableCell className="text-center"><Checkbox aria-label={`选择设备 ${row.deviceName}`} checked={selectedIds.includes(row.id)} onCheckedChange={(checked) => toggleRow(row.id, checked === true)} /></TableCell><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.deviceName}</TableCell><TableCell className="truncate text-center">{row.deviceType}</TableCell><TableCell className="truncate text-center">{row.driverName}</TableCell><TableCell className="text-center"><Badge variant={row.connectStatus === "online" ? "outline" : row.connectStatus === "unstable" ? "secondary" : "destructive"}>{row.connectStatus === "online" ? "在线" : row.connectStatus === "unstable" ? "不稳定" : "离线"}</Badge></TableCell><TableCell className="text-center">{row.dataStatus === "normal" ? "正常" : row.dataStatus === "abnormal" ? "异常" : "无数据"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看点位" onClick={() => navigate(`/device/points?deviceId=${row.id}&deviceCode=${encodeURIComponent(row.deviceCode)}`)}><MapPin className="size-4" /></Button><Button variant="ghost" size="icon-sm" title={row.deviceStatus === "enabled" ? "停用设备" : "启用设备"} disabled={statusUpdatingId === row.id} onClick={() => void toggleDeviceStatus(row)}>{row.deviceStatus === "enabled" ? <PowerOff className="size-4 text-warning" /> : <Power className="size-4 text-success" />}</Button><Button variant="ghost" size="icon-sm" title="编辑设备" onClick={() => openEdit(row)}><Edit3 className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="删除设备" onClick={() => setDeleting(row)}><Trash2 className="size-4 text-destructive" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{devices.error ?? "暂无设备"}</TableCell></TableRow>}</TableBody></Table>
           </div>
