@@ -415,17 +415,17 @@ function BasicTab() {
       <CardHeader>
         <CardTitle>基础设置</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-col gap-2">
-          <Label className="text-xs text-muted-foreground">外观主题</Label>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Label className="text-sm font-medium">外观主题</Label>
           <SegmentedGroup
             options={["浅色", "深色", "跟随系统"]}
             value={THEME_TO_ZH[theme]}
             onChange={(zh) => setTheme(ZH_TO_THEME[zh as keyof typeof ZH_TO_THEME])}
           />
         </div>
-        <div className="flex flex-col gap-2">
-          <Label className="text-xs text-muted-foreground">页面密度</Label>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Label className="text-sm font-medium">页面密度</Label>
           <SegmentedGroup options={["紧凑", "标准", "宽松"]} value={density} onChange={setDensity} />
         </div>
       </CardContent>
@@ -605,33 +605,29 @@ function SaveCard({
   onSaveAndRestart: (name: ModuleName) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>保存策略</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="default" size="sm" className="gap-1.5" disabled={saving || disabled} onClick={onSave}>
-            <Save className="h-3.5 w-3.5" />
-            保存
+    <Card className="py-0">
+      <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3">
+        <span className="text-sm font-medium">保存策略</span>
+        <Button variant="default" size="sm" className="gap-1.5" disabled={saving || disabled} onClick={onSave}>
+          <Save className="h-3.5 w-3.5" />
+          保存
+        </Button>
+        {restartModules.map((name) => (
+          <Button
+            key={name}
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={saving || disabled}
+            onClick={() => onSaveAndRestart(name)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            保存并重启 {moduleLabel(name)}
           </Button>
-          {restartModules.map((name) => (
-            <Button
-              key={name}
-              variant="outline"
-              size="sm"
-              className="gap-1.5"
-              disabled={saving || disabled}
-              onClick={() => onSaveAndRestart(name)}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              保存并重启 {moduleLabel(name)}
-            </Button>
-          ))}
-          {restartModules.length > 0 && (
-            <span className="ml-1 text-xs text-muted-foreground/70">重启后生效</span>
-          )}
-        </div>
+        ))}
+        {restartModules.length > 0 && (
+          <span className="ml-auto text-xs text-muted-foreground">重启后生效</span>
+        )}
       </CardContent>
     </Card>
   );
@@ -842,7 +838,7 @@ export function SettingsPage() {
   // ─── 加载中 ────────────────────────────────────────────────────────────────
   if (configLoading) {
     return (
-      <div className="px-6 py-6 flex items-center justify-center min-h-[300px]">
+      <div className="flex min-h-[300px] items-center justify-center">
         <p className="text-sm text-muted-foreground/70">正在加载配置…</p>
       </div>
     );
@@ -850,7 +846,7 @@ export function SettingsPage() {
 
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
-    <div className="px-6 pb-6 space-y-6" style={{ maxWidth: 1200 }}>
+    <div className="mx-auto w-full max-w-[1200px] space-y-4">
       {/* 加载失败 inline 提示（保存已禁用，需刷新重新加载） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
