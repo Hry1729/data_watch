@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -63,6 +63,20 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error ?? new Error("读取文件失败"));
     reader.readAsDataURL(file);
   });
+}
+
+function KpiCard({ label, value, unit }: { label: string; value: string; unit?: string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="px-4 py-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-2 truncate text-2xl font-semibold leading-none tabular-nums">
+          {value}
+          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 function resolveSourceLabel(source: DriverListItem["source"]): string {
@@ -237,20 +251,20 @@ export default function DriverManagementPage() {
         total,
         pageNo: page,
         pageSize,
+        summary: {
+          total,
+          loaded: mergedList.filter((row) => row.loadStatus === "loaded").length,
+          boundDevices: mergedList.reduce((sum, row) => sum + (row.boundDeviceCount ?? 0), 0),
+          attention: mergedList.filter((row) => resolveStatusBadge(row).variant === "destructive").length,
+        },
       };
     },
     [keyword, page, pageSize],
   );
   const query = useBackendQuery(load);
   const rows = query.data?.list ?? [];
+  const summary = query.data?.summary;
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
-
-  const warningText = useMemo(
-    () => BUILD_ROLE === "distributed-center"
-      ? "此处为平台协议目录，中心机不运行采集。驱动安装与运行状态请在目标边缘节点查看。"
-      : "当前目标：本机采集节点。安装和卸载影响本节点；只接受官方或内部审核通过的驱动包。",
-    [],
-  );
 
   async function prepareInstall(file?: File, driverId?: string) {
     if (!canManage || busy) return;
@@ -346,48 +360,51 @@ export default function DriverManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 md:px-6 md:pb-6">
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader>
-          <CardTitle>驱动管理</CardTitle>
-          <CardAction>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-56">
-                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="pl-9"
-                  placeholder="搜索驱动名称"
-                  value={keyword}
-                  onChange={(event) => {
-                    setKeyword(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </div>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".zip,application/zip"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void prepareInstall(file);
-                }}
-              />
-              <Button
-                size="sm"
-                disabled={busy || !canManage}
-                onClick={() => fileRef.current?.click()}
-              >
-                <Upload className="size-4" />
-                安装/升级 ZIP
-              </Button>
-            </div>
-          </CardAction>
-        </CardHeader>
+    <div className="flex h-full min-h-0 w-full flex-col gap-4">
+      <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard label="驱动总数" value={summary ? String(summary.total) : "—"} />
+        <KpiCard label="已加载" value={summary ? String(summary.loaded) : "—"} unit={summary ? `/ ${summary.total}` : undefined} />
+        <KpiCard label="关联设备" value={summary ? String(summary.boundDevices) : "—"} />
+        <KpiCard label="需处理" value={summary ? String(summary.attention) : "—"} />
+      </div>
 
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-          <p className="text-xs text-muted-foreground">{warningText}</p>
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+          <div className="relative w-56">
+            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="搜索驱动名称"
+              value={keyword}
+              onChange={(event) => {
+                setKeyword(event.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void prepareInstall(file);
+              }}
+            />
+            <Button
+              size="sm"
+              disabled={busy || !canManage}
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload className="size-4" />
+              安装/升级 ZIP
+            </Button>
+          </div>
+        </div>
+
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <TooltipProvider delayDuration={200}>
               <Table className="w-full table-fixed">
