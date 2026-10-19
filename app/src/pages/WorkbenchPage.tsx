@@ -211,6 +211,114 @@ function OnlineRateGauge({ value }: { value: number }) {
   );
 }
 
+/* KPI 小图统一尺寸：与在线率刻度仪表同框（96×56，右下角） */
+const KPI_VIZ_W = 96;
+const KPI_VIZ_H = 56;
+
+/* 设备总数：在线 / 离线 分段小环（来自 dashboardOverview） */
+function DeviceSplitRing({ online, offline }: { online: number; offline: number }) {
+  const total = online + offline;
+  const r = 21;
+  const c = 2 * Math.PI * r;
+  const cx = KPI_VIZ_W - 28;
+  const cy = KPI_VIZ_H / 2;
+  const gap = total > 0 && online > 0 && offline > 0 ? 3 : 0;
+  const onLen = total > 0 ? Math.max(0, (online / total) * c - gap) : 0;
+  const offLen = total > 0 ? Math.max(0, (offline / total) * c - gap) : 0;
+  return (
+    <svg viewBox={`0 0 ${KPI_VIZ_W} ${KPI_VIZ_H}`} width={KPI_VIZ_W} height={KPI_VIZ_H} aria-hidden>
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--muted)" strokeWidth={7} />
+      {offLen > 0 && (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill="none"
+          stroke="color-mix(in oklab, var(--muted-foreground) 55%, transparent)"
+          strokeWidth={7}
+          strokeDasharray={`${offLen} ${c}`}
+          strokeDashoffset={-(onLen + gap)}
+          transform={`rotate(-90 ${cx} ${cy})`}
+        />
+      )}
+      {onLen > 0 && (
+        <circle
+          cx={cx}
+          cy={cy}
+          r={r}
+          fill="none"
+          stroke="var(--brand)"
+          strokeWidth={7}
+          strokeDasharray={`${onLen} ${c}`}
+          transform={`rotate(-90 ${cx} ${cy})`}
+        />
+      )}
+    </svg>
+  );
+}
+
+/* 采集量迷你面积线（近24小时 collectCount 序列） */
+function CollectSparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || 1;
+  const top = 6;
+  const bottom = KPI_VIZ_H - 4;
+  const pts = values.map((v, i) => [
+    (i / (values.length - 1)) * (KPI_VIZ_W - 4) + 2,
+    bottom - ((v - min) / span) * (bottom - top),
+  ]);
+  const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  const last = pts[pts.length - 1];
+  return (
+    <svg viewBox={`0 0 ${KPI_VIZ_W} ${KPI_VIZ_H}`} width={KPI_VIZ_W} height={KPI_VIZ_H} aria-hidden>
+      <defs>
+        <linearGradient id="wbKpiCollect" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.28} />
+          <stop offset="100%" stopColor="var(--brand)" stopOpacity={0} />
+        </linearGradient>
+      </defs>
+      <path d={`${line}L${last[0].toFixed(1)},${KPI_VIZ_H}L2,${KPI_VIZ_H}Z`} fill="url(#wbKpiCollect)" />
+      <path d={line} fill="none" stroke="var(--brand)" strokeWidth={1.8} strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r={2.6} fill="var(--brand)" stroke="var(--card)" strokeWidth={1.5} />
+    </svg>
+  );
+}
+
+/* 告警迷你柱（近24小时 alarmCount 序列，按时间均分为 12 组求和） */
+function AlarmMiniBars({ values }: { values: number[] }) {
+  if (values.length === 0) return null;
+  const groups = Math.min(12, values.length);
+  const size = values.length / groups;
+  const sums = Array.from({ length: groups }, (_, g) =>
+    values.slice(Math.round(g * size), Math.round((g + 1) * size)).reduce((sum, v) => sum + v, 0),
+  );
+  const max = Math.max(1, ...sums);
+  const gap = 3;
+  const barW = (KPI_VIZ_W - gap * (groups - 1)) / groups;
+  const maxH = KPI_VIZ_H - 6;
+  return (
+    <svg viewBox={`0 0 ${KPI_VIZ_W} ${KPI_VIZ_H}`} width={KPI_VIZ_W} height={KPI_VIZ_H} aria-hidden>
+      {sums.map((sum, i) => {
+        const h = sum > 0 ? Math.max(4, (sum / max) * maxH) : 3;
+        return (
+          <rect
+            key={i}
+            x={i * (barW + gap)}
+            y={KPI_VIZ_H - h}
+            width={barW}
+            height={h}
+            rx={Math.min(2, barW / 2)}
+            fill={sum > 0 ? "var(--warning)" : "var(--muted)"}
+            fillOpacity={sum > 0 ? (i === groups - 1 ? 1 : 0.75) : 1}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 function StatCard({
   title,
   value,
@@ -469,6 +577,24 @@ export function WorkbenchPage() {
   const recentLogs = useBackendQuery(loadRecentLogs, { intervalMs: 30_000 });
   const logTotalPages = Math.max(1, Math.ceil((recentLogs.data?.total ?? 0) / logPageSize));
 
+  /* KPI 小图固定看近24小时：趋势卡选的就是近24小时则复用，否则单独拉一份 */
+  const loadKpiTrend = useCallback(
+    (token: string, signal: AbortSignal) => backendClient.dashboardTrend(token, "last24h", signal),
+    [],
+  );
+  const kpiTrendQuery = useBackendQuery(loadKpiTrend, {
+    enabled: dashboard.trendRange !== "last24h",
+    intervalMs: 30_000,
+  });
+  const kpiTrend = dashboard.trendRange === "last24h" ? dashboard.trend : kpiTrendQuery.data;
+  const kpiSeries = useMemo(() => {
+    const series = new Map(kpiTrend?.series?.map((item) => [item.metricKey, item.data]) ?? []);
+    return {
+      collect: series.get("collectCount") ?? [],
+      alarm: series.get("alarmCount") ?? [],
+    };
+  }, [kpiTrend]);
+
   const onlineRate = dashboard.overview?.deviceTotal
     ? (dashboard.overview.onlineDeviceTotal / dashboard.overview.deviceTotal) * 100
     : 0;
@@ -514,7 +640,7 @@ export function WorkbenchPage() {
   const distributionMax = Math.max(1, ...distributionData.map((row) => row.online + row.offline));
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4">
+    <div className="flex min-h-full w-full flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="设备总数"
@@ -522,6 +648,9 @@ export function WorkbenchPage() {
           detail={`${formatNumber(dashboard.overview?.onlineDeviceTotal)} 台在线 · ${formatNumber(dashboard.overview?.offlineDeviceTotal)} 台离线`}
           icon={Server}
           loading={dashboard.loading}
+          viz={dashboard.overview ? (
+            <DeviceSplitRing online={dashboard.overview.onlineDeviceTotal} offline={dashboard.overview.offlineDeviceTotal} />
+          ) : undefined}
         />
         <StatCard
           title="在线率"
@@ -538,6 +667,7 @@ export function WorkbenchPage() {
           detail="当前已配置采集点位"
           icon={Database}
           loading={dashboard.loading}
+          viz={<CollectSparkline values={kpiSeries.collect} />}
         />
         <StatCard
           title="近24小时系统告警"
@@ -551,6 +681,7 @@ export function WorkbenchPage() {
           }
           icon={Bell}
           loading={dashboard.loading}
+          viz={<AlarmMiniBars values={kpiSeries.alarm} />}
           badge={
             alertDiff !== 0 && !dashboard.loading ? (
               <span
@@ -797,7 +928,7 @@ export function WorkbenchPage() {
         </Card>
       </div>
 
-      <Card data-dashboard-section="logs" className={`@container/card ${CARD_CLASS}`}>
+      <Card data-dashboard-section="logs" className={`@container/card flex-1 ${CARD_CLASS}`}>
         <CardHeader className={HEADER_CLASS}>
           <CardTitle className={TITLE_CLASS}>最近系统日志</CardTitle>
           <CardDescription className={DESC_CLASS}>系统运行、采集、存储与操作日志</CardDescription>
@@ -808,7 +939,7 @@ export function WorkbenchPage() {
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="space-y-3 px-5 pb-5 pt-4">
+        <CardContent className="flex flex-1 flex-col gap-3 px-5 pb-5 pt-4">
           <div className="overflow-hidden rounded-lg border">
             <TooltipProvider delayDuration={200}>
               <Table className="w-full table-fixed">
@@ -867,7 +998,7 @@ export function WorkbenchPage() {
             </TooltipProvider>
           </div>
 
-          <div className="flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-auto flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
             <span className="text-muted-foreground">共 {recentLogs.data?.total ?? 0} 条日志</span>
             <div className="flex flex-wrap items-center gap-3 sm:justify-end">
               <div className="flex items-center gap-2">

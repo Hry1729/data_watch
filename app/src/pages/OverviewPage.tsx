@@ -177,7 +177,7 @@ export function OverviewPage() {
     : { value: "—", detail: "当前部署无汇聚模块" };
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-4">
+    <div className="flex min-h-full w-full flex-col gap-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <MonitorKpiCard
           denseDetail
@@ -228,20 +228,23 @@ export function OverviewPage() {
         {OVERVIEW_MODULES.map((name) => <ModuleSection key={name} name={name} />)}
       </div>
 
-      {/* 双序列写入趋势：采集（或汇聚）蓝、入库绿，双轴 */}
-      <TrendChart
-        title={isCenter ? "汇聚入队趋势" : "写入趋势"}
-        unit={cRate?.unit ?? "批次/min"}
-        seriesLabel={isCenter ? "汇聚入队" : "采集写入"}
-        state={rateTrendState(cRate, ratesLoading, ratesError)}
-        data={cRate?.series ?? []}
-        current={cRate?.current ?? null}
-        secondary={{
-          label: "入库写入",
-          unit: wRate?.unit ?? "条/min",
-          data: wRate?.series ?? [],
-        }}
-      />
+      {/* 双序列写入趋势：采集（或汇聚）蓝、入库绿，双轴；撑满到内容区底部 */}
+      <div className="grid min-h-[320px] flex-1">
+        <TrendChart
+          fillHeight
+          title={isCenter ? "汇聚入队趋势" : "写入趋势"}
+          unit={cRate?.unit ?? "批次/min"}
+          seriesLabel={isCenter ? "汇聚入队" : "采集写入"}
+          state={rateTrendState(cRate, ratesLoading, ratesError)}
+          data={cRate?.series ?? []}
+          current={cRate?.current ?? null}
+          secondary={{
+            label: "入库写入",
+            unit: wRate?.unit ?? "条/min",
+            data: wRate?.series ?? [],
+          }}
+        />
+      </div>
     </div>
   );
 }

@@ -277,12 +277,12 @@ export function SystemLogPage() {
   ];
 
   return (
-    <div className="w-full space-y-4">
-      <div className="grid grid-cols-5 gap-4">
+    <div className="flex min-h-full w-full flex-col gap-4">
+      <div className="grid shrink-0 grid-cols-5 gap-4">
         {statCards.map((item) => <StatCard key={item.title} {...item} loading={stats.loading} />)}
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)] gap-4">
+      <div className="grid shrink-0 grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)] gap-4">
         <Card className="gap-0 py-0">
           <div className="flex items-start gap-3 px-5 pt-5">
             <div className="min-w-0">
@@ -389,8 +389,8 @@ export function SystemLogPage() {
         </Card>
       </div>
 
-      <Card className="gap-0 py-0">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-3.5 px-5 pt-5">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-3.5 px-5 pt-5">
           <div className="min-w-0">
             <p className="text-sm leading-none font-semibold">{mode === "system" ? "历史日志查询" : "数据库日志（TDengine 服务日志）"}</p>
             <p className="mt-1.5 text-[13px] text-muted-foreground">{mode === "system" ? `共 ${(logs.data?.total ?? 0).toLocaleString()} 条` : "只读查看服务端日志文件末尾"}</p>
@@ -451,10 +451,10 @@ export function SystemLogPage() {
             </div>
           )}
         </div>
-        <div className="px-5 pt-4 pb-5">
+        <div className="flex min-h-0 flex-1 flex-col px-5 pt-4 pb-5">
           {mode === "system" ? (
             <>
-              <div className="overflow-hidden rounded-[10px] border">
+              <div className="flex-1 overflow-hidden rounded-[10px] border">
                 <TooltipProvider delayDuration={200}>
                   <Table className="w-full table-fixed text-[13px]">
                     <colgroup><col className="w-[150px]" /><col className="w-[112px]" /><col className="w-[80px]" /><col className="w-[14%]" /><col className="w-[11%]" /><col /><col className="w-[76px]" /></colgroup>
@@ -541,7 +541,7 @@ export function SystemLogPage() {
                   </Table>
                 </TooltipProvider>
               </div>
-              <div className="flex items-center gap-3 px-1 pt-3 text-[13px] text-muted-foreground">
+              <div className="flex shrink-0 items-center gap-3 px-1 pt-3 text-[13px] text-muted-foreground">
                 <span>共 {(logs.data?.total ?? 0).toLocaleString()} 条 · 每页 {PAGE_SIZE} 条</span>
                 <div className="ml-auto flex items-center gap-2">
                   <span className="min-w-[110px] text-center font-medium text-foreground tabular-nums">第 {currentPage} / {totalPages} 页</span>
@@ -561,8 +561,8 @@ export function SystemLogPage() {
               </div>
             </>
           ) : (
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <div className="flex shrink-0 flex-wrap gap-2">
                 <Select value={selectedFile} onValueChange={setSelectedFile}>
                   <SelectTrigger className="w-72"><SelectValue placeholder="选择日志文件" /></SelectTrigger>
                   <SelectContent>
@@ -583,7 +583,7 @@ export function SystemLogPage() {
                 </Select>
                 <Button variant="outline" className={btnCls} onClick={tail.refresh}><RefreshCw />刷新</Button>
               </div>
-              <pre className="max-h-[560px] min-h-96 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-200">
+              <pre className="h-0 min-h-96 flex-1 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-200">
                 {tail.loading ? "正在读取日志..." : (tail.error ?? tailText) || "请选择日志文件"}
               </pre>
             </div>

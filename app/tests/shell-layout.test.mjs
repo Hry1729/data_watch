@@ -19,7 +19,7 @@ test("application title bar and navigation shell use white light-theme surfaces"
     readFile(new URL("../src/index.css", import.meta.url), "utf8"),
   ]);
   assert.match(titleBarSource, /bg-white[^"]*dark:bg-card/);
-  assert.match(source, /bg-white[^"]*dark:bg-sidebar/);
+  assert.match(source, /flex h-full min-w-0 overflow-hidden bg-sidebar/);
   assert.ok(source.includes('sidebarCollapsed ? "w-16" : "w-60"'));
   assert.match(source, /readSidebarCollapsed/);
   assert.match(source, /<TopbarTools \/>/);

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { KeyRound, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -31,12 +31,24 @@ const badgeCls = "h-5 rounded-md px-2 font-mono text-[11px]";
 const switchCls = "data-[size=default]:h-5 data-[size=default]:w-[34px] data-checked:bg-brand [&_[data-slot=switch-thumb]]:!size-4";
 const iconBtnCls = "size-7 text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-3.5";
 const pagerBtnCls = "h-7 px-2.5 text-xs";
+// 每页条数按卡片可用高度计算（行高保持 44px），表头 40px
+const HEAD_H = 40;
+const ROW_H = 44;
+const MIN_PAGE_SIZE = 5;
+
+/** 根据表格滚动区高度计算一页能放下的行数（不改行高）。 */
+function fitPageSize(viewportHeight: number, headHeight = HEAD_H, rowHeight = ROW_H) {
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0 || rowHeight <= 0) return MIN_PAGE_SIZE;
+  return Math.max(MIN_PAGE_SIZE, Math.floor((viewportHeight - headHeight) / rowHeight));
+}
 
 export function UserManagementPage() {
   const { auth } = useAuth();
   const token = auth?.backendToken;
   const [draft, setDraft] = useState<UserQuery>({ status: "1" });
   const [query, setQuery] = useState<UserQuery>({ current: 1, size: 20, status: "1" });
+  const [sizeReady, setSizeReady] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<UserListItem | null>(null);
   const [form, setForm] = useState<UserPayload>(emptyForm);
@@ -44,12 +56,38 @@ export function UserManagementPage() {
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
 
   const loadUsers = useCallback((activeToken: string, signal: AbortSignal) => backendClient.userList(activeToken, query, signal), [query]);
-  const users = useBackendQuery(loadUsers);
+  const users = useBackendQuery(loadUsers, { enabled: sizeReady });
   const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleOptions(activeToken, signal), []);
   const roles = useBackendQuery(loadRoles);
   const currentPage = query.current ?? 1;
   const pageSize = query.size ?? 20;
   const totalPages = Math.max(1, Math.ceil((users.data?.total ?? 0) / pageSize));
+
+  // 卡片铺满内容区：按滚动区实际高度换算每页条数，窗口缩放时保持当前首条记录所在页
+  useLayoutEffect(() => {
+    const element = viewportRef.current;
+    if (!element) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const apply = () => {
+      const head = element.querySelector("thead")?.getBoundingClientRect().height || HEAD_H;
+      const row = element.querySelector<HTMLElement>("tbody tr[data-user-row]")?.getBoundingClientRect().height || ROW_H;
+      const next = fitPageSize(element.clientHeight, head, row);
+      setQuery((value) => {
+        const size = value.size ?? 20;
+        if (size === next) return value;
+        const firstIndex = ((value.current ?? 1) - 1) * size;
+        return { ...value, size: next, current: Math.floor(firstIndex / next) + 1 };
+      });
+      setSizeReady(true);
+    };
+    apply();
+    const observer = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(apply, 120);
+    });
+    observer.observe(element);
+    return () => { observer.disconnect(); if (timer) clearTimeout(timer); };
+  }, []);
 
   function openCreate() {
     setEditing(null);
@@ -105,7 +143,7 @@ export function UserManagementPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <Card className="flex max-h-full min-h-0 flex-col gap-0 py-0">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
         <div className="flex items-center gap-2 px-5 pt-5">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -135,7 +173,7 @@ export function UserManagementPage() {
         </div>
         <CardContent className="flex min-h-0 flex-1 flex-col px-5 pt-3 pb-5">
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border">
-            <div className="min-h-0 flex-1 overflow-auto">
+            <div ref={viewportRef} className="min-h-0 flex-1 overflow-auto">
               <Table className="text-[13px]">
                 <TableHeader className="sticky top-0 z-10 bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">
                   <TableRow className="hover:bg-transparent">
@@ -151,11 +189,11 @@ export function UserManagementPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {users.loading && Array.from({ length: 6 }, (_, index) => <TableRow key={index}><TableCell colSpan={9} className="h-11 px-3"><Skeleton className="h-7 w-full" /></TableCell></TableRow>)}
-                  {!users.loading && (users.data?.records ?? []).map((user, index) => {
+                  {(users.loading || !sizeReady) && Array.from({ length: Math.min(pageSize, 12) }, (_, index) => <TableRow key={index}><TableCell colSpan={9} className="h-11 px-3"><Skeleton className="h-7 w-full" /></TableCell></TableRow>)}
+                  {sizeReady && !users.loading && (users.data?.records ?? []).map((user, index) => {
                     const enabled = user.status === "1";
                     return (
-                      <TableRow key={user.id} className={enabled ? "" : "text-muted-foreground"}>
+                      <TableRow key={user.id} data-user-row className={enabled ? "" : "text-muted-foreground"}>
                         <TableCell className={`${tdCls} text-center text-muted-foreground`}>{(currentPage - 1) * pageSize + index + 1}</TableCell>
                         <TableCell className={tdCls}>
                           <div className="flex items-center gap-2.5">
@@ -189,7 +227,7 @@ export function UserManagementPage() {
                       </TableRow>
                     );
                   })}
-                  {!users.loading && !users.data?.records?.length && <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">{users.error ?? "暂无用户"}</TableCell></TableRow>}
+                  {sizeReady && !users.loading && !users.data?.records?.length && <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">{users.error ?? "暂无用户"}</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </div>

@@ -365,7 +365,7 @@ export default function DistributedNodesPage() {
           detail={`时钟异常 ${totals.clockAnomalies} · 配置未应用 ${totals.configPending} · 待审批 ${totals.pending}`}
         />
       </div>
-      <Card className="flex max-h-full min-h-0 flex-col gap-0 py-0">
+      <Card className="flex min-h-[360px] flex-1 flex-col gap-0 py-0">
         <div className="flex shrink-0 items-center gap-3 border-b px-5 pt-5 pb-3.5">
           <div className="min-w-0">
             <p className="text-sm leading-none font-semibold">节点列表</p>
@@ -391,7 +391,7 @@ export default function DistributedNodesPage() {
           {loading ? (
             <div className="space-y-2"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
           ) : (
-            <div className="overflow-hidden rounded-[10px] border">
+            <div className="min-h-full overflow-hidden rounded-[10px] border">
               <Table className="w-full table-fixed text-[13px]">
                 <colgroup><col className="w-[20%]" /><col className="w-[14%]" /><col className="w-[20%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[6%]" /><col className="w-[11%]" /><col className="w-[11%]" /></colgroup>
                 <TableHeader className="bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">

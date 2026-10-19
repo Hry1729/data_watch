@@ -115,7 +115,7 @@ export function MenuManagementPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
-      <Card className="flex max-h-full min-h-0 flex-col gap-0 py-0">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
         <div className="flex items-center justify-end gap-2 px-5 pt-5">
           <Button className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90 [&_svg:not([class*='size-'])]:size-3.5" onClick={() => openAdd()}><Plus data-icon="inline-start" />添加菜单</Button>
         </div>

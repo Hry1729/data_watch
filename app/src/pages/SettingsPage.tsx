@@ -868,7 +868,7 @@ export function SettingsPage() {
 
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
-    <div className="w-full space-y-4">
+    <div className="flex min-h-full w-full flex-col gap-4">
       {/* 加载失败 inline 提示（保存已禁用，需刷新重新加载） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
@@ -939,6 +939,7 @@ export function SettingsPage() {
       </Tabs>
 
       {showSaveCard && (
+        <div className="mt-auto">
         <SaveCard
           saving={saving}
           disabled={!canSave}
@@ -946,6 +947,7 @@ export function SettingsPage() {
           onSave={handleSave}
           onSaveAndRestart={handleSaveAndRestart}
         />
+        </div>
       )}
     </div>
   );

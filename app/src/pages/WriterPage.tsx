@@ -82,7 +82,7 @@ export function WriterPage() {
   const logToggle = <LogViewToggle value={logView} onChange={setLogView} />;
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4 overflow-hidden">
       {showError && (
         <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}

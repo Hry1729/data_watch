@@ -102,7 +102,17 @@ test("Workbench stat cards use a solid background and compact icon rows", () => 
   assert.match(source, /<Card size="sm" className="relative min-h-\[124px\] gap-0 p-4">/);
   assert.match(source, /<Icon className="size-\[15px\] shrink-0" \/>/);
   assert.match(source, /function OnlineRateGauge[\s\S]*const ticks = 24/);
+  // 其余三张 KPI 卡也有同尺寸小图，全部来自真实接口字段
+  assert.match(source, /<DeviceSplitRing online=\{dashboard\.overview\.onlineDeviceTotal\} offline=\{dashboard\.overview\.offlineDeviceTotal\} \/>/);
+  assert.match(source, /<CollectSparkline values=\{kpiSeries\.collect\} \/>/);
+  assert.match(source, /<AlarmMiniBars values=\{kpiSeries\.alarm\} \/>/);
+  assert.match(source, /backendClient\.dashboardTrend\(token, "last24h", signal\)/);
   assert.match(source, /text-\[28px\] font-semibold/);
+});
+
+test("Workbench fills the content height with the log card stretching to the bottom", () => {
+  assert.match(source, /<div className="flex min-h-full w-full flex-col gap-4">/);
+  assert.match(source, /data-dashboard-section="logs" className=\{`@container\/card flex-1/);
 });
 
 test("Workbench cards leave the surface to the shared Card component", () => {
