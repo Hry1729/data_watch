@@ -591,7 +591,7 @@ export default function RealtimeMonitorPage() {
         </div>
       </div>
         <CardContent className="p-3">
-          {coloredPoints.length ? <div className="overflow-x-auto"><div className="grid min-w-[720px] grid-cols-6 gap-2.5">{coloredPoints.map((point) => <LiveTile key={point.varSeq} point={point} previous={previousSample ? (previousSample[`v${point.varSeq}`] as number | null) ?? null : null} />)}</div></div> : <div className="flex h-[74px] flex-col items-center justify-center gap-1 text-[13px] text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
+          {coloredPoints.length ? <div className="overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]"><div className="grid grid-flow-col auto-cols-[minmax(180px,calc((100%-3.125rem)/6))] gap-2.5">{coloredPoints.map((point) => <LiveTile key={point.varSeq} point={point} previous={previousSample ? (previousSample[`v${point.varSeq}`] as number | null) ?? null : null} />)}</div></div> : <div className="flex h-[74px] flex-col items-center justify-center gap-1 text-[13px] text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
         </CardContent>
       </Card>
 
