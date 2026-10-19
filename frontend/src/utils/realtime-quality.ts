@@ -3,3 +3,9 @@
 export function isQualityAbnormal(quality: number | null | undefined): boolean {
   return typeof quality === 'number' && quality !== 0
 }
+
+/** 实时页既有文案：q=0 为 GOOD，非 0 为异常。没有质量码时不编造标签。 */
+export function qualityStatusLabel(quality: number | null | undefined): string | null {
+  if (typeof quality !== 'number' || !Number.isFinite(quality)) return null
+  return quality === 0 ? 'GOOD' : '异常'
+}
