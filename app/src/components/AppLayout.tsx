@@ -196,10 +196,10 @@ export function AppLayout() {
   );
 
   return (
-    <div className="flex h-full min-w-0 overflow-hidden bg-background">
+    <div className="flex h-full min-w-0 overflow-hidden bg-sidebar">
       <aside
         className={[
-          "flex shrink-0 flex-col bg-white text-sidebar-foreground transition-[width] duration-200 dark:bg-sidebar",
+          "flex shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200",
           sidebarCollapsed ? "w-16" : "w-60",
         ].join(" ")}
       >
