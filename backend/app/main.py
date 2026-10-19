@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, urlencode
 from turboapi import CORSMiddleware, JSONResponse, TurboAPI
 from turboapi.request_handler import DependencyResolver, HeaderParser, RequestBodyParser, ResponseHandler
 from turboapi.responses import Response as TurboResponse
+from turboapi.security import get_depends
 from turboapi.websockets import WebSocket as TurboWebSocket
 from turboapi.websockets import WebSocketDisconnect
 
@@ -501,9 +502,14 @@ class EnhancedASGITurboAPI(TurboAPI):
             param_value = self._coerce_scalar_value(param_value, annotation)
             call_args[param_name] = param_value
 
+        # M5：固定优先级。路径参数、request、请求头参数、依赖注入参数由服务端确定，
+        # 不允许被 query / body 中的同名键覆盖；dict 形式的请求体参数只从 body 取值。
+        dependency_names = {name for name, param in sig.parameters.items() if get_depends(param) is not None}
         for param_name, value in query_params.to_handler_dict().items():
-            if param_name not in call_args and param_name in sig.parameters:
+            if param_name not in call_args and param_name in sig.parameters and param_name not in dependency_names:
                 annotation = type_hints.get(param_name)
+                if annotation is dict or get_origin(annotation) is dict or param_name == "payload":
+                    continue
                 call_args[param_name] = self._coerce_scalar_value(value, annotation)
 
         header_values = HeaderParser.parse_headers(dict(headers), sig)
@@ -512,8 +518,11 @@ class EnhancedASGITurboAPI(TurboAPI):
                 call_args[param_name] = value
 
         if body:
+            protected_names = set(path_params) | set(header_values) | dependency_names | {"request"}
             body_values = RequestBodyParser.parse_json_body(body, sig)
-            call_args.update(body_values)
+            call_args.update(
+                {name: value for name, value in body_values.items() if name not in protected_names}
+            )
             raw_json_body = request.json()
             for param_name, param in sig.parameters.items():
                 if param_name in call_args or param_name == "request":
