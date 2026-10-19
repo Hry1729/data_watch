@@ -40,7 +40,7 @@ function displayHealth(
 }
 
 /* 三个库各一个黑色图标,右下角一个状态点表示连接情况,悬停（或键盘聚焦）显示库名与状态 */
-export function ConnectionStatusBar() {
+export function ConnectionStatusBar({ vertical = false }: { vertical?: boolean } = {}) {
   const { data, loading } = useConnectionHealth();
   const healths = SERVICES.map((service) => displayHealth(data?.[service.key], loading));
   const styles = healths.map((health) => STATUS_STYLE[health.status]);
@@ -50,7 +50,7 @@ export function ConnectionStatusBar() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <span className="inline-flex shrink-0 items-center" aria-label={`数据库状态：${summary}`}>
+      <span className={["inline-flex shrink-0 items-center", vertical ? "flex-col" : "gap-1"].join(" ")} aria-label={`数据库状态：${summary}`}>
         {SERVICES.map((service, index) => {
           const health = healths[index];
           const style = styles[index];
@@ -76,7 +76,7 @@ export function ConnectionStatusBar() {
                   />
                 </span>
               </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-56">
+              <TooltipContent side={vertical ? "right" : "top"} className="max-w-56">
                 <p className="font-medium">
                   {service.label} · {style.label}
                 </p>
