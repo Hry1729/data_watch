@@ -249,10 +249,16 @@ class AuthorizedSession:
 _SENSITIVE_FIELDS = {"password", "token", "refreshtoken", "secret", "authorization"}
 
 
+def _is_sensitive_key(key: Any) -> bool:
+    lowered = str(key).lower()
+    # oldPassword / newPassword / temporaryPassword 等任何含 password 的键都按敏感字段处理（M7）。
+    return lowered in _SENSITIVE_FIELDS or "password" in lowered
+
+
 def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            str(key): "***" if str(key).lower() in _SENSITIVE_FIELDS else _redact(item)
+            str(key): "***" if _is_sensitive_key(key) else _redact(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
