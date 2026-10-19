@@ -786,12 +786,29 @@ class StreamConsumer:
                 except Exception as exc:
                     if "NOGROUP" in str(exc):
                         # H1：stream key 被删/Redis 重启后 Ingest XADD 会重建 key 但没有消费组；
-                        # 任一 key 缺组整条 XREADGROUP 失败。按 id=0 重建以保留缺组期间的积压，然后立即重试。
+                        # 任一 key 缺组整条 XREADGROUP 失败。按 id=0 重建以保留缺组期间的积压。
+                        # 只有确认创建成功或组已存在（BUSYGROUP）才立即重试；READONLY、NOPERM、
+                        # 其他 ResponseError 以及连接/超时错误走下面的 1 秒退避，避免热循环或把 Writer 打崩。
                         logger.warning(
                             "[consumer] xreadgroup NOGROUP, recreating consumer group '%s': %s",
                             self._group_name, exc,
                         )
-                        await self._run_blocking(self._ensure_consumer_groups, list(streams_arg))
+                        try:
+                            ensured = await self._run_blocking(
+                                self._ensure_consumer_groups, list(streams_arg)
+                            )
+                        except (
+                            redis.exceptions.ConnectionError,
+                            redis.exceptions.TimeoutError,
+                        ) as group_exc:
+                            logger.error(
+                                "[consumer] xgroup_create connection error while recovering NOGROUP: %s",
+                                group_exc,
+                            )
+                            await asyncio.sleep(1)
+                            continue
+                        if not ensured:
+                            await asyncio.sleep(1)
                         continue
                     logger.error("[consumer] xreadgroup error: %s", exc)
                     await asyncio.sleep(1)
@@ -2143,8 +2160,14 @@ class StreamConsumer:
     # 设置辅助函数
     # ------------------------------------------------------------------
 
-    def _ensure_consumer_groups(self, stream_keys: list[str]) -> None:
-        """如果不存在，为所有流键创建消费者组（MKSTREAM）。"""
+    def _ensure_consumer_groups(self, stream_keys: list[str]) -> bool:
+        """如果不存在，为所有流键创建消费者组（MKSTREAM）。
+
+        返回 True 表示每个键都新建成功，或组已存在（BUSYGROUP）。
+        READONLY、NOPERM 及其他 ResponseError 只记录并返回 False，由调用方退避。
+        连接/超时错误不在这里吞掉，交给 NOGROUP 恢复路径捕获，避免逃出 run_loop。
+        """
+        ensured = True
         for sk in stream_keys:
             try:
                 self._r.xgroup_create(sk, self._group_name, id="0", mkstream=True)
@@ -2154,3 +2177,5 @@ class StreamConsumer:
                     pass  # already exists, fine
                 else:
                     logger.warning("[consumer] xgroup_create error for %s: %s", sk, exc)
+                    ensured = False
+        return ensured
