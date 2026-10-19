@@ -38,7 +38,7 @@ test("Workbench contains the approved operational dashboard regions", () => {
 });
 
 test("Workbench is composed from shadcn UI and navigates to detailed pages", () => {
-  for (const component of ["Badge", "Button", "Card", "ChartContainer", "Select", "Skeleton", "Table"]) {
+  for (const component of ["Badge", "Button", "Card", "ChartContainer", "Select", "Skeleton", "Table", "Tabs"]) {
     assert.match(source, new RegExp(`<${component}`));
   }
   assert.match(source, /navigate\("\/device\/devices"\)/);
@@ -53,7 +53,7 @@ test("Workbench removes the banner and page-local refresh action", () => {
 
 test("Workbench uses the approved responsive panel order", () => {
   assert.match(source, /grid gap-4 sm:grid-cols-2 lg:grid-cols-4/);
-  assert.match(source, /data-dashboard-row="overview-charts"[\s\S]*lg:grid-cols-3/);
+  assert.match(source, /data-dashboard-row="overview-charts"[\s\S]*lg:grid-cols-\[1\.15fr_1fr_1\.15fr\]/);
 
   const distributionIndex = source.indexOf('data-dashboard-section="distribution"');
   const healthIndex = source.indexOf('data-dashboard-section="health"');
@@ -70,8 +70,11 @@ test("Workbench uses the approved responsive panel order", () => {
 test("Workbench uses the requested shadcn chart variants", () => {
   assert.match(source, /<ComposedChart/);
   assert.equal(source.match(/<Area\b/g)?.length, 1);
-  assert.match(source, /<Bar[\s\S]*dataKey="onlineDeviceCount"/);
-  assert.match(source, /<Line[\s\S]*dataKey="alarmCount"/);
+  // 概念稿：采集量=渐变面积，在线设备=虚线，告警=斜纹小柱
+  assert.match(source, /<Area[\s\S]*?dataKey="collectCount"[\s\S]*?fill="url\(#wbFillCollect\)"/);
+  assert.match(source, /<Line[\s\S]*?dataKey="onlineDeviceCount"[\s\S]*?strokeDasharray="5 5"/);
+  assert.match(source, /<Bar[\s\S]*?dataKey="alarmCount"[\s\S]*?fill="url\(#wbAlarmHatch\)"/);
+  assert.match(source, /<LegendChip/);
   assert.doesNotMatch(source, /<AreaChart/);
   assert.match(source, /<Select value=\{dashboard\.trendRange\}/);
   assert.match(source, /data-dashboard-section="distribution"[\s\S]*?grid-cols-\[72px_minmax\(0,1fr\)_64px\]/);
@@ -96,8 +99,9 @@ test("Workbench uses the blue preset chart palette instead of neutral grays", ()
 
 test("Workbench stat cards use a solid background and compact icon rows", () => {
   assert.doesNotMatch(source, /bg-gradient-to-t|from-primary\/5/);
-  assert.match(source, /<Card size="sm" className="relative min-h-\[132px\]">/);
-  assert.match(source, /<Icon className="size-4" \/>/);
+  assert.match(source, /<Card size="sm" className="relative min-h-\[124px\] gap-0 p-4">/);
+  assert.match(source, /<Icon className="size-\[15px\] shrink-0" \/>/);
+  assert.match(source, /function OnlineRateGauge[\s\S]*const ticks = 24/);
   assert.match(source, /text-\[28px\] font-semibold/);
 });
 
@@ -106,12 +110,12 @@ test("Workbench cards leave the surface to the shared Card component", () => {
 });
 
 test("Workbench cards and controls follow the compact dashboard layout", () => {
-  assert.match(source, /min-h-\[132px\]/);
-  assert.match(source, /<CardAction>[\s\S]*<ToggleGroup/);
+  assert.match(source, /min-h-\[124px\]/);
+  assert.match(source, /<CardAction className="flex items-center gap-4">[\s\S]*<Tabs/);
   assert.match(source, /@\[767px\]\/card:flex/);
   assert.match(source, /@\[767px\]\/card:hidden/);
-  assert.match(source, /h-\[280px\] w-full aspect-auto/);
-  assert.equal(source.match(/min-h-\[220px\]/g)?.length, 2);
+  assert.match(source, /h-\[264px\] w-full aspect-auto/);
+  assert.equal(source.match(/min-h-\[220px\]/g)?.length, 1);
   assert.doesNotMatch(source, /\[260px\]/);
 });
 
@@ -121,10 +125,10 @@ test("Workbench renders six live pipeline stages with aggregated health colors",
   for (const label of ["采集", "上行", "汇聚", "Redis", "入库", "存储"]) {
     assert.match(source, new RegExp(`label: "${label}"`));
   }
-  assert.match(source, /grid min-h-\[36px\] grid-cols-\[16px_minmax\(0,1fr\)_auto_auto\]/);
-  assert.match(source, /absolute left-1\/2 top-1\/2 h-full w-px/);
-  assert.match(source, /stage\.status === "warning" \? "bg-warning-soft\/50"/);
-  assert.match(source, /dot: "bg-destructive"/);
+  assert.match(source, /grid min-h-\[34px\] flex-1 grid-cols-\[16px_minmax\(0,1fr\)_auto_52px\]/);
+  assert.match(source, /absolute left-\[15\.5px\] w-px bg-border/);
+  assert.match(source, /warning: \{ label: "需关注"[^}]*row: "bg-warning-soft\/70"/);
+  assert.match(source, /critical: \{ label: "异常", color: "var\(--destructive\)"/);
   assert.match(source, /<PipelineTimeline stages=\{pipeline\.data\.stages\} \/>/);
   assert.doesNotMatch(source, /data-dashboard-section="risk"|<CardTitle>风险设备<\/CardTitle>/);
   assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth\(token,\s*signal\)/);
@@ -143,25 +147,19 @@ test("Workbench keeps a gray canvas and prevents smoothed trends from crossing z
   const rootTheme = themeSource.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
   assert.match(rootTheme, /--background:\s*#F7F9FC;/i);
   assert.equal(source.match(/type="monotone"/g)?.length, 2);
-  assert.equal(source.match(/domain=\{\[0, "auto"\]\}/g)?.length, 2);
+  assert.equal(source.match(/domain=\{\[0, \(max: number\)/g)?.length, 3);
   assert.doesNotMatch(source, /type="natural"/);
 });
 
-test("Workbench overview charts use stacked bars and the interactive Bklit donut", () => {
+test("Workbench overview charts use hatched capsule bars and the concentric ring", () => {
   assert.match(source, /data-dashboard-section="distribution"[\s\S]*?grid-cols-\[72px_minmax\(0,1fr\)_64px\]/);
   assert.match(source, /data-dashboard-section="distribution"[\s\S]*?repeating-linear-gradient/);
-  assert.match(source, /from "@\/components\/charts\/pie-chart"/);
   assert.match(source, /const \[hoveredIndex, setHoveredIndex\] = useState<number \| null>\(null\)/);
-  assert.match(source, /data-dashboard-section="health"[\s\S]*<PieChart[\s\S]*data=\{healthData\}[\s\S]*hoveredIndex=\{hoveredIndex\}[\s\S]*innerRadius=\{45\}[\s\S]*onHoverChange=\{setHoveredIndex\}[\s\S]*size=\{150\}/);
-  assert.match(source, /healthData\.map\(\(_, index\) => <PieSlice index=\{index\} key=\{index\} \/>\)/);
-  assert.match(source, /<PieCenter defaultLabel="设备" \/>/);
-  assert.match(source, /<Legend[\s\S]*hoveredIndex=\{hoveredIndex\}[\s\S]*items=\{healthLegendItems\}[\s\S]*onHoverChange=\{setHoveredIndex\}/);
-  assert.match(source, /<LegendItemComponent[^>]*>[\s\S]*<LegendMarker \/>[\s\S]*<LegendLabel \/>/);
-  assert.match(source, /className="flex w-full max-w-lg flex-col items-center justify-center gap-5"/);
-  assert.match(source, /className="w-full max-w-sm flex-row flex-wrap justify-center gap-x-4 gap-y-1"/);
-  assert.doesNotMatch(source, /gap-8 sm:flex-row/);
-  for (const token of ["chart-2", "chart-4", "chart-5"]) {
-    assert.match(source, new RegExp(`color: "var\\(--${token}\\)"`));
+  assert.match(source, /function HealthRings[\s\S]*const r = 72 - index \* 16/);
+  assert.match(source, /data-dashboard-section="health"[\s\S]*<HealthRings data=\{healthData\} total=\{healthTotal\} hoveredIndex=\{hoveredIndex\} \/>/);
+  assert.match(source, /onMouseEnter=\{\(\) => setHoveredIndex\(index\)\}/);
+  for (const token of ["brand", "warning", "muted-foreground"]) {
+    assert.match(source, new RegExp(`color: "var\\(--${token}\\)" \\}`));
   }
 });
 
