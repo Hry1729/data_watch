@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, KeyRound, Pencil, Plus, Trash2 } from "lucid
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,15 +105,12 @@ export function MenuManagementPage() {
   function toggleExpanded(id: number) { setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader>
-          <CardTitle>菜单列表</CardTitle>
-          <CardAction>
-            <Button onClick={() => openAdd()}><Plus className="size-4" />添加菜单</Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
+        <div className="flex flex-wrap items-center justify-end gap-2 px-4 pt-4">
+          <Button size="sm" onClick={() => openAdd()}><Plus data-icon="inline-start" />添加菜单</Button>
+        </div>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           {/* 由外层统一横纵滚动，避免 Table 内层 overflow 把底栏滚到表格最底部 */}
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:overflow-visible">
             <Table className="min-w-[1280px]">
