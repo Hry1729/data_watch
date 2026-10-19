@@ -155,7 +155,7 @@ test("Workbench renders six live pipeline stages with aggregated health colors",
 
 test("Workbench keeps a gray canvas and prevents smoothed trends from crossing zero", () => {
   const rootTheme = themeSource.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-  assert.match(rootTheme, /--background:\s*#F7F9FC;/i);
+  assert.match(rootTheme, /--background:\s*#F5F8FC;/i);
   assert.equal(source.match(/type="monotone"/g)?.length, 2);
   assert.equal(source.match(/domain=\{\[0, \(max: number\)/g)?.length, 3);
   assert.doesNotMatch(source, /type="natural"/);
