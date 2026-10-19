@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Activity, Clock, Cpu, MemoryStick, Network } from "lucide-react";
 import { LogPanel } from "@/components/LogPanel";
-import { formatUptime } from "@/components/ModuleSummaryCard";
+import { MonitorKpiCard, formatCount } from "@/components/MonitorKpiCard";
+import { UptimeValue } from "@/components/ModuleSummaryCard";
 import { TrendChart } from "@/components/TrendChart";
 import { useModuleStatus } from "@/hooks/useModuleStatus";
 import {
@@ -9,33 +10,6 @@ import {
   useModuleRates,
 } from "@/hooks/useModuleRates";
 import { useWebSocketLog } from "@/hooks/useWebSocketLog";
-
-function MetricCard({
-  label,
-  value,
-  unit,
-  detail,
-  warning = false,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  detail: string;
-  warning?: boolean;
-}) {
-  return (
-    <Card size="sm">
-      <CardContent className="px-4 py-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className={`mt-2 truncate text-2xl font-semibold leading-none tabular-nums ${warning ? "text-destructive" : "text-foreground"}`}>
-          {value}
-          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
-        </p>
-        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
-      </CardContent>
-    </Card>
-  );
-}
 
 function processLabel(status: string): string {
   if (status === "running") return "运行中";
@@ -58,34 +32,39 @@ export function IngestPage() {
       {showError && <p className="px-1 text-xs text-destructive" role="alert">{error}</p>}
 
       <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
-        <MetricCard
+        <MonitorKpiCard
           label="运行状态"
-          value={processLabel(processStatus)}
-          detail="Ingest 进程状态"
-          warning={processStatus === "crashed"}
+          icon={Activity}
+          value={data ? processLabel(processStatus) : "—"}
+          detail={data?.pid != null ? `PID ${data.pid}` : "Ingest 进程状态"}
+          tone={processStatus === "running" ? "success" : processStatus === "crashed" ? "destructive" : "normal"}
         />
-        <MetricCard
+        <MonitorKpiCard
           label="汇聚入队"
-          value={ingestRate?.current != null ? String(ingestRate.current) : "—"}
-          unit={ingestRate?.unit}
+          icon={Network}
+          value={formatCount(ingestRate?.current)}
+          unit={ingestRate?.unit ?? "批次/min"}
           detail="写入 Redis Stream"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="运行时长"
-          value={data ? formatUptime(data.uptime_seconds) : "—"}
-          detail="自本次启动"
+          icon={Clock}
+          value={data ? <UptimeValue seconds={data.uptime_seconds} /> : "—"}
+          detail="自上次启动"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="内存使用"
+          icon={MemoryStick}
           value={data ? data.memory_mb.toFixed(1) : "—"}
           unit="MB"
-          detail="当前常驻内存"
+          detail="Ingest 进程内存"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="CPU 使用率"
+          icon={Cpu}
           value={data ? data.cpu_percent.toFixed(1) : "—"}
           unit="%"
-          detail="整机 CPU 占比"
+          detail="Ingest 进程 CPU"
         />
       </div>
 
@@ -93,7 +72,9 @@ export function IngestPage() {
         <div className="min-h-[320px] overflow-hidden p-px lg:col-span-3 lg:min-h-0">
           <TrendChart
             fillHeight
+            showStats
             title="汇聚入队趋势"
+            description="边缘上传批次经校验后写入 Redis Stream 的速率"
             unit={ingestRate?.unit ?? "批次/min"}
             state={rateTrendState(ingestRate, ratesLoading, ratesError)}
             data={ingestRate?.series ?? []}
