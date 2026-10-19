@@ -315,6 +315,7 @@ _COLLECTOR_ENV = {
 
 _WRITER_ENV = {
     **_COLLECTOR_ENV,
+    "DATAWATCH_REDIS_DB": "0", "DATAWATCH_REDIS_STREAM_SHARD_COUNT": "4",
     "DATAWATCH_TDENGINE_HOST": "td", "DATAWATCH_TDENGINE_PORT": "6041",
     "DATAWATCH_TDENGINE_USER": "root", "DATAWATCH_TDENGINE_DATABASE": "device_data",
     "DATAWATCH_TDENGINE_PASSWORD": "tpw",
@@ -354,7 +355,8 @@ def test_env_emits_empty_strings_for_missing_fields(monkeypatch):
         assert env[empty_key] == ""
 
 
-async def test_collector_start_uses_empty_env_when_password_decrypt_fails(tmp_path, monkeypatch):
+async def test_collector_start_refuses_when_password_decrypt_fails(tmp_path, monkeypatch, caplog):
+    """D6：凭据构造失败不得吞成空 env 启动（子进程会拿空密码崩溃循环），要记日志并拒绝启动。"""
     monkeypatch.setattr("app.routers.admin.load_config", lambda: {
         "mysql": {"password_enc": "encrypted"}
     })
@@ -366,8 +368,44 @@ async def test_collector_start_uses_empty_env_when_password_decrypt_fails(tmp_pa
     pm = FakePM()
     settings = _existing_settings(tmp_path)
     sm = FakeSM(port_mapping_path=None, settings_path=settings)
-    await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
-    assert pm.start_envs == [{}]
+    with caplog.at_level("ERROR", logger="app.routers.admin"):
+        with pytest.raises(HTTPException) as exc_info:
+            await start_process("collector", _req(pm, sidecar_manager=sm), _user="u")
+    assert exc_info.value.status_code == 400
+    assert "collector" in exc_info.value.detail
+    assert pm.start_calls == []
+    assert any(r.exc_info for r in caplog.records)
+
+
+async def test_writer_start_and_restart_refuse_when_config_unreadable(monkeypatch, caplog):
+    def broken_config():
+        raise ValueError("config.toml corrupt")
+
+    monkeypatch.setattr("app.routers.admin.load_config", broken_config)
+    pm = FakePM()
+    with caplog.at_level("ERROR", logger="app.routers.admin"):
+        with pytest.raises(HTTPException) as start_exc:
+            await start_process("writer", _req(pm), _user="u")
+        with pytest.raises(HTTPException) as restart_exc:
+            await restart_process("writer", _req(pm), _user="u")
+    assert start_exc.value.status_code == 400
+    assert restart_exc.value.status_code == 400
+    assert pm.start_calls == [] and pm.restart_calls == []
+    assert any(r.exc_info for r in caplog.records)
+
+
+def test_writer_env_raises_process_manager_error(monkeypatch):
+    from app.routers import admin
+    from app.services.process_manager import ProcessManagerError
+
+    monkeypatch.setattr(admin, "load_config", lambda: {"mysql": {"password_enc": "x"}})
+
+    def fail_decrypt(_value):
+        raise RuntimeError("dpapi unavailable")
+
+    monkeypatch.setattr(admin, "dpapi_decrypt", fail_decrypt)
+    with pytest.raises(ProcessManagerError, match="writer"):
+        admin._writer_env()
 
 
 async def test_writer_does_not_touch_sidecar_manager(monkeypatch):
