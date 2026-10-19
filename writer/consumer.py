@@ -784,6 +784,15 @@ class StreamConsumer:
                         ),
                     )
                 except Exception as exc:
+                    if "NOGROUP" in str(exc):
+                        # H1：stream key 被删/Redis 重启后 Ingest XADD 会重建 key 但没有消费组；
+                        # 任一 key 缺组整条 XREADGROUP 失败。按 id=0 重建以保留缺组期间的积压，然后立即重试。
+                        logger.warning(
+                            "[consumer] xreadgroup NOGROUP, recreating consumer group '%s': %s",
+                            self._group_name, exc,
+                        )
+                        await self._run_blocking(self._ensure_consumer_groups, list(streams_arg))
+                        continue
                     logger.error("[consumer] xreadgroup error: %s", exc)
                     await asyncio.sleep(1)
                     continue
