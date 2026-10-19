@@ -10,7 +10,7 @@ from app.core.config import initialize_config_permissions, data_root, install_ro
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
-from app.routers.admin import _collector_env, _edge_storage_url, _storage_env, _require_driver_idle, start_process
+from app.routers.admin import _collector_env, _edge_storage_url, _storage_env, start_process
 from app.services.driver_installer import DriverInstaller
 from app.services.edge_sync import EdgeSyncService
 from app.services.edge_storage_client import EdgeStorageClient
@@ -97,7 +97,6 @@ async def _recover_edge_storage(app: FastAPI) -> None:
                 stable_since = None
                 delay = min(60.0, delay * 2)
                 if status in {"crashed", "stopped"}:
-                    _require_driver_idle("storage", Request({"type": "http", "app": app}))
                     await pm.restart("storage", env=_storage_env())
                 await asyncio.to_thread(app.state.edge_storage.wait_ready)
                 app.state._storage_recovery_pending = False
@@ -110,10 +109,25 @@ async def _recover_edge_storage(app: FastAPI) -> None:
         except asyncio.CancelledError:
             raise
         except HTTPException as exc:
-            if exc.status_code != 409:
-                logger.error("Cannot recover Edge Storage: %s", exc.detail)
+            logger.error("Cannot recover Edge Storage: %s", exc.detail)
         except Exception:
             logger.exception("Failed to restart crashed Edge Storage")
+
+
+def _driver_gate_status(app: FastAPI) -> object:
+    installer = getattr(app.state, "driver_installer", None)
+    if installer is None:
+        return None
+    try:
+        status = installer.recovery_status()
+        return {
+            "locked": installer._lock.locked(),
+            "blocked": status.get("blocked"),
+            "reasons": status.get("reasons"),
+            "incomplete": len(status.get("incomplete") or []),
+        }
+    except Exception as exc:
+        return f"unknown ({exc})"
 
 
 async def _recover_processes(app: FastAPI, interval: float = 2.0) -> None:
@@ -160,7 +174,13 @@ async def _recover_processes(app: FastAPI, interval: float = 2.0) -> None:
                 except asyncio.CancelledError:
                     raise
                 except HTTPException as exc:
-                    if exc.status_code != 409:
+                    if exc.status_code == 409:
+                        # D4：被驱动门禁拦下时必须留痕，否则界面只见 409、日志一片空白。
+                        logger.warning(
+                            "Recovery of module %s blocked: %s; driver recovery: %s",
+                            name, exc.detail, _driver_gate_status(app),
+                        )
+                    else:
                         logger.error("Cannot recover module %s: %s", name, exc.detail)
                 except Exception:
                     logger.exception("Cannot recover module %s", name)
