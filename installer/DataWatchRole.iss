@@ -110,9 +110,14 @@ const
 function WV2Present(RootKey: Integer; SubKey: String): Boolean;
 var
   Value: String;
+  DotPos: Integer;
 begin
-  Result := RegQueryStringValue(RootKey, SubKey, 'pv', Value) and
-    (Value <> '') and (Value <> '0.0.0.0');
+  Result := False;
+  if not RegQueryStringValue(RootKey, SubKey, 'pv', Value) then Exit;
+  DotPos := Pos('.', Value);
+  if DotPos <= 1 then Exit;
+  { Tailwind 4 requires Chromium 111+; an installed 109 runtime is not sufficient. }
+  Result := StrToIntDef(Copy(Value, 1, DotPos - 1), 0) >= 111;
 end;
 
 function NeedsWebView2: Boolean;

@@ -85,9 +85,16 @@ const
   WV2_GUID = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
 
 function WV2Present(RootKey: Integer; SubKey: String): Boolean;
-var v: String;
+var
+  v: String;
+  DotPos: Integer;
 begin
-  Result := RegQueryStringValue(RootKey, SubKey, 'pv', v) and (v <> '') and (v <> '0.0.0.0');
+  Result := False;
+  if not RegQueryStringValue(RootKey, SubKey, 'pv', v) then Exit;
+  DotPos := Pos('.', v);
+  if DotPos <= 1 then Exit;
+  { Tailwind 4 requires Chromium 111+; an installed 109 runtime is not sufficient. }
+  Result := StrToIntDef(Copy(v, 1, DotPos - 1), 0) >= 111;
 end;
 
 function IsWebView2Installed: Boolean;
