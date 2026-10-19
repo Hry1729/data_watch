@@ -5,6 +5,7 @@ import { Copy, Minus, Square, X } from "lucide-react";
 import appIconUrl from "../../src-tauri/icons/128x128.png";
 
 export const TITLEBAR_SLOT_ID = "dw-titlebar-slot";
+export const TITLEBAR_STATUS_SLOT_ID = "dw-titlebar-status-slot";
 
 const appWindow = isTauri() ? getCurrentWindow() : null;
 
@@ -37,14 +38,15 @@ export function TitleBar() {
       <div data-tauri-drag-region className="flex items-center gap-2">
         <img
           src={appIconUrl}
-          alt=""
+          alt="Data Watch"
           className="h-4 w-4 shrink-0 rounded-sm object-cover"
         />
-        <span className="font-medium">Data Watch Console</span>
         {/* AppLayout 通过 portal 把「折叠导航栏 / 刷新」按钮放进这里 */}
         <div id={TITLEBAR_SLOT_ID} className="ml-2 flex items-center gap-0.5" />
       </div>
-      <div className="flex h-full">
+      <div className="flex h-full items-center">
+        {/* AppLayout 通过 portal 把数据库连接状态放进这里 */}
+        <div id={TITLEBAR_STATUS_SLOT_ID} className="mr-2 flex items-center" />
         <button
           type="button"
           disabled={!appWindow}
