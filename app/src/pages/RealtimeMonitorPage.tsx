@@ -26,7 +26,7 @@ import { BUILD_ROLE } from "@/config/build-role";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChartContainer,
@@ -50,6 +50,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
@@ -449,8 +450,9 @@ export default function RealtimeMonitorPage() {
   const hasData = samples.length > 0;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden">
+      <Card className="shrink-0 gap-0 py-0">
+      <div className="flex flex-wrap items-center gap-2 px-3 pt-3">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">当前设备</span>
           <Button variant="outline" className="max-w-56" onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span></Button>
@@ -482,6 +484,10 @@ export default function RealtimeMonitorPage() {
           </Select>
         </div>
       </div>
+        <CardContent className="p-2 pt-2">
+          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point, index) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><div className="flex items-start justify-between gap-2"><p className="truncate text-[11px] font-medium">{point.pointName}</p><span className="mt-0.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /></div><p className={`mt-0.5 font-mono text-base font-semibold ${point.quality == null || point.quality === 0 ? "text-foreground" : "text-destructive"}`}>{formatValue(point.value)}</p><p className="truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress} · {point.dataType || "--"}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
+        </CardContent>
+      </Card>
 
       {running && (realtimeSocket.source === "local" || !socketConnected || realtimeSocket.deviceOffline) && (
         <Alert variant={realtimeSocket.source === "local" ? "default" : "destructive"}>
@@ -490,17 +496,9 @@ export default function RealtimeMonitorPage() {
         </Alert>
       )}
 
-      <Card className="gap-0 py-0">
-        <CardContent className="p-2">
-          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point, index) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><div className="flex items-start justify-between gap-2"><p className="truncate text-[11px] font-medium">{point.pointName}</p><span className="mt-0.5 size-2 shrink-0 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }} /></div><p className={`mt-0.5 font-mono text-base font-semibold ${point.quality == null || point.quality === 0 ? "text-foreground" : "text-destructive"}`}>{formatValue(point.value)}</p><p className="truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress} · {point.dataType || "--"}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
-        </CardContent>
-      </Card>
-
       <Card ref={chartCardRef} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0">
-        <CardHeader className="!flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2.5">
-          <CardTitle>点位实时趋势</CardTitle>
-          <CardAction>
-            <div className="flex items-center gap-1">
+        <CardHeader className="!flex shrink-0 items-center justify-end gap-3 border-b px-4 py-2.5">
+            <div className="flex items-center gap-2">
               <Select value={String(viewWindowMs)} onValueChange={(value) => setViewWindowMs(Number(value))}>
                 <SelectTrigger className="w-24" aria-label="最大显示跨度" title="最大显示跨度"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -509,11 +507,14 @@ export default function RealtimeMonitorPage() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              {(["line", "area", "status"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : "状态图"}</Button>)}
+              <ToggleGroup type="single" value={chartType} onValueChange={(value) => { if (value) setChartType(value as ChartType); }} spacing={1} className="rounded-full bg-muted p-0.5">
+                <ToggleGroupItem value="line" className="h-6 rounded-full px-2.5 text-xs text-muted-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">折线图</ToggleGroupItem>
+                <ToggleGroupItem value="area" className="h-6 rounded-full px-2.5 text-xs text-muted-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">面积图</ToggleGroupItem>
+                <ToggleGroupItem value="status" className="h-6 rounded-full px-2.5 text-xs text-muted-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">状态图</ToggleGroupItem>
+              </ToggleGroup>
               <Button size="icon" variant="ghost" title="全屏" aria-label="全屏" onClick={() => void toggleFullscreen()}><Expand className="size-4" /></Button>
               <Button size="icon" variant="ghost" title="图表设置" aria-label="图表设置" onClick={() => setSettingsOpen(true)}><Settings2 className="size-4" /></Button>
             </div>
-          </CardAction>
         </CardHeader>
         <CardContent className="min-h-0 flex-1 p-3">
           {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button size="sm" onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : chartType !== "status" && separateBoolChart && numericPoints.length > 0 && boolPoints.length > 0 ? <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_96px] gap-2"><TrendChart title="数值型点位" points={numericPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} className="h-full" /><TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} compact className="h-full" /></div> : chartType !== "status" && separateBoolChart && boolPoints.length > 0 ? <TrendChart title="Bool 型点位" points={boolPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} compact className="h-24" /> : <TrendChart points={selectedPointItems} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} className="h-full" />}
