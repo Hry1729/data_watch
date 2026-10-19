@@ -61,20 +61,15 @@ _REQUIRED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# H3：流发现与解码（mysql_mapper）、Ingest 校验同源，读永久映射 point_storage_mapping；
+# 点位禁用/软删后映射仍在，其流中已被 Ingest ACK 的积压仍须有人消费。
 _STREAM_SCOPE_SQL = """
-SELECT DISTINCT LOWER(dt.type_code) AS device_type, dpg.group_code AS group_code
-FROM device_variable dv
-JOIN device_point_group dpg ON dv.point_group_id = dpg.id
-JOIN device d ON dpg.device_id = d.id
-JOIN device_type dt ON dt.id = d.type_id
-WHERE dv.deleted = 0
-  AND dv.enable = 1
-  AND dv.td_column_name IS NOT NULL
-  AND dv.td_column_name <> ''
-  AND dt.type_code IS NOT NULL
-  AND dt.type_code <> ''
-  AND dpg.group_code IS NOT NULL
-  AND dpg.group_code <> ''
+SELECT DISTINCT LOWER(device_type_code) AS device_type, group_code
+FROM point_storage_mapping
+WHERE device_type_code IS NOT NULL
+  AND device_type_code <> ''
+  AND group_code IS NOT NULL
+  AND group_code <> ''
 ORDER BY device_type, group_code
 """
 
@@ -98,10 +93,11 @@ def _validate_config(config: dict) -> None:
 # 生产凭据单一来源为 Agent 的 DPAPI config.toml；settings.toml 仅作 dev 回退与运行参数。
 _ENV_CONN_FIELDS: dict[str, tuple[str, ...]] = {
     "mysql": ("host", "port", "user", "database", "password"),
-    "redis": ("host", "port", "password"),
+    # db / stream_shard_count：Agent 与 Ingest 共用同一配置来源下发（H3 / Edge 16）。
+    "redis": ("host", "port", "password", "db", "stream_shard_count"),
     "tdengine": ("host", "port", "user", "database", "password"),
 }
-_ENV_INT_FIELDS = {"port"}
+_ENV_INT_FIELDS = {"port", "db", "stream_shard_count"}
 
 
 def _apply_env_overrides(config: dict) -> None:
