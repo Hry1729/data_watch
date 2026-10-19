@@ -10,6 +10,7 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { RatePoint, TrendChartState } from "@/types";
 import { useChartColors } from "@/hooks/useChartColors";
 
@@ -21,6 +22,13 @@ const RANGE_OPTIONS = [
 
 type RangeMinutes = (typeof RANGE_OPTIONS)[number]["minutes"];
 
+export interface TrendChartSeries {
+  label: string;
+  unit: string;
+  data: RatePoint[];
+  color?: string;
+}
+
 export interface TrendChartProps {
   title: string;
   /** 单位标签，如 "批次/min" 或 "rows/min" */
@@ -31,12 +39,19 @@ export interface TrendChartProps {
   data?: RatePoint[];
   /** 当前值（速率卡同源）；null 时显示 -- */
   current?: number | null;
+  /** 主序列图例名；默认“速率” */
+  seriesLabel?: string;
+  /** 可选的第二序列（双轴趋势，控制台使用） */
+  secondary?: TrendChartSeries;
   /** 填充父容器高度；仅用于监控页的自适应布局。 */
   fillHeight?: boolean;
 }
 
 interface TooltipPayloadItem {
   value?: number;
+  dataKey?: string;
+  name?: string;
+  color?: string;
 }
 
 function parseTimeSeconds(value: string): number | null {
@@ -69,11 +84,13 @@ function ChartTooltipCard({
   payload,
   label,
   unit,
+  secondaryUnit,
 }: {
   active?: boolean;
   payload?: readonly TooltipPayloadItem[];
   label?: string;
   unit: string;
+  secondaryUnit?: string;
 }) {
   const c = useChartColors();
   if (!active || !payload || payload.length === 0) return null;
@@ -88,13 +105,22 @@ function ChartTooltipCard({
       }}
     >
       <div className="text-xs font-semibold mb-1" style={{ color: c.text }}>{label}</div>
-      <div className="flex items-center gap-2 text-xs">
-        <span style={{ width: 8, height: 8, background: c.line, borderRadius: 2 }} />
-        <span style={{ color: c.muted }}>速率</span>
-        <span className="ml-2 font-semibold" style={{ color: c.text }}>
-          {payload[0].value} {unit}
-        </span>
-      </div>
+      {payload.map((item) => (
+        <div key={item.dataKey} className="flex items-center gap-2 text-xs">
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              background: item.color ?? c.line,
+              borderRadius: 2,
+            }}
+          />
+          <span style={{ color: c.muted }}>{item.name ?? "速率"}</span>
+          <span className="ml-2 font-semibold" style={{ color: c.text }}>
+            {item.value} {item.dataKey === "v2" ? secondaryUnit ?? unit : unit}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -105,17 +131,37 @@ export function TrendChart({
   state,
   data = [],
   current,
+  seriesLabel = "速率",
+  secondary,
   fillHeight = false,
 }: TrendChartProps) {
   const gradientId = `trend-grad-${useId().replace(/:/g, "")}`;
+  const secondaryGradientId = `trend-grad-2-${useId().replace(/:/g, "")}`;
   const [rangeMinutes, setRangeMinutes] = useState<RangeMinutes>(10);
   const c = useChartColors();
   const visibleData = useMemo(
     () => filterByRange(data, rangeMinutes),
     [data, rangeMinutes]
   );
+  const secondaryMap = useMemo(
+    () => new Map((secondary?.data ?? []).map((point) => [point.t, point.v])),
+    [secondary?.data]
+  );
+  const chartData = useMemo(
+    () =>
+      visibleData.map((point) => ({
+        t: point.t,
+        v: point.v,
+        v2: secondaryMap.get(point.t) ?? null,
+      })),
+    [visibleData, secondaryMap]
+  );
   const displayCurrent =
     visibleData.length > 0 ? visibleData[visibleData.length - 1].v : current;
+  const displaySecondaryCurrent =
+    secondary && secondary.data.length > 0
+      ? secondary.data[secondary.data.length - 1].v
+      : null;
   const hasSeries = state === "ready" && visibleData.length >= 2;
 
   return (
@@ -126,43 +172,54 @@ export function TrendChart({
       ].join(" ")}
     >
       <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <CardTitle>{title}</CardTitle>
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            <div className="text-right">
-              {state === "ready" && displayCurrent != null ? (
-                <span className="text-sm font-semibold text-foreground">
-                  {displayCurrent} <span className="font-normal text-muted-foreground">{unit}</span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-5 gap-y-1">
+            <CardTitle>{title}</CardTitle>
+            {secondary ? (
+              <>
+                <span className="inline-flex items-baseline gap-1.5 text-xs text-muted-foreground">
+                  <span className="size-2 self-center rounded-full bg-brand" />
+                  {seriesLabel}
+                  <b className="ml-0.5 text-sm font-semibold text-foreground tabular-nums">
+                    {state === "ready" && displayCurrent != null ? displayCurrent : "—"}
+                  </b>
+                  <span className="-ml-1 text-[11px]">{unit}</span>
                 </span>
-              ) : (
-                <span className="text-sm font-semibold text-muted-foreground/70">-- {unit}</span>
-              )}
-            </div>
-            <div
-              className="flex overflow-hidden rounded-lg"
-              style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-            >
-              {RANGE_OPTIONS.map((option, index) => {
-                const active = option.minutes === rangeMinutes;
-                return (
-                  <button
-                    key={option.minutes}
-                    type="button"
-                    onClick={() => setRangeMinutes(option.minutes)}
-                    className="h-8 px-3 text-xs transition-colors"
-                    style={{
-                      borderLeft: index === 0 ? "none" : "1px solid var(--border)",
-                      background: active ? "var(--accent)" : "var(--card)",
-                      color: active ? "var(--foreground)" : "var(--muted-foreground)",
-                      fontWeight: active ? 600 : 500,
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                );
-              })}
-            </div>
+                <span className="inline-flex items-baseline gap-1.5 text-xs text-muted-foreground">
+                  <span className="size-2 self-center rounded-full bg-success" />
+                  {secondary.label}
+                  <b className="ml-0.5 text-sm font-semibold text-foreground tabular-nums">
+                    {displaySecondaryCurrent ?? "—"}
+                  </b>
+                  <span className="-ml-1 text-[11px]">{secondary.unit}</span>
+                </span>
+              </>
+            ) : (
+              <span className="text-sm font-semibold text-foreground">
+                {state === "ready" && displayCurrent != null ? `${displayCurrent} ` : "-- "}
+                <span className="font-normal text-muted-foreground">{unit}</span>
+              </span>
+            )}
           </div>
+          <ToggleGroup
+            type="single"
+            value={String(rangeMinutes)}
+            onValueChange={(value) => {
+              if (value) setRangeMinutes(Number(value) as RangeMinutes);
+            }}
+            spacing={1}
+            className="rounded-full bg-muted p-0.5"
+          >
+            {RANGE_OPTIONS.map((option) => (
+              <ToggleGroupItem
+                key={option.minutes}
+                value={String(option.minutes)}
+                className="h-6 rounded-full px-2.5 text-xs text-muted-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm"
+              >
+                {option.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
       </CardHeader>
 
@@ -179,11 +236,15 @@ export function TrendChart({
         >
           {hasSeries ? (
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={visibleData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+              <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <defs>
                   <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor={c.line} stopOpacity={0.3} />
                     <stop offset="95%" stopColor={c.line} stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id={secondaryGradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={secondary?.color ?? "var(--success)"} stopOpacity={0.24} />
+                    <stop offset="95%" stopColor={secondary?.color ?? "var(--success)"} stopOpacity={0.02} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid vertical={false} stroke={c.grid} />
@@ -196,7 +257,8 @@ export function TrendChart({
                   tick={{ fontSize: 11, fill: c.axis }}
                   tickFormatter={(t) => String(t).slice(0, 5)}
                 />
-                <YAxis hide domain={[0, "auto"]} />
+                <YAxis yAxisId="left" hide domain={[0, "auto"]} />
+                {secondary && <YAxis yAxisId="right" hide domain={[0, "auto"]} />}
                 <Tooltip
                   cursor={{ stroke: c.cursor, strokeDasharray: "3 3" }}
                   content={(props) => (
@@ -205,11 +267,14 @@ export function TrendChart({
                       payload={props.payload as unknown as readonly TooltipPayloadItem[] | undefined}
                       label={props.label as string | undefined}
                       unit={unit}
+                      secondaryUnit={secondary?.unit}
                     />
                   )}
                 />
                 <Area
+                  yAxisId="left"
                   dataKey="v"
+                  name={seriesLabel}
                   type="monotone"
                   stroke={c.line}
                   strokeWidth={2}
@@ -218,6 +283,21 @@ export function TrendChart({
                   activeDot={{ r: 4, fill: c.line }}
                   isAnimationActive={false}
                 />
+                {secondary && (
+                  <Area
+                    yAxisId="right"
+                    dataKey="v2"
+                    name={secondary.label}
+                    type="monotone"
+                    stroke={secondary.color ?? "var(--success)"}
+                    strokeWidth={2}
+                    fill={`url(#${secondaryGradientId})`}
+                    dot={false}
+                    activeDot={{ r: 4, fill: secondary.color ?? "var(--success)" }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                )}
               </AreaChart>
             </ResponsiveContainer>
           ) : (

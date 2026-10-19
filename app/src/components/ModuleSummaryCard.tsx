@@ -113,7 +113,7 @@ function MetricCard({
   compact?: boolean;
 }) {
   return (
-    <div className={cn("min-w-0 rounded-xl border p-4", compact && "rounded-lg p-3")}>
+    <div className={cn("min-w-0 rounded-lg bg-muted/60 p-4", compact && "p-3")}>
       <div className={cn("mb-3 text-sm text-muted-foreground", compact && "mb-1.5 truncate text-xs")}>
         {label}
       </div>
