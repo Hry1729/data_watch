@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Activity, CloudUpload, Database, GitMerge, Layers } from "lucide-react";
+import { Activity, ChartLine, CloudUpload, HardDriveDownload, Network } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Card, CardContent } from "@/components/ui/card";
+import { MonitorKpiCard, formatShort } from "@/components/MonitorKpiCard";
 import { ModuleSummaryCard } from "@/components/ModuleSummaryCard";
 import { TrendChart } from "@/components/TrendChart";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -43,40 +43,6 @@ function rateStats(rate: ModuleRate | undefined) {
     avg: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
     min: Math.min(...values),
   };
-}
-
-function ConsoleKpi({
-  label,
-  icon: Icon,
-  value,
-  unit,
-  detail,
-  warning = false,
-}: {
-  label: string;
-  icon: typeof Activity;
-  value: string;
-  unit?: string;
-  detail: string;
-  warning?: boolean;
-}) {
-  return (
-    <Card size="sm" className="min-h-[132px]">
-      <CardContent className="flex flex-col px-4 py-1">
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Icon className="size-4 shrink-0" />
-          <span className="truncate">{label}</span>
-        </div>
-        <p
-          className={`mt-3 text-2xl font-semibold leading-none tabular-nums ${warning ? "text-warning" : "text-foreground"}`}
-        >
-          {value}
-          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
-        </p>
-        <p className="mt-3 truncate text-xs text-muted-foreground" title={detail}>{detail}</p>
-      </CardContent>
-    </Card>
-  );
 }
 
 // ─── 确认 Dialog 文案 ─────────────────────────────────────────────────────────
@@ -163,7 +129,7 @@ export function OverviewPage() {
   // 二期速率/趋势（与详情页同源，总览复用同一份数据）
   const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
   const cRate = rates?.collector;
-  const cPointRate = rates?.collectorPoints;
+  const wRate = rates?.writer;
   const wLandedRate = rates?.writerLanded;
   const writerMetrics = useModuleMetrics("writer");
 
@@ -186,7 +152,6 @@ export function OverviewPage() {
     };
   }, [nodesQuery.data]);
 
-  const cPointStats = rateStats(cPointRate);
   const cStats = rateStats(cRate);
   const wLandedStats = rateStats(wLandedRate);
   const isCenter = BUILD_ROLE === "distributed-center";
@@ -198,50 +163,63 @@ export function OverviewPage() {
         ? "无已注册边缘节点"
         : `${edgeStats.online} / ${edgeStats.total} 节点在线${edgeStats.watermarkWarnings > 0 ? ` · ${edgeStats.watermarkWarnings} 台水位告警` : ""}`;
 
-  const rateDetail = (stats: ReturnType<typeof rateStats>) =>
-    stats
-      ? `峰值 ${formatNumber(stats.max)} · 均值 ${formatNumber(stats.avg)} · 谷值 ${formatNumber(stats.min)}`
-      : "近 10 分钟暂无数据";
+  const rateDetail = (stats: ReturnType<typeof rateStats>, short = false) => {
+    if (!stats) return "近 10 分钟暂无数据";
+    const f = short ? formatShort : formatNumber;
+    return `峰值 ${f(stats.max)} · 均值 ${f(stats.avg)} · 谷值 ${f(stats.min)}`;
+  };
+  // 集中式：collector 速率即“采集量”，无汇聚模块；分布式中心：同一 Redis 入队速率来自 Ingest，即“汇聚量”
+  const collectKpi = isCenter
+    ? { value: "—", detail: "采集在边缘节点执行" }
+    : { value: formatNumber(cRate?.current), detail: rateDetail(cStats) };
+  const ingestKpi = isCenter
+    ? { value: formatNumber(cRate?.current), detail: rateDetail(cStats) }
+    : { value: "—", detail: "当前部署无汇聚模块" };
 
   return (
     <div className="mx-auto w-full max-w-[1400px] space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <ConsoleKpi
+        <MonitorKpiCard
+          denseDetail
           label="采集量"
           icon={Activity}
-          value={cPointRate?.current != null ? formatNumber(cPointRate.current) : "—"}
-          unit={cPointRate?.unit}
-          detail={rateDetail(cPointStats)}
+          value={collectKpi.value}
+          unit={cRate?.unit ?? "批次/min"}
+          detail={collectKpi.detail}
         />
-        <ConsoleKpi
+        <MonitorKpiCard
+          denseDetail
           label="汇聚量"
-          icon={GitMerge}
-          value={cRate?.current != null ? formatNumber(cRate.current) : "—"}
-          unit={cRate?.unit}
-          detail={rateDetail(cStats)}
+          icon={Network}
+          value={ingestKpi.value}
+          unit={cRate?.unit ?? "批次/min"}
+          detail={ingestKpi.detail}
         />
-        <ConsoleKpi
+        <MonitorKpiCard
+          denseDetail
           label="入库量"
-          icon={Database}
-          value={wLandedRate?.current != null ? formatNumber(wLandedRate.current) : "—"}
-          unit={wLandedRate?.unit}
-          detail={rateDetail(wLandedStats)}
+          icon={HardDriveDownload}
+          value={formatNumber(wLandedRate?.current)}
+          unit={wLandedRate?.unit ?? "rows/min"}
+          detail={rateDetail(wLandedStats, true)}
         />
-        <ConsoleKpi
+        <MonitorKpiCard
+          denseDetail
           label="入库积压 Stream Lag"
-          icon={Layers}
+          icon={ChartLine}
           value={writerMetrics.data ? formatNumber(writerMetrics.data.streamLagTotal) : "—"}
           unit="条"
           detail={`阈值 ${formatNumber(BACKLOG_THRESHOLD)} · ${writerMetrics.data?.streams.length ?? 0} 个 Stream`}
-          warning={(writerMetrics.data?.streamLagTotal ?? 0) >= BACKLOG_THRESHOLD}
+          tone={(writerMetrics.data?.streamLagTotal ?? 0) >= BACKLOG_THRESHOLD ? "warning" : "normal"}
         />
-        <ConsoleKpi
+        <MonitorKpiCard
+          denseDetail
           label="边缘上行积压"
           icon={CloudUpload}
           value={isCenter && nodesQuery.data ? formatNumber(edgeStats.backlog) : "—"}
           unit="条"
           detail={edgeDetail}
-          warning={edgeStats.watermarkWarnings > 0}
+          tone={edgeStats.watermarkWarnings > 0 ? "warning" : "normal"}
         />
       </div>
 
@@ -250,18 +228,18 @@ export function OverviewPage() {
         {OVERVIEW_MODULES.map((name) => <ModuleSection key={name} name={name} />)}
       </div>
 
-      {/* 双序列写入趋势：采集蓝、入库绿 */}
+      {/* 双序列写入趋势：采集（或汇聚）蓝、入库绿，双轴 */}
       <TrendChart
-        title="写入趋势"
+        title={isCenter ? "汇聚入队趋势" : "写入趋势"}
         unit={cRate?.unit ?? "批次/min"}
-        seriesLabel="采集写入"
+        seriesLabel={isCenter ? "汇聚入队" : "采集写入"}
         state={rateTrendState(cRate, ratesLoading, ratesError)}
         data={cRate?.series ?? []}
         current={cRate?.current ?? null}
         secondary={{
           label: "入库写入",
-          unit: wLandedRate?.unit ?? "rows/min",
-          data: wLandedRate?.series ?? [],
+          unit: wRate?.unit ?? "条/min",
+          data: wRate?.series ?? [],
         }}
       />
     </div>
