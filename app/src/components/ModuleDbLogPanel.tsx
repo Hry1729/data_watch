@@ -2,17 +2,14 @@ import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  LOG_LEVEL_CHIP_CLASS,
+  LOG_LEVEL_CLASS,
+  LOG_LINE_CLASS,
+  LOG_LINES_CLASS,
+} from "@/components/LogPanel";
+import { cn } from "@/lib/utils";
 import type { WriterLogRow } from "@/types";
-
-// ─── Level chip 颜色映射（CRITICAL 复用 ERROR 红）─────────────────────────────
-
-const LEVEL_CLASS: Record<string, string> = {
-  DEBUG:    "bg-muted text-muted-foreground",
-  INFO:     "bg-brand-soft text-brand",
-  WARN:     "bg-warning-soft text-warning",
-  ERROR:    "bg-destructive-soft text-destructive",
-  CRITICAL: "bg-destructive-soft text-destructive",
-};
 
 // ─── 属性 Props ────────────────────────────────────────────────────────────────
 
@@ -35,62 +32,57 @@ export function ModuleDbLogPanel({
   headerExtra,
 }: ModuleDbLogPanelProps) {
   return (
-    <Card className="h-full min-h-0 w-full">
+    <Card className="h-full min-h-0 w-full gap-0 py-0">
       {/* 面板头部 */}
-      <CardHeader>
-        <CardTitle>历史日志（system_log）</CardTitle>
-        <CardAction>
-        <div className="flex items-center gap-2">
-        {headerExtra}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={onRefresh}
-          disabled={loading}
-          aria-label="刷新历史日志"
-        >
-          <RefreshCw
-            className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`}
-          />
-        </Button>
-        </div>
+      <CardHeader className="items-center px-4 pt-4">
+        <CardTitle className="self-center text-sm font-semibold leading-[26px]" title="system_log">历史日志</CardTitle>
+        <CardAction className="self-center">
+          <div className="flex items-center gap-2.5">
+            {headerExtra}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-[26px] rounded-md text-muted-foreground hover:text-foreground"
+              onClick={onRefresh}
+              disabled={loading}
+              aria-label="刷新历史日志"
+            >
+              <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            </Button>
+          </div>
         </CardAction>
       </CardHeader>
+
+      <div className="mt-3 border-t border-border" />
 
       {/* 错误 Banner */}
       {error && (
         <div
-          className="flex-shrink-0 px-4 py-2 text-xs font-medium bg-destructive-soft text-destructive border-b border-destructive/40"
+          className="flex-shrink-0 border-b border-destructive/40 bg-destructive-soft px-4 py-[7px] text-xs font-medium text-destructive"
         >
           {error}
         </div>
       )}
 
       {/* 日志滚动区域（DB 返回按时间倒序，最新在上） */}
-      <CardContent
-        className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 py-2"
-        style={{ fontFamily: "monospace", fontSize: 13 }}
-      >
+      <CardContent className={LOG_LINES_CLASS}>
         {rows.length === 0 ? (
-          <p className="text-xs text-muted-foreground/70 py-4 text-center">
+          <p className="py-5 text-center font-sans text-xs text-muted-foreground">
             {loading ? "加载中…" : "暂无日志"}
           </p>
         ) : (
           rows.map((row) => (
-            <div key={row.id} className="flex items-start gap-2 py-0.5">
+            <div key={row.id} className={LOG_LINE_CLASS}>
               {/* 时间戳 */}
-              <span className="flex-shrink-0 text-muted-foreground/70 text-xs w-32">{row.time}</span>
+              <span className="w-[138px] shrink-0 whitespace-nowrap tabular-nums text-muted-foreground opacity-80">{row.time}</span>
               {/* 级别 chip */}
-              <span
-                className={`flex-shrink-0 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none ${LEVEL_CLASS[row.level] ?? LEVEL_CLASS.INFO}`}
-              >
+              <span className={cn(LOG_LEVEL_CHIP_CLASS, LOG_LEVEL_CLASS[row.level] ?? LOG_LEVEL_CLASS.INFO)}>
                 {row.level}
               </span>
               {/* source（DB 视图保留模块细分） */}
-              <span className="flex-shrink-0 text-muted-foreground text-xs">{row.source}</span>
+              <span className="shrink-0 text-muted-foreground">{row.source}</span>
               {/* 内容 */}
-              <span className="text-foreground text-xs break-all leading-relaxed">
+              <span className="min-w-0 break-words text-foreground">
                 {row.content}
               </span>
             </div>
