@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-react";
+import { ChevronDown, KeyRound, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,8 +21,51 @@ import type { MenuTreeItem, RoleGrant, RoleListItem, RolePayload, RoleQuery } fr
 
 const emptyForm: RolePayload = { roleName: "", roleCode: "R_", description: "", enabled: true };
 
-function GrantNode({ menu, depth, menuIds, permissionIds, toggleMenu, togglePermission }: { menu: MenuTreeItem; depth: number; menuIds: Set<number>; permissionIds: Set<number>; toggleMenu: (id: number, checked: boolean) => void; togglePermission: (id: number, checked: boolean) => void }) {
-  return <div><label className="flex min-h-9 items-center gap-2 rounded-sm px-2 hover:bg-muted/60" style={{ paddingLeft: `${depth * 20 + 8}px` }}><Checkbox checked={menuIds.has(menu.id)} onCheckedChange={(checked) => toggleMenu(menu.id, checked === true)} /><ShieldCheck className="size-4 text-muted-foreground" /><span className="text-sm font-medium">{menu.meta.title || menu.name}</span>{menu.enabled === false && <Badge variant="destructive">禁用</Badge>}</label>{menu.children?.map((child) => <GrantNode key={child.id} menu={child} depth={depth + 1} menuIds={menuIds} permissionIds={permissionIds} toggleMenu={toggleMenu} togglePermission={togglePermission} />)}{(menu.meta.authList ?? []).filter((permission) => permission.permissionType === "action").map((permission) => <label key={permission.id} className="flex min-h-8 items-center gap-2 rounded-sm px-2 text-sm text-muted-foreground hover:bg-muted/60" style={{ paddingLeft: `${(depth + 1) * 20 + 8}px` }}><Checkbox checked={permissionIds.has(permission.id)} onCheckedChange={(checked) => togglePermission(permission.id, checked === true)} /><KeyRound className="size-3.5" /><span>{permission.title}</span><Badge variant="outline">权限</Badge></label>)}</div>;
+// 概念稿尺寸：控件 32px、表头 40px、行 44px、正文 13px
+const fieldCls = "h-8 bg-background text-[13px] md:text-[13px]";
+const selectCls = "!h-8 bg-background text-[13px]";
+const btnCls = "h-8 gap-1.5 px-2.5 text-[13px] [&_svg:not([class*='size-'])]:size-3.5";
+const priCls = "bg-brand text-brand-foreground hover:bg-brand/90";
+const thCls = "h-10 px-2.5 text-[13px] font-medium text-muted-foreground";
+const tdCls = "h-11 px-2.5 py-1";
+const badgeCls = "h-5 rounded-md px-2 font-mono text-[11px]";
+const switchCls = "data-[size=default]:h-5 data-[size=default]:w-[34px] data-checked:bg-brand [&_[data-slot=switch-thumb]]:!size-4";
+const iconBtnCls = "size-7 text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-3.5";
+const checkCls = "data-checked:border-brand data-checked:bg-brand dark:data-checked:bg-brand";
+
+function countMenus(items: MenuTreeItem[] | undefined, menuIds: Set<number>): [number, number] {
+  let done = 0; let total = 0;
+  const visit = (list: MenuTreeItem[]) => list.forEach((menu) => { total += 1; if (menuIds.has(menu.id)) done += 1; if (menu.children) visit(menu.children); });
+  visit(items ?? []);
+  return [done, total];
+}
+
+function GrantNode({ menu, depth, menuIds, permissionIds, collapsed, toggleCollapsed, toggleMenu, togglePermission }: { menu: MenuTreeItem; depth: number; menuIds: Set<number>; permissionIds: Set<number>; collapsed: Set<number>; toggleCollapsed: (id: number) => void; toggleMenu: (id: number, checked: boolean) => void; togglePermission: (id: number, checked: boolean) => void }) {
+  const permissions = (menu.meta.authList ?? []).filter((permission) => permission.permissionType === "action");
+  const expandable = Boolean(menu.children?.length || permissions.length);
+  const closed = collapsed.has(menu.id);
+  const [done, total] = countMenus(menu.children, menuIds);
+  return (
+    <div>
+      <div className={`flex min-h-[34px] items-center gap-2 rounded-md pr-2 text-[13px] hover:bg-card ${depth === 0 ? "font-medium" : ""}`} style={{ paddingLeft: `${depth * 20 + 8}px` }}>
+        <button type="button" className={`grid size-4 shrink-0 place-items-center text-muted-foreground transition-transform ${expandable ? "" : "invisible"} ${closed ? "-rotate-90" : ""}`} title={closed ? "展开" : "收起"} onClick={() => toggleCollapsed(menu.id)}><ChevronDown className="size-3.5" /></button>
+        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+          <Checkbox className={checkCls} checked={menuIds.has(menu.id)} onCheckedChange={(checked) => toggleMenu(menu.id, checked === true)} />
+          <span className="truncate">{menu.meta.title || menu.name}</span>
+          {menu.enabled === false && <Badge variant="destructive" className="h-[18px] rounded-md px-1.5 text-[11px]">禁用</Badge>}
+        </label>
+        {total > 0 && <span className="ml-auto text-[11.5px] font-normal text-muted-foreground tabular-nums">{done}/{total}</span>}
+      </div>
+      {!closed && menu.children?.map((child) => <GrantNode key={child.id} menu={child} depth={depth + 1} menuIds={menuIds} permissionIds={permissionIds} collapsed={collapsed} toggleCollapsed={toggleCollapsed} toggleMenu={toggleMenu} togglePermission={togglePermission} />)}
+      {!closed && permissions.map((permission) => (
+        <label key={permission.id} className="flex min-h-[30px] cursor-pointer items-center gap-2 rounded-md pr-2 text-[12.5px] text-muted-foreground hover:bg-card" style={{ paddingLeft: `${(depth + 1) * 20 + 8 + 24}px` }}>
+          <Checkbox className={checkCls} checked={permissionIds.has(permission.id)} onCheckedChange={(checked) => togglePermission(permission.id, checked === true)} />
+          <KeyRound className="size-3.5" />
+          <span>{permission.title}</span>
+        </label>
+      ))}
+    </div>
+  );
 }
 
 export function RoleManagementPage() {
@@ -37,6 +80,7 @@ export function RoleManagementPage() {
   const [grantRole, setGrantRole] = useState<RoleListItem | null>(null);
   const [grant, setGrant] = useState<RoleGrant>({ menuIds: [], permissionIds: [], dataScopes: [] });
   const [grantLoading, setGrantLoading] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
   const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleList(activeToken, query, signal), [query]);
   const roles = useBackendQuery(loadRoles);
@@ -47,6 +91,18 @@ export function RoleManagementPage() {
   const totalPages = Math.max(1, Math.ceil((roles.data?.total ?? 0) / pageSize));
   const menuIds = new Set(grant.menuIds);
   const permissionIds = new Set(grant.permissionIds);
+  const [menuDone, menuTotal] = countMenus(menus.data ?? undefined, menuIds);
+  const allPermissionIds: number[] = [];
+  const collectPermissions = (items: MenuTreeItem[]) => items.forEach((menu) => { (menu.meta.authList ?? []).filter((permission) => permission.permissionType === "action").forEach((permission) => allPermissionIds.push(permission.id)); if (menu.children) collectPermissions(menu.children); });
+  collectPermissions(menus.data ?? []);
+  const permissionDone = allPermissionIds.filter((id) => permissionIds.has(id)).length;
+  const firstRole = roles.data?.records?.[0];
+
+  // 概念稿默认选中第一个角色，右侧常驻显示其菜单权限
+  useEffect(() => {
+    if (!grantRole && firstRole) void openGrant(firstRole);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstRole, token]);
 
   function openCreate() { setEditing(null); setForm({ ...emptyForm }); setDialogOpen(true); }
   function openEdit(role: RoleListItem) { setEditing(role); setForm({ roleName: role.roleName, roleCode: role.roleCode, description: role.description, enabled: role.enabled }); setDialogOpen(true); }
@@ -86,6 +142,7 @@ export function RoleManagementPage() {
     catch { toast.error("权限保存失败"); }
   }
 
+  function toggleCollapsed(id: number) { setCollapsed((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; }); }
   function toggleMenu(id: number, checked: boolean) { setGrant((value) => ({ ...value, menuIds: checked ? [...new Set([...value.menuIds, id])] : value.menuIds.filter((item) => item !== id) })); }
   function togglePermission(id: number, checked: boolean) { setGrant((value) => ({ ...value, permissionIds: checked ? [...new Set([...value.permissionIds, id])] : value.permissionIds.filter((item) => item !== id) })); }
   function selectAll(checked: boolean) {
@@ -96,100 +153,110 @@ export function RoleManagementPage() {
   }
 
   return (
-    <div className="grid h-full min-h-0 w-full gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(380px,1fr)]">
+    <div className="grid h-full min-h-[560px] w-full grid-cols-[minmax(0,1fr)_352px] grid-rows-[minmax(0,1fr)] items-stretch gap-4">
       <Card className="flex min-h-0 flex-col gap-0 py-0">
-        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
-          <Input className="h-7 w-40" value={draft.roleName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleName: event.target.value }))} placeholder="角色名称" />
-          <Input className="h-7 w-32" value={draft.roleCode ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleCode: event.target.value }))} placeholder="角色编码" />
-          <Input className="h-7 w-36" value={draft.description ?? ""} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="角色描述" />
+        <div className="flex items-center gap-2 px-5 pt-5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input className={`${fieldCls} w-[116px] pl-8`} value={draft.roleName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleName: event.target.value }))} placeholder="角色名称" />
+          </div>
+          <Input className={`${fieldCls} w-[100px]`} value={draft.roleCode ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleCode: event.target.value }))} placeholder="角色编码" />
+          <Input className={`${fieldCls} w-[108px]`} value={draft.description ?? ""} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="角色描述" />
           <Select value={draft.enabled === undefined || draft.enabled === "" ? "all" : String(draft.enabled)} onValueChange={(value) => setDraft((current) => ({ ...current, enabled: value === "all" ? "" : value === "true" }))}>
-            <SelectTrigger className="!h-7 w-32"><SelectValue /></SelectTrigger>
+            <SelectTrigger className={`${selectCls} w-[120px]`}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">状态（全部）</SelectItem>
               <SelectItem value="true">启用</SelectItem>
               <SelectItem value="false">禁用</SelectItem>
             </SelectContent>
           </Select>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <Button size="sm" variant="outline" onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}>重置</Button>
-            <Button size="sm" variant="outline" onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search data-icon="inline-start" />查询</Button>
-            <Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增角色</Button>
-          </div>
+          <Button variant="outline" className={btnCls} onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}><RotateCcw data-icon="inline-start" />重置</Button>
+          <Button variant="outline" className={btnCls} onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search data-icon="inline-start" />查询</Button>
+          <Button className={`${btnCls} ${priCls} ml-auto`} onClick={openCreate}><Plus data-icon="inline-start" />新增角色</Button>
         </div>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
-          <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
-            <Table>
-              <TableHeader className="bg-muted/50">
-                <TableRow>
-                  <TableHead className="text-center">角色ID</TableHead>
-                  <TableHead className="text-center">角色名称</TableHead>
-                  <TableHead className="text-center">角色编码</TableHead>
-                  <TableHead className="text-center">角色描述</TableHead>
-                  <TableHead className="text-center">状态</TableHead>
-                  <TableHead className="text-center">创建日期</TableHead>
-                  <TableHead className="text-center">操作</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {roles.loading && Array.from({ length: 5 }, (_, index) => <TableRow key={index}><TableCell colSpan={7}><Skeleton className="h-8 w-full" /></TableCell></TableRow>)}
-                {!roles.loading && (roles.data?.records ?? []).map((role) => (
-                  <TableRow key={role.roleId}>
-                    <TableCell>{role.roleId}</TableCell>
-                    <TableCell className="font-medium">{role.roleName}</TableCell>
-                    <TableCell><Badge variant="outline">{role.roleCode}</Badge></TableCell>
-                    <TableCell>{role.description || "-"}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch checked={role.enabled} onCheckedChange={(enabled) => void toggleStatus(role, enabled)} />
-                        <span className="text-xs text-muted-foreground">{role.enabled ? "启用" : "禁用"}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{role.createTime?.slice(0, 19)}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" title="菜单权限" onClick={() => void openGrant(role)}><KeyRound className="size-4" /></Button>
-                        <Button size="icon" variant="ghost" title="编辑角色" onClick={() => openEdit(role)}><Pencil className="size-4" /></Button>
-                        <Button size="icon" variant="ghost" title="删除角色" disabled={role.roleCode === "R_SUPER"} onClick={() => setDeleteRole(role)}><Trash2 className="size-4" /></Button>
-                      </div>
-                    </TableCell>
+        <CardContent className="flex min-h-0 flex-1 flex-col px-5 pt-3 pb-5">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[10px] border">
+            <div className="min-h-0 flex-1 overflow-auto [&_[data-slot=table-container]]:overflow-visible">
+              <Table className="text-[13px]">
+                <TableHeader className="sticky top-0 z-10 bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className={`${thCls} w-16`}>角色ID</TableHead>
+                    <TableHead className={thCls}>角色名称</TableHead>
+                    <TableHead className={thCls}>角色编码</TableHead>
+                    <TableHead className={thCls}>角色描述</TableHead>
+                    <TableHead className={thCls}>状态</TableHead>
+                    <TableHead className={thCls}>创建日期</TableHead>
+                    <TableHead className={thCls}>操作</TableHead>
                   </TableRow>
-                ))}
-                {!roles.loading && !roles.data?.records?.length && <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground">{roles.error ?? "暂无角色"}</TableCell></TableRow>}
-              </TableBody>
-            </Table>
-          </div>
-          <div className="flex flex-col gap-3 pt-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <span>共 {roles.data?.total ?? 0} 条</span>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" disabled={currentPage <= 1} onClick={() => setQuery((value) => ({ ...value, current: currentPage - 1 }))}>上一页</Button>
-              <span>第 {currentPage} / {totalPages} 页</span>
-              <Button size="sm" variant="outline" disabled={currentPage >= totalPages} onClick={() => setQuery((value) => ({ ...value, current: currentPage + 1 }))}>下一页</Button>
+                </TableHeader>
+                <TableBody>
+                  {roles.loading && Array.from({ length: 5 }, (_, index) => <TableRow key={index}><TableCell colSpan={7} className="h-11 px-2.5"><Skeleton className="h-7 w-full" /></TableCell></TableRow>)}
+                  {!roles.loading && (roles.data?.records ?? []).map((role) => {
+                    const selected = grantRole?.roleId === role.roleId;
+                    const [date, time] = (role.createTime?.slice(0, 19) ?? "").replace("T", " ").split(" ");
+                    return (
+                      <TableRow key={role.roleId} className={`cursor-pointer ${selected ? "bg-brand/[0.07] hover:bg-brand/[0.07]" : ""}`} onClick={() => { if (!selected) void openGrant(role); }}>
+                        <TableCell className={`${tdCls} text-muted-foreground ${selected ? "shadow-[inset_3px_0_0_var(--brand)]" : ""}`}>{role.roleId}</TableCell>
+                        <TableCell className={`${tdCls} font-medium`}>{role.roleName}</TableCell>
+                        <TableCell className={tdCls}><Badge variant="outline" className={role.roleCode === "R_SUPER" ? `${badgeCls} border-transparent bg-brand-soft text-brand` : `${badgeCls} bg-transparent text-foreground`}>{role.roleCode}</Badge></TableCell>
+                        <TableCell className={`${tdCls} min-w-[120px] leading-snug whitespace-normal text-muted-foreground`}>{role.description || "-"}</TableCell>
+                        <TableCell className={tdCls} onClick={(event) => event.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            <Switch className={switchCls} checked={role.enabled} onCheckedChange={(enabled) => void toggleStatus(role, enabled)} />
+                            <span className="text-xs text-muted-foreground">{role.enabled ? "启用" : "禁用"}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className={`${tdCls} font-mono text-xs leading-tight`}><div>{date}</div><div className="text-muted-foreground">{time}</div></TableCell>
+                        <TableCell className={tdCls} onClick={(event) => event.stopPropagation()}>
+                          <div className="flex gap-0.5">
+                            <Button size="icon" variant="ghost" className={`${iconBtnCls} ${selected ? "bg-brand-soft text-brand hover:bg-brand-soft hover:text-brand" : ""}`} title="菜单权限" onClick={() => void openGrant(role)}><KeyRound /></Button>
+                            <Button size="icon" variant="ghost" className={iconBtnCls} title="编辑角色" onClick={() => openEdit(role)}><Pencil /></Button>
+                            <Button size="icon" variant="ghost" className={`${iconBtnCls} hover:bg-destructive-soft hover:text-destructive disabled:opacity-35`} title="删除角色" disabled={role.roleCode === "R_SUPER"} onClick={() => setDeleteRole(role)}><Trash2 /></Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {!roles.loading && !roles.data?.records?.length && <TableRow><TableCell colSpan={7} className="h-32 text-center text-muted-foreground">{roles.error ?? "暂无角色"}</TableCell></TableRow>}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-2.5 text-xs text-muted-foreground">
+              <span>共 {roles.data?.total ?? 0} 条</span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={currentPage <= 1} onClick={() => setQuery((value) => ({ ...value, current: currentPage - 1 }))}>上一页</Button>
+                <span>第 {currentPage} / {totalPages} 页</span>
+                <Button size="sm" variant="outline" className="h-7 px-2.5 text-xs" disabled={currentPage >= totalPages} onClick={() => setQuery((value) => ({ ...value, current: currentPage + 1 }))}>下一页</Button>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
       <Card className="flex min-h-0 flex-col gap-0 py-0">
-        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
-          <span className="text-sm font-medium">菜单权限</span>
-          {grantRole && <span className="truncate text-xs text-muted-foreground">· {grantRole.roleName}</span>}
-          <div className="ml-auto flex items-center gap-2">
-            <Button size="sm" variant="outline" disabled={!grantRole || grantLoading} onClick={() => selectAll(true)}>全部选择</Button>
-            <Button size="sm" variant="outline" disabled={!grantRole || grantLoading} onClick={() => selectAll(false)}>取消全选</Button>
+        <div className="px-4 pt-4">
+          <p className="truncate text-sm leading-none font-semibold">菜单权限{grantRole ? ` · ${grantRole.roleName}` : ""}</p>
+          <p className="mt-1.5 text-[13px] text-muted-foreground">菜单与按钮权限独立勾选</p>
+        </div>
+        <div className="flex items-center justify-between gap-2 px-4 pt-3.5 pb-2 text-xs whitespace-nowrap text-muted-foreground">
+          <span>菜单 <b className="font-semibold text-foreground tabular-nums">{grantRole ? menuDone : 0} / {menuTotal}</b> · 按钮权限 <b className="font-semibold text-foreground tabular-nums">{grantRole ? permissionDone : 0} / {allPermissionIds.length}</b></span>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!grantRole || grantLoading} onClick={() => selectAll(true)}>全部选择</Button>
+            <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!grantRole || grantLoading} onClick={() => selectAll(false)}>取消全选</Button>
           </div>
         </div>
-        <p className="mt-2 px-4 text-xs text-muted-foreground">菜单与按钮权限独立勾选</p>
-        <div className="mx-4 mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg bg-muted/40 p-2">
+        <div className="mx-4 min-h-0 flex-1 overflow-y-auto rounded-[10px] bg-[color-mix(in_oklab,var(--muted)_55%,transparent)] p-1">
           {!grantRole ? (
-            <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">选择左侧角色的菜单权限</div>
+            <div className="flex h-full min-h-40 items-center justify-center text-[13px] text-muted-foreground">选择左侧角色的菜单权限</div>
           ) : grantLoading ? (
             <div className="space-y-2 p-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-5/6" /></div>
           ) : (
-            (menus.data ?? []).map((menu) => <GrantNode key={menu.id} menu={menu} depth={0} menuIds={menuIds} permissionIds={permissionIds} toggleMenu={toggleMenu} togglePermission={togglePermission} />)
+            (menus.data ?? []).map((menu) => <GrantNode key={menu.id} menu={menu} depth={0} menuIds={menuIds} permissionIds={permissionIds} collapsed={collapsed} toggleCollapsed={toggleCollapsed} toggleMenu={toggleMenu} togglePermission={togglePermission} />)
           )}
         </div>
-        <div className="mt-3 flex justify-end border-t px-4 py-3">
-          <Button size="sm" onClick={() => void saveGrant()} disabled={!grantRole || grantLoading}>保存</Button>
+        <div className="flex shrink-0 justify-end gap-2 px-4 pt-3 pb-4">
+          <Button variant="outline" className={btnCls} disabled={!grantRole || grantLoading} onClick={() => { if (grantRole) void openGrant(grantRole); }}>取消</Button>
+          <Button className={`${btnCls} ${priCls}`} onClick={() => void saveGrant()} disabled={!grantRole || grantLoading}>保存</Button>
         </div>
       </Card>
 
