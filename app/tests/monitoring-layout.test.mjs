@@ -23,7 +23,7 @@ test("monitoring panel clipping containers preserve the shared card surface", as
       "utf8",
     );
 
-    assert.match(source, /grid-rows-\[260px_minmax\(0,1fr\)\][^"]*overflow-hidden p-px/);
+    assert.match(source, /grid-rows-\[360px_minmax\(0,1fr\)\][^"]*overflow-hidden p-px/);
     assert.doesNotMatch(source, /ring-1 ring-foreground\/10/);
   }
 });
