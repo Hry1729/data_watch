@@ -282,6 +282,42 @@ class Uploader:
             )
             await self._retry_records(records, response.text, response.status_code)
             return False
+        if response.status_code == 413:
+            # Edge 18：请求体超过中心/反代上限。批次减半重试，不消耗隔离预算。
+            if len(records) > 1:
+                self._contract_batch_limit = max(1, len(records) // 2)
+                logger.warning(
+                    "Upload payload too large status=413 records=%d payload_bytes=%d; "
+                    "retrying with batch limit %d",
+                    len(records),
+                    payload_bytes,
+                    self._contract_batch_limit,
+                )
+            else:
+                logger.error(
+                    "Upload payload too large status=413 for a single record batch_id=%s "
+                    "local_seq=%d payload_bytes=%d; raise the center request body limit "
+                    "(INGEST max_body_bytes / reverse proxy client_max_body_size). "
+                    "Record kept for retry.",
+                    records[0].batch_id,
+                    records[0].local_seq,
+                    payload_bytes,
+                )
+            await self._retry_records(records, "http_413_payload_too_large", 413)
+            return False
+        if response.status_code == 400 and self._error_scope(response) != "item":
+            # Edge 6：批级 400（node_uuid 非法、批次超过中心上限、代理/旧中心未标明
+            # scope 等）与具体记录无关，不得消耗逐条的隔离预算，也不判 dead。
+            logger.error(
+                "Upload rejected at batch level status=400 records=%d response=%s; "
+                "check center/edge configuration, records kept for retry",
+                len(records),
+                self._response_detail(response),
+            )
+            if len(records) > 1:
+                self._contract_batch_limit = max(1, len(records) // 2)
+            await self._retry_records(records, "http_400_batch_rejected", 400)
+            return False
         if response.status_code == 400:
             if len(records) > 1:
                 self._contract_batch_limit = 1
@@ -367,7 +403,20 @@ class Uploader:
                         str(result.get("reason") or "rejected_consumed"),
                     )
                 )
-            elif status in {"seq_reject", "commit_unknown"}:
+            elif status == "commit_unknown":
+                # 中心持久化结果不确定（Redis 暂时故障）。同一 session 内退避重试：
+                # 已提交的帧会被中心按 hw 判为 duplicate，不会重复写入；不消耗隔离预算，
+                # 不切换 session。
+                logger.error(
+                    "Upload commit uncertain status=commit_unknown local_seq=%d reason=%s; "
+                    "retrying in the same session with backoff",
+                    record.local_seq,
+                    result.get("reason") or "",
+                )
+                await self._persist_confirmed(completions)
+                await self._retry_records(records[index:], "commit_unknown", 200)
+                return False
+            elif status == "seq_reject":
                 logger.error(
                     "Upload sequence/commit uncertain status=%s local_seq=%d; "
                     "preserving and replaying unconfirmed backlog in a new session",
@@ -453,6 +502,15 @@ class Uploader:
         self._summary_records = 0
         self._summary_payload_bytes = 0
         self._summary_batch_ms.clear()
+
+    @staticmethod
+    def _error_scope(response: httpx.Response) -> str | None:
+        """中心 400 响应体里的 ``scope``（``batch``/``item``）；缺失或非 JSON 时为 None。"""
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        return body.get("scope") if isinstance(body, dict) else None
 
     @staticmethod
     def _response_detail(response: httpx.Response) -> str:
@@ -560,8 +618,8 @@ class Uploader:
         """B6：坏数据隔离预算**只看** ``reject_count``（协议级裁决计数）。
 
         - ``reject_count`` 由 Edge Storage 的 ``mark_retry_batch`` 权威累加，且
-          **只**由中心给出的协议级裁决（400 契约拒绝 / ``seq_reject`` /
-          ``commit_unknown``）消耗；429/5xx/断网/ACK 缺失等传输类与中心侧问题只累加
+          **只**由中心给出的协议级裁决（记录级 400 契约拒绝 / ``seq_reject``）消耗；
+          ``commit_unknown``/批级 400/413/429/5xx/断网/ACK 缺失等传输类与中心侧问题只累加
           ``attempt_count``（退避用）。因此长时间断网的历史网络次数不会再让一次
           序列异常把好数据判死。
         - ``reject_count is None`` 表示对端 Edge Storage **没有回传**该字段（旧版
