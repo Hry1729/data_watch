@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -10,7 +11,7 @@ from turboapi import JSONResponse
 
 from .config import IngestSettings, get_settings
 from .http_compat import IngestASGI, Request
-from .redis_store import IngestRedisStore, NonceReplayError
+from .redis_store import IngestRedisStore, NonceReplayError, TransientStoreError
 from .repository import MySQLIngestRepository
 from .schemas import RequestValidationError, SessionSwitch, UploadBatch
 from .security import (
@@ -19,6 +20,9 @@ from .security import (
     SignatureHeaders,
 )
 from .service import IngestService
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -140,8 +144,16 @@ def create_app(
             return {"results": [result.to_dict() for result in results]}
         except (AuthenticationError, NonceReplayError) as exc:
             return _error(401, "unauthorized", str(exc))
+        except TransientStoreError as exc:
+            logger.error("Ingest deferred: transient Redis persistence failure: %s", exc)
+            return _error(503, "store_unavailable", str(exc))
         except (RequestValidationError, ValueError) as exc:
-            return _error(400, "bad_request", str(exc))
+            return _error(
+                400,
+                "bad_request",
+                str(exc),
+                scope=getattr(exc, "scope", "batch"),
+            )
 
     @app.post("/ingest/session_switch")
     async def session_switch(payload: dict[str, Any], request: Request):
@@ -217,11 +229,13 @@ def _node_uuid(payload: dict[str, Any]) -> str:
     return str(UUID(str(payload.get("node_uuid") or "")))
 
 
-def _error(http_status: int, status: str, reason: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=http_status,
-        content={"status": status, "reason": reason},
-    )
+def _error(
+    http_status: int, status: str, reason: str, *, scope: str | None = None
+) -> JSONResponse:
+    content = {"status": status, "reason": reason}
+    if scope is not None:
+        content["scope"] = scope
+    return JSONResponse(status_code=http_status, content=content)
 
 
 app = create_app()
