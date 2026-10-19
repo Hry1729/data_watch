@@ -280,7 +280,7 @@ export function SystemLogPage() {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
+    <div className="mx-auto w-full max-w-[1400px] space-y-4">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {statCards.map((item) => <StatCard key={item.title} {...item} loading={stats.loading} />)}
       </div>
@@ -380,58 +380,6 @@ export function SystemLogPage() {
         </Card>
       </div>
 
-      {/* 查询工具栏 */}
-      {mode === "system" && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="datetime-local"
-            aria-label="开始时间"
-            title="开始时间"
-            value={draft.startTime ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))}
-            className="h-7 w-40"
-          />
-          <Input
-            type="datetime-local"
-            aria-label="结束时间"
-            title="结束时间"
-            value={draft.endTime ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))}
-            className="h-7 w-40"
-          />
-          <Select
-            value={draft.type || "all"}
-            onValueChange={(value) => setDraft((current) => ({ ...current, type: value === "all" ? "" : value as SystemLogQuery["type"] }))}
-          >
-            <SelectTrigger className="!h-7 w-24" aria-label="日志类型">
-              <SelectValue placeholder="类型" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部类型</SelectItem>
-              {typeOptions.map(([value, label]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            placeholder="关键字"
-            value={draft.keyword ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))}
-            onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }}
-            className="h-7 w-32"
-          />
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => setAdvancedOpen(true)}>
-              高级查询{advancedCount > 0 && <Badge className="ml-1">{advancedCount}</Badge>}
-            </Button>
-            <Button variant="outline" onClick={() => setCleanupOpen(true)}><Trash2 className="size-3.5" />清理日志</Button>
-            <Button variant="outline" onClick={exportRows}><Download className="size-3.5" />导出日志</Button>
-            <Button variant="outline" onClick={resetSearch}>重置</Button>
-            <Button onClick={applySearch}><Search className="size-3.5" />查询</Button>
-          </div>
-        </div>
-      )}
-
       <Card>
         <CardHeader>
           <CardTitle>
@@ -455,6 +403,56 @@ export function SystemLogPage() {
               </Button>
             </div>
           </CardAction>
+          {mode === "system" && (
+            <div className="col-span-2 mt-2 flex flex-wrap items-center gap-2">
+              <Input
+                type="datetime-local"
+                aria-label="开始时间"
+                title="开始时间"
+                value={draft.startTime ?? ""}
+                onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))}
+                className="h-7 w-40"
+              />
+              <Input
+                type="datetime-local"
+                aria-label="结束时间"
+                title="结束时间"
+                value={draft.endTime ?? ""}
+                onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))}
+                className="h-7 w-40"
+              />
+              <Select
+                value={draft.type || "all"}
+                onValueChange={(value) => setDraft((current) => ({ ...current, type: value === "all" ? "" : value as SystemLogQuery["type"] }))}
+              >
+                <SelectTrigger className="!h-7 w-24" aria-label="日志类型">
+                  <SelectValue placeholder="类型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部类型</SelectItem>
+                  {typeOptions.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="关键字"
+                value={draft.keyword ?? ""}
+                onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))}
+                onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }}
+                className="h-7 w-32"
+              />
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <Button variant="outline" onClick={() => setAdvancedOpen(true)}>
+                  高级查询{advancedCount > 0 && <Badge className="ml-1">{advancedCount}</Badge>}
+                </Button>
+                <Button variant="outline" onClick={() => setCleanupOpen(true)}><Trash2 className="size-3.5" />清理日志</Button>
+                <Button variant="outline" onClick={exportRows}><Download className="size-3.5" />导出日志</Button>
+                <Button variant="outline" onClick={resetSearch}>重置</Button>
+                <Button onClick={applySearch}><Search className="size-3.5" />查询</Button>
+              </div>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {mode === "system" ? (
