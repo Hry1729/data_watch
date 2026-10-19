@@ -13,6 +13,7 @@ from app.core.security import generate_temporary_password, hash_password, verify
 from app.db.mysql import get_mysql_engine, get_mysql_session_factory
 from app.models import (
     Base,
+    SysBootstrapState,
     SysDataPermission,
     SysMenu,
     SysPermission,
@@ -383,6 +384,12 @@ DATA_SCOPE_GRANTS = {
     "R_USER": [{"scope_type": "all", "scope_value": "*"}],
 }
 
+# 种子授权（用户角色 / 角色菜单 / 角色权限 / 数据权限）只完整执行一次，并在
+# sys_bootstrap_state 记录已应用的版本。之后的启动只为「本次新建」的角色、用户、
+# 菜单、权限补种子授权，已有对象上的授权以管理员的决定为准，撤销后不会被补回。
+SEED_GRANTS_STATE_KEY = "auth_seed_grants"
+SEED_GRANTS_VERSION = 1
+
 
 async def bootstrap_auth_schema(
     *,
@@ -395,28 +402,68 @@ async def bootstrap_auth_schema(
 
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
-        await _seed_roles(session)
+        seed_user_names = [seed["user_name"] for seed in USER_SEEDS]
+        existing_user_names = set(
+            (
+                await session.execute(select(SysUser.user_name).where(SysUser.user_name.in_(seed_user_names)))
+            ).scalars()
+        )
+        new_role_codes = await _seed_roles(session)
         bootstrap_credentials = await _seed_users(session, app_env=app_env)
         environment = (app_env or os.getenv("BACKEND_ENV", "production")).strip().lower()
         if bootstrap_credentials and environment not in {"dev", "development", "test"}:
             raise RuntimeError("non-development bootstrap must not return plaintext credentials")
-        menu_by_name = await _seed_menus(session)
-        permission_by_code = await _seed_permissions(session, menu_by_name)
+        new_menu_names: set[str] = set()
+        menu_by_name = await _seed_menus(session, new_menu_names)
+        new_permission_codes: set[str] = set()
+        permission_by_code = await _seed_permissions(session, menu_by_name, new_permission_codes)
         role_by_code = await _load_role_map(session)
         user_by_name = await _load_user_map(session)
-        await _seed_user_roles(session, user_by_name, role_by_code)
-        await _seed_role_menus(session, role_by_code, menu_by_name)
-        await _seed_role_permissions(session, role_by_code, permission_by_code)
-        await _seed_role_menu_page_permissions(session)
-        await _seed_data_permissions(session, role_by_code)
+        new_user_names = set(seed_user_names) - existing_user_names
+        grant_state = await session.get(SysBootstrapState, SEED_GRANTS_STATE_KEY)
+        # 没有状态记录：种子角色全部是本次新建 → 全新安装，完整执行一次种子授权；
+        # 否则是旧版本已初始化过的库（旧逻辑每次启动都补过授权），视为已应用，不再补。
+        full_grants = grant_state is None and new_role_codes == {seed["role_code"] for seed in ROLE_SEEDS}
+        await _seed_user_roles(
+            session, user_by_name, role_by_code, full=full_grants, new_user_names=new_user_names
+        )
+        await _seed_role_menus(
+            session,
+            role_by_code,
+            menu_by_name,
+            full=full_grants,
+            new_role_codes=new_role_codes,
+            new_menu_names=new_menu_names,
+        )
+        await _seed_role_permissions(
+            session,
+            role_by_code,
+            permission_by_code,
+            full=full_grants,
+            new_role_codes=new_role_codes,
+            new_permission_codes=new_permission_codes,
+        )
+        await _seed_role_menu_page_permissions(
+            session,
+            full=full_grants,
+            new_role_ids={role_by_code[code].id for code in new_role_codes},
+            new_menu_ids={menu_by_name[name].id for name in new_menu_names},
+            new_permission_ids={permission_by_code[code].id for code in new_permission_codes},
+        )
+        await _seed_data_permissions(session, role_by_code, full=full_grants, new_role_codes=new_role_codes)
+        if grant_state is None:
+            session.add(SysBootstrapState(state_key=SEED_GRANTS_STATE_KEY, version=SEED_GRANTS_VERSION))
+        elif grant_state.version < SEED_GRANTS_VERSION:
+            grant_state.version = SEED_GRANTS_VERSION
         await session.commit()
 
     logger.info("Auth schema bootstrap complete")
     return bootstrap_credentials
 
 
-async def _seed_roles(session) -> None:
-    """只新增缺失角色，不覆盖已有角色的任何字段"""
+async def _seed_roles(session) -> set[str]:
+    """只新增缺失角色，不覆盖已有角色的任何字段；返回本次新建的角色编码"""
+    created: set[str] = set()
     for seed in ROLE_SEEDS:
         role = await session.scalar(select(SysRole).where(SysRole.role_code == seed["role_code"]))
         if role is None:
@@ -428,7 +475,9 @@ async def _seed_roles(session) -> None:
                 sort=seed["sort"],
             )
             session.add(role)
+            created.add(seed["role_code"])
     await session.flush()
+    return created
 
 
 async def _seed_users(
@@ -533,8 +582,8 @@ def _migrate_auth_columns(connection) -> None:
         )
 
 
-async def _seed_menus(session) -> dict[str, SysMenu]:
-    """只新增缺失菜单，不覆盖已有菜单的任何字段"""
+async def _seed_menus(session, created: set[str] | None = None) -> dict[str, SysMenu]:
+    """只新增缺失菜单，不覆盖已有菜单的任何字段；created 收集本次新建的菜单名"""
     menu_by_name: dict[str, SysMenu] = {}
 
     async def upsert(seed: MenuSeed, parent_id: int | None = None) -> None:
@@ -561,6 +610,8 @@ async def _seed_menus(session) -> dict[str, SysMenu]:
             )
             session.add(menu)
             await session.flush()
+            if created is not None:
+                created.add(seed.name)
         menu_by_name[seed.name] = menu
         for child in seed.children:
             await upsert(child, menu.id)
@@ -571,8 +622,12 @@ async def _seed_menus(session) -> dict[str, SysMenu]:
     return menu_by_name
 
 
-async def _seed_permissions(session, menu_by_name: dict[str, SysMenu]) -> dict[str, SysPermission]:
-    """只新增缺失权限，不覆盖已有权限的任何字段"""
+async def _seed_permissions(
+    session,
+    menu_by_name: dict[str, SysMenu],
+    created: set[str] | None = None,
+) -> dict[str, SysPermission]:
+    """只新增缺失权限，不覆盖已有权限的任何字段；created 收集本次新建的权限编码"""
     permission_by_code: dict[str, SysPermission] = {}
     for seed in PERMISSION_SEEDS:
         permission = await session.scalar(
@@ -591,6 +646,8 @@ async def _seed_permissions(session, menu_by_name: dict[str, SysMenu]) -> dict[s
             )
             session.add(permission)
             await session.flush()
+            if created is not None:
+                created.add(seed.permission_code)
         permission_by_code[seed.permission_code] = permission
     return permission_by_code
 
@@ -605,11 +662,20 @@ async def _load_user_map(session) -> dict[str, SysUser]:
     return {user.user_name: user for user in users}
 
 
-async def _seed_user_roles(session, user_by_name: dict[str, SysUser], role_by_code: dict[str, SysRole]) -> None:
-    """只补齐缺失的用户角色关系，不删除已有关系"""
+async def _seed_user_roles(
+    session,
+    user_by_name: dict[str, SysUser],
+    role_by_code: dict[str, SysRole],
+    *,
+    full: bool = True,
+    new_user_names: set[str] = frozenset(),
+) -> None:
+    """只补齐缺失的用户角色关系，不删除已有关系；非完整执行时只处理本次新建的用户"""
     for seed in USER_SEEDS:
         user = user_by_name.get(seed["user_name"])
         if user is None or user.deleted:
+            continue
+        if not full and seed["user_name"] not in new_user_names:
             continue
         for role_code in seed["roles"]:
             role = role_by_code[role_code]
@@ -624,8 +690,16 @@ async def _seed_user_roles(session, user_by_name: dict[str, SysUser], role_by_co
     await session.flush()
 
 
-async def _seed_role_menus(session, role_by_code: dict[str, SysRole], menu_by_name: dict[str, SysMenu]) -> None:
-    """只补齐缺失的角色菜单关系，不删除已有关系"""
+async def _seed_role_menus(
+    session,
+    role_by_code: dict[str, SysRole],
+    menu_by_name: dict[str, SysMenu],
+    *,
+    full: bool = True,
+    new_role_codes: set[str] = frozenset(),
+    new_menu_names: set[str] = frozenset(),
+) -> None:
+    """只补齐缺失的角色菜单关系，不删除已有关系；非完整执行时只处理新建的角色或菜单"""
     for role_code, menu_names in ROLE_MENU_GRANTS.items():
         role = role_by_code.get(role_code)
         if role is None:
@@ -634,6 +708,8 @@ async def _seed_role_menus(session, role_by_code: dict[str, SysRole], menu_by_na
         for menu_name in expanded_menu_names:
             menu = menu_by_name.get(menu_name)
             if menu is None:
+                continue
+            if not full and role_code not in new_role_codes and menu_name not in new_menu_names:
                 continue
             existing = await session.scalar(
                 select(SysRoleMenu).where(
@@ -650,8 +726,12 @@ async def _seed_role_permissions(
     session,
     role_by_code: dict[str, SysRole],
     permission_by_code: dict[str, SysPermission],
+    *,
+    full: bool = True,
+    new_role_codes: set[str] = frozenset(),
+    new_permission_codes: set[str] = frozenset(),
 ) -> None:
-    """只补齐缺失的角色权限关系，不删除已有关系"""
+    """只补齐缺失的角色权限关系，不删除已有关系；非完整执行时只处理新建的角色或权限"""
     for role_code, permission_codes in ROLE_PERMISSION_GRANTS.items():
         role = role_by_code.get(role_code)
         if role is None:
@@ -659,6 +739,8 @@ async def _seed_role_permissions(
         for permission_code in set(permission_codes):
             permission = permission_by_code.get(permission_code)
             if permission is None:
+                continue
+            if not full and role_code not in new_role_codes and permission_code not in new_permission_codes:
                 continue
             existing = await session.scalar(
                 select(SysRolePermission).where(
@@ -676,17 +758,31 @@ async def _seed_role_permissions(
     await session.flush()
 
 
-async def _seed_role_menu_page_permissions(session) -> None:
-    """按已有角色菜单关系补齐页面权限，不删除任何已有授权"""
+async def _seed_role_menu_page_permissions(
+    session,
+    *,
+    full: bool = True,
+    new_role_ids: set[int] = frozenset(),
+    new_menu_ids: set[int] = frozenset(),
+    new_permission_ids: set[int] = frozenset(),
+) -> None:
+    """按已有角色菜单关系补齐页面权限，不删除任何已有授权；非完整执行时只处理新建的角色、菜单或权限"""
     rows = (
         await session.execute(
-            select(SysRoleMenu.role_id, SysPermission.id)
+            select(SysRoleMenu.role_id, SysPermission.id, SysRoleMenu.menu_id)
             .join(SysPermission, SysPermission.menu_id == SysRoleMenu.menu_id)
             .where(SysPermission.permission_type == "page")
             .where(SysPermission.enabled.is_(True))
         )
     ).all()
-    for role_id, permission_id in rows:
+    for role_id, permission_id, menu_id in rows:
+        if (
+            not full
+            and role_id not in new_role_ids
+            and menu_id not in new_menu_ids
+            and permission_id not in new_permission_ids
+        ):
+            continue
         existing = await session.scalar(
             select(SysRolePermission).where(
                 SysRolePermission.role_id == role_id,
@@ -698,11 +794,17 @@ async def _seed_role_menu_page_permissions(session) -> None:
     await session.flush()
 
 
-async def _seed_data_permissions(session, role_by_code: dict[str, SysRole]) -> None:
-    """只补齐缺失的数据权限，不删除已有数据权限"""
+async def _seed_data_permissions(
+    session,
+    role_by_code: dict[str, SysRole],
+    *,
+    full: bool = True,
+    new_role_codes: set[str] = frozenset(),
+) -> None:
+    """只补齐缺失的数据权限，不删除已有数据权限；非完整执行时只处理新建的角色"""
     for role_code, scopes in DATA_SCOPE_GRANTS.items():
         role = role_by_code.get(role_code)
-        if role is None:
+        if role is None or (not full and role_code not in new_role_codes):
             continue
         for scope in scopes:
             existing = await session.scalar(
