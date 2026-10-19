@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
@@ -194,9 +195,9 @@ export default function PointManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
           <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}><div className="max-w-full overflow-x-auto"><TabsList className="w-max"><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
           <Button type="button" variant="outline" className="h-8 w-28 justify-between px-2 font-normal" onClick={openDevicePicker}>
             <span className={`truncate ${deviceCodeFilter ? "text-foreground" : "text-muted-foreground"}`}>{deviceCodeFilter || "设备号"}</span>
@@ -211,13 +212,32 @@ export default function PointManagementPage() {
               </SelectGroup>
             </SelectContent>
           </Select>
+          <div className="relative w-48"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="点位名称 / IO地址" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div>
+          <Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增点位</Button>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon-sm" aria-label="导入点位" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload className="size-4" /></Button>
+                </TooltipTrigger>
+                <TooltipContent>导入点位</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon-sm" aria-label="导出点位" disabled={transferring} onClick={() => exportWorkbook(false)}><Download className="size-4" /></Button>
+                </TooltipTrigger>
+                <TooltipContent>导出点位</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}>
+              <Trash2 data-icon="inline-start" />删除
+              {selectedIds.length > 0 && <Badge variant="secondary" className="ml-0.5 h-4 min-w-4 rounded-full px-1 text-[10px] leading-none">{selectedIds.length}</Badge>}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2"><div className="relative w-48"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="点位名称 / IO地址" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div><Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select></div>
-      </div>
-      <Card className="flex shrink-0 flex-col">
-        <CardHeader><CardTitle>点位管理</CardTitle><CardAction><div className="flex flex-wrap justify-end gap-2"><Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增点位</Button><Button variant="outline" size="sm" onClick={() => { setImportResult(null); setImportOpen(true); }}><Upload data-icon="inline-start" />导入</Button><Button variant="outline" size="sm" onClick={() => exportWorkbook(false)} disabled={transferring}><Download data-icon="inline-start" />导出</Button><Button variant="destructive" size="sm" disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}><Trash2 data-icon="inline-start" />删除</Button></div></CardAction></CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-          <div className="h-[442px] shrink-0 overflow-auto rounded-lg border"><Table className="w-full table-fixed"><TableHeader><TableRow className="bg-muted/50"><TableHead className="w-12 text-center"><Checkbox aria-label="选择全部点位" checked={allSelected ? true : selectedIds.length ? "indeterminate" : false} onCheckedChange={(checked) => toggleAll(checked === true)} /></TableHead><TableHead className="w-[14%] text-center">所属设备</TableHead><TableHead className="text-center">点位名称</TableHead><TableHead className="w-[10%] text-center">点位序号</TableHead><TableHead className="w-[15%] text-center">IO地址</TableHead><TableHead className="w-[11%] text-center">数据类型</TableHead><TableHead className="w-[14%] text-center">驱动名称</TableHead><TableHead className="w-[8%] text-center">只读</TableHead><TableHead className="w-40 text-center">操作</TableHead></TableRow></TableHeader><TableBody className="[&_td]:py-1">{points.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={9}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : pageRows.length ? pageRows.map((row) => <TableRow key={`${row.id}-${row.deviceId}-${row.varSeq}`} className="h-10" data-state={selectedIds.includes(row.id) ? "selected" : undefined}><TableCell className="text-center"><Checkbox aria-label={`选择点位 ${row.pointName}`} checked={selectedIds.includes(row.id)} onCheckedChange={(checked) => toggleRow(row.id, checked === true)} /></TableCell><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.pointName}</TableCell><TableCell className="text-center">{row.varSeq}</TableCell><TableCell className="truncate text-center font-mono text-xs">{row.ioAddress}</TableCell><TableCell className="text-center"><Badge variant="outline">{row.dataType}</Badge></TableCell><TableCell className="truncate text-center">{row.driverName}</TableCell><TableCell className="text-center">{row.isReadonly ? "是" : "否"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看详情" onClick={() => setDetail(row)}><Eye className="size-4" /></Button><Button variant="ghost" size="icon-sm" title={row.pointStatus === "enabled" ? "停用点位" : "启用点位"} disabled={statusUpdatingId === row.id} onClick={() => void togglePointStatus(row)}>{row.pointStatus === "enabled" ? <PowerOff className="size-4 text-warning" /> : <Power className="size-4 text-success" />}</Button><Button variant="ghost" size="icon-sm" title="编辑点位" onClick={() => openEdit(row)}><Pencil className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="删除点位" onClick={() => setDeleting(row)}><Trash2 className="size-4 text-destructive" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">{points.error ?? "暂无点位"}</TableCell></TableRow>}</TableBody></Table></div>
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border"><Table className="w-full table-fixed"><TableHeader><TableRow className="bg-muted/50"><TableHead className="w-12 text-center"><Checkbox aria-label="选择全部点位" checked={allSelected ? true : selectedIds.length ? "indeterminate" : false} onCheckedChange={(checked) => toggleAll(checked === true)} /></TableHead><TableHead className="w-[14%] text-center">所属设备</TableHead><TableHead className="text-center">点位名称</TableHead><TableHead className="w-[10%] text-center">点位序号</TableHead><TableHead className="w-[15%] text-center">IO地址</TableHead><TableHead className="w-[11%] text-center">数据类型</TableHead><TableHead className="w-[14%] text-center">驱动名称</TableHead><TableHead className="w-[8%] text-center">只读</TableHead><TableHead className="w-40 text-center">操作</TableHead></TableRow></TableHeader><TableBody className="[&_td]:py-1">{points.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={9}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : pageRows.length ? pageRows.map((row) => <TableRow key={`${row.id}-${row.deviceId}-${row.varSeq}`} className="h-10" data-state={selectedIds.includes(row.id) ? "selected" : undefined}><TableCell className="text-center"><Checkbox aria-label={`选择点位 ${row.pointName}`} checked={selectedIds.includes(row.id)} onCheckedChange={(checked) => toggleRow(row.id, checked === true)} /></TableCell><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.pointName}</TableCell><TableCell className="text-center">{row.varSeq}</TableCell><TableCell className="truncate text-center font-mono text-xs">{row.ioAddress}</TableCell><TableCell className="text-center"><Badge variant="outline">{row.dataType}</Badge></TableCell><TableCell className="truncate text-center">{row.driverName}</TableCell><TableCell className="text-center">{row.isReadonly ? "是" : "否"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看详情" onClick={() => setDetail(row)}><Eye className="size-4" /></Button><Button variant="ghost" size="icon-sm" title={row.pointStatus === "enabled" ? "停用点位" : "启用点位"} disabled={statusUpdatingId === row.id} onClick={() => void togglePointStatus(row)}>{row.pointStatus === "enabled" ? <PowerOff className="size-4 text-warning" /> : <Power className="size-4 text-success" />}</Button><Button variant="ghost" size="icon-sm" title="编辑点位" onClick={() => openEdit(row)}><Pencil className="size-4" /></Button><Button variant="ghost" size="icon-sm" title="删除点位" onClick={() => setDeleting(row)}><Trash2 className="size-4 text-destructive" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={9} className="h-32 text-center text-muted-foreground">{points.error ?? "暂无点位"}</TableCell></TableRow>}</TableBody></Table></div>
           <div className="flex flex-col gap-3 pt-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><span>共 {points.data?.total ?? 0} 个点位</span><div className="flex flex-wrap items-center gap-2"><span>每页 {pageSize} 行</span><span>第 {page} / {totalPages} 页</span><Button variant="outline" size="icon-sm" disabled={page === 1} onClick={() => setPage(1)}><ChevronsLeft className="size-4" /></Button><Button variant="outline" size="icon-sm" disabled={page === 1} onClick={() => setPage((value) => value - 1)}><ChevronLeft className="size-4" /></Button><Button variant="outline" size="icon-sm" disabled={page === totalPages} onClick={() => setPage((value) => value + 1)}><ChevronRight className="size-4" /></Button><Button variant="outline" size="icon-sm" disabled={page === totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="size-4" /></Button></div></div>
         </CardContent></Card>
 
