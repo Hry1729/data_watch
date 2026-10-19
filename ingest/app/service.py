@@ -4,7 +4,7 @@ from typing import Protocol
 
 from data_watch_shared.stream_envelope import validate_envelope
 
-from .redis_store import CommitUnknownError, RedisProcessResult
+from .redis_store import CommitUnknownError, RedisProcessResult, TransientStoreError
 from .repository import IngestRepository, ValidationDecision
 from .schemas import AckResult, SessionSwitch, UploadBatch, UploadItem
 
@@ -49,6 +49,9 @@ class IngestService:
                 [(item, decision.action) for item, decision in zip(items, decisions)],
                 nonce=nonce or batch.request_id,
             )
+        except TransientStoreError:
+            # 暂时性持久化故障交给 HTTP 层映射为 503（可重试），不作为逐条 ACK 状态返回。
+            raise
         except CommitUnknownError as exc:
             await self._repository.touch_node(batch.node_uuid)
             return [self._ack(items[0], "commit_unknown", str(exc))]
