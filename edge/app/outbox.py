@@ -52,13 +52,16 @@ logger = logging.getLogger("edge.outbox")
 # 传输类失败（无 http_status、429/5xx/断网）只累积 ``attempt_count``（退避用），
 # 绝不消耗隔离预算 —— 否则长时间断网的历史网络次数会让一次序列异常把好数据判死。
 # 取值与 ``edge/app/uploader.py`` 中 ``quarantine_after_max=True`` 的两个调用点严格一致。
+# ``commit_unknown`` 是中心持久化结果不确定（Redis 暂时故障），不是坏数据裁决，
+# 不在此列：uploader 在同一 session 内退避重试，不消耗隔离预算。
 PROTOCOL_REJECT_ERRORS = frozenset(
     {
-        "http_400_contract_rejected",  # uploader.py: HTTP 400 契约拒绝
+        "http_400_contract_rejected",  # uploader.py: HTTP 400 契约拒绝（记录级）
         "seq_reject",  # uploader.py: ACK 状态 seq_reject
-        "commit_unknown",  # uploader.py: ACK 状态 commit_unknown
     }
 )
+# 没有启用的 assignment 但 outbox 仍有积压时的上传间隔：采集停了，积压照样要传完。
+DEFAULT_UPLOAD_INTERVAL_MS = 1000
 
 OUTBOX_SCHEMA = """
 CREATE TABLE IF NOT EXISTS outbox (
@@ -295,7 +298,18 @@ class OutboxStore:
                 ) AS value
                 """
             ).fetchone()
-        return int(row["value"]) if row and row["value"] is not None else None
+            if row and row["value"] is not None:
+                return int(row["value"])
+            # Edge 9：上传调度与「是否还在采集」解耦。设备被禁用/迁走/时间窗结束后，
+            # 未确认的积压仍按默认间隔上传，否则会拖过中心 grace 窗口而丢失。
+            backlog = self._connection.execute(
+                """
+                SELECT 1 FROM outbox
+                WHERE state IN ('pending', 'retry_wait', 'inflight')
+                LIMIT 1
+                """
+            ).fetchone()
+        return DEFAULT_UPLOAD_INTERVAL_MS if backlog is not None else None
 
     def append_envelope(
         self,
@@ -714,14 +728,16 @@ class OutboxStore:
             # ``last_error``/``http_status`` 同样保留：它们是「该帧为何进入新会话」的
             # 行级取证字段（协议裁决证据），按 B6「真正非法项有独立证据」的要求不得
             # 在恢复路径上被抹掉；下一次尝试会由 mark_retry_batch/complete_batch 覆盖。
+            #
+            # 退避（retry_wait + next_retry_at）同样跨切换保留：切换只是重编号，
+            # 清掉退避会让下一个上传周期立即重放，形成对中心的无退避重试风暴。
             for local_seq, row in enumerate(pending_rows, start=1):
                 connection.execute(
                     """
                     UPDATE outbox
                     SET upload_session_id=?,
                         local_seq=?,
-                        state='pending',
-                        next_retry_at=NULL,
+                        state=CASE WHEN state='retry_wait' THEN 'retry_wait' ELSE 'pending' END,
                         lease_owner=NULL,
                         inflight_at=NULL,
                         lease_until=NULL
