@@ -2,8 +2,8 @@
 
 存储层（W1-E1 落地，本文件原有用例）：
 - 429/5xx/断网等传输类失败**绝不**消耗坏数据隔离预算（``reject_count`` 保持 0）；
-- 只有中心给出协议级裁决的三个原因（``http_400_contract_rejected`` / ``seq_reject`` /
-  ``commit_unknown``）才消耗该预算；
+- 只有中心给出协议级裁决的两个原因（记录级 ``http_400_contract_rejected`` /
+  ``seq_reject``）才消耗该预算；``commit_unknown`` 是中心持久化不确定，不消耗（Edge 2）；
 - 中心侧异常（``missing_ack`` / ``malformed_ack`` / ``unknown_ack`` / 未确认 AOF /
   ``session_obsolete``）同样不消耗该预算（保守方向：不得因中心侧问题杀好数据）；
 - 已存在的现场库能被补列迁移。
@@ -203,7 +203,13 @@ async def test_contract_rejection_is_recorded_as_independent_evidence(tmp_path: 
 
     async with httpx.AsyncClient(
         base_url="https://center.test",
-        transport=httpx.MockTransport(lambda request: httpx.Response(400, text="bad contract")),
+        # 中心明确标注记录级（scope=item）的 400 才是协议裁决（Edge 6）。
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                400,
+                json={"status": "bad_request", "reason": "bad contract", "scope": "item"},
+            )
+        ),
     ) as client:
         uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
         await uploader.run_cycle()
@@ -367,6 +373,8 @@ async def _run_cycle(store: OutboxStore, tmp_path: Path, handler, **overrides) -
             store, settings(tmp_path, **overrides), client=client, signer=FakeSigner()
         )
         await uploader.run_cycle()
+    # session 切换现在保留退避（Edge 2/15），这里免除等待以便下一轮立即 claim。
+    clear_retry_schedule(store)
 
 
 @pytest.mark.asyncio
