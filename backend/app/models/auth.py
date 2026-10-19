@@ -156,3 +156,17 @@ class SysDataPermission(Base):
     scope_value: Mapped[str] = mapped_column(String(128), nullable=False, default="*")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+
+class SysBootstrapState(Base):
+    """记录一次性初始化步骤（如种子授权）已执行到的版本"""
+
+    __tablename__ = "sys_bootstrap_state"
+
+    state_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    update_time: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=now_local,
+        onupdate=now_local,
+    )
