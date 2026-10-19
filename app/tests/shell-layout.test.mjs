@@ -67,3 +67,13 @@ test("distributed assignment locks devices owned by other nodes and filters by t
   assert.ok(clientSource.includes("/api/distributed/assignments/occupancy"));
   assert.ok(clientSource.includes("/api/distributed/nodes/sync-device-status"));
 });
+
+test("content area offers back-to-top and page search has a Ctrl+K shortcut", async () => {
+  const layout = await readFile(new URL("../src/components/AppLayout.tsx", import.meta.url), "utf8");
+  const tools = await readFile(new URL("../src/components/TopbarTools.tsx", import.meta.url), "utf8");
+  assert.match(layout, /aria-label="回到顶部"/);
+  assert.match(layout, /scrollTo\(\{ top: 0, behavior: "smooth" \}\)/);
+  assert.match(layout, /dw-acrylic-header/);
+  assert.match(tools, /event\.ctrlKey \|\| event\.metaKey/);
+  assert.match(tools, /ArrowDown/);
+});
