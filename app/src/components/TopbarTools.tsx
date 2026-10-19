@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bell, Search } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -25,6 +25,23 @@ export function TopbarTools() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [keyword, setKeyword] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const shortcutLabel = isMac ? "⌘K" : "Ctrl+K";
+  // 全局快捷键：Ctrl+K / ⌘K 打开（再次按下关闭）页面搜索
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(open => {
+          if (!open) { setKeyword(""); setActiveIndex(0); }
+          return !open;
+        });
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const canReadLogs = BUILD_ROLE !== "edge" && Boolean(auth?.allowedPaths?.includes("/logs/system"));
   const pages = useMemo(() => searchPages(filterNavigationGroups(auth?.allowedPaths), keyword, Boolean(auth?.allowedPaths?.includes("/settings"))), [auth?.allowedPaths, keyword]);
   const loadNotices = useCallback(async (token: string, signal: AbortSignal): Promise<Notice[]> => {
@@ -45,15 +62,19 @@ export function TopbarTools() {
   function openPage(path: string) { setSearchOpen(false); setNoticeOpen(false); navigate(path); }
 
   return <>
-    <Dialog open={searchOpen} onOpenChange={open => { setSearchOpen(open); if (open) setKeyword(""); }}>
-      <DialogTrigger asChild><Button variant="ghost" size="icon" className="size-8 rounded-3xl" aria-label="搜索页面" title="搜索页面"><Search /></Button></DialogTrigger>
+    <Dialog open={searchOpen} onOpenChange={open => { setSearchOpen(open); if (open) { setKeyword(""); setActiveIndex(0); } }}>
+      <DialogTrigger asChild><Button variant="ghost" size="icon" className="size-8 rounded-3xl" aria-label={`搜索页面（${shortcutLabel}）`} title={`搜索页面（${shortcutLabel}）`} aria-keyshortcuts="Control+K Meta+K"><Search /></Button></DialogTrigger>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader><DialogTitle>搜索页面</DialogTitle><DialogDescription>搜索当前账号可访问的页面，按 Enter 打开首个结果。</DialogDescription></DialogHeader>
-        <form onSubmit={event => { event.preventDefault(); if (pages[0]) openPage(pages[0].path); }}>
-          <Field><FieldLabel htmlFor="page-search">页面名称</FieldLabel><Input id="page-search" autoFocus value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="例如：实时监控、设置" /></Field>
+        <DialogHeader><DialogTitle>搜索页面</DialogTitle><DialogDescription>搜索当前账号可访问的页面，↑↓ 选择，Enter 打开；随时按 {shortcutLabel} 唤起。</DialogDescription></DialogHeader>
+        <form onSubmit={event => { event.preventDefault(); const target = pages[Math.min(activeIndex, pages.length - 1)]; if (target) openPage(target.path); }}>
+          <Field><FieldLabel htmlFor="page-search">页面名称</FieldLabel><Input id="page-search" autoFocus value={keyword} onChange={event => { setKeyword(event.target.value); setActiveIndex(0); }} onKeyDown={event => {
+            if (!pages.length) return;
+            if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex(index => (index + 1) % pages.length); }
+            else if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex(index => (index - 1 + pages.length) % pages.length); }
+          }} placeholder="例如：实时监控、设置" /></Field>
         </form>
         <nav aria-label="页面搜索结果" className="flex max-h-80 flex-col gap-1 overflow-y-auto">
-          {pages.length ? pages.map(page => <Button key={page.path} type="button" variant="ghost" className="justify-between" onClick={() => openPage(page.path)}><span>{page.label}</span><span className="text-muted-foreground">{page.group}</span></Button>) : <p role="status">没有匹配的可访问页面。</p>}
+          {pages.length ? pages.map((page, index) => <Button key={page.path} type="button" variant="ghost" aria-current={index === activeIndex ? "true" : undefined} className={["justify-between", index === activeIndex ? "bg-accent text-accent-foreground" : ""].join(" ")} onMouseEnter={() => setActiveIndex(index)} onClick={() => openPage(page.path)}><span>{page.label}</span><span className="text-muted-foreground">{page.group}</span></Button>) : <p role="status">没有匹配的可访问页面。</p>}
         </nav>
       </DialogContent>
     </Dialog>
