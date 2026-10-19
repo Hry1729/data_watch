@@ -239,12 +239,12 @@ async def create_role(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:role:create")
+    principal = await require_permissions(credentials, "system:role:create")
     role_payload = RolePayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.create_role(role_payload)
+        data = await service.create_role(role_payload, current_user_roles=principal["roles"])
         return success_response(data=data)
 
 
@@ -430,12 +430,18 @@ async def update_menu_permission(
     payload: dict[str, Any],
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
-    await require_permissions(credentials, "system:menu:update")
+    principal = await require_permissions(credentials, "system:menu:update")
     permission_payload = PermissionPayload.from_dict(payload)
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:
         service = SystemManageService(session)
-        data = await service.update_menu_permission(menu_id, permission_id, permission_payload)
+        data = await service.update_menu_permission(
+            menu_id,
+            permission_id,
+            permission_payload,
+            current_user_id=principal["user_id"],
+            current_user_roles=principal["roles"],
+        )
         return success_response(data=data)
 
 
