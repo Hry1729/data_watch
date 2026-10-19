@@ -199,7 +199,7 @@ export function AppLayout() {
     <div className="flex h-full min-w-0 overflow-hidden bg-background">
       <aside
         className={[
-          "flex shrink-0 flex-col border-r border-sidebar-border bg-white text-sidebar-foreground transition-[width] duration-200 dark:bg-sidebar",
+          "flex shrink-0 flex-col bg-white text-sidebar-foreground transition-[width] duration-200 dark:bg-sidebar",
           sidebarCollapsed ? "w-16" : "w-60",
         ].join(" ")}
       >
@@ -456,8 +456,8 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center border-b border-border bg-white px-4 dark:bg-card">
+      <section className="m-2 ml-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+        <header className="flex h-14 shrink-0 items-center border-b border-border bg-transparent px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>
@@ -480,7 +480,7 @@ export function AppLayout() {
           <div className="ml-auto">{headerActions}</div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto p-4 [&>*]:px-0 md:[&>*]:px-0">
+        <main className="min-h-0 flex-1 overflow-auto p-4">
           <Outlet />
         </main>
       </section>

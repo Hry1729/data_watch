@@ -178,6 +178,9 @@ export function getPageMeta(pathname: string): PageMeta | null {
   if (pathname === "/settings") {
     return { title: "设置", groupLabel: null, kind: "existing" };
   }
+  if (pathname === "/help") {
+    return { title: "帮助", groupLabel: null, kind: "existing" };
+  }
 
   for (const group of navigationGroups) {
     const item = group.items.find((candidate) => candidate.path === pathname);

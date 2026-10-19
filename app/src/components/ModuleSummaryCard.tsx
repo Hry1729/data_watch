@@ -1,16 +1,25 @@
 import {
   useEffect,
   useState,
+  type ComponentType,
+  type ReactNode,
 } from "react";
 import {
+  Activity,
+  Clock,
+  CloudUpload,
+  Cpu,
+  Database,
+  HardDriveDownload,
+  MemoryStick,
+  Network,
   Play,
   RotateCcw,
   ScrollText,
   Square,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { ModuleName, ModuleStatus, ModuleStatusValue } from "@/types";
@@ -24,114 +33,194 @@ export function formatUptime(seconds: number): string {
   return [h, m, s].map((v) => String(v).padStart(2, "0")).join(":");
 }
 
+/** 运行时长（分钟粒度）：3天 02时 35分，单位为小字 */
+export function UptimeValue({ seconds }: { seconds: number }) {
+  const safe = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(safe / 86400);
+  const h = Math.floor((safe % 86400) / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const unit = "mx-px text-xs font-medium tracking-normal text-muted-foreground";
+  return (
+    <>
+      {d > 0 && (
+        <>
+          {d}
+          <small className={unit}>天</small>{" "}
+        </>
+      )}
+      {String(h).padStart(2, "0")}
+      <small className={unit}>时</small>{" "}
+      {String(m).padStart(2, "0")}
+      <small className={unit}>分</small>
+    </>
+  );
+}
+
 // ─── 模块元信息 ───────────────────────────────────────────────────────────────
 
-const MODULE_META = {
+const MODULE_META: Record<ModuleName, {
+  label: string;
+  subtitle: string;
+  targetLabel: string;
+  icon: ComponentType<{ className?: string }>;
+}> = {
   collector: {
     label: "Collector 采集模块",
     subtitle: "实时设备数据采集与流式入队",
     targetLabel: "Redis Stream",
+    icon: Activity,
   },
   ingest: {
     label: "Ingest 数据汇聚模块",
     subtitle: "边缘数据校验、汇聚与 Redis Stream 入队",
     targetLabel: "Redis Stream",
+    icon: Network,
   },
   uploader: {
     label: "Uploader 上行同步模块",
     subtitle: "本地离线队列严格按序同步至中心 Ingest",
     targetLabel: "中心 Ingest",
+    icon: CloudUpload,
   },
   storage: {
     label: "Storage 本地存储模块",
     subtitle: "边缘采集帧、实时快照与上行状态单写落盘",
     targetLabel: "SQLite Outbox",
+    icon: Database,
   },
   writer: {
     label: "Writer 入库模块",
     subtitle: "Redis Stream 消费与 TDengine 批量写入",
     targetLabel: "TDengine",
-  },
-} as const;
-
-// ─── 状态 Badge（4 态色彩区分）────────────────────────────────────────────────
-
-const STATUS_META: Record<
-  ModuleStatusValue,
-  { label: string; cls: string; dot: string }
-> = {
-  running: {
-    label: "运行中",
-    cls: "bg-success-soft text-success hover:bg-success-soft border-success/30",
-    dot: "bg-success",
-  },
-  stopped: {
-    label: "已停止",
-    cls: "bg-muted text-muted-foreground hover:bg-muted",
-    dot: "bg-muted-foreground",
-  },
-  crashed: {
-    label: "异常退出",
-    cls: "bg-destructive-soft text-destructive hover:bg-destructive-soft border-destructive/30",
-    dot: "bg-destructive",
-  },
-  unknown: {
-    label: "未知",
-    cls: "bg-muted text-muted-foreground hover:bg-muted",
-    dot: "bg-muted-foreground/70",
+    icon: HardDriveDownload,
   },
 };
 
-function StatusBadge({ status, compact = false }: { status: ModuleStatusValue; compact?: boolean }) {
+/** 内存小仪表满刻度（状态里只有 memory_mb；按系统内存占比需后端返回 memory_percent） */
+const MEMORY_GAUGE_CAP_MB = 1024;
+
+// ─── 状态 Pill（4 态色彩区分）────────────────────────────────────────────────
+
+const STATUS_META: Record<
+  ModuleStatusValue,
+  { label: string; cls: string; pulse: boolean }
+> = {
+  running: {
+    label: "运行中",
+    cls: "bg-success-soft text-success border-success/30",
+    pulse: true,
+  },
+  stopped: {
+    label: "已停止",
+    cls: "bg-muted text-muted-foreground border-transparent",
+    pulse: false,
+  },
+  crashed: {
+    label: "异常退出",
+    cls: "bg-destructive-soft text-destructive border-destructive/30",
+    pulse: false,
+  },
+  unknown: {
+    label: "未知",
+    cls: "bg-muted text-muted-foreground/80 border-transparent",
+    pulse: false,
+  },
+};
+
+function StatusBadge({ status }: { status: ModuleStatusValue }) {
   const meta = STATUS_META[status];
   return (
-    <Badge
-      variant="secondary"
+    <span
       className={cn(
-        "gap-1.5 rounded-full px-3 py-1",
+        "inline-flex h-6 shrink-0 items-center gap-[7px] rounded-full border px-2.5 text-xs font-medium",
         meta.cls,
-        compact && "gap-1 px-2 py-0.5 text-xs",
       )}
     >
-      <span className={cn("size-2 rounded-full", meta.dot, compact && "size-1.5")} />
+      <span className="relative size-[7px]">
+        {meta.pulse && <span className="absolute inset-0 animate-ping rounded-full bg-current opacity-50 [animation-duration:2.4s]" />}
+        <span className="absolute inset-0 rounded-full bg-current" />
+      </span>
       {meta.label}
-    </Badge>
+    </span>
   );
 }
 
-// ─── Metric 小卡（用于 Overview 的内嵌 3 卡）─────────────────────────────────
+// ─── 刻度小仪表（半圆缺口，概念稿 notch）──────────────────────────────────────
 
-function MetricCard({
+function NotchGauge({ percent }: { percent: number }) {
+  const width = 66;
+  const height = 40;
+  const count = 18;
+  const cx = width / 2;
+  const cy = height - 4;
+  const outer = Math.min(width / 2 - 2, height - 6);
+  const inner = outer * 0.7;
+  const pct = Math.max(0, Math.min(100, percent));
+  const color = pct > 70 ? "var(--warning)" : "var(--brand)";
+  return (
+    <svg width={width} height={height} className="pointer-events-none absolute bottom-2 right-2.5" aria-hidden>
+      {Array.from({ length: count }, (_, i) => {
+        const angle = Math.PI + (Math.PI * i) / (count - 1);
+        const on = i / (count - 1) <= pct / 100 + 1e-6;
+        return (
+          <line
+            key={i}
+            x1={cx + inner * Math.cos(angle)}
+            y1={cy + inner * Math.sin(angle)}
+            x2={cx + outer * Math.cos(angle)}
+            y2={cy + outer * Math.sin(angle)}
+            stroke={on ? color : "var(--muted)"}
+            strokeWidth={2.6}
+            strokeLinecap="round"
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+// ─── Metric 小格（模块卡内嵌 3 格）──────────────────────────────────────────
+
+function MetricCell({
   label,
+  icon: Icon,
   value,
   loading,
-  compact = false,
+  gauge,
+  narrow = false,
 }: {
   label: string;
-  value: string;
+  icon: ComponentType<{ className?: string }>;
+  value: ReactNode;
   loading?: boolean;
-  compact?: boolean;
+  gauge?: number | null;
+  /** 三列卡片内的窄格：数字略小并允许换行 */
+  narrow?: boolean;
 }) {
   return (
-    <div className={cn("min-w-0 rounded-xl border p-4", compact && "rounded-lg p-3")}>
-      <div className={cn("mb-3 text-sm text-muted-foreground", compact && "mb-1.5 truncate text-xs")}>
-        {label}
+    <div className={cn("relative min-h-20 min-w-0 overflow-hidden rounded-[10px] bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))] px-3.5 py-3", narrow && "px-3")}>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Icon className="size-[13px] shrink-0" />
+        <span className="truncate">{label}</span>
       </div>
       {loading ? (
-        <Skeleton className={cn("h-7 w-24", compact && "h-6 w-16")} />
+        <Skeleton className="mt-2.5 h-6 w-16" />
       ) : (
         <div className={cn(
-          "text-2xl font-semibold tabular-nums text-foreground",
-          compact && "truncate whitespace-nowrap text-lg leading-6",
+          "relative z-[1] mt-2 truncate whitespace-nowrap text-[22px] font-semibold leading-[1.2] tracking-[-0.02em] tabular-nums text-foreground",
+          narrow && "whitespace-normal text-lg leading-[1.25]",
         )}>
           {value}
         </div>
       )}
+      {!loading && gauge != null && <NotchGauge percent={gauge} />}
     </div>
   );
 }
 
-// ─── 模块 Header 内容（icon + 标题 + 副标题 + Badge + 可选 PID）──────────────
+const UNIT_CLASS = "ml-0.5 text-xs font-medium tracking-normal text-muted-foreground";
+
+// ─── 模块 Header 内容（icon + 标题 + 副标题 + 输出 + Badge + 可选 PID）────────
 //
 // 抽出为函数：Overview 的 ModuleSummaryCard 与 Detail 页的 ModuleHeaderCard 共用。
 
@@ -140,7 +229,6 @@ function ModuleHeader({
   status,
   loading,
   showPid,
-  compact = false,
 }: {
   name: ModuleName;
   status: ModuleStatus;
@@ -148,28 +236,32 @@ function ModuleHeader({
   showPid: boolean;
   compact?: boolean;
 }) {
-  const { label, subtitle } = MODULE_META[name];
+  const { label, subtitle, targetLabel, icon: Icon } = MODULE_META[name];
   return (
-    <div className={cn("flex items-start justify-between gap-4", compact && "gap-2")}>
-      {/* 左：标题 + 副标题 */}
-      <div className="flex items-center gap-4 min-w-0">
-        <div className="min-w-0">
-          <CardTitle className={cn("text-xl text-foreground", compact && "text-lg leading-6")}>{label}</CardTitle>
-          <p className={cn("mt-1 text-sm text-muted-foreground", compact && "text-xs leading-5")}>{subtitle}</p>
+    <div className="flex items-start gap-3">
+      <div className="grid size-10 shrink-0 place-items-center rounded-[10px] bg-brand-soft text-brand">
+        <Icon className="size-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <CardTitle className="truncate text-base font-semibold leading-[1.3] tracking-[-0.01em] text-foreground">{label}</CardTitle>
+        <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{subtitle}</p>
+        <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          输出
+          <span className="rounded-full bg-muted px-2 py-px font-medium text-foreground">{targetLabel}</span>
         </div>
       </div>
 
-      {/* 右：状态 Badge + 可选 PID chip */}
-      <div className="flex items-center gap-2 shrink-0">
+      {/* 右：可选 PID chip + 状态 Pill */}
+      <div className="flex shrink-0 items-center gap-2">
         {showPid && !loading && status.pid != null && (
-          <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 text-xs font-mono text-muted-foreground">
+          <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-1 font-mono text-xs text-muted-foreground">
             PID {status.pid}
           </span>
         )}
         {loading ? (
           <Skeleton className="h-6 w-20 rounded-full" />
         ) : (
-          <StatusBadge status={status.status} compact={compact} />
+          <StatusBadge status={status.status} />
         )}
       </div>
     </div>
@@ -193,7 +285,7 @@ export function ModuleHeaderCard({
     <Card
       className="w-full bg-card"
     >
-      <CardContent className="px-6 py-5">
+      <CardContent className="px-5">
         <ModuleHeader name={name} status={status} loading={loading} showPid />
       </CardContent>
     </Card>
@@ -213,7 +305,7 @@ export interface ModuleSummaryCardProps {
   loading?: boolean;
   /** "日志"按钮文案 */
   logButtonLabel?: string;
-  /** 三列控制台使用的紧凑尺寸 */
+  /** 两列控制台使用：指标格较宽，显示内存 / CPU 刻度小仪表 */
   compact?: boolean;
   // 回调
   onStart?:   () => void;
@@ -221,6 +313,8 @@ export interface ModuleSummaryCardProps {
   onRestart?: () => void;
   onViewLog?: () => void;
 }
+
+const ACTION_BUTTON_CLASS = "h-9 gap-1.5 px-2 text-[13px] font-medium [&_svg]:size-3.5";
 
 // ─── ModuleSummaryCard 主组件 ─────────────────────────────────────────────────
 
@@ -243,78 +337,80 @@ export function ModuleSummaryCard({
     setDisplayUptimeSeconds(status.uptime_seconds);
     if (loading || status.status !== "running") return;
 
+    // 运行时长只显示到分钟，30s 校一次即可
+    const startedAt = Date.now();
     const timer = setInterval(() => {
-      setDisplayUptimeSeconds((value) => value + 1);
-    }, 1_000);
+      setDisplayUptimeSeconds(status.uptime_seconds + Math.floor((Date.now() - startedAt) / 1000));
+    }, 30_000);
 
     return () => clearInterval(timer);
   }, [loading, status.status, status.uptime_seconds]);
 
-  const uptimeStr = formatUptime(displayUptimeSeconds);
-  const memValueStr = status.memory_mb > 0 ? `${status.memory_mb.toFixed(0)} MB` : "—";
-  const cpuValueStr = status.cpu_percent > 0 ? `${status.cpu_percent.toFixed(1)}%` : "0.0%";
+  const hasMemory = status.memory_mb > 0;
+  const cpu = status.cpu_percent > 0 ? status.cpu_percent : 0;
 
   return (
     <Card
-      className={cn("w-full bg-card", compact && "h-full")}
+      className={cn("w-full gap-4 bg-card p-5", compact && "h-full")}
     >
-      <CardHeader className={cn("pb-2", compact && "min-h-[76px] px-4 pb-1 pt-4")}>
-        <ModuleHeader name={name} status={status} loading={loading} showPid={false} compact={compact} />
-      </CardHeader>
+      <ModuleHeader name={name} status={status} loading={loading} showPid={false} />
 
-      <CardContent className={cn("space-y-5", compact && "flex flex-1 flex-col gap-4 space-y-0 px-4 pb-4 pt-0")}>
-        {/* 3 个运行指标卡 */}
-        <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-3", compact && "gap-2")}>
-          <MetricCard
-            label="运行时长"
-            value={uptimeStr}
-            loading={loading}
-            compact={compact}
-          />
-          <MetricCard
-            label="内存使用"
-            value={memValueStr}
-            loading={loading}
-            compact={compact}
-          />
-          <MetricCard
-            label="CPU 使用率"
-            value={cpuValueStr}
-            loading={loading}
-            compact={compact}
-          />
-        </div>
+      {/* 3 个运行指标格 */}
+      <div className="grid grid-cols-3 gap-2.5">
+        <MetricCell
+          label="运行时长"
+          narrow={!compact}
+          icon={Clock}
+          value={<UptimeValue seconds={displayUptimeSeconds} />}
+          loading={loading}
+        />
+        <MetricCell
+          label="内存使用"
+          narrow={!compact}
+          icon={MemoryStick}
+          value={hasMemory ? <>{status.memory_mb.toFixed(0)}<small className={UNIT_CLASS}>MB</small></> : "—"}
+          loading={loading}
+          gauge={compact && hasMemory ? (status.memory_mb / MEMORY_GAUGE_CAP_MB) * 100 : null}
+        />
+        <MetricCell
+          label="CPU 使用率"
+          narrow={!compact}
+          icon={Cpu}
+          value={<>{cpu.toFixed(1)}<small className={UNIT_CLASS}>%</small></>}
+          loading={loading}
+          gauge={compact ? cpu : null}
+        />
+      </div>
 
-        {/* 操作按钮 */}
-        <div className={cn("grid grid-cols-2 gap-3 md:grid-cols-4", compact && "mt-auto grid-cols-4 gap-2")}>
-          <Button
-            variant="outline"
-            className={cn("h-11 border-brand/30 text-brand hover:bg-brand/10", compact && "h-9 gap-1 px-2 text-xs")}
-            disabled={disabled}
-            onClick={onStart}
-          >
-            <Play data-icon="inline-start" />
-            启动
-          </Button>
-          <Button
-            variant="outline"
-            className={cn("h-11 border-destructive/30 text-destructive hover:bg-destructive/10", compact && "h-9 gap-1 px-2 text-xs")}
-            disabled={disabled}
-            onClick={onStop}
-          >
-            <Square data-icon="inline-start" className="fill-current" />
-            停止
-          </Button>
-          <Button variant="outline" className={cn("h-11", compact && "h-9 gap-1 px-2 text-xs")} disabled={disabled} onClick={onRestart}>
-            <RotateCcw data-icon="inline-start" />
-            重启
-          </Button>
-          <Button variant="outline" className={cn("h-11", compact && "h-9 gap-1 px-2 text-xs")} disabled={disabled || !onViewLog} onClick={onViewLog}>
-            <ScrollText data-icon="inline-start" />
-            {logButtonLabel}
-          </Button>
-        </div>
-      </CardContent>
+      {/* 操作按钮 */}
+      <div className={cn("grid grid-cols-4 gap-2", compact && "mt-auto")}>
+        <Button
+          variant="outline"
+          className={cn(ACTION_BUTTON_CLASS, "border-brand/30 text-brand hover:bg-brand/10 hover:text-brand")}
+          disabled={disabled}
+          onClick={onStart}
+        >
+          <Play data-icon="inline-start" />
+          启动
+        </Button>
+        <Button
+          variant="outline"
+          className={cn(ACTION_BUTTON_CLASS, "border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive")}
+          disabled={disabled}
+          onClick={onStop}
+        >
+          <Square data-icon="inline-start" className="fill-current" />
+          停止
+        </Button>
+        <Button variant="outline" className={ACTION_BUTTON_CLASS} disabled={disabled} onClick={onRestart}>
+          <RotateCcw data-icon="inline-start" />
+          重启
+        </Button>
+        <Button variant="outline" className={ACTION_BUTTON_CLASS} disabled={disabled || !onViewLog} onClick={onViewLog}>
+          <ScrollText data-icon="inline-start" />
+          {logButtonLabel}
+        </Button>
+      </div>
     </Card>
   );
 }

@@ -1,4 +1,6 @@
+import { useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { Activity, ChartLine, CloudUpload, HardDriveDownload, Network } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,16 +11,39 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { MonitorKpiCard, formatShort } from "@/components/MonitorKpiCard";
 import { ModuleSummaryCard } from "@/components/ModuleSummaryCard";
 import { TrendChart } from "@/components/TrendChart";
+import { useBackendQuery } from "@/hooks/useBackendQuery";
 import {
   fallbackStatus,
   useModuleStatus,
   useProcessControl,
 } from "@/hooks/useModuleStatus";
+import { useModuleMetrics } from "@/hooks/useModuleMetrics";
 import { useModuleRates, rateTrendState } from "@/hooks/useModuleRates";
+import { backendClient } from "@/lib/backend-client";
 import { BUILD_ROLE } from "@/config/build-role";
+import type { DistributedNode } from "@/types/distributed";
+import type { ModuleRate } from "@/types";
 type OverviewModuleName = "collector" | "ingest" | "writer";
+
+const BACKLOG_THRESHOLD = 5000;
+
+function formatNumber(value: number | undefined | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("zh-CN");
+}
+
+function rateStats(rate: ModuleRate | undefined) {
+  const values = (rate?.series ?? []).map((point) => point.v).filter((value) => Number.isFinite(value));
+  if (values.length === 0) return null;
+  return {
+    max: Math.max(...values),
+    avg: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length),
+    min: Math.min(...values),
+  };
+}
 
 // ─── 确认 Dialog 文案 ─────────────────────────────────────────────────────────
 
@@ -58,6 +83,7 @@ function ModuleSection({ name }: { name: OverviewModuleName }) {
       <ModuleSummaryCard
         name={name}
         status={status}
+        compact
         loading={isInitialLoading}
         operating={ctl.operating}
         onStart={ctl.onStart}
@@ -104,28 +130,117 @@ export function OverviewPage() {
   const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
   const cRate = rates?.collector;
   const wRate = rates?.writer;
+  const wLandedRate = rates?.writerLanded;
+  const writerMetrics = useModuleMetrics("writer");
+
+  const loadNodes = useCallback(
+    (token: string, signal: AbortSignal) => backendClient.distributedNodes(token, signal),
+    [],
+  );
+  const nodesQuery = useBackendQuery<DistributedNode[]>(loadNodes, {
+    enabled: BUILD_ROLE === "distributed-center",
+    intervalMs: 10_000,
+  });
+
+  const edgeStats = useMemo(() => {
+    const nodes = nodesQuery.data ?? [];
+    return {
+      total: nodes.length,
+      online: nodes.filter((node) => Boolean(node.lastSeenAt && Date.now() - new Date(node.lastSeenAt).getTime() < 30_000)).length,
+      backlog: nodes.reduce((sum, node) => sum + node.outboxBacklog, 0),
+      watermarkWarnings: nodes.filter((node) => node.outboxWatermark !== "normal").length,
+    };
+  }, [nodesQuery.data]);
+
+  const cStats = rateStats(cRate);
+  const wLandedStats = rateStats(wLandedRate);
+  const isCenter = BUILD_ROLE === "distributed-center";
+  const edgeDetail = !isCenter
+    ? "当前部署无边缘节点"
+    : nodesQuery.error
+      ? "无法获取边缘节点数据"
+      : edgeStats.total === 0
+        ? "无已注册边缘节点"
+        : `${edgeStats.online} / ${edgeStats.total} 节点在线${edgeStats.watermarkWarnings > 0 ? ` · ${edgeStats.watermarkWarnings} 台水位告警` : ""}`;
+
+  const rateDetail = (stats: ReturnType<typeof rateStats>, short = false) => {
+    if (!stats) return "近 10 分钟暂无数据";
+    const f = short ? formatShort : formatNumber;
+    return `峰值 ${f(stats.max)} · 均值 ${f(stats.avg)} · 谷值 ${f(stats.min)}`;
+  };
+  // 集中式：collector 速率即“采集量”，无汇聚模块；分布式中心：同一 Redis 入队速率来自 Ingest，即“汇聚量”
+  const collectKpi = isCenter
+    ? { value: "—", detail: "采集在边缘节点执行" }
+    : { value: formatNumber(cRate?.current), detail: rateDetail(cStats) };
+  const ingestKpi = isCenter
+    ? { value: formatNumber(cRate?.current), detail: rateDetail(cStats) }
+    : { value: "—", detail: "当前部署无汇聚模块" };
 
   return (
-    <div className="px-6 pb-6 space-y-4" style={{ maxWidth: 1400 }}>
-      {/* 顶部：当前构建角色的两个受管模块 */}
-      <div className="grid grid-cols-2 gap-4">
+    <div className="mx-auto w-full max-w-[1400px] space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <MonitorKpiCard
+          denseDetail
+          label="采集量"
+          icon={Activity}
+          value={collectKpi.value}
+          unit={cRate?.unit ?? "批次/min"}
+          detail={collectKpi.detail}
+        />
+        <MonitorKpiCard
+          denseDetail
+          label="汇聚量"
+          icon={Network}
+          value={ingestKpi.value}
+          unit={cRate?.unit ?? "批次/min"}
+          detail={ingestKpi.detail}
+        />
+        <MonitorKpiCard
+          denseDetail
+          label="入库量"
+          icon={HardDriveDownload}
+          value={formatNumber(wLandedRate?.current)}
+          unit={wLandedRate?.unit ?? "rows/min"}
+          detail={rateDetail(wLandedStats, true)}
+        />
+        <MonitorKpiCard
+          denseDetail
+          label="入库积压 Stream Lag"
+          icon={ChartLine}
+          value={writerMetrics.data ? formatNumber(writerMetrics.data.streamLagTotal) : "—"}
+          unit="条"
+          detail={`阈值 ${formatNumber(BACKLOG_THRESHOLD)} · ${writerMetrics.data?.streams.length ?? 0} 个 Stream`}
+          tone={(writerMetrics.data?.streamLagTotal ?? 0) >= BACKLOG_THRESHOLD ? "warning" : "normal"}
+        />
+        <MonitorKpiCard
+          denseDetail
+          label="边缘上行积压"
+          icon={CloudUpload}
+          value={isCenter && nodesQuery.data ? formatNumber(edgeStats.backlog) : "—"}
+          unit="条"
+          detail={edgeDetail}
+          tone={edgeStats.watermarkWarnings > 0 ? "warning" : "normal"}
+        />
+      </div>
+
+      {/* 当前构建角色的两个受管模块 */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {OVERVIEW_MODULES.map((name) => <ModuleSection key={name} name={name} />)}
       </div>
 
-      {/* 趋势图：两行各一张全宽，接入 module-monitor/rates */}
+      {/* 双序列写入趋势：采集（或汇聚）蓝、入库绿，双轴 */}
       <TrendChart
-        title={BUILD_ROLE === "distributed-center" ? "汇聚入队趋势" : "采集写入趋势"}
+        title={isCenter ? "汇聚入队趋势" : "写入趋势"}
         unit={cRate?.unit ?? "批次/min"}
+        seriesLabel={isCenter ? "汇聚入队" : "采集写入"}
         state={rateTrendState(cRate, ratesLoading, ratesError)}
         data={cRate?.series ?? []}
         current={cRate?.current ?? null}
-      />
-      <TrendChart
-        title="入库写入趋势"
-        unit={wRate?.unit ?? "rows/min"}
-        state={rateTrendState(wRate, ratesLoading, ratesError)}
-        data={wRate?.series ?? []}
-        current={wRate?.current ?? null}
+        secondary={{
+          label: "入库写入",
+          unit: wRate?.unit ?? "条/min",
+          data: wRate?.series ?? [],
+        }}
       />
     </div>
   );

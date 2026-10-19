@@ -90,7 +90,7 @@ function ModulePage({
   const processStatus = status.data?.status ?? "unknown";
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-4 pb-4 md:px-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col gap-4 overflow-hidden">
       {showError && <p className="px-1 text-xs text-destructive" role="alert">{status.error}</p>}
       <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
         <MetricCard label="运行状态" value={processLabel(processStatus)} warning={processStatus === "crashed"} />

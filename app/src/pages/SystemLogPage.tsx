@@ -1,30 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, BellRing, Bug, CircleAlert, CircleCheck, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Database, Download, FileClock, LoaderCircle, RefreshCw, Search, Trash2 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { AlertTriangle, ArrowLeftRight, BellRing, CalendarDays, CircleAlert, CircleCheck, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Database, Download, FileClock, LoaderCircle, RefreshCw, Search, Trash2 } from "lucide-react";
+import { Area, Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 import { PieCenter } from "@/components/charts/pie-center";
 import { PieChart } from "@/components/charts/pie-chart";
 import { PieSlice } from "@/components/charts/pie-slice";
-import {
-  Legend,
-  LegendItem as LegendItemComponent,
-  LegendLabel,
-  LegendMarker,
-} from "@/components/charts/legend";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -58,19 +43,29 @@ const typeOptions = [
 const typeName = Object.fromEntries(typeOptions);
 
 const trendConfig = {
-  info: { label: "INFO", color: "var(--chart-1)" },
+  info: { label: "INFO", color: "var(--brand)" },
   warn: { label: "WARN", color: "var(--warning)" },
   error: { label: "ERROR", color: "var(--destructive)" },
-  critical: { label: "CRITICAL", color: "var(--chart-5)" },
+  critical: { label: "CRITICAL", color: "var(--destructive)" },
 } satisfies ChartConfig;
+type TrendKey = keyof typeof trendConfig;
 
+// 概念稿类型占比配色：品牌蓝三档 + 成功 / 警告 / 灰
 const TYPE_PIE_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
+  "var(--brand)",
+  "color-mix(in oklab, var(--brand) 62%, var(--card))",
+  "color-mix(in oklab, var(--brand) 36%, var(--card))",
+  "var(--success)",
+  "var(--warning)",
+  "var(--muted-foreground)",
+  "color-mix(in oklab, var(--success) 50%, var(--card))",
+  "color-mix(in oklab, var(--muted-foreground) 45%, var(--card))",
 ];
+
+// 概念稿尺寸：控件 32px、正文 13px
+const btnCls = "h-8 gap-1.5 bg-background px-3 text-[13px] [&_svg:not([class*='size-'])]:size-3.5";
+const priCls = "h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90 [&_svg:not([class*='size-'])]:size-3.5";
+const fieldCls = "h-8 bg-background text-[13px] md:text-[13px]";
 
 function apiTime(value?: string) {
   if (!value) return undefined;
@@ -106,67 +101,60 @@ function formatCompactNumber(value: number) {
   }).format(value);
 }
 
+function splitTableTime(value?: string): [string, string] {
+  const text = formatTableTime(value);
+  const [date, time] = text.split(" ");
+  return time ? [time, date] : [text, ""];
+}
+
+const levelBadgeCls = "inline-flex h-[22px] items-center gap-1 rounded-md border px-2 font-mono text-[11.5px] font-semibold tracking-[0.02em] [&_svg]:size-3";
+
 function logLevelBadge(level: SystemLogItem["level"]) {
-  if (level === "ERROR" || level === "CRITICAL") {
-    return (
-      <Badge variant="outline" className="border-destructive/30 bg-destructive/5 text-destructive">
-        <CircleAlert className="size-3" />
-        {level}
-      </Badge>
-    );
+  if (level === "CRITICAL") {
+    return <span className={`${levelBadgeCls} border-transparent bg-destructive text-white`}><CircleAlert />{level}</span>;
   }
-
+  if (level === "ERROR") {
+    return <span className={`${levelBadgeCls} border-destructive/25 bg-destructive-soft text-destructive`}><CircleAlert />{level}</span>;
+  }
   if (level === "WARN") {
-    return (
-      <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning">
-        <BellRing className="size-3" />
-        {level}
-      </Badge>
-    );
+    return <span className={`${levelBadgeCls} border-warning/25 bg-warning-soft text-warning`}><BellRing />{level}</span>;
   }
-
   if (level === "DEBUG") {
-    return (
-      <Badge variant="outline" className="text-muted-foreground">
-        <LoaderCircle className="size-3" />
-        {level}
-      </Badge>
-    );
+    return <span className={`${levelBadgeCls} border-border bg-transparent text-muted-foreground`}><LoaderCircle />{level}</span>;
   }
-
-  return (
-    <Badge variant="outline" className="border-success/30 bg-success-soft text-success">
-      <CircleCheck className="size-3" />
-      {level}
-    </Badge>
-  );
+  return <span className={`${levelBadgeCls} border-success/25 bg-success-soft text-success`}><CircleCheck />{level}</span>;
 }
 
 function StatCard({
   title,
   value,
+  unit,
   detail,
   icon: Icon,
   loading,
+  tone,
 }: {
   title: string;
   value: string;
+  unit?: string;
   detail: string;
-  icon: typeof Database;
+  icon?: typeof Database;
   loading: boolean;
+  tone?: "warning";
 }) {
   return (
-    <Card size="sm" className="bg-card">
-      <CardContent className="flex min-h-24 items-center justify-between gap-3 py-2">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{title}</p>
-          {loading ? <Skeleton className="mt-2 h-7 w-24" /> : <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>}
-          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
-        </div>
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="size-6" />
-        </div>
-      </CardContent>
+    <Card className="min-h-[108px] gap-0 p-4">
+      <div className={`flex items-center gap-2 text-[13px] ${tone === "warning" ? "text-warning" : "text-muted-foreground"}`}>
+        {Icon ? <Icon className="size-[15px] shrink-0" /> : <span className="relative flex size-2 shrink-0"><span className="absolute inset-0 animate-ping rounded-full bg-warning opacity-60" /><span className="relative size-2 rounded-full bg-warning" /></span>}
+        <span className="truncate">{title}</span>
+      </div>
+      {loading ? <Skeleton className="mt-2.5 h-7 w-24" /> : (
+        <p className="mt-2.5 truncate text-[26px] leading-[1.15] font-semibold tracking-[-0.03em] tabular-nums">
+          {value}
+          {unit && <small className="ml-[3px] text-[13px] font-medium tracking-normal text-muted-foreground">{unit}</small>}
+        </p>
+      )}
+      <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">{detail}</p>
     </Card>
   );
 }
@@ -188,6 +176,7 @@ export function SystemLogPage() {
   const [selectedFile, setSelectedFile] = useState("");
   const [tailLines, setTailLines] = useState(300);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [hiddenSeries, setHiddenSeries] = useState<Set<TrendKey>>(new Set());
 
   const loadLogs = useCallback((activeToken: string, signal: AbortSignal) => backendClient.systemLogList(activeToken, query, signal), [query]);
   const logs = useBackendQuery(loadLogs, { enabled: mode === "system" });
@@ -221,6 +210,11 @@ export function SystemLogPage() {
   );
 
   const trendData = stats.data?.levelTrend ?? [];
+  const typeTotal = typePieData.reduce((sum, item) => sum + item.value, 0);
+
+  function toggleSeries(key: TrendKey) {
+    setHiddenSeries((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  }
 
   function applySearch() {
     setQuery({ ...draft, startTime: apiTime(draft.startTime), endTime: apiTime(draft.endTime), pageNo: 1, pageSize: PAGE_SIZE });
@@ -271,234 +265,237 @@ export function SystemLogPage() {
   }
 
   const summary = stats.data;
+  const usedPercent = summary?.maxTotalMb ? Math.round(((summary.totalSizeMb ?? 0) / summary.maxTotalMb) * 100) : null;
   const statCards = [
     { title: "今日日志", value: (summary?.todayTotal ?? 0).toLocaleString(), detail: `较昨日 ${(summary?.todayTotal ?? 0) - (summary?.yesterdayTotal ?? 0) >= 0 ? "+" : ""}${(summary?.todayTotal ?? 0) - (summary?.yesterdayTotal ?? 0)} 条`, icon: FileClock },
-    { title: "今日异常", value: String((summary?.todayWarnTotal ?? 0) + (summary?.todayErrorTotal ?? 0) + (summary?.todayCriticalTotal ?? 0)), detail: `WARN ${summary?.todayWarnTotal ?? 0} / ERROR ${summary?.todayErrorTotal ?? 0}`, icon: AlertTriangle },
-    { title: summary?.debugEnabled ? "DEBUG 记录中" : "DEBUG 已关闭", value: summary?.debugEnabled ? String(summary.debugRemainingSeconds) : "-", detail: summary?.debugEnabled ? "剩余秒数" : "点击下方开关设置", icon: Bug },
-    { title: "日志容量", value: `${Math.round(summary?.totalSizeMb ?? 0)} MB`, detail: `上限 ${summary?.maxTotalMb ?? 0} MB`, icon: Database },
+    { title: "今日异常", value: ((summary?.todayWarnTotal ?? 0) + (summary?.todayErrorTotal ?? 0) + (summary?.todayCriticalTotal ?? 0)).toLocaleString(), detail: `WARN ${summary?.todayWarnTotal ?? 0} / ERROR ${summary?.todayErrorTotal ?? 0}`, icon: AlertTriangle },
+    summary?.debugEnabled
+      ? { title: "DEBUG 记录中", value: summary.debugRemainingSeconds.toLocaleString(), unit: "秒", detail: "剩余秒数", tone: "warning" as const }
+      : { title: "DEBUG 已关闭", value: "—", detail: "点击下方开关设置", icon: LoaderCircle },
+    { title: "日志容量", value: Math.round(summary?.totalSizeMb ?? 0).toLocaleString(), unit: "MB", detail: `上限 ${(summary?.maxTotalMb ?? 0).toLocaleString()} MB${usedPercent === null ? "" : ` · 已用 ${usedPercent}%`}`, icon: Database },
     { title: "最近清理", value: (summary?.lastCleanupDeletedTotal ?? 0).toLocaleString(), detail: summary?.lastCleanupTime ?? "暂无记录", icon: Trash2 },
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <div className="w-full space-y-4">
+      <div className="grid grid-cols-5 gap-4">
         {statCards.map((item) => <StatCard key={item.title} {...item} loading={stats.loading} />)}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)]">
-        <Card className="@container/card">
-          <CardHeader>
-            <CardTitle>日志级别趋势</CardTitle>
-            <CardDescription>最近 24 小时各级别日志数量变化</CardDescription>
-            <CardAction>
-              <Button size="icon" variant="ghost" title="刷新统计" onClick={stats.refresh}>
-                <RefreshCw className="size-4" />
-              </Button>
-            </CardAction>
-          </CardHeader>
-          <CardContent className="px-2 pt-2 sm:px-6">
+      <div className="grid grid-cols-[minmax(0,1.55fr)_minmax(320px,1fr)] gap-4">
+        <Card className="gap-0 py-0">
+          <div className="flex items-start gap-3 px-5 pt-5">
+            <div className="min-w-0">
+              <p className="text-sm leading-none font-semibold">日志级别趋势</p>
+              <p className="mt-1.5 text-[13px] text-muted-foreground">最近 24 小时各级别日志数量变化</p>
+            </div>
+            <Button size="icon" variant="ghost" className="ml-auto size-7 text-muted-foreground" title="刷新统计" onClick={stats.refresh}>
+              <RefreshCw className="size-3.5" />
+            </Button>
+          </div>
+          <div className="px-5 pt-4 pb-5">
+            <div className="mb-2.5 flex items-center gap-3">
+              <div className="flex flex-wrap gap-1.5">
+                {(Object.keys(trendConfig) as TrendKey[]).map((key) => (
+                  <button key={key} type="button" onClick={() => toggleSeries(key)} className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-opacity hover:bg-muted ${hiddenSeries.has(key) ? "opacity-45" : ""}`}>
+                    <i className={`size-2 rounded-full ${key === "critical" ? "bg-[repeating-linear-gradient(45deg,var(--destructive)_0_2px,transparent_2px_4px)] shadow-[inset_0_0_0_1px_var(--destructive)]" : ""}`} style={key === "critical" ? undefined : { background: trendConfig[key].color }} />
+                    {trendConfig[key].label}
+                  </button>
+                ))}
+              </div>
+              <span className="ml-auto text-[11.5px] text-muted-foreground">左轴 INFO · 右轴 WARN / ERROR（条/小时）</span>
+            </div>
             {trendData.length ? (
-              <ChartContainer config={trendConfig} className="aspect-auto h-[280px] w-full">
-                <AreaChart data={trendData} margin={{ left: 0, right: 0, top: 8 }} accessibilityLayer>
+              <ChartContainer config={trendConfig} className="aspect-auto h-[250px] w-full">
+                <ComposedChart data={trendData} margin={{ left: 0, right: 0, top: 8, bottom: 0 }} accessibilityLayer barCategoryGap="38%">
                   <defs>
                     <linearGradient id="fillLogInfo" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-info)" stopOpacity={0.85} />
-                      <stop offset="95%" stopColor="var(--color-info)" stopOpacity={0.08} />
+                      <stop offset="0%" stopColor="var(--color-info)" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="var(--color-info)" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="fillLogWarn" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-warn)" stopOpacity={0.7} />
-                      <stop offset="95%" stopColor="var(--color-warn)" stopOpacity={0.06} />
+                      <stop offset="0%" stopColor="var(--color-warn)" stopOpacity={0.22} />
+                      <stop offset="100%" stopColor="var(--color-warn)" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="fillLogError" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-error)" stopOpacity={0.7} />
-                      <stop offset="95%" stopColor="var(--color-error)" stopOpacity={0.06} />
-                    </linearGradient>
-                    <linearGradient id="fillLogCritical" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="var(--color-critical)" stopOpacity={0.65} />
-                      <stop offset="95%" stopColor="var(--color-critical)" stopOpacity={0.06} />
-                    </linearGradient>
+                    <pattern id="fillLogCritical" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <line x1="0" y1="0" x2="0" y2="4" stroke="var(--color-critical)" strokeWidth={2} />
+                    </pattern>
                   </defs>
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="time" tickLine={false} axisLine={false} tickMargin={8} minTickGap={32} />
-                  <YAxis
-                    domain={[0, "auto"]}
-                    tickLine={false}
-                    axisLine={false}
-                    width={48}
-                    tickFormatter={(value) => formatCompactNumber(Number(value))}
+                  <CartesianGrid vertical={false} strokeDasharray="3 4" />
+                  <XAxis dataKey="time" tickLine={false} axisLine={false} tickMargin={8} interval={3} fontSize={10.5} tickFormatter={(value, index) => (index === trendData.length - 1 ? "现在" : String(value))} />
+                  <YAxis yAxisId="info" domain={[0, "auto"]} tickLine={false} axisLine={false} width={40} fontSize={10.5} tickCount={4} tickFormatter={(value) => formatCompactNumber(Number(value))} />
+                  <YAxis yAxisId="critical" orientation="right" hide width={0} domain={[0, 6]} />
+                  <YAxis yAxisId="alert" orientation="right" domain={[0, "auto"]} tickLine={false} axisLine={false} width={28} fontSize={10.5} tickCount={4} />
+                  <ChartTooltip
+                    cursor={{ stroke: "var(--muted-foreground)", strokeOpacity: 0.5, strokeDasharray: "3 3" }}
+                    content={<ChartTooltipContent indicator="dot" labelFormatter={(label) => { const index = trendData.findIndex((item) => item.time === label); const next = trendData[index + 1]?.time ?? "现在"; return `${label} – ${next}`; }} />}
                   />
-                  <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="dot" />} />
-                  <Area dataKey="info" type="monotone" fill="url(#fillLogInfo)" stroke="var(--color-info)" strokeWidth={2} />
-                  <Area dataKey="warn" type="monotone" fill="url(#fillLogWarn)" stroke="var(--color-warn)" strokeWidth={2} />
-                  <Area dataKey="error" type="monotone" fill="url(#fillLogError)" stroke="var(--color-error)" strokeWidth={2} />
-                  <Area dataKey="critical" type="monotone" fill="url(#fillLogCritical)" stroke="var(--color-critical)" strokeWidth={2} />
-                  <ChartLegend content={<ChartLegendContent />} />
-                </AreaChart>
+                  {!hiddenSeries.has("info") && <Area yAxisId="info" dataKey="info" type="monotone" fill="url(#fillLogInfo)" stroke="var(--color-info)" strokeWidth={2} activeDot={{ r: 4.5, strokeWidth: 2.5, stroke: "var(--card)" }} />}
+                  {!hiddenSeries.has("warn") && <Area yAxisId="alert" dataKey="warn" type="monotone" fill="url(#fillLogWarn)" stroke="var(--color-warn)" strokeWidth={2} />}
+                  {!hiddenSeries.has("error") && <Line yAxisId="alert" dataKey="error" type="monotone" stroke="var(--color-error)" strokeWidth={2} strokeDasharray="4 4" dot={false} />}
+                  {!hiddenSeries.has("critical") && <Bar yAxisId="critical" dataKey="critical" fill="url(#fillLogCritical)" stroke="var(--color-critical)" strokeWidth={1} radius={2} maxBarSize={8} />}
+                </ComposedChart>
               </ChartContainer>
             ) : (
-              <div className="flex h-[280px] items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-[250px] items-center justify-center text-[13px] text-muted-foreground">
                 {stats.loading ? "加载中…" : "暂无统计数据"}
               </div>
             )}
-          </CardContent>
+          </div>
         </Card>
 
-        <Card className="@container/card">
-          <CardHeader>
-            <CardTitle>日志类型占比</CardTitle>
-            <CardDescription>各类日志条数分布</CardDescription>
-          </CardHeader>
-          <CardContent className="flex min-h-[280px] items-center justify-center">
+        <Card className="gap-0 py-0">
+          <div className="px-5 pt-5">
+            <p className="text-sm leading-none font-semibold">日志类型占比</p>
+            <p className="mt-1.5 text-[13px] text-muted-foreground">各类日志条数分布</p>
+          </div>
+          <div className="flex min-h-[280px] flex-1 items-center gap-5 px-5 pt-4 pb-5">
             {typePieData.length ? (
-              <div className="flex w-full max-w-lg flex-col items-center justify-center gap-5">
+              <>
                 <PieChart
                   data={typePieData}
                   hoveredIndex={hoveredIndex}
-                  innerRadius={45}
+                  innerRadius={58}
+                  padAngle={0.03}
+                  startAngle={0}
+                  endAngle={Math.PI * 2}
                   onHoverChange={setHoveredIndex}
                   size={180}
+                  className="shrink-0"
                 >
                   {typePieData.map((_, index) => <PieSlice index={index} key={index} />)}
-                  <PieCenter defaultLabel="类型" />
+                  <PieCenter defaultLabel="类型" formatOptions={{ notation: "compact", maximumFractionDigits: 1 }} />
                 </PieChart>
-                <Legend
-                  hoveredIndex={hoveredIndex}
-                  items={typePieData}
-                  onHoverChange={setHoveredIndex}
-                  className="w-full max-w-sm flex-row flex-wrap justify-center gap-x-4 gap-y-1"
-                >
-                  <LegendItemComponent className="flex items-center gap-3">
-                    <LegendMarker />
-                    <LegendLabel />
-                  </LegendItemComponent>
-                </Legend>
-              </div>
+                <div className="grid max-w-[300px] flex-1">
+                  {typePieData.map((item, index) => (
+                    <div
+                      key={item.label}
+                      className={`flex items-center gap-2 rounded-lg px-2 py-[5px] text-[13px] whitespace-nowrap transition-opacity hover:bg-muted ${hoveredIndex !== null && hoveredIndex !== index ? "opacity-50" : ""}`}
+                      onMouseEnter={() => setHoveredIndex(index)}
+                      onMouseLeave={() => setHoveredIndex(null)}
+                    >
+                      <i className="size-2 shrink-0 rounded-full" style={{ background: item.color }} />
+                      {item.label}
+                      <em className="ml-auto text-xs font-medium not-italic tabular-nums">{item.value.toLocaleString()}</em>
+                      <span className="w-[34px] text-right text-[11.5px] text-muted-foreground tabular-nums">{typeTotal ? Math.round((item.value / typeTotal) * 100) : 0}%</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             ) : (
-              <p className="text-sm text-muted-foreground">{stats.loading ? "加载中…" : "暂无统计数据"}</p>
+              <p className="w-full text-center text-[13px] text-muted-foreground">{stats.loading ? "加载中…" : "暂无统计数据"}</p>
             )}
-          </CardContent>
+          </div>
         </Card>
       </div>
 
-      {/* 查询工具栏 */}
-      {mode === "system" && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="datetime-local"
-            aria-label="开始时间"
-            title="开始时间"
-            value={draft.startTime ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))}
-            className="h-7 w-40"
-          />
-          <Input
-            type="datetime-local"
-            aria-label="结束时间"
-            title="结束时间"
-            value={draft.endTime ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))}
-            className="h-7 w-40"
-          />
-          <Select
-            value={draft.type || "all"}
-            onValueChange={(value) => setDraft((current) => ({ ...current, type: value === "all" ? "" : value as SystemLogQuery["type"] }))}
-          >
-            <SelectTrigger className="!h-7 w-24" aria-label="日志类型">
-              <SelectValue placeholder="类型" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部类型</SelectItem>
-              {typeOptions.map(([value, label]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            placeholder="关键字"
-            value={draft.keyword ?? ""}
-            onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))}
-            onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }}
-            className="h-7 w-32"
-          />
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            <Button variant="outline" onClick={() => setAdvancedOpen(true)}>
-              高级查询{advancedCount > 0 && <Badge className="ml-1">{advancedCount}</Badge>}
-            </Button>
-            <Button variant="outline" onClick={() => setCleanupOpen(true)}><Trash2 className="size-3.5" />清理日志</Button>
-            <Button variant="outline" onClick={exportRows}><Download className="size-3.5" />导出日志</Button>
-            <Button variant="outline" onClick={resetSearch}>重置</Button>
-            <Button onClick={applySearch}><Search className="size-3.5" />查询</Button>
+      <Card className="gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-3.5 px-5 pt-5">
+          <div className="min-w-0">
+            <p className="text-sm leading-none font-semibold">{mode === "system" ? "历史日志查询" : "数据库日志（TDengine 服务日志）"}</p>
+            <p className="mt-1.5 text-[13px] text-muted-foreground">{mode === "system" ? `共 ${(logs.data?.total ?? 0).toLocaleString()} 条` : "只读查看服务端日志文件末尾"}</p>
           </div>
-        </div>
-      )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            {mode === "system" ? "历史日志查询" : "数据库日志（TDengine 服务日志）"}
-          </CardTitle>
-          <CardAction>
-            <div className="flex items-center gap-2">
-              {mode === "system" && (
-                <Button
-                  variant={summary?.debugEnabled ? "secondary" : "outline"}
-                  onClick={() => { setDebugEnabled(!summary?.debugEnabled); setDebugOpen(true); }}
-                >
-                  {summary?.debugEnabled ? "DEBUG 开启中" : "DEBUG 开关"}
-                </Button>
-              )}
+          <div className="ml-auto flex items-center gap-2">
+            {mode === "system" && (
               <Button
                 variant="outline"
-                onClick={() => setMode((value) => (value === "system" ? "db" : "system"))}
+                className={summary?.debugEnabled ? `${btnCls} border-warning/40 text-warning hover:text-warning` : btnCls}
+                onClick={() => { setDebugEnabled(!summary?.debugEnabled); setDebugOpen(true); }}
               >
-                {mode === "system" ? "切换到数据库日志" : "切换到系统日志"}
+                {summary?.debugEnabled && <span className="relative flex size-2"><span className="absolute inset-0 animate-ping rounded-full bg-warning opacity-60" /><span className="relative size-2 rounded-full bg-warning" /></span>}
+                {summary?.debugEnabled ? "DEBUG 开启中" : "DEBUG 开关"}
               </Button>
+            )}
+            <Button variant="outline" className={btnCls} onClick={() => setMode((value) => (value === "system" ? "db" : "system"))}>
+              <ArrowLeftRight />
+              {mode === "system" ? "切换到数据库日志" : "切换到系统日志"}
+            </Button>
+          </div>
+          {mode === "system" && (
+            <div className="flex basis-full flex-wrap items-center gap-2">
+              <div className="relative">
+                <CalendarDays className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input type="datetime-local" aria-label="开始时间" title="开始时间" value={draft.startTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))} className={`${fieldCls} w-[196px] pl-8 tabular-nums`} />
+              </div>
+              <div className="relative">
+                <CalendarDays className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input type="datetime-local" aria-label="结束时间" title="结束时间" value={draft.endTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))} className={`${fieldCls} w-[196px] pl-8 tabular-nums`} />
+              </div>
+              <Select
+                value={draft.type || "all"}
+                onValueChange={(value) => setDraft((current) => ({ ...current, type: value === "all" ? "" : value as SystemLogQuery["type"] }))}
+              >
+                <SelectTrigger className="!h-8 w-[104px] bg-background text-[13px]" aria-label="日志类型">
+                  <SelectValue placeholder="类型" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">全部类型</SelectItem>
+                  {typeOptions.map(([value, label]) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="关键字" value={draft.keyword ?? ""} onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }} className={`${fieldCls} w-32 pl-8`} />
+              </div>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <Button variant="outline" className={btnCls} onClick={() => setAdvancedOpen(true)}>
+                  高级查询{advancedCount > 0 && <span className="inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-[5px] text-[11px] font-semibold text-brand-foreground">{advancedCount}</span>}
+                </Button>
+                <Button variant="outline" className={btnCls} onClick={() => setCleanupOpen(true)}><Trash2 />清理日志</Button>
+                <Button variant="outline" className={btnCls} onClick={exportRows}><Download />导出日志</Button>
+                <Button variant="outline" className={btnCls} onClick={resetSearch}>重置</Button>
+                <Button className={priCls} onClick={applySearch}><Search />查询</Button>
+              </div>
             </div>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
+          )}
+        </div>
+        <div className="px-5 pt-4 pb-5">
           {mode === "system" ? (
             <>
-              <div className="overflow-hidden rounded-lg border">
+              <div className="overflow-hidden rounded-[10px] border">
                 <TooltipProvider delayDuration={200}>
-                  <Table className="w-full table-fixed">
-                    <TableHeader className="bg-muted/50">
-                      <TableRow className="h-10 hover:bg-transparent">
-                        <TableHead className="w-[168px] text-center">时间</TableHead>
-                        <TableHead className="w-[96px] text-center">级别</TableHead>
-                        <TableHead className="w-[88px] text-center">类型</TableHead>
-                        <TableHead className="w-[11%] text-center">来源</TableHead>
-                        <TableHead className="w-[11%] text-center">设备</TableHead>
-                        <TableHead className="text-center">内容</TableHead>
-                        <TableHead className="w-[72px] text-center">操作</TableHead>
+                  <Table className="w-full table-fixed text-[13px]">
+                    <colgroup><col className="w-[150px]" /><col className="w-[112px]" /><col className="w-[80px]" /><col className="w-[14%]" /><col className="w-[11%]" /><col /><col className="w-[76px]" /></colgroup>
+                    <TableHeader className="bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">
+                      <TableRow className="hover:bg-transparent">
+                        {["时间", "级别", "类型", "来源", "设备", "内容"].map((label) => <TableHead key={label} className="h-10 px-3 text-[13px] font-medium text-muted-foreground">{label}</TableHead>)}
+                        <TableHead className="h-10 px-3 text-center text-[13px] font-medium text-muted-foreground">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {logs.loading && Array.from({ length: PAGE_SIZE }, (_, index) => (
-                        <TableRow key={index} className="h-12">
-                          <TableCell colSpan={7}><Skeleton className="h-7 w-full" /></TableCell>
+                        <TableRow key={index}>
+                          <TableCell colSpan={7} className="h-[52px] px-3"><Skeleton className="h-7 w-full" /></TableCell>
                         </TableRow>
                       ))}
-                      {!logs.loading && (logs.data?.list ?? []).map((row) => (
-                        <TableRow key={`${row.kind}:${row.id}`} className="h-12">
-                          <TableCell className="whitespace-nowrap text-center text-xs tabular-nums text-muted-foreground">
+                      {!logs.loading && (logs.data?.list ?? []).map((row) => {
+                        const [clock, date] = splitTableTime(row.time);
+                        const bar = row.level === "ERROR" || row.level === "CRITICAL" ? "shadow-[inset_3px_0_0_var(--destructive)]" : row.level === "WARN" ? "shadow-[inset_3px_0_0_var(--warning)]" : "";
+                        return (
+                        <TableRow key={`${row.kind}:${row.id}`}>
+                          <TableCell className={`h-[52px] px-3 py-1 text-xs leading-[1.3] text-muted-foreground tabular-nums ${bar}`}>
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="block cursor-help">{formatTableTime(row.time)}</span>
+                                <span className="block cursor-help"><b className="block text-[12.5px] font-medium text-foreground">{clock}</b>{date}</span>
                               </TooltipTrigger>
                               <TooltipContent side="top">{formatTime(row.time)}</TooltipContent>
                             </Tooltip>
                           </TableCell>
-                          <TableCell className="max-w-0 overflow-hidden text-center">{logLevelBadge(row.level)}</TableCell>
-                          <TableCell className="max-w-0 overflow-hidden text-center">
-                            <Badge variant="outline" className="max-w-full truncate font-normal text-muted-foreground">
+                          <TableCell className="px-3 py-1">{logLevelBadge(row.level)}</TableCell>
+                          <TableCell className="max-w-0 overflow-hidden px-3 py-1">
+                            <Badge variant="outline" className="h-5 max-w-full truncate rounded-md bg-transparent px-2 text-xs font-normal text-muted-foreground">
                               {typeName[row.type] ?? row.type}
                             </Badge>
                           </TableCell>
-                          <TableCell className="max-w-0 overflow-hidden text-center">
+                          <TableCell className="max-w-0 overflow-hidden px-3 py-1">
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="block cursor-help truncate font-medium">{row.source || "-"}</span>
+                                <span className="block cursor-help">
+                                  <span className="block truncate font-medium">{row.source || "-"}</span>
+                                  {row.serviceName && <span className="block truncate text-[11.5px] leading-[1.3] text-muted-foreground">{row.serviceName}</span>}
+                                </span>
                               </TooltipTrigger>
                               <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap break-words text-left leading-relaxed">
                                 {row.source || "-"}
@@ -506,10 +503,10 @@ export function SystemLogPage() {
                               </TooltipContent>
                             </Tooltip>
                           </TableCell>
-                          <TableCell className="max-w-0 overflow-hidden text-center">
+                          <TableCell className="max-w-0 overflow-hidden px-3 py-1">
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="block cursor-help truncate">{row.deviceCode || row.operatorName || "-"}</span>
+                                <span className={`block cursor-help truncate ${row.deviceCode ? "font-mono" : "text-muted-foreground"}`}>{row.deviceCode || row.operatorName || "-"}</span>
                               </TooltipTrigger>
                               <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap break-words text-left leading-relaxed">
                                 设备：{row.deviceCode || "-"}
@@ -517,7 +514,7 @@ export function SystemLogPage() {
                               </TooltipContent>
                             </Tooltip>
                           </TableCell>
-                          <TableCell className="max-w-0 overflow-hidden px-3 text-center">
+                          <TableCell className="max-w-0 overflow-hidden px-3 py-1">
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <span className="block w-full cursor-help truncate">{row.content || "-"}</span>
@@ -527,11 +524,12 @@ export function SystemLogPage() {
                               </TooltipContent>
                             </Tooltip>
                           </TableCell>
-                          <TableCell className="text-center">
-                            <Button variant="ghost" size="sm" onClick={() => setDetail(row)}>详情</Button>
+                          <TableCell className="px-3 py-1 text-center">
+                            <Button variant="ghost" size="sm" className="h-7 px-2 text-[13px]" onClick={() => setDetail(row)}>详情</Button>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                       {!logs.loading && !logs.data?.list?.length && (
                         <TableRow>
                           <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
@@ -543,24 +541,22 @@ export function SystemLogPage() {
                   </Table>
                 </TooltipProvider>
               </div>
-              <div className="mt-3 flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <span className="text-muted-foreground">共 {logs.data?.total ?? 0} 条 · 每页 {PAGE_SIZE} 条</span>
-                <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-                  <span className="min-w-24 text-center font-medium tabular-nums">第 {currentPage} / {totalPages} 页</span>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" className="size-8" disabled={currentPage <= 1} onClick={() => changePage(1)} aria-label="第一页">
-                      <ChevronsLeft className="size-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="size-8" disabled={currentPage <= 1} onClick={() => changePage(currentPage - 1)} aria-label="上一页">
-                      <ChevronLeft className="size-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="size-8" disabled={currentPage >= totalPages} onClick={() => changePage(currentPage + 1)} aria-label="下一页">
-                      <ChevronRight className="size-4" />
-                    </Button>
-                    <Button variant="outline" size="icon" className="size-8" disabled={currentPage >= totalPages} onClick={() => changePage(totalPages)} aria-label="最后一页">
-                      <ChevronsRight className="size-4" />
-                    </Button>
-                  </div>
+              <div className="flex items-center gap-3 px-1 pt-3 text-[13px] text-muted-foreground">
+                <span>共 {(logs.data?.total ?? 0).toLocaleString()} 条 · 每页 {PAGE_SIZE} 条</span>
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="min-w-[110px] text-center font-medium text-foreground tabular-nums">第 {currentPage} / {totalPages} 页</span>
+                  <Button variant="outline" size="icon" className="size-8 bg-background" disabled={currentPage <= 1} onClick={() => changePage(1)} aria-label="第一页">
+                    <ChevronsLeft className="size-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="size-8 bg-background" disabled={currentPage <= 1} onClick={() => changePage(currentPage - 1)} aria-label="上一页">
+                    <ChevronLeft className="size-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="size-8 bg-background" disabled={currentPage >= totalPages} onClick={() => changePage(currentPage + 1)} aria-label="下一页">
+                    <ChevronRight className="size-4" />
+                  </Button>
+                  <Button variant="outline" size="icon" className="size-8 bg-background" disabled={currentPage >= totalPages} onClick={() => changePage(totalPages)} aria-label="最后一页">
+                    <ChevronsRight className="size-4" />
+                  </Button>
                 </div>
               </div>
             </>
@@ -585,14 +581,14 @@ export function SystemLogPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button variant="outline" onClick={tail.refresh}><RefreshCw className="size-4" />刷新</Button>
+                <Button variant="outline" className={btnCls} onClick={tail.refresh}><RefreshCw />刷新</Button>
               </div>
               <pre className="max-h-[560px] min-h-96 overflow-auto rounded-md bg-zinc-950 p-4 font-mono text-xs leading-6 text-zinc-200">
                 {tail.loading ? "正在读取日志..." : (tail.error ?? tailText) || "请选择日志文件"}
               </pre>
             </div>
           )}
-        </CardContent>
+        </div>
       </Card>
 
       <Dialog open={Boolean(detail)} onOpenChange={(open) => { if (!open) setDetail(null); }}>

@@ -147,7 +147,19 @@ export function useRealtimeWebSocket({
       setSource("center");
       setDeviceOffline(false);
       setError(null);
-      return;
+      setTdengineConnected(true);
+      // 仅开发 mock：按时间仿真推送实时值，供实时监控页预览
+      let mockTimer: number | null = null;
+      void import("@/lib/mock-device-data").then(({ mockRealtimeWire }) => {
+        if (disposed) return;
+        const push = () => { pendingRef.current = { ...pendingRef.current, ...mockRealtimeWire(deviceCode, groupCode) }; };
+        push();
+        mockTimer = window.setInterval(push, Math.max(100, flushIntervalMs));
+      });
+      return () => {
+        disposed = true;
+        if (mockTimer !== null) window.clearInterval(mockTimer);
+      };
     }
 
     const clearTimers = () => {

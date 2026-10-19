@@ -158,7 +158,7 @@ export default function EdgeOperationsPage() {
   }, [totalPages]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden px-4 pb-4">
+    <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">

@@ -26,8 +26,8 @@ test("distributed center administrators can open edge node management", () => {
 
 test("edge node management follows the workbench table pattern", () => {
   assert.ok(nodesPageSource.includes("<TooltipProvider delayDuration={200}>"));
-  assert.ok(nodesPageSource.includes('<Table className="w-full table-fixed">'));
-  assert.ok(nodesPageSource.includes('<TableHeader className="bg-muted/50">'));
+  assert.match(nodesPageSource, /<Table className="w-full table-fixed[^"]*">/);
+  assert.match(nodesPageSource, /<TableHeader className="bg-\[color-mix\(in_oklab,var\(--muted\)_55%/);
   assert.ok(nodesPageSource.includes("每页行数"));
   assert.ok(nodesPageSource.includes('aria-label="最后一页"'));
 });

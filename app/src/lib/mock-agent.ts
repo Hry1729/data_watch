@@ -18,6 +18,7 @@ import type {
 import type { MenuTreeItem, RoleGrant, RoleListItem, UserListItem } from "@/types/system-management";
 import type { DriverListItem } from "@/types/device-monitor";
 import type { DistributedNode } from "@/types/distributed";
+import { MOCK_DEVICES, MOCK_POINTS, mockDeviceRows, mockHistoryChart, mockHistoryMatrix, mockHistoryPoints, mockPointGroups, mockRealtimeItems } from "./mock-device-data";
 
 // ─── 辅助 ─────────────────────────────────────────────────────────────────────
 
@@ -42,10 +43,48 @@ let _edgeLocalSettings = {
 };
 const _processStatus: Record<string, ModuleStatusValue> = {
   collector: "running",
-  writer:    "stopped",
+  ingest:    "running",
+  writer:    "running",
   uploader:  "running",
   storage:   "running",
 };
+
+// ─── 监控页示例数据（仅开发用：确定性伪随机，按 5s 桶滑动，刷新不跳变）────────────
+
+function mockNoise(seed: number) {
+  const x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function mockPad(n: number, w = 2) {
+  return String(n).padStart(w, "0");
+}
+
+function mockHms(d: Date, ms = false) {
+  const base = `${mockPad(d.getHours())}:${mockPad(d.getMinutes())}:${mockPad(d.getSeconds())}`;
+  return ms ? `${base}.${mockPad(d.getMilliseconds(), 3)}` : base;
+}
+
+function mockLocalIso(d: Date) {
+  return `${d.getFullYear()}-${mockPad(d.getMonth() + 1)}-${mockPad(d.getDate())}T${mockHms(d, true)}`;
+}
+
+/** 近 ~10 分钟速率序列：每 5s 一点，126 点 */
+function mockRateSeries(key: number, base: number, vol: number) {
+  const bucket = Math.floor(Date.now() / 5000);
+  const series: { t: string; v: number }[] = [];
+  // 从更早处起算的指数平滑随机游走（与概念稿一致的平滑度），只保留最后 126 点
+  let v = base;
+  for (let i = 200; i >= 0; i -= 1) {
+    const k = bucket - i;
+    const target = base + vol * 1.9 * Math.sin(k * 0.09 + key) + vol * 1.1 * Math.sin(k * 0.031 + key * 1.7);
+    v += (target - v) * 0.32 + (mockNoise(k * 7 + key) - 0.5) * vol * 1.1;
+    if (mockNoise(k * 13 + key) < 0.025) v -= vol * 2.2 * mockNoise(k + key);
+    v = Math.max(0, v);
+    if (i <= 125) series.push({ t: mockHms(new Date(k * 5000)), v: Math.round(v) });
+  }
+  return series;
+}
 
 // password 字段省略：模拟真实 Agent 行为（GET /admin/config 不返回密码）
 let _config: ConnectionConfig = {
@@ -215,7 +254,7 @@ export const mockAgent: AgentClient = {
   },
 
   async getLocalRealtimeLatest(deviceCode, groupCode) {
-    const deviceId = deviceCode === "METER-02" ? 2 : 1;
+    const deviceId = MOCK_DEVICES.find((device) => device.deviceCode === deviceCode)?.id ?? 1;
     const result = await mockBackend.realtimeInit("mock", deviceId, groupCode);
     return {
       values: Object.fromEntries(result.data.map((point) => [String(point.pointId), {
@@ -268,10 +307,10 @@ export const mockAgent: AgentClient = {
     return {
       name,
       status,
-      pid:            running ? (name === "collector" ? 4820 : 4932) : null,
-      uptime_seconds: running ? 13338 : 0,
-      memory_mb:      running ? (name === "collector" ? 186  : 142)  : 0,
-      cpu_percent:    running ? (name === "collector" ? 2.4  : 1.1)  : 0,
+      pid:            running ? ({ collector: 4820, ingest: 18342, writer: 4932 }[name as string] ?? 5010) : null,
+      uptime_seconds: running ? ({ collector: 268512, ingest: 186190, writer: 268470 }[name as string] ?? 13338) : 0,
+      memory_mb:      running ? ({ collector: 278, ingest: 315.3, writer: 419 }[name as string] ?? 142) : 0,
+      cpu_percent:    running ? ({ collector: 10.7, ingest: 17.9, writer: 19.6 }[name as string] ?? 1.1) : 0,
       started_at:     running ? "2026-05-25T06:18:00Z" : null,
       restart_count:  0,
     } satisfies ModuleStatus;
@@ -328,22 +367,22 @@ export const mockAgent: AgentClient = {
 
   async listDrivers() {
     await delay();
+    // 仅开发用：覆盖 已加载/未使用/未注册/加载失败/未安装/包缺失 等状态
+    const d = (id: string, name: string, description: string, version: string, rw: string, source: string, status: string, extra: Record<string, unknown> = {}) => ({
+      id, protocol: id, name, description, version, sha256: "abc", capabilities: ["poll", "read"], readWriteType: rw, aliases: [id, name.toLowerCase().replace(/[\s-]+/g, "_")], source,
+      protected: source === "bundled", status, error: null, ...extra,
+    });
     return [
-      {
-        id: "modbus_tcp",
-        protocol: "modbus_tcp",
-        name: "Modbus TCP",
-        description: "安装包默认内置的 Modbus TCP 只读驱动",
-        version: "1.0.0",
-        sha256: "abc",
-        capabilities: ["poll", "read"],
-        readWriteType: "只读",
-        aliases: ["modbus_tcp"],
-        source: "bundled",
-        protected: true,
-        status: "loaded",
-        error: null,
-      },
+      d("siemens_s7", "Siemens S7", "西门子 S7 TCP 驱动（S7-300/400/1200/1500）", "2.4.1", "读写", "bundled", "loaded"),
+      d("opc_ua", "OPC UA", "OPC UA 客户端驱动，支持订阅与轮询", "1.9.3", "读写", "official", "loaded"),
+      d("modbus_tcp", "Modbus TCP", "Modbus TCP 通用驱动", "2.1.0", "读写", "bundled", "loaded"),
+      d("opc_da", "OPC DA", "OPC DA 驱动（经 DCOM 网关桥接）", "1.3.7", "只读", "installed", "loaded"),
+      d("ge_srtp", "GE SRTP", "GE PLC 通讯驱动（RX3i / 90-30）", "1.2.0", "只读", "official", "loaded"),
+      d("modbus_rtu", "Modbus RTU", "串口 Modbus RTU 驱动（RS-485）", "1.0.4", "读写", "installed", "loaded"),
+      d("omron_fins", "", "", "0.9.2", "只读", "installed", "loaded", { protocol: "Omron FINS", updated_at: "2026-10-16 17:30:02" }),
+      d("ethernet_ip", "EtherNet/IP", "罗克韦尔 CIP 驱动（ControlLogix）", "1.1.0", "读写", "installed", "load_failed", { runtime_status: "load_failed", error: "manifest ABI 版本 3 与 Collector ABI 4 不兼容，已回滚至旧包" }),
+      d("mitsubishi_mc", "Mitsubishi MC", "三菱 MC 协议 3E 帧驱动", "1.4.2", "读写", "official", "not_installed", { install_status: "not_installed" }),
+      d("bacnet_ip", "BACnet/IP", "冷箱区空调 BACnet/IP 驱动", "0.8.0", "只读", "official", "missing", { install_status: "missing", error: "驱动目录缺少 bacnet-0.8.0，Collector 无法加载" }),
     ];
   },
 
@@ -384,30 +423,42 @@ export const mockAgent: AgentClient = {
 
 let _mockDebugUntil = 0;
 
+const MOCK_LOG_SAMPLES = [
+  { level: "ERROR", type: "collect", source: "collector", serviceName: "data-watch-collector", deviceCode: "QC01", content: "S7 读取超时：DB100.DBD24 连续 3 次超时（timeout=500ms），驱动进入重连", detail: { driver: "S7", host: "10.20.3.11", area: "DB100", offset: 24, retries: 3, timeoutMs: 500 }, exceptionStack: "s7: read DB100.DBD24: i/o timeout\n  at driver/s7.(*Conn).ReadArea (conn.go:214)" },
+  { level: "WARN", type: "storage", source: "writer", serviceName: "data-watch-writer", content: "TDengine 写入批次耗时 1,284 ms，超过阈值 1,000 ms（batch_count=200）", detail: { stable: "sdqc", rows: 200, costMs: 1284, thresholdMs: 1000 } },
+  { level: "INFO", type: "operation", source: "web-admin", serviceName: "data-watch-server", deviceCode: "RTG07", operatorName: "admin", moduleName: "点位管理", actionName: "update", resultStatus: "success", content: "修改点位 RTG07.Hoist.Speed 采集周期 200ms → 100ms", detail: { module: "点位管理", action: "update", durationMs: 42 } },
+  { level: "INFO", type: "auth", source: "auth", serviceName: "data-watch-server", operatorName: "zhangwei", content: "用户 zhangwei 登录成功（192.168.10.23）", detail: { ip: "192.168.10.23", client: "desktop 2.4.1" } },
+  { level: "CRITICAL", type: "alarm", source: "alarm-engine", serviceName: "data-watch-server", deviceCode: "ASC03", content: "ASC03 大车急停触发，PLC 状态字 0x8004，已推送告警", detail: { device: "ASC03", protocol: "OPC UA", node: "ns=3;s=ASC03.Gantry.EStop", value: true, statusWord: "0x8004" } },
+  { level: "WARN", type: "collect", source: "collector", serviceName: "data-watch-collector", deviceCode: "AGV-118", content: "Modbus TCP 重连：192.168.31.118:502 第 2 次", detail: { driver: "Modbus TCP", host: "192.168.31.118", port: 502, attempt: 2 } },
+  { level: "DEBUG", type: "collect", source: "collector", serviceName: "data-watch-collector", deviceCode: "QC01", content: "OPC UA 订阅回调 batch=64 queue=3 latency=18ms", detail: { subscription: 12, batch: 64, queue: 3 } },
+  { level: "INFO", type: "system", source: "ingest", serviceName: "data-watch-ingest", content: "Redis Stream rt:stream:qc:main:0 消费组 ingest-g1 rebalance 完成", detail: { stream: "rt:stream:qc:main:0", group: "ingest-g1", consumers: 4 } },
+  { level: "INFO", type: "storage", source: "writer", serviceName: "data-watch-writer", content: "TDengine 批量写入完成 rows=200 cost=86ms", detail: { stable: "sdqc", rows: 200, costMs: 86 } },
+  { level: "INFO", type: "security", source: "auth", serviceName: "data-watch-server", operatorName: "admin", content: "用户 liuyang 的临时密码已重置", detail: { target: "liuyang" } },
+  { level: "INFO", type: "frontend", source: "desktop", serviceName: "data-watch-app", operatorName: "lina", content: "实时监控页面订阅 128 个点位", detail: { points: 128 } },
+  { level: "INFO", type: "system", source: "backend", serviceName: "data-watch-server", content: "服务运行正常，周期任务执行完成", detail: { job: "cleanup-check" } },
+] as const;
+
 const MOCK_SYSTEM_LOGS = Array.from({ length: 36 }, (_, index) => {
-  const levels = ["INFO", "INFO", "WARN", "INFO", "ERROR"] as const;
-  const types = ["system", "collect", "storage", "operation", "auth"] as const;
-  const level = levels[index % levels.length];
-  const type = types[index % types.length];
+  const sample = MOCK_LOG_SAMPLES[index % MOCK_LOG_SAMPLES.length] as (typeof MOCK_LOG_SAMPLES)[number] & { deviceCode?: string; operatorName?: string; moduleName?: string; actionName?: string; resultStatus?: string; exceptionStack?: string };
   return {
     id: 1000 - index,
-    kind: type === "operation" ? "operation" as const : "system" as const,
-    time: new Date(Date.now() - index * 12 * 60_000).toISOString(),
-    level,
-    type,
-    source: type === "collect" ? "collector" : type === "storage" ? "writer" : "backend",
-    serviceName: type === "collect" ? "collector" : type === "storage" ? "writer" : "backend",
-    moduleName: type === "operation" ? "设备管理" : undefined,
-    actionName: type === "operation" ? "更新设备" : undefined,
-    operatorName: type === "operation" ? "admin" : undefined,
-    deviceCode: index % 3 === 0 ? "PLC-S7-01" : undefined,
-    content: level === "ERROR" ? "TDengine batch write failed, retry scheduled" : level === "WARN" ? "采集周期出现短时抖动" : "服务运行正常，周期任务执行完成",
-    resultStatus: type === "operation" ? "success" : undefined,
+    kind: sample.type === "operation" ? "operation" as const : "system" as const,
+    time: new Date(Date.now() - index * 83_000 - 12_000).toISOString(),
+    level: sample.level,
+    type: sample.type,
+    source: sample.source,
+    serviceName: sample.serviceName,
+    moduleName: sample.moduleName,
+    actionName: sample.actionName,
+    operatorName: sample.operatorName,
+    deviceCode: sample.deviceCode,
+    content: sample.content,
+    resultStatus: sample.resultStatus,
     durationMs: 18 + index * 3,
-    requestId: `req-${1000 - index}`,
+    requestId: `req-${(0x7f3a9c21 - index * 977).toString(16)}`,
     traceId: index % 4 === 0 ? `trace-${1000 - index}` : undefined,
-    detail: { sample: true, sequence: index },
-    exceptionStack: level === "ERROR" ? "MockError: write timeout\n    at batch_writer.flush" : undefined,
+    detail: { ...sample.detail },
+    exceptionStack: sample.exceptionStack,
   };
 });
 
@@ -415,35 +466,56 @@ let MOCK_USERS: UserListItem[] = [
   { id: 1, avatar: "", status: "1", userName: "admin", userGender: "male", nickName: "系统管理员", userPhone: "13800000001", userEmail: "admin@example.com", userRoles: ["R_SUPER"], createBy: "system", createTime: "2026-01-01 08:00:00", updateBy: "system", updateTime: "2026-07-17 10:00:00" },
   { id: 2, avatar: "", status: "1", userName: "operator", userGender: "female", nickName: "值班员", userPhone: "13800000002", userEmail: "operator@example.com", userRoles: ["R_OPERATOR"], createBy: "admin", createTime: "2026-03-12 09:30:00", updateBy: "admin", updateTime: "2026-07-16 16:20:00" },
   { id: 3, avatar: "", status: "2", userName: "viewer", userGender: "unknown", nickName: "访客账号", userPhone: "", userEmail: "viewer@example.com", userRoles: ["R_USER"], createBy: "admin", createTime: "2026-05-20 14:12:00", updateBy: "admin", updateTime: "2026-07-10 11:40:00" },
+  { id: 4, avatar: "", status: "1", userName: "zhangwei", userGender: "male", nickName: "张伟 · 岸桥班组", userPhone: "13916620418", userEmail: "zhangwei@port-ops.cn", userRoles: ["R_OPERATOR"], createBy: "admin", createTime: "2026-03-18 10:06:41", updateBy: "admin", updateTime: "2026-03-18 10:06:41" },
+  { id: 5, avatar: "", status: "1", userName: "lina", userGender: "female", nickName: "李娜", userPhone: "13761205537", userEmail: "lina@port-ops.cn", userRoles: ["R_ENGINEER", "R_OPERATOR"], createBy: "admin", createTime: "2026-03-21 15:42:09", updateBy: "admin", updateTime: "2026-03-21 15:42:09" },
+  { id: 6, avatar: "", status: "1", userName: "wangqiang", userGender: "male", nickName: "王强 · PLC 工程师", userPhone: "13817749062", userEmail: "wangqiang@port-ops.cn", userRoles: ["R_ENGINEER"], createBy: "admin", createTime: "2026-04-02 09:15:27", updateBy: "admin", updateTime: "2026-04-02 09:15:27" },
+  { id: 7, avatar: "", status: "1", userName: "chenjing", userGender: "female", nickName: "陈静", userPhone: "13524418890", userEmail: "chenjing@port-ops.cn", userRoles: ["R_ADMIN"], createBy: "admin", createTime: "2026-04-08 11:20:53", updateBy: "admin", updateTime: "2026-04-08 11:20:53" },
+  { id: 8, avatar: "", status: "1", userName: "liuyang", userGender: "male", nickName: "刘洋 · RTG 值班", userPhone: "13661930275", userEmail: "liuyang@port-ops.cn", userRoles: ["R_OPERATOR"], createBy: "admin", createTime: "2026-04-15 08:47:12", updateBy: "admin", updateTime: "2026-04-15 08:47:12" },
+  { id: 9, avatar: "", status: "1", userName: "zhaomin", userGender: "female", nickName: "赵敏", userPhone: "13901872264", userEmail: "zhaomin@port-ops.cn", userRoles: ["R_USER"], createBy: "admin", createTime: "2026-05-06 16:03:38", updateBy: "admin", updateTime: "2026-05-06 16:03:38" },
+  { id: 10, avatar: "", status: "2", userName: "sunhao", userGender: "male", nickName: "孙浩", userPhone: "13788051943", userEmail: "sunhao@port-ops.cn", userRoles: ["R_ENGINEER"], createBy: "admin", createTime: "2026-05-28 13:29:05", updateBy: "admin", updateTime: "2026-05-28 13:29:05" },
+  { id: 11, avatar: "", status: "1", userName: "rtg_shift_b", userGender: "unknown", nickName: "RTG 夜班", userPhone: "13671126608", userEmail: "", userRoles: ["R_OPERATOR"], createBy: "admin", createTime: "2026-06-11 20:10:44", updateBy: "admin", updateTime: "2026-06-11 20:10:44" },
+  { id: 12, avatar: "", status: "1", userName: "audit_view", userGender: "unknown", nickName: "调度只读", userPhone: "", userEmail: "dispatch@port-ops.cn", userRoles: ["R_USER"], createBy: "admin", createTime: "2026-07-03 09:58:16", updateBy: "admin", updateTime: "2026-07-03 09:58:16" },
 ];
 
 let MOCK_ROLES: RoleListItem[] = [
   { roleId: 1, roleName: "超级管理员", roleCode: "R_SUPER", description: "拥有全部系统权限", enabled: true, createTime: "2026-01-01 08:00:00" },
   { roleId: 2, roleName: "运维人员", roleCode: "R_OPERATOR", description: "设备运维与日志查看", enabled: true, createTime: "2026-02-10 10:00:00" },
   { roleId: 3, roleName: "普通用户", roleCode: "R_USER", description: "只读访问", enabled: true, createTime: "2026-02-10 10:05:00" },
+  { roleId: 4, roleName: "系统管理员", roleCode: "R_ADMIN", description: "用户、角色与系统配置管理", enabled: true, createTime: "2026-02-18 09:12:30" },
+  { roleId: 5, roleName: "设备工程师", roleCode: "R_ENGINEER", description: "驱动、设备与点位配置", enabled: true, createTime: "2026-03-05 14:26:08" },
+  { roleId: 6, roleName: "审计员", roleCode: "R_AUDIT", description: "系统日志与操作审计（只读）", enabled: false, createTime: "2026-06-22 10:41:55" },
 ];
 
 let MOCK_MENUS: MenuTreeItem[] = [
   { id: 10, path: "/dashboard", name: "Dashboard", component: "", menuType: "directory", sort: 1, enabled: true, meta: { title: "仪表盘", icon: "LayoutDashboard", authList: [] }, children: [
-    { id: 11, parentId: 10, path: "workbench", name: "Workbench", component: "/dashboard/workbench", menuType: "menu", sort: 1, enabled: true, meta: { title: "工作台", keepAlive: true, authList: [{ id: 101, title: "查看", authMark: "view", permissionCode: "dashboard:workbench:view", permissionType: "action", enabled: true, sort: 1 }] } },
+    { id: 11, parentId: 10, path: "workbench", name: "Workbench", component: "/dashboard/workbench", menuType: "menu", sort: 1, enabled: true, meta: { title: "工作台", icon: "BriefcaseBusiness", keepAlive: true, authList: [{ id: 101, title: "查看", authMark: "view", permissionCode: "dashboard:workbench:view", permissionType: "action", enabled: true, sort: 1 }] } },
+    { id: 12, parentId: 10, path: "console", name: "Console", component: "/dashboard/console", menuType: "menu", sort: 2, enabled: true, meta: { title: "控制台", icon: "Gauge", authList: [{ id: 102, title: "查看", authMark: "view", permissionCode: "dashboard:console:view", permissionType: "action", enabled: true, sort: 1 }, { id: 103, title: "重启服务", authMark: "restart", permissionCode: "dashboard:console:restart", permissionType: "action", enabled: true, sort: 2 }] } },
   ] },
-  { id: 30, path: "/device-monitor", name: "DeviceMonitor", component: "", menuType: "directory", sort: 2, enabled: true, meta: { title: "设备监控", authList: [] }, children: [
-    { id: 31, parentId: 30, path: "monitor", name: "DeviceMonitorCard", component: "/device_monitor/monitor/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "设备通讯", authList: [] } },
-    { id: 32, parentId: 30, path: "driver", name: "DriverManage", component: "/device_monitor/driver/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "驱动管理", authList: [] } },
-    { id: 33, parentId: 30, path: "device", name: "DeviceManage", component: "/device_monitor/device/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "设备管理", authList: [] } },
-    { id: 34, parentId: 30, path: "point", name: "PointManage", component: "/device_monitor/point/index", menuType: "menu", sort: 4, enabled: true, meta: { title: "点位管理", authList: [] } },
-    { id: 35, parentId: 30, path: "realtime", name: "RealtimeMonitor", component: "/device_monitor/realtime/index", menuType: "menu", sort: 5, enabled: true, meta: { title: "实时监控", authList: [] } },
-    { id: 36, parentId: 30, path: "history", name: "HistoryData", component: "/device_monitor/history/index", menuType: "menu", sort: 6, enabled: true, meta: { title: "历史数据", authList: [] } },
-    { id: 37, parentId: 30, path: "log", name: "SystemLog", component: "/device_monitor/log/index", menuType: "menu", sort: 7, enabled: true, meta: { title: "系统日志", authList: [] } },
+  { id: 40, path: "/collection", name: "Collection", component: "", menuType: "directory", sort: 2, enabled: true, meta: { title: "数据采集", icon: "Database", authList: [] }, children: [
+    { id: 41, parentId: 40, path: "collector", name: "Collector", component: "/collection/collector", menuType: "menu", sort: 1, enabled: true, meta: { title: "采集监控", icon: "Activity", authList: [] } },
+    { id: 42, parentId: 40, path: "ingest", name: "Ingest", component: "/collection/ingest", menuType: "menu", sort: 2, enabled: false, meta: { title: "汇聚监控", icon: "Network", authList: [] } },
+    { id: 43, parentId: 40, path: "writer", name: "Writer", component: "/collection/writer", menuType: "menu", sort: 3, enabled: true, meta: { title: "入库监控", icon: "HardDriveDownload", authList: [] } },
+  ] },
+  { id: 30, path: "/device-monitor", name: "DeviceMonitor", component: "", menuType: "directory", sort: 3, enabled: true, meta: { title: "设备监控", icon: "MonitorCog", authList: [] }, children: [
+    { id: 31, parentId: 30, path: "monitor", name: "DeviceMonitorCard", component: "/device_monitor/monitor/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "设备通讯", icon: "Cable", authList: [] } },
+    { id: 32, parentId: 30, path: "driver", name: "DriverManage", component: "/device_monitor/driver/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "驱动管理", icon: "Puzzle", authList: [{ id: 321, title: "安装", authMark: "install", permissionCode: "device:driver:install", permissionType: "action", enabled: true, sort: 1 }, { id: 322, title: "启停", authMark: "toggle", permissionCode: "device:driver:toggle", permissionType: "action", enabled: true, sort: 2 }] } },
+    { id: 33, parentId: 30, path: "device", name: "DeviceManage", component: "/device_monitor/device/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "设备管理", icon: "Cpu", keepAlive: true, authList: [{ id: 331, title: "新增", authMark: "add", permissionCode: "device:device:create", permissionType: "action", enabled: true, sort: 1 }, { id: 332, title: "编辑", authMark: "edit", permissionCode: "device:device:update", permissionType: "action", enabled: true, sort: 2 }, { id: 333, title: "删除", authMark: "delete", permissionCode: "device:device:delete", permissionType: "action", enabled: true, sort: 3 }, { id: 334, title: "导入", authMark: "import", permissionCode: "device:device:import", permissionType: "action", enabled: true, sort: 4 }] } },
+    { id: 34, parentId: 30, path: "point", name: "PointManage", component: "/device_monitor/point/index", menuType: "menu", sort: 4, enabled: true, meta: { title: "点位管理", icon: "MapPin", authList: [{ id: 341, title: "新增", authMark: "add", permissionCode: "device:point:create", permissionType: "action", enabled: true, sort: 1 }, { id: 342, title: "导入", authMark: "import", permissionCode: "device:point:import", permissionType: "action", enabled: true, sort: 2 }, { id: 343, title: "导出", authMark: "export", permissionCode: "device:point:export", permissionType: "action", enabled: true, sort: 3 }] } },
+    { id: 35, parentId: 30, path: "realtime", name: "RealtimeMonitor", component: "/device_monitor/realtime/index", menuType: "menu", sort: 5, enabled: true, meta: { title: "实时监控", icon: "Radio", authList: [] } },
+    { id: 36, parentId: 30, path: "history", name: "HistoryData", component: "/device_monitor/history/index", menuType: "menu", sort: 6, enabled: true, meta: { title: "历史数据", icon: "History", authList: [{ id: 361, title: "导出", authMark: "export", permissionCode: "device:history:export", permissionType: "action", enabled: true, sort: 1 }] } },
+  ] },
+  { id: 50, path: "/distributed", name: "Distributed", component: "", menuType: "directory", sort: 4, enabled: true, meta: { title: "分布式", icon: "Network", authList: [] }, children: [
+    { id: 51, parentId: 50, path: "nodes", name: "DistributedNodes", component: "/distributed/nodes", menuType: "menu", sort: 1, enabled: true, meta: { title: "边缘节点", icon: "Network", authList: [{ id: 511, title: "审批", authMark: "approve", permissionCode: "distributed:node:approve", permissionType: "action", enabled: true, sort: 1 }, { id: 512, title: "下发配置", authMark: "assign", permissionCode: "distributed:node:assign", permissionType: "action", enabled: true, sort: 2 }] } },
   ] },
   { id: 20, path: "/system", name: "System", component: "", menuType: "directory", sort: 9, enabled: true, meta: { title: "系统管理", icon: "Settings2", authList: [] }, children: [
-    { id: 21, parentId: 20, path: "users", name: "Users", component: "/system/user/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "用户管理", authList: [{ id: 201, title: "新增", authMark: "add", permissionCode: "system:user:create", permissionType: "action", enabled: true, sort: 1 }, { id: 202, title: "编辑", authMark: "edit", permissionCode: "system:user:update", permissionType: "action", enabled: true, sort: 2 }] } },
-    { id: 22, parentId: 20, path: "roles", name: "Roles", component: "/system/role/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "角色管理", authList: [] } },
-    { id: 23, parentId: 20, path: "menu", name: "Menus", component: "/system/menu/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "菜单管理", authList: [] } },
+    { id: 37, parentId: 20, path: "log", name: "SystemLog", component: "/device_monitor/log/index", menuType: "menu", sort: 1, enabled: true, meta: { title: "系统日志", icon: "FileText", authList: [{ id: 371, title: "导出", authMark: "export", permissionCode: "system:log:export", permissionType: "action", enabled: true, sort: 1 }] } },
+    { id: 21, parentId: 20, path: "users", name: "Users", component: "/system/user/index", menuType: "menu", sort: 2, enabled: true, meta: { title: "用户管理", icon: "Users", authList: [{ id: 201, title: "新增", authMark: "add", permissionCode: "system:user:create", permissionType: "action", enabled: true, sort: 1 }, { id: 202, title: "编辑", authMark: "edit", permissionCode: "system:user:update", permissionType: "action", enabled: true, sort: 2 }, { id: 203, title: "删除", authMark: "delete", permissionCode: "system:user:delete", permissionType: "action", enabled: true, sort: 3 }, { id: 204, title: "重置密码", authMark: "reset", permissionCode: "system:user:reset-password", permissionType: "action", enabled: true, sort: 4 }] } },
+    { id: 22, parentId: 20, path: "roles", name: "Roles", component: "/system/role/index", menuType: "menu", sort: 3, enabled: true, meta: { title: "角色管理", icon: "Shield", authList: [{ id: 221, title: "新增", authMark: "add", permissionCode: "system:role:create", permissionType: "action", enabled: true, sort: 1 }, { id: 222, title: "编辑", authMark: "edit", permissionCode: "system:role:update", permissionType: "action", enabled: true, sort: 2 }, { id: 223, title: "菜单权限", authMark: "grant", permissionCode: "system:role:grant", permissionType: "action", enabled: true, sort: 3 }] } },
+    { id: 23, parentId: 20, path: "menu", name: "Menus", component: "/system/menu/index", menuType: "menu", sort: 4, enabled: true, meta: { title: "菜单管理", icon: "Menu", authList: [{ id: 231, title: "新增", authMark: "add", permissionCode: "system:menu:create", permissionType: "action", enabled: true, sort: 1 }, { id: 232, title: "编辑", authMark: "edit", permissionCode: "system:menu:update", permissionType: "action", enabled: true, sort: 2 }, { id: 233, title: "删除", authMark: "delete", permissionCode: "system:menu:delete", permissionType: "action", enabled: true, sort: 3 }] } },
   ] },
 ];
 
-const MOCK_ROLE_GRANTS = new Map<number, RoleGrant>([[1, { menuIds: [10, 11, 20, 21, 22], permissionIds: [101, 201, 202], dataScopes: [] }], [2, { menuIds: [10, 11, 20, 21], permissionIds: [101], dataScopes: [] }], [3, { menuIds: [10, 11], permissionIds: [101], dataScopes: [] }]]);
+const MOCK_ROLE_GRANTS = new Map<number, RoleGrant>([[1, { menuIds: [10, 11, 12, 40, 41, 42, 43, 30, 31, 32, 33, 34, 35, 36, 50, 51, 20, 37, 21, 22, 23], permissionIds: [101, 102, 103, 321, 322, 331, 332, 333, 334, 341, 342, 343, 361, 511, 512, 371, 201, 202, 203, 204, 221, 222, 223, 231, 232, 233], dataScopes: [] }], [2, { menuIds: [10, 11, 12, 40, 41, 42, 43, 30, 31, 33, 34, 35, 36, 20, 37], permissionIds: [101, 102, 341, 343, 361, 371], dataScopes: [] }], [3, { menuIds: [10, 11, 30, 35, 36], permissionIds: [101], dataScopes: [] }], [4, { menuIds: [10, 11, 12, 20, 37, 21, 22, 23, 50, 51], permissionIds: [101, 102, 103, 201, 202, 203, 204, 221, 222, 223, 231, 232, 233, 371], dataScopes: [] }], [5, { menuIds: [10, 11, 30, 31, 32, 33, 34, 35, 36, 40, 41], permissionIds: [101, 321, 322, 331, 332, 333, 334, 341, 342, 343, 361], dataScopes: [] }], [6, { menuIds: [20, 37], permissionIds: [371], dataScopes: [] }]]);
 
 const MOCK_DISTRIBUTED_NODES: DistributedNode[] = [
   {
@@ -472,6 +544,11 @@ const MOCK_DISTRIBUTED_NODES: DistributedNode[] = [
     createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     updatedAt: new Date().toISOString(),
   },
+  { nodeUuid: "b21d5e08-93fa-4b67-8c1d-5f2e7a9c0d44", nodeName: "东区岸桥边缘-02", status: "approved", configVersion: 42, appliedRevision: 41, outboxBacklog: 1206, outboxDatabaseBytes: 2469888, outboxDiskUsedPercent: 41.6, outboxWatermark: "warning", outboxDroppedRecords: 0, keyVersion: 1, collectorStatus: "running", storageStatus: "running", uploaderStatus: "unknown", storageQueueDepth: 0, storageCommitP99Ms: 2.1, storageErrorsTotal: 0, clockSkewMs: 80, clockAnomaly: false, assignmentCount: 16, readTimeoutMs: 1500, lastSeenAt: new Date(Date.now() - 5000).toISOString(), createdAt: new Date(Date.now() - 86_400_000 * 30).toISOString(), updatedAt: new Date().toISOString() },
+  { nodeUuid: "0c8e4f6a-21b7-4d93-a5e0-7b3c9d1f2e65", nodeName: "堆场 RTG 边缘-A", status: "approved", configVersion: 42, appliedRevision: 42, outboxBacklog: 38, outboxDatabaseBytes: 77824, outboxDiskUsedPercent: 2.1, outboxWatermark: "normal", outboxDroppedRecords: 0, keyVersion: 1, collectorStatus: "running", storageStatus: "running", uploaderStatus: "running", storageQueueDepth: 0, storageCommitP99Ms: 2.1, storageErrorsTotal: 0, clockSkewMs: 80, clockAnomaly: false, assignmentCount: 24, readTimeoutMs: null, lastSeenAt: new Date(Date.now() - 3000).toISOString(), createdAt: new Date(Date.now() - 86_400_000 * 30).toISOString(), updatedAt: new Date().toISOString() },
+  { nodeUuid: "e5a7b3c1-6d2f-4e98-b0a4-3c1e8f7d9b02", nodeName: "自动化堆场 ASC 边缘", status: "approved", configVersion: 42, appliedRevision: 42, outboxBacklog: 0, outboxDatabaseBytes: 0, outboxDiskUsedPercent: 5.8, outboxWatermark: "normal", outboxDroppedRecords: 0, keyVersion: 1, collectorStatus: "running", storageStatus: "running", uploaderStatus: "running", storageQueueDepth: 0, storageCommitP99Ms: 2.1, storageErrorsTotal: 0, clockSkewMs: 4200, clockAnomaly: true, assignmentCount: 32, readTimeoutMs: 2000, lastSeenAt: new Date(Date.now() - 8000).toISOString(), createdAt: new Date(Date.now() - 86_400_000 * 30).toISOString(), updatedAt: new Date().toISOString() },
+  { nodeUuid: "9d4b2e7f-0a3c-4f15-8e6d-2b9a5c7e1f83", nodeName: "AGV 调度边缘", status: "approved", configVersion: 42, appliedRevision: 40, outboxBacklog: 0, outboxDatabaseBytes: 0, outboxDiskUsedPercent: 0.4, outboxWatermark: "normal", outboxDroppedRecords: 0, keyVersion: 1, collectorStatus: "stopped", storageStatus: "stopped", uploaderStatus: "stopped", storageQueueDepth: 0, storageCommitP99Ms: 2.1, storageErrorsTotal: 0, clockSkewMs: 80, clockAnomaly: false, assignmentCount: 12, readTimeoutMs: null, lastSeenAt: new Date(Date.now() - 1560000).toISOString(), createdAt: new Date(Date.now() - 86_400_000 * 30).toISOString(), updatedAt: new Date().toISOString() },
+  { nodeUuid: "3a6f1c9e-7b52-4d08-9f3a-6e0d4b2c8a17", nodeName: "闸口边缘节点", status: "pending", configVersion: 0, appliedRevision: 0, outboxBacklog: 0, outboxDatabaseBytes: 0, outboxDiskUsedPercent: 0, outboxWatermark: "normal", outboxDroppedRecords: 0, keyVersion: 1, collectorStatus: "unknown", storageStatus: "unknown", uploaderStatus: "unknown", storageQueueDepth: 0, storageCommitP99Ms: 2.1, storageErrorsTotal: 0, clockSkewMs: 80, clockAnomaly: false, assignmentCount: 0, readTimeoutMs: null, lastSeenAt: null, createdAt: new Date(Date.now() - 86_400_000 * 30).toISOString(), updatedAt: new Date().toISOString() },
 ];
 
 const MOCK_NODE_ASSIGNMENTS = new Map<string, number[]>([
@@ -487,25 +564,67 @@ export const mockBackend: BackendClient = {
       refreshToken: "mock-refresh-dev",
     };
   },
-  async logList(_token, _query) {
+  async logList(_token, query) {
     await delay();
-    return [];
+    const pool: [string, string, string][] = query.serviceName === "writer"
+      ? [
+          ["INFO", "writer", "批量写入完成，周期任务执行正常"], ["INFO", "writer.td", "TDengine 连接池就绪 size=8"],
+          ["WARN", "writer.td", "TDengine 写入耗时偏高 elapsed=820ms"], ["INFO", "writer.redis", "消费组 writer 位点已同步"],
+          ["WARN", "writer.redis", "pending drain claimed=3 stream=rt:stream:qc:g001:0"], ["ERROR", "writer.td", "tdengine write failed，已进入重试"],
+          ["INFO", "writer", "配置版本更新 config_version=8"], ["DEBUG", "writer", "心跳上报完成 uptime=268470s"],
+        ]
+      : [
+          ["INFO", "collector", "服务运行正常，周期任务执行完成"], ["WARN", "collector", "采集周期出现短时抖动"],
+          ["INFO", "collector.s7", "QC101 连接建立 10.0.0.11:102"], ["WARN", "collector.opcua", "ASC0092 会话超时，已自动重连"],
+          ["ERROR", "collector.modbus", "AGV012 读超时，连续 3 次失败，标记离线"], ["INFO", "collector.redis", "Redis Stream 连接恢复"],
+          ["INFO", "collector", "配置版本更新 config_version=8，重新分配采集任务"], ["DEBUG", "collector", "心跳上报完成 uptime=268512s"],
+        ];
+    let t = Date.now() - 40_000;
+    return Array.from({ length: 34 }, (_, i) => {
+      const [level, source, content] = pool[Math.floor(mockNoise(i + 3) * pool.length)];
+      const d = new Date(t);
+      t -= 60_000 * (1 + mockNoise(i + 11) * 14);
+      return { id: i + 1, time: `${d.getFullYear()}-${mockPad(d.getMonth() + 1)}-${mockPad(d.getDate())} ${mockHms(d)}`, level, source, content };
+    });
   },
   async collectorMetrics(_token) {
     await delay();
-    return { scanRateMs: null, onlineDevices: 0, totalDevices: 0, pointTotal: 0, tasks: [] };
+    const rows: [string, string, string, number, number, "online" | "unstable" | "offline"][] = [
+      ["QC101", "桥吊一组", "S7", 100, 426, "online"], ["QC102", "桥吊一组", "S7", 100, 422, "online"], ["QC103", "桥吊一组", "S7", 100, 422, "online"],
+      ["QC107", "桥吊二组", "S7", 100, 422, "unstable"], ["QC110", "桥吊二组", "S7", 100, 422, "online"], ["QC115", "桥吊三组", "S7", 100, 422, "offline"],
+      ["ASC0011", "轨道吊一组", "OPC UA", 200, 64, "online"], ["ASC0012", "轨道吊一组", "OPC UA", 200, 64, "online"], ["ASC0021", "轨道吊一组", "OPC UA", 200, 64, "online"],
+      ["ASC0092", "轨道吊三组", "OPC UA", 200, 64, "unstable"], ["ASC0171", "轨道吊六组", "OPC UA", 200, 64, "offline"],
+      ["AGV001", "AGV 主组", "Modbus TCP", 500, 18, "online"], ["AGV002", "AGV 主组", "Modbus TCP", 500, 18, "online"], ["AGV012", "AGV 主组", "Modbus TCP", 500, 18, "offline"],
+      ["AGV023", "AGV 主组", "Modbus TCP", 500, 18, "unstable"], ["AGV047", "AGV 二组", "Modbus TCP", 500, 18, "unstable"], ["AGV048", "AGV 二组", "Modbus TCP", 500, 18, "online"],
+    ];
+    const now = Date.now();
+    const tasks = rows.map(([deviceCode, groupName, protocol, scanRateMs, pointCount, connectStatus], i) => {
+      const r = mockNoise(i + 5);
+      const at = connectStatus === "offline" ? now - 960_000 - Math.floor(r * 300_000) : connectStatus === "unstable" ? now - 2000 - Math.floor(r * 6000) : now - Math.floor(r * scanRateMs);
+      return { deviceCode, deviceName: deviceCode, groupName, protocol, scanRateMs, pointCount, lastCollectTime: mockHms(new Date(at), true), connectStatus };
+    });
+    return { scanRateMs: 100, onlineDevices: 138, totalDevices: 146, pointTotal: 12480, tasks };
   },
   async writerMetrics(_token) {
     await delay();
-    return { streamLagTotal: 0, pelPendingTotal: 0, dlqTotal: 0, streams: [] };
+    const streams = [
+      ["rt:stream:qc:g001:0", 2940, 256], ["rt:stream:qc:g001:1", 486, 64], ["rt:stream:asc:g001:0", 132, 24], ["rt:stream:asc:g002:0", 88, 16],
+      ["rt:stream:agv:main:0", 141, 32], ["rt:stream:agv:main:1", 37, 8], ["rt:stream:agv:g002:0", 26, 8], ["rt:stream:agv:g002:1", 12, 4],
+    ].map(([streamKey, lag, pel]) => ({ streamKey: streamKey as string, lag: lag as number, pel: pel as number, length: 50000, status: (lag as number) >= 1000 ? "backlog" as const : "normal" as const }));
+    return { streamLagTotal: 3862, pelPendingTotal: 412, dlqTotal: 3, streams };
   },
   async moduleRates(_token) {
     await delay();
+    const collector = mockRateSeries(1, 2148, 46);
+    const writer = mockRateSeries(2, 2146, 44);
+    const collectorPoints = mockRateSeries(3, 2141280, 42000);
+    const writerLanded = mockRateSeries(4, 35640, 760);
+    const last = (series: { v: number }[]) => series[series.length - 1]?.v ?? null;
     return {
-      collector: { unit: "批次/min", current: null, series: [] },
-      writer: { unit: "条/min", current: null, series: [] },
-      collectorPoints: { unit: "点/min", current: null, series: [] },
-      writerLanded: { unit: "rows/min", current: null, series: [] },
+      collector: { unit: "批次/min", current: last(collector), series: collector },
+      writer: { unit: "条/min", current: last(writer), series: writer },
+      collectorPoints: { unit: "点/min", current: last(collectorPoints), series: collectorPoints },
+      writerLanded: { unit: "rows/min", current: last(writerLanded), series: writerLanded },
     };
   },
   async getCollectorConfig(_token) {
@@ -519,43 +638,57 @@ export const mockBackend: BackendClient = {
   async dashboardOverview(_token) {
     await delay(180);
     return {
-      deviceTotal: 42,
-      onlineDeviceTotal: 36,
-      offlineDeviceTotal: 4,
-      riskDeviceTotal: 2,
-      pointTotal: 2864,
-      systemAlertTotal: 18,
-      systemAlertComparePrev: { countDiff: -5, ratioDiff: -21.7 },
+      deviceTotal: 146,
+      onlineDeviceTotal: 138,
+      offlineDeviceTotal: 8,
+      riskDeviceTotal: 5,
+      pointTotal: 12480,
+      systemAlertTotal: 23,
+      systemAlertComparePrev: { countDiff: 6, ratioDiff: 35.3 },
       generatedAt: new Date().toISOString(),
     };
   },
   async dashboardTrend(_token, rangeType) {
     await delay(220);
     const isWeek = rangeType === "last7d";
+    // 仅开发用：确定性伪随机，半小时一个桶（近7天按天）
+    let seed = isWeek ? 7 : 11;
+    const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    const count = isWeek ? 7 : 49;
     const timeAxis = isWeek
       ? ["07-11", "07-12", "07-13", "07-14", "07-15", "07-16", "07-17"]
-      : ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "24:00"];
+      : Array.from({ length: count }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, "0")}:${i % 2 ? "30" : "00"}`);
+    const collect: number[] = [];
+    const alarm: number[] = [];
+    const online: number[] = [];
+    let level = 5.6;
+    for (let i = 0; i < count; i += 1) {
+      level = Math.max(4.6, Math.min(7.6, level + (rnd() - 0.48) * 0.9));
+      collect.push(Math.round(level * 1_000_000 * (isWeek ? 48 : 1)));
+      online.push(Math.round(134 + rnd() * 6 - (i > 30 && i < 36 ? 4 : 0)));
+      alarm.push(rnd() < 0.35 ? Math.ceil(rnd() * 3) : 0);
+    }
     return {
-      query: { rangeType, granularity: isWeek ? "1d" : "1h" },
+      query: { rangeType, granularity: isWeek ? "1d" : "30m" },
       timeAxis,
       series: [
-        { metricKey: "collectCount", metricName: "采集量", unit: "点", data: [1820, 2060, 3180, 3460, 3290, 3720, 3510] },
-        { metricKey: "alarmCount", metricName: "告警数", unit: "条", data: [2, 1, 4, 3, 5, 2, 1] },
-        { metricKey: "onlineDeviceCount", metricName: "在线设备数", unit: "台", data: [34, 35, 36, 35, 37, 36, 36] },
+        { metricKey: "collectCount", metricName: "采集量", unit: "点", data: collect },
+        { metricKey: "alarmCount", metricName: "告警数", unit: "条", data: alarm },
+        { metricKey: "onlineDeviceCount", metricName: "在线设备数", unit: "台", data: online },
       ],
-      summary: { collectCountTotal: 21040, alarmCountTotal: 18, onlineRateAvg: 94.3 },
+      summary: { collectCountTotal: collect.reduce((a, b) => a + b, 0), alarmCountTotal: alarm.reduce((a, b) => a + b, 0), onlineRateAvg: 94.5 },
     };
   },
   async dashboardDeviceTypeDistribution(_token) {
     await delay(180);
     return {
-      total: 42,
+      total: 146,
       groups: [
-        { typeCode: "PLC", typeName: "PLC", deviceCount: 14, onlineCount: 13, ratio: 33.3 },
-        { typeCode: "METER", typeName: "仪表", deviceCount: 10, onlineCount: 9, ratio: 23.8 },
-        { typeCode: "ROBOT", typeName: "机器人", deviceCount: 8, onlineCount: 7, ratio: 19.0 },
-        { typeCode: "SENSOR", typeName: "传感器", deviceCount: 6, onlineCount: 5, ratio: 14.3 },
-        { typeCode: "OTHER", typeName: "其他", deviceCount: 4, onlineCount: 2, ratio: 9.6 },
+        { typeCode: "S7", typeName: "S7", deviceCount: 48, onlineCount: 46, ratio: 32.9 },
+        { typeCode: "OPCUA", typeName: "OPC UA", deviceCount: 35, onlineCount: 34, ratio: 24.0 },
+        { typeCode: "MODBUS", typeName: "Modbus", deviceCount: 31, onlineCount: 28, ratio: 21.2 },
+        { typeCode: "OPCDA", typeName: "OPC DA", deviceCount: 19, onlineCount: 18, ratio: 13.0 },
+        { typeCode: "GESRTP", typeName: "GE SRTP", deviceCount: 13, onlineCount: 12, ratio: 8.9 },
       ],
     };
   },
@@ -563,7 +696,7 @@ export const mockBackend: BackendClient = {
     await delay(200);
     return {
       query: { statRange: "last24h", topN: 8, includeOffline: true },
-      overview: { onlineDevices: 36, offlineDevices: 4, riskDevices: 2 },
+      overview: { onlineDevices: 133, offlineDevices: 8, riskDevices: 5 },
       list: [
         { deviceId: 1, deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", deviceType: "PLC", connectStatus: "online" as const, exceptionCount: 0, timeoutCount: 0, reconnectCount: 1, successRate: 99.8, lastHeartbeatTime: new Date().toISOString() },
         { deviceId: 2, deviceCode: "METER-02", deviceName: "二号电力仪表", deviceType: "METER", connectStatus: "unstable" as const, exceptionCount: 3, timeoutCount: 2, reconnectCount: 4, successRate: 94.2, lastHeartbeatTime: new Date().toISOString() },
@@ -666,12 +799,17 @@ export const mockBackend: BackendClient = {
   async driverList(_token, query) {
     await delay(160);
     const list = ([
-      { id: 1, driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动", readWriteType: "只读", updateTime: "2026-07-16 14:20:00", status: "available", boundDeviceCount: 14, source: "bundled", protected: true },
-      { id: 2, driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动", readWriteType: "只读", updateTime: "2026-07-15 09:12:00", status: "available", boundDeviceCount: 10, source: "bundled", protected: true },
-      { id: 3, driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动", readWriteType: "只读", updateTime: "2026-07-13 18:35:00", status: "available", boundDeviceCount: 8, source: "bundled", protected: true },
-      { id: 4, driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动", readWriteType: "只读", updateTime: "2026-07-10 10:05:00", status: "disabled", boundDeviceCount: 0, source: "bundled", protected: true },
+      { id: 1, driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动（S7-300/400/1200/1500）", readWriteType: "读写", updateTime: "2026-10-12 14:20:08", status: "available", boundDeviceCount: 54, source: "bundled", protected: true },
+      { id: 2, driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动，支持订阅与轮询", readWriteType: "读写", updateTime: "2026-10-11 09:41:52", status: "available", boundDeviceCount: 35, source: "installed" },
+      { id: 3, driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动", readWriteType: "读写", updateTime: "2026-10-09 16:05:31", status: "available", boundDeviceCount: 31, source: "bundled", protected: true },
+      { id: 4, driverName: "OPC DA", driverDesc: "OPC DA 驱动（经 DCOM 网关桥接）", readWriteType: "只读", updateTime: "2026-09-28 11:12:44", status: "available", boundDeviceCount: 19, source: "installed" },
+      { id: 5, driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动（RX3i / 90-30）", readWriteType: "只读", updateTime: "2026-09-21 10:05:17", status: "available", boundDeviceCount: 15, source: "installed" },
+      { id: 6, driverName: "Modbus RTU", driverDesc: "串口 Modbus RTU 驱动（RS-485）", readWriteType: "读写", updateTime: "2026-10-15 08:47:20", status: "available", boundDeviceCount: 0, source: "installed" },
+      { id: 7, driverName: "EtherNet/IP", driverDesc: "罗克韦尔 CIP 驱动（ControlLogix）", readWriteType: "读写", updateTime: "2026-10-18 21:14:56", status: "available", boundDeviceCount: 0, source: "installed" },
+      { id: 8, driverName: "Mitsubishi MC", driverDesc: "三菱 MC 协议 3E 帧驱动", readWriteType: "读写", updateTime: "2026-08-30 09:00:00", status: "available", boundDeviceCount: 0, source: "installed" },
+      { id: 9, driverName: "BACnet/IP", driverDesc: "冷箱区空调 BACnet/IP 驱动", readWriteType: "只读", updateTime: "2026-07-02 15:22:10", status: "available", boundDeviceCount: 0, source: "installed" },
     ] satisfies DriverListItem[]).filter((item) => !query.keyword || item.driverName.toLowerCase().includes(query.keyword.toLowerCase()));
-    return { list, total: list.length, pageNo: 1, pageSize: 20, availableCount: 3 };
+    return { list, total: list.length, pageNo: 1, pageSize: 20, availableCount: 7 };
   },
   async driverOptions(_token) {
     await delay(100);
@@ -679,6 +817,8 @@ export const mockBackend: BackendClient = {
       { driverName: "Siemens S7", driverDesc: "西门子 S7 TCP 驱动" },
       { driverName: "Modbus TCP", driverDesc: "Modbus TCP 通用驱动" },
       { driverName: "OPC UA", driverDesc: "OPC UA 客户端驱动" },
+      { driverName: "OPC DA", driverDesc: "OPC DA 驱动" },
+      { driverName: "GE SRTP", driverDesc: "GE PLC 通讯驱动" },
     ];
   },
   async registerDriver(_token, payload) {
@@ -703,12 +843,7 @@ export const mockBackend: BackendClient = {
   },
   async deviceList(_token, query) {
     await delay(160);
-    const rows = [
-      { id: 1, deviceType: "PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", driverName: "Siemens S7", endpoint: "192.168.1.10:102", endpointBackup: "192.168.1.11:102", deviceStatus: "enabled" as const, connectStatus: "online" as const, connectUpdateTime: "2026-07-17 15:30:00", dataStatus: "normal" as const, dataUpdateTime: "2026-07-17 15:30:00", description: "主线控制器" },
-      { id: 2, deviceType: "仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", driverName: "Modbus TCP", endpoint: "192.168.1.20:502", endpointBackup: "", deviceStatus: "enabled" as const, connectStatus: "unstable" as const, connectUpdateTime: "2026-07-17 15:29:41", dataStatus: "abnormal" as const, dataUpdateTime: "2026-07-17 15:29:40", description: "能耗计量" },
-      { id: 3, deviceType: "机器人", deviceCode: "ROBOT-07", deviceName: "七号装配机器人", driverName: "OPC UA", endpoint: "192.168.1.30:4840", endpointBackup: "", deviceStatus: "enabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-17 14:52:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-17 14:51:55", description: "装配工位" },
-      { id: 4, deviceType: "PLC", deviceCode: "PLC-S7-03", deviceName: "三号线辅控PLC", driverName: "Siemens S7", endpoint: "192.168.1.40:102", endpointBackup: "", deviceStatus: "disabled" as const, connectStatus: "offline" as const, connectUpdateTime: "2026-07-16 11:10:00", dataStatus: "nodata" as const, dataUpdateTime: "2026-07-16 11:10:00", description: "维护中" },
-    ];
+    const rows = mockDeviceRows();
     const list = rows.filter((item) => (!query.keyword || `${item.deviceCode} ${item.deviceName}`.toLowerCase().includes(query.keyword.toLowerCase()))
       && (!query.connectStatus || item.connectStatus === query.connectStatus)
       && (!query.deviceStatus || item.deviceStatus === query.deviceStatus)
@@ -720,10 +855,10 @@ export const mockBackend: BackendClient = {
     return { list: list.slice((pageNo - 1) * pageSize, pageNo * pageSize), total: list.length, pageNo, pageSize };
   },
   async deviceTypes(token, query = {}) {
-    return [...new Set((await this.deviceList(token, { ...query, pageSize: 100 })).list.map((device) => device.deviceType))];
+    return [...new Set((await this.deviceList(token, { ...query, pageSize: 1000 })).list.map((device) => device.deviceType))];
   },
   async deviceSummary(token, query) {
-    const { list } = await this.deviceList(token, { ...query, pageSize: 100 });
+    const { list } = await this.deviceList(token, { ...query, pageSize: 1000 });
     return {
       total: list.length,
       onlineCount: list.filter((device) => device.connectStatus === "online").length,
@@ -744,13 +879,9 @@ export const mockBackend: BackendClient = {
   async pointDeviceTree(_token) { return this.deviceGroupTree(_token); },
   async pointList(_token, query) {
     await delay(160);
-    const rows = [
-      { id: 11, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", dataType: "BOOL" as const, description: "设备运行标志", isReadonly: true, driverName: "Siemens S7", pointStatus: "enabled" as const, updateTime: "2026-07-17 15:30:00" },
-      { id: 12, deviceId: 1, deviceCode: "PLC-S7-01", varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", dataType: "REAL" as const, description: "rpm", isReadonly: true, driverName: "Siemens S7", pointStatus: "enabled" as const, updateTime: "2026-07-17 15:30:00" },
-      { id: 21, deviceId: 2, deviceCode: "METER-02", varSeq: 1, pointName: "A相电压", ioAddress: "40001", dataType: "REAL" as const, description: "V", isReadonly: true, driverName: "Modbus TCP", pointStatus: "disabled" as const, updateTime: "2026-07-17 15:29:40" },
-    ];
+    const rows = MOCK_POINTS.map(({ unit: _unit, group: _group, ...point }) => point);
     const allowedDevices = query.deviceType || query.connectStatus
-      ? (await this.deviceList(_token, { deviceTypeExact: query.deviceType, connectStatus: query.connectStatus, deviceIds: query.deviceIds, pageSize: 100 })).list.map((device) => device.id)
+      ? (await this.deviceList(_token, { deviceTypeExact: query.deviceType, connectStatus: query.connectStatus, deviceIds: query.deviceIds, pageSize: 1000 })).list.map((device) => device.id)
       : query.deviceIds;
     const list = rows.filter((item) =>
       (!query.keyword || `${item.pointName} ${item.ioAddress}`.toLowerCase().includes(query.keyword.toLowerCase()))
@@ -770,32 +901,25 @@ export const mockBackend: BackendClient = {
   async exportPoints(_token, _query, template = false) { return { bytes: Array.from(new TextEncoder().encode("mock workbook")), fileName: template ? "point-import-template.xlsx" : "point-export.xlsx" }; },
   async importPoints(_token, rows) { return { success: rows.length, fail: 0, errors: [] }; },
   async importPointsFromTemplate(_token, _deviceId) { return { success: 3, fail: 0, errors: [] }; },
-  async realtimeInit(_token, deviceId, _groupCode = "g001") {
+  async realtimeInit(_token, deviceId, groupCode = "g001") {
     await delay(120);
-    const now = new Date().toISOString();
-    return { deviceId, deviceCode: deviceId === 2 ? "METER-02" : "PLC-S7-01", deviceName: deviceId === 2 ? "二号电力仪表" : "一号线主控PLC", driverName: deviceId === 2 ? "Modbus TCP" : "Siemens S7", connectStatus: "online" as const, lastCollectTime: now, redisConnected: true, degraded: false, data: [
-      { pointId: 11, varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0", value: true, updateTime: now, quality: 192, dataType: "BOOL" },
-      { pointId: 12, varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4", value: 1480 + Math.round(Math.random() * 20), updateTime: now, quality: 192, dataType: "REAL" },
-      { pointId: 13, varSeq: 3, pointName: "轴承温度", ioAddress: "DB1.DBD8", value: 46.2 + Math.random(), updateTime: now, quality: 192, dataType: "REAL" },
-    ] };
+    const { device, data } = mockRealtimeItems(deviceId, groupCode);
+    return { deviceId: device.id, deviceCode: device.deviceCode, deviceName: device.deviceName, driverName: device.driverName, connectStatus: device.connectStatus, lastCollectTime: new Date().toISOString(), redisConnected: true, degraded: false, data };
   },
-  async realtimePointGroups(_token, _deviceCode) {
+  async realtimePointGroups(_token, deviceCode) {
     await delay(80);
-    return [{ group_code: "g001", group_name: "默认分组", active_point_count: 3, max_point_count: 3072, status: "active" }];
+    return mockPointGroups(deviceCode);
   },
-  async historyDevices(_token) { await delay(100); return [{ id: 1, name: "PLC-S7-01 · 一号线主控PLC", deviceCode: "PLC-S7-01", deviceName: "一号线主控PLC", typeCode: "PLC", typeName: "PLC" }, { id: 2, name: "METER-02 · 二号电力仪表", deviceCode: "METER-02", deviceName: "二号电力仪表", typeCode: "METER", typeName: "仪表" }]; },
-  async historyDeviceTypes(_token) { await delay(80); return [{ typeCode: "PLC", typeName: "PLC", deviceCount: 1 }, { typeCode: "METER", typeName: "仪表", deviceCount: 1 }]; },
-  async historyPoints(_token, deviceId) { await delay(80); return deviceId === 2 ? [{ varSeq: 1, pointName: "A相电压", ioAddress: "40001" }] : [{ varSeq: 1, pointName: "运行状态", ioAddress: "DB1.DBX0.0" }, { varSeq: 2, pointName: "主轴转速", ioAddress: "DB1.DBD4" }, { varSeq: 3, pointName: "轴承温度", ioAddress: "DB1.DBD8" }]; },
+  async historyDevices(_token) { await delay(100); return MOCK_DEVICES.map((device) => ({ id: device.id, name: `${device.deviceCode} · ${device.deviceName}`, deviceCode: device.deviceCode, deviceName: device.deviceName, typeCode: device.deviceType, typeName: device.deviceType })); },
+  async historyDeviceTypes(_token) { await delay(80); return [...new Set(MOCK_DEVICES.map((device) => device.deviceType))].map((type) => ({ typeCode: type, typeName: type, deviceCount: MOCK_DEVICES.filter((device) => device.deviceType === type).length })); },
+  async historyPoints(_token, deviceId) { await delay(80); return mockHistoryPoints(deviceId); },
   async historyChart(_token, query) {
     await delay(180);
-    const times = Array.from({ length: 12 }, (_, i) => new Date(Date.now() - (11 - i) * 300_000).toISOString());
-    return { interval: query.interval ?? "5m", series: query.varSeqs.map((varSeq) => ({ varSeq, name: varSeq === 2 ? "主轴转速" : varSeq === 3 ? "轴承温度" : "运行状态", unit: varSeq === 2 ? "rpm" : varSeq === 3 ? "°C" : "", dataType: "REAL", data: times.map((time, index) => [time, varSeq === 2 ? 1450 + index * 4 : 42 + index * 0.5]) })) };
+    return mockHistoryChart(query);
   },
   async historyRawMatrix(_token, query) {
     await delay(180);
-    const columns = [{ prop: "ts", label: "采样时间" }, ...query.varSeqs.map((varSeq) => ({ prop: `v${varSeq}`, label: `点位 ${varSeq}`, varSeq }))];
-    const rows = Array.from({ length: 8 }, (_, index) => Object.fromEntries([["ts", new Date(Date.now() - index * 60_000).toISOString()], ...query.varSeqs.map((varSeq) => [`v${varSeq}`, (varSeq * 100 + index).toFixed(2)])]));
-    return { columns, rows, nextCursor: null, meta: { alignGranularity: query.alignGranularity ?? "1s", fillMode: "none" as const, pageSize: query.pageSize ?? 100 } };
+    return mockHistoryMatrix(query);
   },
   async historyExport(_token, _payload) { await delay(120); return { taskId: "mock-history-export" }; },
   async historyExportStatus(_token, _taskId) { await delay(120); return { status: "completed" as const, progress: 100, createdAt: new Date().toISOString() }; },
@@ -825,19 +949,25 @@ export const mockBackend: BackendClient = {
     await delay(100);
     const debugRemainingSeconds = Math.max(0, Math.floor((_mockDebugUntil - Date.now()) / 1000));
     return {
-      todayTotal: 1842,
-      yesterdayTotal: 1728,
-      todayWarnTotal: 34,
-      todayErrorTotal: 7,
-      todayCriticalTotal: 1,
+      todayTotal: 18426,
+      yesterdayTotal: 17113,
+      todayWarnTotal: 312,
+      todayErrorTotal: 47,
+      todayCriticalTotal: 3,
       debugEnabled: debugRemainingSeconds > 0,
       debugRemainingSeconds,
-      totalSizeMb: 286.4,
-      maxTotalMb: 1024,
-      lastCleanupTime: "2026-07-17 03:00:00",
-      lastCleanupDeletedTotal: 6240,
-      levelTrend: Array.from({ length: 12 }, (_, index) => ({ time: `${String(index * 2).padStart(2, "0")}:00`, info: 90 + index * 7, warn: 8 + index % 5, error: index % 4, critical: index === 8 ? 1 : 0, debug: debugRemainingSeconds > 0 ? 20 + index * 2 : 0 })),
-      typeRatio: [{ type: "system", count: 620, ratio: 33.7 }, { type: "collect", count: 486, ratio: 26.4 }, { type: "storage", count: 358, ratio: 19.4 }, { type: "operation", count: 241, ratio: 13.1 }, { type: "auth", count: 137, ratio: 7.4 }],
+      totalSizeMb: 1284.2,
+      maxTotalMb: 4096,
+      lastCleanupTime: "2026-10-18 03:00:12",
+      lastCleanupDeletedTotal: 126530,
+      // 24 小时：白班（07–19）高、夜班低，08/20 交接班尖峰；WARN/ERROR 与 INFO 不同量级（双轴）
+      levelTrend: Array.from({ length: 24 }, (_, index) => {
+        const hour = (new Date().getHours() + 1 + index) % 24;
+        const shift = hour >= 7 && hour <= 19 ? 1 : 0.62;
+        const wave = Math.sin(index * 1.7) * 0.5 + 0.5;
+        return { time: `${String(hour).padStart(2, "0")}:00`, info: Math.round((640 + wave * 220) * shift + (hour === 8 || hour === 20 ? 260 : 0)), warn: Math.round((12 + wave * 14) * shift + (hour === 15 ? 18 : 0)), error: Math.round(2 + Math.cos(index * 2.3) * 2 + (hour === 15 ? 8 : 0)) + 1, critical: index === 5 || index === 17 || index === 23 ? 1 : 0, debug: debugRemainingSeconds > 0 && index === 23 ? 420 : 0 };
+      }),
+      typeRatio: [{ type: "collect", count: 7558, ratio: 41 }, { type: "system", count: 4054, ratio: 22 }, { type: "operation", count: 2211, ratio: 12 }, { type: "storage", count: 1658, ratio: 9 }, { type: "auth", count: 1105, ratio: 6 }, { type: "alarm", count: 921, ratio: 5 }, { type: "security", count: 553, ratio: 3 }, { type: "frontend", count: 366, ratio: 2 }],
       sourceRatio: [],
     };
   },
@@ -872,7 +1002,7 @@ export const mockBackend: BackendClient = {
       email: "admin@example.com",
       avatar: "",
       roles: ["R_SUPER"],
-      buttons: ["view", "add", "edit", "delete"],
+      buttons: ["view", "add", "edit", "delete", "device_monitor:driver:manage"],
     };
   },
   async roleOptions(_token) { await delay(80); return MOCK_ROLES.map(({ roleId, roleName, roleCode, enabled }) => ({ roleId, roleName, roleCode, enabled })); },
@@ -907,35 +1037,67 @@ export const mockBackend: BackendClient = {
 
 // 随机日志消息池
 const COLLECTOR_MSGS: { level: LogLevel; message: string }[] = [
-  { level: "INFO",  message: "Device AGV-01 polled. points=384 quality=Good" },
-  { level: "INFO",  message: "XADD rt:stream:agv:main:0 ok. id=1716890012345-0" },
-  { level: "INFO",  message: "Device PLC-S7-02 polled. points=620 quality=Good" },
-  { level: "INFO",  message: "Subscribe Redis stream: rt:stream:agv:main:*" },
-  { level: "INFO",  message: "Device QC-100 connected. protocol=OPC UA" },
-  { level: "WARN",  message: "Retry opcda tag read once. device=QC-100 tag=Temp_01" },
-  { level: "WARN",  message: "Stream write lag detected. stream=rt:stream:agv:main:0 lag=18" },
-  { level: "ERROR", message: "opcda read failed. device=METER-01 tag=Voltage_A" },
-  { level: "DEBUG", message: "Batch flush: 384 pts → redis stream" },
-  { level: "INFO",  message: "Device METER-01 reconnected. protocol=Modbus TCP" },
+  { level: "INFO",  message: "Device QC101 polled. points=426 quality=Good" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=7" },
+  { level: "INFO",  message: "Device ASC0011 polled. points=64 quality=Good" },
+  { level: "DEBUG", message: "Scan cycle done. group=qc:g001 elapsed=43ms" },
+  { level: "INFO",  message: "XADD rt:stream:agv:main:0 ok. entries=4" },
+  { level: "INFO",  message: "Device AGV001 polled. points=18 quality=Good" },
+  { level: "DEBUG", message: "Batch flush: 467 pts → redis stream" },
+  { level: "INFO",  message: "XADD rt:stream:asc:g001:0 ok. entries=2" },
+  { level: "WARN",  message: "Device QC107 response slow. protocol=S7 rtt=406ms" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=9" },
+  { level: "INFO",  message: "Device QC101 polled. points=426 quality=Good" },
+  { level: "DEBUG", message: "Scan cycle done. group=qc:g001 elapsed=57ms" },
+  { level: "INFO",  message: "Device ASC0011 polled. points=64 quality=Good" },
+  { level: "WARN",  message: "Retry opcua node read once. device=ASC0092 node=ns=2;s=Hoist.Load" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=6" },
+  { level: "ERROR", message: "modbus read timeout. device=AGV012 unit=1 addr=40001" },
+  { level: "INFO",  message: "Device AGV023 reconnected. protocol=Modbus TCP" },
+];
+
+const INGEST_MSGS: { level: LogLevel; message: string }[] = [
+  { level: "INFO",  message: "accept edge batch. node=edge-qc-01 seq=182635 frames=35" },
+  { level: "DEBUG", message: "validate batch ok. schema=v2 points=1449" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=7" },
+  { level: "INFO",  message: "receipt ack sent. node=edge-qc-02 seq=182225" },
+  { level: "INFO",  message: "accept edge batch. node=edge-agv-01 seq=55490 frames=5" },
+  { level: "INFO",  message: "accept edge batch. node=edge-asc-02 seq=90475 frames=20" },
+  { level: "INFO",  message: "XADD rt:stream:asc:g001:0 ok. entries=3" },
+  { level: "INFO",  message: "accept edge batch. node=edge-qc-01 seq=182636 frames=38" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=4" },
+  { level: "INFO",  message: "receipt ack sent. node=edge-qc-02 seq=182050" },
+  { level: "INFO",  message: "accept edge batch. node=edge-agv-01 seq=55459 frames=13" },
+  { level: "INFO",  message: "XADD rt:stream:qc:g001:0 ok. entries=9" },
+  { level: "INFO",  message: "accept edge batch. node=edge-asc-02 seq=90502 frames=11" },
+  { level: "DEBUG", message: "validate batch ok. schema=v2 points=989" },
+  { level: "INFO",  message: "accept edge batch. node=edge-agv-01 seq=55125 frames=14" },
+  { level: "WARN",  message: "duplicate batch ignored. node=edge-asc-02 seq=90474" },
 ];
 
 const WRITER_MSGS: { level: LogLevel; message: string }[] = [
-  { level: "INFO",  message: "XREADGROUP streams=8 consumer=writer-1" },
-  { level: "INFO",  message: "batch insert TDengine rows=512 table=AGV-01" },
-  { level: "INFO",  message: "XACK success count=512" },
+  { level: "INFO",  message: "XACK success count=551" },
+  { level: "INFO",  message: "XREADGROUP streams=8 consumer=writer-1 count=433" },
+  { level: "DEBUG", message: "flush timer triggered. interval=500ms" },
   { level: "INFO",  message: "map var_id to td_column_name success" },
+  { level: "INFO",  message: "batch insert TDengine rows=512 table=qc101" },
+  { level: "INFO",  message: "XACK success count=533" },
+  { level: "DEBUG", message: "flush timer triggered. interval=500ms" },
+  { level: "INFO",  message: "XREADGROUP streams=8 consumer=writer-1 count=465" },
+  { level: "INFO",  message: "batch insert TDengine rows=88 table=asc0011" },
+  { level: "INFO",  message: "XACK success count=498" },
+  { level: "WARN",  message: "pending drain claimed=3 stream=rt:stream:qc:g001:0" },
   { level: "INFO",  message: "DLQ check: 0 items" },
-  { level: "INFO",  message: "flush timer triggered. interval=500ms" },
-  { level: "WARN",  message: "pending drain claimed=2" },
-  { level: "WARN",  message: "TDengine write slow. elapsed=820ms" },
+  { level: "DEBUG", message: "Writer heartbeat ok. uptime=268470s" },
+  { level: "INFO",  message: "XREADGROUP streams=8 consumer=writer-1 count=427" },
+  { level: "INFO",  message: "XACK success count=526" },
   { level: "ERROR", message: "tdengine write failed. retry later" },
-  { level: "DEBUG", message: "Writer heartbeat ok. uptime=13338s" },
 ];
 
 /**
  * 创建与真实 WebSocket 接口兼容的 mock 对象。
  * - 50ms 后触发 onopen（模拟握手延迟）
- * - 之后每 400ms 推一条随机 LogLine
+ * - 首屏回填 40 条，之后每 1200ms 推一条随机 LogLine
  * - close() 后立即停止推送，不泄漏定时器
  * - send() 接受 auth 首帧但不做校验（简化 mock）
  */
@@ -944,7 +1106,7 @@ export function createMockWebSocket(name: string): WebSocket {
   let openTimer:  ReturnType<typeof setTimeout>  | null = null;
   let pushTimer:  ReturnType<typeof setInterval> | null = null;
 
-  const pool = name === "writer" ? WRITER_MSGS : COLLECTOR_MSGS;
+  const pool = name === "writer" ? WRITER_MSGS : name === "ingest" ? INGEST_MSGS : COLLECTOR_MSGS;
 
   // 事件处理器存储（用 get/set 代理到外部赋值）
   let _onopen:    ((e: Event)        => void) | null = null;
@@ -965,12 +1127,22 @@ export function createMockWebSocket(name: string): WebSocket {
     _onopen?.({ type: "open" } as Event);
 
     let i = Math.floor(Math.random() * pool.length); // 随机起始，避免每次开头相同
+    // 首屏回填近 40 条（本地时间戳），让预览日志面板有内容
+    const backfillStart = Date.now() - 40 * 900;
+    for (let k = 0; k < 40; k += 1) {
+      const { level, message } = pool[i % pool.length];
+      i++;
+      _onmessage?.({
+        type: "message",
+        data: JSON.stringify({ timestamp: mockLocalIso(new Date(backfillStart + k * 900 + Math.floor(mockNoise(k) * 400))), level, source: name, message }),
+      } as MessageEvent);
+    }
     pushTimer = setInterval(() => {
       if (closed) { clearInterval(pushTimer!); pushTimer = null; return; }
       const { level, message } = pool[i % pool.length];
       i++;
       const line: LogLine = {
-        timestamp: new Date().toISOString(),
+        timestamp: mockLocalIso(new Date()),
         level,
         source: name,
         message,
@@ -979,7 +1151,7 @@ export function createMockWebSocket(name: string): WebSocket {
         type: "message",
         data: JSON.stringify(line),
       } as MessageEvent);
-    }, 400);
+    }, 1200);
   }, 50);
 
   const ws = {

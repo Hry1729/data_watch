@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Area,
@@ -9,23 +9,20 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceArea,
   Scatter,
   ScatterChart,
   XAxis,
   YAxis,
 } from "recharts";
-import { Download, RotateCcw, Search } from "lucide-react";
+import { CalendarDays, ChevronDown, Download, LineChart as LineChartIcon, RotateCcw, Search } from "lucide-react";
 import { BUILD_ROLE } from "@/config/build-role";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
 import {
@@ -41,6 +38,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ChartTipCard, CountChip, CTRL, HEAD_ROW, LegendPill, OUTLINE_BTN, PRIMARY_BTN, SegTabs, SERIES_COLORS, SoftBadge, TABLE_FRAME, TABLE_TEXT, TD, TH } from "@/components/DevicePageUi";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -49,7 +47,7 @@ import { saveDownload } from "@/lib/save-download";
 import type { AppError } from "@/types";
 import type { HistoryChartResponse, HistoryRawMatrixResponse } from "@/types/device-monitor";
 
-const COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+const COLORS = SERIES_COLORS;
 const QUERY_POINT_LIMIT = 10;
 const EXPORT_POINT_LIMIT = 20;
 const HISTORY_STATE_KEY = "datawatch-history-state";
@@ -123,6 +121,22 @@ function formatHistoryAxisTime(timestamp: number, spanMs: number): string {
   });
 }
 
+function formatStat(value: number | null) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function seriesStats(data: [string, number | null][]) {
+  const values = data.map(([, value]) => value).filter((value): value is number => value != null && Number.isFinite(value));
+  if (!values.length) return { min: null, avg: null, max: null };
+  return { min: Math.min(...values), avg: values.reduce((sum, value) => sum + value, 0) / values.length, max: Math.max(...values) };
+}
+
+function shortClock(timestamp: number) {
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "--";
+}
+
 function HistoryChart({
   chart,
   chartType,
@@ -136,6 +150,7 @@ function HistoryChart({
 }) {
   const [zoomDomain, setZoomDomain] = useState<[number, number] | null>(null);
   const [brushVersion, setBrushVersion] = useState(0);
+  const [hidden, setHidden] = useState<number[]>([]);
   const chartRows = useMemo(() => {
     const rows = new Map<string, Record<string, number | null>>();
     chart.series.forEach((series) => series.data.forEach(([time, value]) => {
@@ -145,7 +160,8 @@ function HistoryChart({
     }));
     return [...rows.values()].sort((left, right) => Number(left.time) - Number(right.time));
   }, [chart]);
-  const config = useMemo(() => Object.fromEntries(chart.series.map((series, index) => [`v${series.varSeq}`, { label: series.name, color: COLORS[index % COLORS.length] }])) as ChartConfig, [chart]);
+  const colored = useMemo(() => chart.series.map((series, index) => ({ ...series, color: COLORS[index % COLORS.length] })), [chart]);
+  const config = useMemo(() => Object.fromEntries(colored.map((series) => [`v${series.varSeq}`, { label: series.name, color: series.color }])) as ChartConfig, [colored]);
   const fullDomain = useMemo<[number, number]>(() => {
     const requestedStart = parseHistoryTime(rangeStart);
     const requestedEnd = parseHistoryTime(rangeEnd);
@@ -156,6 +172,19 @@ function HistoryChart({
   }, [chartRows, rangeEnd, rangeStart]);
   const axisDomain = zoomDomain ?? fullDomain;
   const axisSpan = axisDomain[1] - axisDomain[0];
+  // 缺失区间：所有序列同时为 null 的连续时间段
+  const gaps = useMemo(() => {
+    const result: [number, number][] = [];
+    let gapStart: number | null = null;
+    chartRows.forEach((row, index) => {
+      const empty = chart.series.every((series) => row[`v${series.varSeq}`] == null);
+      if (empty && gapStart == null) gapStart = Number(chartRows[Math.max(0, index - 1)]?.time ?? row.time);
+      if (!empty && gapStart != null) { result.push([gapStart, Number(row.time)]); gapStart = null; }
+    });
+    if (gapStart != null) result.push([gapStart, Number(chartRows[chartRows.length - 1]?.time)]);
+    return result;
+  }, [chart.series, chartRows]);
+  const visibleCount = chartRows.filter((row) => Number(row.time) >= axisDomain[0] && Number(row.time) <= axisDomain[1]).length;
 
   function handleBrushChange(range: { startIndex?: number; endIndex?: number } | null) {
     if (!range || chartRows.length < 2) return;
@@ -177,6 +206,7 @@ function HistoryChart({
     setBrushVersion((current) => current + 1);
   }
 
+  const visible = colored.filter((series) => !hidden.includes(series.varSeq));
   const timeAxis = (
     <XAxis
       dataKey="time"
@@ -186,60 +216,103 @@ function HistoryChart({
       allowDataOverflow
       tickLine={false}
       axisLine={false}
-      minTickGap={28}
+      minTickGap={36}
+      tickMargin={8}
+      fontSize={11}
       tickFormatter={(value) => formatHistoryAxisTime(Number(value), axisSpan)}
     />
   );
   const tooltip = (
     <ChartTooltip
-      labelFormatter={(value) => new Date(Number(value)).toLocaleString("zh-CN", { hour12: false })}
-      content={<ChartTooltipContent indicator="line" />}
+      cursor={chartType === "bar" ? { fill: "var(--muted)", fillOpacity: 0.5 } : { stroke: "var(--muted-foreground)", strokeOpacity: 0.55, strokeDasharray: "3 3" }}
+      isAnimationActive={false}
+      content={({ active, payload, label }) => active && payload?.length ? (
+        <ChartTipCard
+          title={new Date(Number(label ?? payload[0]?.payload?.time)).toLocaleString("zh-CN", { hour12: false })}
+          rows={payload.filter((item) => item.value != null).map((item) => {
+            const series = colored.find((candidate) => `v${candidate.varSeq}` === item.dataKey || candidate.name === item.name);
+            const value = typeof item.value === "number" ? `${Number.isInteger(item.value) ? item.value : item.value.toFixed(1)}${series?.unit ? ` ${series.unit}` : ""}` : String(item.value);
+            return { key: String(item.dataKey ?? item.name), label: series?.name ?? String(item.name), color: series?.color ?? "var(--brand)", value };
+          })}
+        />
+      ) : null}
     />
   );
   const brush = chartRows.length > 1 ? (
     <Brush
       key={brushVersion}
       dataKey="time"
-      height={24}
+      height={40}
       travellerWidth={8}
-      stroke="var(--border)"
-      fill="var(--muted)"
-      tickFormatter={(value) => formatHistoryAxisTime(Number(value), fullDomain[1] - fullDomain[0])}
+      stroke="var(--brand)"
+      fill="var(--card)"
+      tickFormatter={(value) => shortClock(Number(value))}
       onChange={handleBrushChange}
-    />
+    >
+      <LineChart data={chartRows}>
+        {colored.map((series) => <Line key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={series.color} strokeOpacity={0.45} strokeWidth={1} dot={false} activeDot={false} isAnimationActive={false} />)}
+      </LineChart>
+    </Brush>
   ) : null;
-  const common = <><CartesianGrid vertical={false} />{timeAxis}<YAxis tickLine={false} axisLine={false} width={52} />{tooltip}<ChartLegend content={<ChartLegendContent />} />{brush}</>;
+  const defs = (
+    <defs>
+      {visible.map((series) => (
+        <linearGradient key={series.varSeq} id={`hi-grad-${series.varSeq}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style={{ stopColor: series.color, stopOpacity: 0.22 }} />
+          <stop offset="100%" style={{ stopColor: series.color, stopOpacity: 0 }} />
+        </linearGradient>
+      ))}
+      <pattern id="hi-gap" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+        <line x1="0" y1="0" x2="0" y2="6" style={{ stroke: "var(--muted-foreground)", strokeOpacity: 0.3 }} strokeWidth={2} />
+      </pattern>
+    </defs>
+  );
+  const gapAreas = gaps.map(([x1, x2]) => (
+    <ReferenceArea key={x1} x1={x1} x2={x2} fill="url(#hi-gap)" fillOpacity={1} ifOverflow="hidden" label={{ value: "无数据", position: "insideTop", fontSize: 11, fill: "var(--muted-foreground)" }} />
+  ));
+  const common = <>{defs}<CartesianGrid vertical={false} strokeDasharray="3 4" stroke="var(--border)" />{timeAxis}<YAxis tickLine={false} axisLine={false} width={44} fontSize={11} domain={["auto", "auto"]} />{tooltip}{gapAreas}{brush}</>;
+  const margin = { top: 8, right: 12, bottom: 0, left: 0 };
   const zoomReset = zoomDomain ? (
-    <Button className="absolute right-3 top-2" size="icon-sm" variant="outline" title="重置缩放" aria-label="重置缩放" onClick={resetZoom}>
-      <RotateCcw />
+    <Button className="absolute right-1.5 top-0.5 z-10 h-7 gap-1.5 px-2.5 text-xs" size="sm" variant="outline" title="重置缩放" aria-label="重置缩放" onClick={resetZoom}>
+      <RotateCcw className="size-3.5" />重置缩放
     </Button>
   ) : null;
 
+  let body: ReactNode;
   if (chartType === "scatter") {
-    return (
+    body = (
+      <ScatterChart data={chartRows} margin={margin} accessibilityLayer>
+        {defs}
+        <CartesianGrid strokeDasharray="3 4" stroke="var(--border)" />
+        {timeAxis}
+        <YAxis type="number" dataKey="value" tickLine={false} axisLine={false} width={44} fontSize={11} domain={["auto", "auto"]} />
+        {tooltip}
+        {visible.map((series) => <Scatter key={series.varSeq} name={series.name} fill={series.color} fillOpacity={0.75} shape={(props: { cx?: number; cy?: number }) => <circle cx={props.cx} cy={props.cy} r={2.5} fill={series.color} fillOpacity={0.75} />} data={series.data.filter(([, value]) => value != null).map(([time, value]) => ({ time: parseHistoryTime(time), value }))} />)}
+        {brush}
+      </ScatterChart>
+    );
+  } else if (chartType === "bar") {
+    body = <BarChart data={chartRows} margin={margin} accessibilityLayer>{common}{visible.map((series) => <Bar key={series.varSeq} dataKey={`v${series.varSeq}`} fill={series.color} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}</BarChart>;
+  } else {
+    body = <AreaChart data={chartRows} margin={margin} accessibilityLayer>{common}{visible.map((series) => <Area key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={series.color} fill={chartType === "area" ? `url(#hi-grad-${series.varSeq})` : "transparent"} strokeWidth={2} dot={false} activeDot={{ r: 4.5, stroke: "var(--card)", strokeWidth: 2, fill: series.color }} isAnimationActive={false} />)}</AreaChart>;
+  }
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center gap-3.5">
+        <div className="flex flex-wrap gap-1.5">{colored.map((series) => <LegendPill key={series.varSeq} color={series.color} label={series.name} off={hidden.includes(series.varSeq)} onClick={() => setHidden((current) => current.includes(series.varSeq) ? current.filter((value) => value !== series.varSeq) : [...current, series.varSeq])} />)}</div>
+        <div className="ml-auto flex gap-4 text-xs tabular-nums text-muted-foreground">
+          <span>显示区间 <b className="font-semibold text-foreground">{shortClock(axisDomain[0])} – {shortClock(axisDomain[1])}</b></span>
+          <span>数据点 <b className="font-semibold text-foreground">{visibleCount}</b></span>
+          <span>缺失区间 <b className="font-semibold text-foreground">{gaps.length}</b> 段</span>
+        </div>
+      </div>
       <div className="relative">
-        <ChartContainer config={config} className="h-[420px] w-full aspect-auto">
-          <ScatterChart data={chartRows} accessibilityLayer>
-            <CartesianGrid />
-            {timeAxis}
-            <YAxis type="number" dataKey="value" tickLine={false} axisLine={false} width={52} />
-            {tooltip}
-            <ChartLegend content={<ChartLegendContent />} />
-            {chart.series.map((series, index) => <Scatter key={series.varSeq} name={series.name} fill={COLORS[index % COLORS.length]} data={series.data.filter(([, value]) => value != null).map(([time, value]) => ({ time: parseHistoryTime(time), value }))} />)}
-            {brush}
-          </ScatterChart>
-        </ChartContainer>
+        <ChartContainer config={config} className="h-[400px] w-full aspect-auto">{body}</ChartContainer>
         {zoomReset}
       </div>
-    );
-  }
-  if (chartType === "bar") {
-    return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><BarChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Bar key={series.varSeq} dataKey={`v${series.varSeq}`} fill={COLORS[index % COLORS.length]} radius={[3, 3, 0, 0]} isAnimationActive={false} />)}</BarChart></ChartContainer>{zoomReset}</div>;
-  }
-  if (chartType === "area") {
-    return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><AreaChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Area key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} fill={COLORS[index % COLORS.length]} fillOpacity={0.16} strokeWidth={2} isAnimationActive={false} />)}</AreaChart></ChartContainer>{zoomReset}</div>;
-  }
-  return <div className="relative"><ChartContainer config={config} className="h-[420px] w-full aspect-auto"><LineChart data={chartRows} accessibilityLayer>{common}{chart.series.map((series, index) => <Line key={series.varSeq} type="monotone" dataKey={`v${series.varSeq}`} stroke={COLORS[index % COLORS.length]} strokeWidth={2} dot={false} isAnimationActive={false} />)}</LineChart></ChartContainer>{zoomReset}</div>;
+    </div>
+  );
 }
 
 export default function HistoryDataPage() {
@@ -520,45 +593,61 @@ export default function HistoryDataPage() {
     }
   }
 
-  const pointSummary = selectedPointItems.length ? selectedPointItems.map((point) => point.pointName).join("、") : "点击选择查询点位";
   const submittedQuery = lastQueryRef.current?.query;
 
+  const aggregateLabel = ({ avg: "平均值", max: "最大值", min: "最小值", last: "最新值" } as Record<string, string>)[submittedQuery?.aggregate ?? aggregate] ?? aggregate;
+  const statsBySeq = new Map((chart?.series ?? []).map((series) => [series.varSeq, { ...seriesStats(series.data), unit: series.unit, dataType: series.dataType }]));
+  const matrixColumnColor = (prop: string) => {
+    const index = (chart?.series ?? []).findIndex((series) => `v${series.varSeq}` === prop);
+    return index >= 0 ? COLORS[index % COLORS.length] : null;
+  };
+
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-wrap items-center gap-1">
-        <div className="flex items-center gap-1"><span className="text-xs text-muted-foreground">当前设备</span><Button variant="outline" className="max-w-56" onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span></Button></div>
-        <Button variant="outline" onClick={openPointDialog} disabled={!deviceId}><Search className="size-3.5" />选择点位{selectedPoints.length > 0 && <Badge variant="secondary" className="ml-1">{selectedPoints.length}</Badge>}</Button>
+    <div className="mx-auto w-full max-w-[1800px] space-y-3">
+      <Card className="gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap border-b px-5 py-3.5">
+        <span className="text-xs text-muted-foreground">当前设备</span>
+        <Button variant="outline" className={`${OUTLINE_BTN} max-w-56 font-mono text-[12.5px]`} onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
+        <Button variant="outline" className={OUTLINE_BTN} onClick={openPointDialog} disabled={!deviceId}><Search className="size-3.5" />选择点位{selectedPoints.length > 0 && <CountChip count={selectedPoints.length} />}</Button>
+        <span className="mx-0.5 h-5 w-px bg-border" />
         <Select value={quickRange} onValueChange={(value) => { setQuickRange(value); setRecentRange(Number(value), setStartTime, setEndTime); }}>
-          <SelectTrigger className="h-7 w-[110px]" aria-label="快捷时间范围"><SelectValue placeholder="快捷时间范围" /></SelectTrigger>
+          <SelectTrigger className={`${CTRL} w-[110px] !text-xs`} aria-label="快捷时间范围" title="快捷时间范围"><SelectValue placeholder="快捷时间范围" /></SelectTrigger>
           <SelectContent>{[["1", "最近1小时"], ["6", "最近6小时"], ["12", "最近12小时"], ["24", "最近24小时"]].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
         </Select>
-        <div className="flex items-center gap-1" aria-label="时间范围"><Input className="h-7 w-[148px]" type="datetime-local" value={startTime} onChange={(event) => setStartTime(event.target.value)} /><Input className="h-7 w-[148px]" type="datetime-local" value={endTime} onChange={(event) => setEndTime(event.target.value)} /></div>
-        <Select value={interval} onValueChange={setIntervalValue}><SelectTrigger className="!h-7 w-20" aria-label="时间对齐颗粒度"><SelectValue /></SelectTrigger><SelectContent>{INTERVALS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-        <Select value={aggregate} onValueChange={setAggregate}><SelectTrigger className="!h-7 w-20" aria-label="值统计"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="avg">平均值</SelectItem><SelectItem value="max">最大值</SelectItem><SelectItem value="min">最小值</SelectItem><SelectItem value="last">最新值</SelectItem></SelectContent></Select>
+        <div className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-input/20 pl-2.5 pr-1 text-xs text-muted-foreground dark:bg-input/30" aria-label="时间范围"><CalendarDays className="size-3.5 shrink-0" /><input className="w-[148px] bg-transparent text-xs tabular-nums text-foreground outline-none [color-scheme:light] dark:[color-scheme:dark]" type="datetime-local" value={startTime} onChange={(event) => setStartTime(event.target.value)} aria-label="开始时间" /><span>至</span><input className="w-[148px] bg-transparent text-xs tabular-nums text-foreground outline-none [color-scheme:light] dark:[color-scheme:dark]" type="datetime-local" value={endTime} onChange={(event) => setEndTime(event.target.value)} aria-label="结束时间" /></div>
+        <Select value={interval} onValueChange={setIntervalValue}><SelectTrigger className={`${CTRL} w-[88px]`} aria-label="时间对齐颗粒度" title="时间对齐颗粒度"><SelectValue /></SelectTrigger><SelectContent>{INTERVALS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
+        <Select value={aggregate} onValueChange={setAggregate}><SelectTrigger className={`${CTRL} w-[84px]`} aria-label="值统计" title="值统计"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="avg">平均值</SelectItem><SelectItem value="max">最大值</SelectItem><SelectItem value="min">最小值</SelectItem><SelectItem value="last">最新值</SelectItem></SelectContent></Select>
         {/* Matrix alignment is configured with the data table below. */}
-        <div className="ml-auto flex items-center gap-1">
-          <Button variant="outline" onClick={openExportDialog} disabled={!chart?.series.length}><Download className="size-4" />导出</Button>
-          <Button onClick={() => void queryHistory()} disabled={loading || !deviceId || !selectedPoints.length}><Search className="size-4" />{loading ? "查询中..." : "查询"}</Button>
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="outline" className={OUTLINE_BTN} onClick={openExportDialog} disabled={!chart?.series.length}><Download className="size-3.5" />导出</Button>
+          <Button className={PRIMARY_BTN} onClick={() => void queryHistory()} disabled={loading || !deviceId || !selectedPoints.length}><Search className="size-3.5" />{loading ? "查询中..." : "查询"}</Button>
         </div>
-      </div>
-
-      <Card className="gap-0 py-0" title={pointSummary}>
-        <CardContent className="p-2">
-          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><p className="truncate text-[11px] font-medium">{point.pointName}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></div>}
+        </div>
+        <CardContent className="p-3">
+          {selectedPointItems.length ? <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">{selectedPointItems.map((point, index) => { const stats = statsBySeq.get(point.varSeq); return <div key={point.varSeq} className="flex min-w-0 flex-col gap-0.5 rounded-[10px] bg-muted/55 px-3 py-2.5"><p className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium"><span className="size-2 shrink-0 rounded-full" style={{ background: COLORS[index % COLORS.length] }} /><span className="truncate">{point.pointName}</span></p><p className="truncate font-mono text-[10.5px] text-muted-foreground">{[point.ioAddress, stats?.dataType, stats?.unit].filter(Boolean).join(" · ")}</p><div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">{([["最小", stats?.min ?? null], ["平均", stats?.avg ?? null], ["最大", stats?.max ?? null]] as const).map(([label, value]) => <div key={label}>{label}<b className="block text-sm font-semibold tracking-[-0.01em] tabular-nums text-foreground">{formatStat(value)}</b></div>)}</div></div>; })}</div> : <div className="flex h-[74px] flex-col items-center justify-center gap-1 text-[13px] text-muted-foreground"><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></div>}
         </CardContent>
       </Card>
 
-      <Card className="min-w-0">
-        <CardHeader className="!flex items-center justify-between gap-3 border-b px-4 pb-2 pt-4">
-          <CardTitle>历史趋势图分析</CardTitle>
-          <CardAction>
-            <div className="flex items-center gap-1">{(["line", "area", "bar", "scatter"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : type === "bar" ? "柱状图" : "散点图"}</Button>)}</div>
-          </CardAction>
+      <Card className="min-w-0 gap-0 py-0">
+        <CardHeader className="!flex shrink-0 items-center gap-3 border-b px-5 py-3.5">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold leading-none">历史趋势图分析</p>
+            <p className="mt-1.5 truncate text-[13px] text-muted-foreground">{currentDevice?.deviceCode ?? currentDevice?.name ?? "未选择设备"}{submittedQuery ? ` · ${submittedQuery.startTime.slice(0, 16)} ~ ${submittedQuery.endTime.slice(11, 16)} · 间隔 ${chart?.interval ?? submittedQuery.interval} · ${aggregateLabel}` : " · 请选择点位和时间范围后查询"}</p>
+          </div>
+          <div className="ml-auto"><SegTabs<ChartType> value={chartType} options={[["line", "折线图"], ["area", "面积图"], ["bar", "柱状图"], ["scatter", "散点图"]]} onChange={setChartType} /></div>
         </CardHeader>
-        <CardContent>{loading ? <Skeleton className="h-[420px]" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-[420px] items-center justify-center text-sm text-muted-foreground">请选择设备、点位和时间范围后查询</div>}</CardContent>
+        <CardContent className="px-5 pb-5 pt-4">{loading ? <Skeleton className="h-[440px]" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-[440px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><LineChartIcon className="size-9 opacity-35" />请选择设备、点位和时间范围后查询</div>}</CardContent>
       </Card>
 
-      <Card><CardHeader className="!flex flex-row items-center justify-between space-y-0"><CardTitle className="text-base">历史数据矩阵</CardTitle><CardAction><div className="flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div></CardAction></CardHeader><CardContent className="space-y-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent></Card>
+      <Card className="gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-3 px-5 pt-5">
+          <div><p className="text-[15px] font-semibold leading-none">历史数据矩阵</p><p className="mt-1.5 text-[13px] text-muted-foreground">按对齐粒度展开的原始采样，未补值</p></div>
+          <div className="ml-auto flex items-center gap-2"><Label className="text-xs font-normal text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className={`${CTRL} w-28`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div>
+        </div>
+        <CardContent className="space-y-3 px-5 pb-5 pt-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><SoftBadge tone="muted" dot={false}>fillMode: {matrix?.meta.fillMode ?? "none"}</SoftBadge><SoftBadge tone="muted" dot={false}>每页 200 行</SoftBadge><span className="ml-auto tabular-nums">已加载 {matrix?.rows.length ?? 0} 行{matrix?.rows.length ? ` · 起始 ${String(matrix.rows[0].ts).replace("T", " ").slice(0, 19)}` : ""}</span></div>
+          <div className={`max-h-[420px] overflow-auto ${TABLE_FRAME}`}><Table className={TABLE_TEXT}><TableHeader className="sticky top-0 z-10 bg-card"><TableRow className={HEAD_ROW}>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => { const color = matrixColumnColor(column.prop); return <TableHead key={column.prop} className={`${TH} ${column.prop === "ts" ? "min-w-52" : "min-w-32"}`}>{color && <span className="mr-2 inline-block size-1.5 rounded-full align-[1px]" style={{ background: color }} />}{column.label}{column.unit && <span className="ml-0.5 font-normal opacity-75">({column.unit})</span>}</TableHead>; })}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1} className={TD}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`} className="h-10">{matrix.columns.map((column) => { const value = row[column.prop]; return <TableCell key={column.prop} className={`${TD} ${column.prop === "ts" ? "whitespace-nowrap font-mono text-xs text-muted-foreground" : value == null ? "font-mono text-xs text-muted-foreground/60" : "font-mono text-xs"}`}>{String(value ?? "--")}</TableCell>; })}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" className={OUTLINE_BTN} onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent>
+      </Card>
 
       <Dialog open={pointDialogOpen} onOpenChange={setPointDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>选择查询点位</DialogTitle><DialogDescription>单次历史查询最多选择 {QUERY_POINT_LIMIT} 个点位。</DialogDescription></DialogHeader><div className="space-y-3"><div className="relative"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input value={pointSearch} onChange={(event) => setPointSearch(event.target.value)} placeholder="搜索点位名称或地址" className="pl-9" /></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">已选择 {draftPoints.length}/{QUERY_POINT_LIMIT}</span><div><Button size="sm" variant="ghost" onClick={() => setDraftPoints(pointList.slice(0, QUERY_POINT_LIMIT).map((point) => point.varSeq))}>全选</Button><Button size="sm" variant="ghost" onClick={() => setDraftPoints([])}>清空</Button></div></div><div className="grid max-h-[360px] grid-cols-2 gap-1 overflow-y-auto rounded-md border p-2">{points.loading ? <Skeleton className="col-span-2 h-48" /> : filteredPoints.length ? filteredPoints.map((point) => { const selected = draftPoints.includes(point.varSeq); const disabled = draftPoints.length >= QUERY_POINT_LIMIT && !selected; return <label key={point.varSeq} className={`flex min-w-0 items-center gap-2 rounded-md px-2 py-2 ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer hover:bg-muted"}`}><Checkbox checked={selected} disabled={disabled} onCheckedChange={(checked) => setDraftPoints((current) => checked ? [...new Set([...current, point.varSeq])].slice(0, QUERY_POINT_LIMIT) : current.filter((value) => value !== point.varSeq))} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{point.pointName}</span><span className="block truncate font-mono text-xs text-muted-foreground">{point.ioAddress}</span></span></label>; }) : <div className="col-span-2 flex h-32 items-center justify-center text-sm text-muted-foreground">没有匹配的点位</div>}</div></div><DialogFooter><Button variant="outline" onClick={() => setPointDialogOpen(false)}>取消</Button><Button onClick={confirmPoints} disabled={!draftPoints.length}>确认</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
