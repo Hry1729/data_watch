@@ -71,12 +71,14 @@ class UploadItem:
                 latest_timestamps = _int_map(payload["latest_timestamps"], "latest_timestamps")
             # 高-3：坏质量且无值的点只出现在 latest_qualities / latest_timestamps（仅更新质量），
             # 因此要求 latest_values 的键是它们的子集，且两者键集合一致。
-            if (
-                latest_qualities is not None
-                and latest_timestamps is not None
-                and set(latest_qualities) != set(latest_timestamps)
-            ):
-                raise RequestValidationError("latest_qualities and latest_timestamps keys must match")
+            # 缺一边或键不一致时只记到本条 envelope_error，并丢掉 latest 映射，
+            # 避免 redis_store 在 latest_updates[var_id] 上 KeyError 把整批打成 500。
+            mismatch = _latest_key_mismatch_message(latest_qualities, latest_timestamps)
+            if mismatch:
+                latest_values = None
+                latest_qualities = None
+                latest_timestamps = None
+                raise RequestValidationError(mismatch)
             for label, mapping in (("latest_qualities", latest_qualities), ("latest_timestamps", latest_timestamps)):
                 if mapping is not None and (latest_values is None or not set(latest_values) <= set(mapping)):
                     raise RequestValidationError(f"{label} keys must cover latest_values")
@@ -148,6 +150,10 @@ class UploadBatch:
         seqs = [item.local_seq for item in items]
         if len(set(seqs)) != len(seqs):
             raise RequestValidationError("local_seq must be unique within a request")
+        # 每一条都是 latest 键不一致：整批无法按记录裁决，返回 scope=batch 的 400。
+        # 只有其中一部分坏时留给服务层按 rejected_consumed 逐条 ACK，其余照常接受。
+        if len(items) > 1 and all(_is_latest_key_mismatch(item) for item in items):
+            raise RequestValidationError(items[0].envelope_error or _LATEST_KEY_MISMATCH)
         return cls(node_uuid=node_uuid, request_id=request_id, items=items)
 
 
@@ -224,6 +230,32 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+_LATEST_KEY_MISMATCH = "latest_qualities and latest_timestamps keys must match"
+
+
+def _latest_key_mismatch_message(
+    qualities: dict[str, int] | None,
+    timestamps: dict[str, int] | None,
+) -> str | None:
+    """两边都缺省时不比较。缺一边，或键集合不同，都算出点名。"""
+    if qualities is None and timestamps is None:
+        return None
+    quality_keys = set(qualities or {})
+    timestamp_keys = set(timestamps or {})
+    if qualities is not None and timestamps is not None and quality_keys == timestamp_keys:
+        return None
+    missing_quality = sorted(timestamp_keys - quality_keys)
+    extra_quality = sorted(quality_keys - timestamp_keys)
+    return (
+        f"{_LATEST_KEY_MISMATCH}"
+        f" (missing quality: {missing_quality}; extra quality: {extra_quality})"
+    )
+
+
+def _is_latest_key_mismatch(item: UploadItem) -> bool:
+    return bool(item.envelope_error and item.envelope_error.startswith(_LATEST_KEY_MISMATCH))
 
 
 def _string_map(value: Any, name: str) -> dict[str, str]:
