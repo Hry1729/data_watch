@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Area,
@@ -121,20 +121,50 @@ function formatHistoryAxisTime(timestamp: number, spanMs: number): string {
   });
 }
 
-function formatStat(value: number | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toFixed(1);
-}
-
-function seriesStats(data: [string, number | null][]) {
-  const values = data.map(([, value]) => value).filter((value): value is number => value != null && Number.isFinite(value));
-  if (!values.length) return { min: null, avg: null, max: null };
-  return { min: Math.min(...values), avg: values.reduce((sum, value) => sum + value, 0) / values.length, max: Math.max(...values) };
+function isBoolSeries(series: { dataType?: string }) {
+  return (series.dataType ?? "").toUpperCase() === "BOOL";
 }
 
 function shortClock(timestamp: number) {
   const date = new Date(timestamp);
   return Number.isFinite(date.getTime()) ? date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "--";
+}
+
+type ColoredSeries = HistoryChartResponse["series"][number] & { color: string };
+
+/** Bool 型点位状态泳道（与实时监控一致）：值为 1 的区间画实色段，0 不画，底为斜纹轨道 */
+function HistoryBoolLanes({ series, domain }: { series: ColoredSeries[]; domain: [number, number] }) {
+  const [start, end] = domain;
+  const span = Math.max(end - start, 1);
+  const pct = (time: number) => Math.min(100, Math.max(0, ((time - start) / span) * 100));
+  return (
+    <div className="grid grid-cols-[72px_minmax(0,1fr)] items-center gap-y-2 pl-0 pr-3">
+      {series.map((item) => {
+        const samples = item.data.map(([time, value]) => [parseHistoryTime(time), value] as const).sort((left, right) => left[0] - right[0]);
+        const runs: [number, number][] = [];
+        let runStart: number | null = null;
+        samples.forEach(([time, value], index) => {
+          const on = value != null && value >= 0.5;
+          if (on && runStart == null) runStart = time;
+          const next = samples[index + 1];
+          if (runStart != null && (!on || !next)) {
+            runs.push([runStart, time]);
+            runStart = null;
+          }
+        });
+        return (
+          <Fragment key={item.varSeq}>
+            <span className="truncate text-xs text-foreground" title={item.name}>{item.name}</span>
+            <div className="relative h-[18px] overflow-hidden rounded-full bg-[repeating-linear-gradient(135deg,color-mix(in_oklab,var(--muted-foreground)_35%,transparent)_0_2px,transparent_2px_5px)]">
+              {runs.filter(([from, to]) => to >= start && from <= end).map(([from, to]) => (
+                <span key={from} className="absolute inset-y-0 rounded-full" style={{ left: `${pct(from)}%`, width: `${Math.max(0.6, pct(to) - pct(from))}%`, background: item.color }} />
+              ))}
+            </div>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
 }
 
 function HistoryChart({
@@ -160,7 +190,9 @@ function HistoryChart({
     }));
     return [...rows.values()].sort((left, right) => Number(left.time) - Number(right.time));
   }, [chart]);
-  const colored = useMemo(() => chart.series.map((series, index) => ({ ...series, color: COLORS[index % COLORS.length] })), [chart]);
+  const allColored = useMemo<ColoredSeries[]>(() => chart.series.map((series, index) => ({ ...series, color: COLORS[index % COLORS.length] })), [chart]);
+  const colored = useMemo(() => allColored.filter((series) => !isBoolSeries(series)), [allColored]);
+  const boolSeries = useMemo(() => allColored.filter(isBoolSeries), [allColored]);
   const config = useMemo(() => Object.fromEntries(colored.map((series) => [`v${series.varSeq}`, { label: series.name, color: series.color }])) as ChartConfig, [colored]);
   const fullDomain = useMemo<[number, number]>(() => {
     const requestedStart = parseHistoryTime(rangeStart);
@@ -298,8 +330,8 @@ function HistoryChart({
   }
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center gap-3.5">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-2 flex shrink-0 flex-wrap items-center gap-3.5">
         <div className="flex flex-wrap gap-1.5">{colored.map((series) => <LegendPill key={series.varSeq} color={series.color} label={series.name} off={hidden.includes(series.varSeq)} onClick={() => setHidden((current) => current.includes(series.varSeq) ? current.filter((value) => value !== series.varSeq) : [...current, series.varSeq])} />)}</div>
         <div className="ml-auto flex gap-4 text-xs tabular-nums text-muted-foreground">
           <span>显示区间 <b className="font-semibold text-foreground">{shortClock(axisDomain[0])} – {shortClock(axisDomain[1])}</b></span>
@@ -307,10 +339,18 @@ function HistoryChart({
           <span>缺失区间 <b className="font-semibold text-foreground">{gaps.length}</b> 段</span>
         </div>
       </div>
-      <div className="relative">
-        <ChartContainer config={config} className="h-[400px] w-full aspect-auto">{body}</ChartContainer>
-        {zoomReset}
-      </div>
+      {colored.length > 0 && (
+        <div className="relative flex min-h-[200px] flex-1 flex-col">
+          <ChartContainer config={config} className="h-full min-h-0 w-full flex-1 aspect-auto">{body}</ChartContainer>
+          {zoomReset}
+        </div>
+      )}
+      {boolSeries.length > 0 && (
+        <div className={colored.length ? "shrink-0" : "min-h-0 flex-1 overflow-y-auto"}>
+          <div className="mb-2 mt-3.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">Bool 型点位<span className="h-px flex-1 bg-border" /></div>
+          <HistoryBoolLanes series={boolSeries} domain={axisDomain} />
+        </div>
+      )}
     </div>
   );
 }
@@ -596,15 +636,16 @@ export default function HistoryDataPage() {
   const submittedQuery = lastQueryRef.current?.query;
 
   const aggregateLabel = ({ avg: "平均值", max: "最大值", min: "最小值", last: "最新值" } as Record<string, string>)[submittedQuery?.aggregate ?? aggregate] ?? aggregate;
-  const statsBySeq = new Map((chart?.series ?? []).map((series) => [series.varSeq, { ...seriesStats(series.data), unit: series.unit, dataType: series.dataType }]));
+  const metaBySeq = new Map((chart?.series ?? []).map((series) => [series.varSeq, { unit: series.unit, dataType: series.dataType }]));
   const matrixColumnColor = (prop: string) => {
     const index = (chart?.series ?? []).findIndex((series) => `v${series.varSeq}` === prop);
     return index >= 0 ? COLORS[index % COLORS.length] : null;
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-3">
-      <Card className="gap-0 py-0">
+    <div className="mx-auto flex h-full w-full max-w-[1800px] flex-col gap-3">
+      <div className="flex h-full min-h-[560px] shrink-0 flex-col gap-3">
+      <Card className="shrink-0 gap-0 py-0">
         <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap border-b px-5 py-3.5">
         <span className="text-xs text-muted-foreground">当前设备</span>
         <Button variant="outline" className={`${OUTLINE_BTN} max-w-56 font-mono text-[12.5px]`} onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
@@ -624,11 +665,11 @@ export default function HistoryDataPage() {
         </div>
         </div>
         <CardContent className="p-3">
-          {selectedPointItems.length ? <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">{selectedPointItems.map((point, index) => { const stats = statsBySeq.get(point.varSeq); return <div key={point.varSeq} className="flex min-w-0 flex-col gap-0.5 rounded-[10px] bg-muted/55 px-3 py-2.5"><p className="flex min-w-0 items-center gap-1.5 text-[12.5px] font-medium"><span className="size-2 shrink-0 rounded-full" style={{ background: COLORS[index % COLORS.length] }} /><span className="truncate">{point.pointName}</span></p><p className="truncate font-mono text-[10.5px] text-muted-foreground">{[point.ioAddress, stats?.dataType, stats?.unit].filter(Boolean).join(" · ")}</p><div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">{([["最小", stats?.min ?? null], ["平均", stats?.avg ?? null], ["最大", stats?.max ?? null]] as const).map(([label, value]) => <div key={label}>{label}<b className="block text-sm font-semibold tracking-[-0.01em] tabular-nums text-foreground">{formatStat(value)}</b></div>)}</div></div>; })}</div> : <div className="flex h-[74px] flex-col items-center justify-center gap-1 text-[13px] text-muted-foreground"><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></div>}
+          {selectedPointItems.length ? <div className="flex gap-2 overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]">{selectedPointItems.map((point, index) => { const meta = metaBySeq.get(point.varSeq); return <div key={point.varSeq} className="flex h-9 max-w-[260px] shrink-0 items-center gap-2 whitespace-nowrap rounded-[10px] bg-muted/55 px-3"><span className="size-2 shrink-0 rounded-full" style={{ background: COLORS[index % COLORS.length] }} /><span className="truncate text-[12.5px] font-medium">{point.pointName}</span><span className="truncate font-mono text-[10.5px] text-muted-foreground">{[point.ioAddress, meta?.dataType, meta?.unit].filter(Boolean).join(" · ")}</span></div>; })}</div> : <div className="flex h-9 items-center justify-center gap-2 text-[13px] text-muted-foreground"><Search className="size-4 opacity-50" /><span className="font-medium text-foreground">已选点位</span>暂未选择查询点位</div>}
         </CardContent>
       </Card>
 
-      <Card className="min-w-0 gap-0 py-0">
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0">
         <CardHeader className="!flex shrink-0 items-center gap-3 border-b px-5 py-3.5">
           <div className="min-w-0">
             <p className="text-sm font-semibold leading-none">历史趋势图分析</p>
@@ -636,10 +677,11 @@ export default function HistoryDataPage() {
           </div>
           <div className="ml-auto"><SegTabs<ChartType> value={chartType} options={[["line", "折线图"], ["area", "面积图"], ["bar", "柱状图"], ["scatter", "散点图"]]} onChange={setChartType} /></div>
         </CardHeader>
-        <CardContent className="px-5 pb-5 pt-4">{loading ? <Skeleton className="h-[440px]" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-[440px] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><LineChartIcon className="size-9 opacity-35" />请选择设备、点位和时间范围后查询</div>}</CardContent>
+        <CardContent className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">{loading ? <Skeleton className="h-full min-h-40" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><LineChartIcon className="size-9 opacity-35" />请选择设备、点位和时间范围后查询</div>}</CardContent>
       </Card>
+      </div>
 
-      <Card className="gap-0 py-0">
+      <Card className="shrink-0 gap-0 py-0">
         <div className="flex flex-wrap items-center gap-3 px-5 pt-5">
           <div><p className="text-[15px] font-semibold leading-none">历史数据矩阵</p><p className="mt-1.5 text-[13px] text-muted-foreground">按对齐粒度展开的原始采样，未补值</p></div>
           <div className="ml-auto flex items-center gap-2"><Label className="text-xs font-normal text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className={`${CTRL} w-28`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div>
