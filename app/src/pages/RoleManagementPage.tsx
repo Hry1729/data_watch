@@ -4,7 +4,7 @@ import { KeyRound, Pencil, Plus, Search, ShieldCheck, Trash2 } from "lucide-reac
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -82,7 +82,7 @@ export function RoleManagementPage() {
 
   async function saveGrant() {
     if (!token || !grantRole) return;
-    try { await backendClient.updateRoleGrant(token, grantRole.roleId, grant); toast.success("菜单权限已保存"); setGrantRole(null); }
+    try { await backendClient.updateRoleGrant(token, grantRole.roleId, grant); toast.success("菜单权限已保存"); }
     catch { toast.error("权限保存失败"); }
   }
 
@@ -96,33 +96,27 @@ export function RoleManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input className="h-7 w-44" value={draft.roleName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleName: event.target.value }))} placeholder="角色名称" />
-        <Input className="h-7 w-44" value={draft.roleCode ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleCode: event.target.value }))} placeholder="角色编码" />
-        <Input className="h-7 w-52" value={draft.description ?? ""} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="角色描述" />
-        <Select value={draft.enabled === undefined || draft.enabled === "" ? "all" : String(draft.enabled)} onValueChange={(value) => setDraft((current) => ({ ...current, enabled: value === "all" ? "" : value === "true" }))}>
-          <SelectTrigger className="!h-7 w-32"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">状态（全部）</SelectItem>
-            <SelectItem value="true">启用</SelectItem>
-            <SelectItem value="false">禁用</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}>重置</Button>
-          <Button onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search className="size-4" />查询</Button>
+    <div className="grid h-full min-h-0 w-full gap-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(380px,1fr)]">
+      <Card className="flex min-h-0 flex-col gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+          <Input className="h-7 w-40" value={draft.roleName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleName: event.target.value }))} placeholder="角色名称" />
+          <Input className="h-7 w-32" value={draft.roleCode ?? ""} onChange={(event) => setDraft((value) => ({ ...value, roleCode: event.target.value }))} placeholder="角色编码" />
+          <Input className="h-7 w-36" value={draft.description ?? ""} onChange={(event) => setDraft((value) => ({ ...value, description: event.target.value }))} placeholder="角色描述" />
+          <Select value={draft.enabled === undefined || draft.enabled === "" ? "all" : String(draft.enabled)} onValueChange={(value) => setDraft((current) => ({ ...current, enabled: value === "all" ? "" : value === "true" }))}>
+            <SelectTrigger className="!h-7 w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">状态（全部）</SelectItem>
+              <SelectItem value="true">启用</SelectItem>
+              <SelectItem value="false">禁用</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}>重置</Button>
+            <Button size="sm" variant="outline" onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search data-icon="inline-start" />查询</Button>
+            <Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增角色</Button>
+          </div>
         </div>
-      </div>
-
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader>
-          <CardTitle>角色列表</CardTitle>
-          <CardAction>
-            <Button onClick={openCreate}><Plus className="size-4" />新增角色</Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <Table>
               <TableHeader className="bg-muted/50">
@@ -174,8 +168,32 @@ export function RoleManagementPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Card className="flex min-h-0 flex-col gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+          <span className="text-sm font-medium">菜单权限</span>
+          {grantRole && <span className="truncate text-xs text-muted-foreground">· {grantRole.roleName}</span>}
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={!grantRole || grantLoading} onClick={() => selectAll(true)}>全部选择</Button>
+            <Button size="sm" variant="outline" disabled={!grantRole || grantLoading} onClick={() => selectAll(false)}>取消全选</Button>
+          </div>
+        </div>
+        <p className="mt-2 px-4 text-xs text-muted-foreground">菜单与按钮权限独立勾选</p>
+        <div className="mx-4 mt-3 min-h-0 flex-1 overflow-y-auto rounded-lg bg-muted/40 p-2">
+          {!grantRole ? (
+            <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">选择左侧角色的菜单权限</div>
+          ) : grantLoading ? (
+            <div className="space-y-2 p-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-5/6" /></div>
+          ) : (
+            (menus.data ?? []).map((menu) => <GrantNode key={menu.id} menu={menu} depth={0} menuIds={menuIds} permissionIds={permissionIds} toggleMenu={toggleMenu} togglePermission={togglePermission} />)
+          )}
+        </div>
+        <div className="mt-3 flex justify-end border-t px-4 py-3">
+          <Button size="sm" onClick={() => void saveGrant()} disabled={!grantRole || grantLoading}>保存</Button>
+        </div>
+      </Card>
+
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑角色" : "新增角色"}</DialogTitle></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label>角色名称</Label><Input value={form.roleName} onChange={(event) => setForm((value) => ({ ...value, roleName: event.target.value }))} /></div><div className="space-y-2"><Label>角色编码</Label><Input disabled={Boolean(editing)} value={form.roleCode} onChange={(event) => setForm((value) => ({ ...value, roleCode: event.target.value.toUpperCase() }))} placeholder="如 R_TEST_001" /></div><div className="space-y-2"><Label>描述</Label><Textarea rows={3} value={form.description ?? ""} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} /></div><div className="flex items-center justify-between rounded-md border p-3"><div><p className="text-sm font-medium">角色状态</p><p className="text-xs text-muted-foreground">启用后可分配给用户</p></div><Switch checked={form.enabled} onCheckedChange={(enabled) => setForm((value) => ({ ...value, enabled }))} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={() => void saveRole()}>提交</Button></DialogFooter></DialogContent></Dialog>
-    <Dialog open={Boolean(grantRole)} onOpenChange={(open) => { if (!open) setGrantRole(null); }}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>菜单权限 · {grantRole?.roleName}</DialogTitle></DialogHeader><div className="flex items-center justify-between"><p className="text-sm text-muted-foreground">菜单与按钮权限独立勾选</p><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => selectAll(true)}>全部选择</Button><Button size="sm" variant="outline" onClick={() => selectAll(false)}>取消全选</Button></div></div><div className="max-h-[58vh] overflow-y-auto rounded-md border p-2">{grantLoading ? <div className="space-y-2 p-3"><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-5/6" /></div> : (menus.data ?? []).map((menu) => <GrantNode key={menu.id} menu={menu} depth={0} menuIds={menuIds} permissionIds={permissionIds} toggleMenu={toggleMenu} togglePermission={togglePermission} />)}</div><DialogFooter><Button variant="outline" onClick={() => setGrantRole(null)}>取消</Button><Button onClick={() => void saveGrant()}>保存</Button></DialogFooter></DialogContent></Dialog>
     <AlertDialog open={Boolean(deleteRole)} onOpenChange={(open) => { if (!open) setDeleteRole(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>删除角色</AlertDialogTitle><AlertDialogDescription>确定删除角色“{deleteRole?.roleName}”吗？已关联用户可能受到影响。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void confirmDelete()}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
