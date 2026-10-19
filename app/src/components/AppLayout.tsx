@@ -454,7 +454,7 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="mb-1 mr-1 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+      <section className="mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
         <header className="flex h-12 shrink-0 items-center bg-transparent px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
