@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   CircleDashed,
@@ -31,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { agentClient, type BootstrapTarget } from "@/lib/agent-client";
 import { setBackendBaseUrl } from "@/lib/backend-client";
+import { validateBackendOrigin } from "@/lib/backend-proxy-policy";
 import type { AppError } from "@/types";
 
 // B12：边缘角色不使用中心 Redis/TDengine（边缘本地 SQLite → Uploader → Ingest HTTP），
@@ -93,9 +94,15 @@ function centerHost(value: string): string | null {
 
 function errorMessage(error: unknown): string {
   const appError = error as AppError;
-  if (appError?.type === "api_error" && appError.message) return appError.message;
+  const fallback = "初始化失败，请检查中心地址、数据库配置和注册码";
+  // M6：展示完整失败原因（Agent detail / HTTP 状态 / 网络错误），不吞掉
+  if (appError?.type === "api_error") {
+    return appError.message ? appError.message : `${fallback}（HTTP ${appError.status}）`;
+  }
+  if (appError?.type === "network_error" && appError.message) return appError.message;
   if (appError?.type === "agent_unreachable") return "无法连接本机 Agent";
-  return "初始化失败，请检查中心地址、数据库配置和注册码";
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
 }
 
 function ConfigField({
@@ -161,16 +168,21 @@ export default function EdgeBootstrapPage() {
   const [nodeUuid, setNodeUuid] = useState("");
   const [registrationStatus, setRegistrationStatus] = useState("not_registered");
   const [registered, setRegistered] = useState(false);
+  // M1：已注册节点的中心地址（Uploader / 心跳使用的 edge.center_url），注册后锁定
+  const [registeredCenterUrl, setRegisteredCenterUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [retesting, setRetesting] = useState(false);
+  // M6：检测结果与表单版本绑定，检测期间表单被修改则丢弃旧结果
+  const formVersionRef = useRef<Record<DbTarget, number>>({ mysql: 0 });
 
   const allPassed = useMemo(
     () => DB_TARGETS.every((target) => tests[target].status === "success"),
     [tests],
   );
+  const centerCheck = validateBackendOrigin(form.centerUrl);
   const nodeReady = Boolean(
-    centerHost(form.centerUrl)
+    centerCheck.origin
       && form.nodeName.trim()
       && (registered || form.registrationCode.trim()),
   );
@@ -185,6 +197,7 @@ export default function EdgeBootstrapPage() {
         setNodeUuid(status.nodeUuid);
         setRegistrationStatus(status.registrationStatus);
         setRegistered(status.registered);
+        setRegisteredCenterUrl(status.registered ? status.centerUrl : "");
         setForm((current) => ({
           ...current,
           centerUrl: status.centerUrl,
@@ -202,6 +215,7 @@ export default function EdgeBootstrapPage() {
   }, []);
 
   function resetTest(target: DbTarget) {
+    formVersionRef.current[target] += 1;
     setTests((current) => ({
       ...current,
       [target]: { status: "idle", error: null },
@@ -209,6 +223,8 @@ export default function EdgeBootstrapPage() {
   }
 
   function updateCenterUrl(value: string) {
+    // 已注册：中心地址锁定，更换中心必须重新注册
+    if (registered) return;
     setForm((current) => ({ ...current, centerUrl: value }));
     const host = centerHost(value);
     if (host) {
@@ -216,6 +232,7 @@ export default function EdgeBootstrapPage() {
         DB_TARGETS.map((target) => [target, { ...current[target], host }]),
       ) as Record<DbTarget, DbForm>);
     }
+    for (const target of DB_TARGETS) formVersionRef.current[target] += 1;
     setTests(EMPTY_TESTS);
   }
 
@@ -239,7 +256,9 @@ export default function EdgeBootstrapPage() {
     };
   }
 
-  async function testDatabase(target: DbTarget) {
+  async function testDatabase(target: DbTarget, formVersion = formVersionRef.current[target]) {
+    const isCurrent = () => formVersionRef.current[target] === formVersion;
+    if (!isCurrent()) return;
     const value = databases[target];
     const port = Number(value.port);
     if (!value.host.trim() || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -263,6 +282,8 @@ export default function EdgeBootstrapPage() {
     }));
     try {
       const result = await agentClient.postBootstrapTestConnection(databasePayload(target));
+      // 检测期间表单已被修改：结果属于旧配置，丢弃
+      if (!isCurrent()) return;
       setTests((current) => ({
         ...current,
         [target]: result.success
@@ -270,6 +291,7 @@ export default function EdgeBootstrapPage() {
           : { status: "failed", error: result.message ?? "连接失败，请检查配置" },
       }));
     } catch (error) {
+      if (!isCurrent()) return;
       setTests((current) => ({
         ...current,
         [target]: { status: "failed", error: errorMessage(error) },
@@ -280,9 +302,10 @@ export default function EdgeBootstrapPage() {
   async function retestAll() {
     if (retesting || submitting) return;
     setRetesting(true);
+    const versions = { ...formVersionRef.current };
     for (const target of DB_TARGETS) {
       setSelectedStep(target);
-      await testDatabase(target);
+      await testDatabase(target, versions[target]);
     }
     setRetesting(false);
   }
@@ -290,14 +313,17 @@ export default function EdgeBootstrapPage() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting) return;
-    if (!centerHost(form.centerUrl)) return toast.error("请输入有效的中心 HTTP(S) 地址");
+    if (!centerCheck.origin) return toast.error(`中心地址无效：${centerCheck.error}`);
+    if (registered && centerCheck.origin !== validateBackendOrigin(registeredCenterUrl).origin) {
+      return toast.error("节点已注册到原中心，不能直接修改中心地址；更换中心需要重新注册");
+    }
     if (!form.nodeName.trim()) return toast.error("请输入节点名称");
     if (!registered && !form.registrationCode.trim()) return toast.error("请输入中心生成的一次性注册码");
     if (!allPassed) return toast.error("请先完成 MySQL 连接测试");
 
     setSubmitting(true);
     try {
-      const centerUrl = form.centerUrl.trim().replace(/\/$/, "");
+      const centerUrl = centerCheck.origin;
       await agentClient.putBootstrapConfig({
         backend: { base_url: centerUrl },
         mysql: {
@@ -423,8 +449,12 @@ export default function EdgeBootstrapPage() {
                     <ConfigField
                       id="edge-center-url"
                       label="分布式中心地址"
-                      description="该地址会同步为三个数据库的默认主机地址"
+                      description={registered
+                        ? "节点已注册到该中心，地址已锁定（只读）。更换中心需要重新注册：当前版本需重置边缘节点后重新执行注册"
+                        : "该地址会同步为三个数据库的默认主机地址"}
+                      error={form.centerUrl.trim() && centerCheck.error ? centerCheck.error : null}
                       type="url"
+                      readOnly={registered}
                       value={form.centerUrl}
                       onChange={(event) => updateCenterUrl(event.target.value)}
                       placeholder="http://192.168.1.10:8080"
