@@ -4,6 +4,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Copy, Minus, Square, X } from "lucide-react";
 import appIconUrl from "../../src-tauri/icons/128x128.png";
 
+export const TITLEBAR_SLOT_ID = "dw-titlebar-slot";
+
 const appWindow = isTauri() ? getCurrentWindow() : null;
 
 export function TitleBar() {
@@ -30,7 +32,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="flex h-8 shrink-0 select-none items-center justify-between border-b border-border bg-white pl-3 text-xs text-muted-foreground dark:bg-card"
+      className="flex h-9 shrink-0 select-none items-center justify-between bg-sidebar pl-3 text-xs text-muted-foreground"
     >
       <div data-tauri-drag-region className="flex items-center gap-2">
         <img
@@ -39,6 +41,8 @@ export function TitleBar() {
           className="h-4 w-4 shrink-0 rounded-sm object-cover"
         />
         <span className="font-medium">Data Watch Console</span>
+        {/* AppLayout 通过 portal 把「折叠导航栏 / 刷新」按钮放进这里 */}
+        <div id={TITLEBAR_SLOT_ID} className="ml-2 flex items-center gap-0.5" />
       </div>
       <div className="flex h-full">
         <button
