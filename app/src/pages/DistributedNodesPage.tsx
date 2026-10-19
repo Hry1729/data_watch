@@ -80,6 +80,21 @@ function onlineBadge(online: boolean) {
     : <Badge variant="outline" className="border-border bg-muted text-muted-foreground">离线</Badge>;
 }
 
+function KpiCard({ label, value, unit, detail }: { label: string; value: string; unit?: string; detail: string }) {
+  return (
+    <Card size="sm">
+      <CardContent className="px-4 py-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-2 truncate text-2xl font-semibold leading-none tabular-nums">
+          {value}
+          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
+        </p>
+        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function DistributedNodesPage() {
   const { auth } = useAuth();
   const token = auth?.backendToken;
@@ -134,10 +149,24 @@ export default function DistributedNodesPage() {
     };
   }, [loadNodes]);
 
-  const totals = useMemo(() => ({
-    online: nodes.filter((node) => isOnline(node.lastSeenAt)).length,
-    backlog: nodes.reduce((sum, node) => sum + node.outboxBacklog, 0),
-  }), [nodes]);
+  const totals = useMemo(() => {
+    const online = nodes.filter((node) => isOnline(node.lastSeenAt)).length;
+    const pending = nodes.filter((node) => node.status === "pending").length;
+    const clockAnomalies = nodes.filter((node) => node.clockAnomaly).length;
+    const configPending = nodes.filter((node) => node.appliedRevision !== node.configVersion).length;
+    return {
+      online,
+      backlog: nodes.reduce((sum, node) => sum + node.outboxBacklog, 0),
+      offline: nodes.length - online,
+      pending,
+      clockAnomalies,
+      configPending,
+      attention: nodes.filter((node) => node.clockAnomaly || node.appliedRevision !== node.configVersion || node.status === "pending").length,
+      assignedDevices: nodes.reduce((sum, node) => sum + node.assignmentCount, 0),
+      assignedNodes: nodes.filter((node) => node.assignmentCount > 0).length,
+      topBacklogNode: nodes.reduce<DistributedNode | null>((top, node) => (!top || node.outboxBacklog > top.outboxBacklog ? node : top), null),
+    };
+  }, [nodes]);
   const totalPages = Math.max(1, Math.ceil(nodes.length / pageSize));
   const pagedNodes = useMemo(
     () => nodes.slice((page - 1) * pageSize, page * pageSize),
@@ -277,15 +306,35 @@ export default function DistributedNodesPage() {
 
   return (
     <TooltipProvider delayDuration={200}>
-    <div className="flex h-full min-h-0 w-full flex-col px-4 pb-4 md:px-6 md:pb-6">
+    <div className="flex h-full min-h-0 w-full flex-col gap-4">
+      <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          label="在线节点"
+          value={String(totals.online)}
+          unit={`/ ${nodes.length} 台`}
+          detail={`${totals.offline} 台离线 · ${totals.pending} 台待审批`}
+        />
+        <KpiCard
+          label="上行积压"
+          value={totals.backlog.toLocaleString()}
+          unit="条"
+          detail={totals.topBacklogNode && totals.topBacklogNode.outboxBacklog > 0 ? `主要来自 ${totals.topBacklogNode.nodeName}` : "暂无积压"}
+        />
+        <KpiCard
+          label="已分配设备"
+          value={String(totals.assignedDevices)}
+          unit="台"
+          detail={`分布在 ${totals.assignedNodes} 个边缘节点`}
+        />
+        <KpiCard
+          label="需关注"
+          value={String(totals.attention)}
+          detail={`时钟异常 ${totals.clockAnomalies} · 配置未应用 ${totals.configPending} · 待审批 ${totals.pending}`}
+        />
+      </div>
       <Card className="flex min-h-0 flex-1 flex-col">
         <CardHeader>
-          <CardTitle className="flex items-center gap-3">
-            边缘节点
-            <span className="text-xs font-normal text-muted-foreground">
-              {nodes.length} 台 / {totals.online} 台在线 / {totals.backlog} 条积压
-            </span>
-          </CardTitle>
+          <CardTitle>节点列表</CardTitle>
           <CardAction className="flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -301,7 +350,8 @@ export default function DistributedNodesPage() {
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="min-h-0 flex-1 space-y-3 overflow-auto">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+          <div className="min-h-0 flex-1 overflow-auto">
           {loading ? (
             <div className="space-y-2"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
           ) : (
@@ -353,6 +403,7 @@ export default function DistributedNodesPage() {
               </Table>
             </div>
           )}
+          </div>
           {!loading && (
             <div className="flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
               <span className="text-muted-foreground">共 {nodes.length} 台节点</span>
