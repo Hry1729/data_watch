@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Activity, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cpu, Puzzle, Search, TriangleAlert, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Puzzle, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -14,14 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -30,9 +22,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CTRL, HEAD_ROW, KpiTile, PAGER, PAGER_BTN, SoftBadge, TABLE_FRAME, TABLE_TEXT, TD, TH, type Tone } from "@/components/DevicePageUi";
+import { CTRL, HEAD_ROW, PAGER, PAGER_BTN, SoftBadge, TABLE_FRAME, TABLE_TEXT, TD, TH, type Tone } from "@/components/DevicePageUi";
 import { BUILD_ROLE } from "@/config/build-role";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAdaptivePageSize } from "@/hooks/useAdaptivePageSize";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { agentClient } from "@/lib/agent-client";
 import { resolveStatusBadge } from "@/lib/driver-status";
@@ -99,7 +92,7 @@ export default function DriverManagementPage() {
     BUILD_ROLE !== "distributed-center" && (auth?.user?.buttons?.includes("device_monitor:driver:manage") ?? false);
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const { pageSize, tableViewportRef } = useAdaptivePageSize({ rowHeight: 48 });
   const [busy, setBusy] = useState(false);
   const [uninstallTarget, setUninstallTarget] = useState<DriverListItem | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -266,7 +259,6 @@ export default function DriverManagementPage() {
   );
   const query = useBackendQuery(load);
   const rows = query.data?.list ?? [];
-  const summary = query.data?.summary;
   const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
 
   async function prepareInstall(file?: File, driverId?: string) {
@@ -364,15 +356,12 @@ export default function DriverManagementPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-4">
-      <div className="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiTile icon={Puzzle} label="驱动总数" value={summary ? String(summary.total) : "—"} />
-        <KpiTile icon={Activity} label="已加载" value={summary ? String(summary.loaded) : "—"} unit={summary ? `/ ${summary.total}` : undefined} />
-        <KpiTile icon={Cpu} label="关联设备" value={summary ? String(summary.boundDevices) : "—"} />
-        <KpiTile icon={TriangleAlert} label="需处理" value={summary ? String(summary.attention) : "—"} />
-      </div>
-
-      <Card className="flex min-h-0 flex-col gap-0 py-0">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
         <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5">
+          <div className="mr-2 flex items-baseline gap-2">
+            <h2 className="text-[15px] font-semibold leading-none">驱动列表</h2>
+            <span className="text-[13px] tabular-nums text-muted-foreground">{query.data ? `${query.data.total} 个` : "—"}</span>
+          </div>
           <div className="relative w-[220px]">
             <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -409,7 +398,7 @@ export default function DriverManagementPage() {
 
         <CardContent className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">
           <div className={`flex min-h-0 flex-1 flex-col ${TABLE_FRAME}`}>
-            <div className="min-h-0 flex-1 overflow-auto">
+            <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto">
             <TooltipProvider delayDuration={200}>
               <Table className={`w-full table-fixed ${TABLE_TEXT}`}>
                 <colgroup>
@@ -431,7 +420,7 @@ export default function DriverManagementPage() {
                 </TableHeader>
                 <TableBody>
                   {query.loading ? (
-                    Array.from({ length: 6 }, (_, index) => (
+                    Array.from({ length: pageSize }, (_, index) => (
                       <TableRow key={index} className="h-12">
                         <TableCell colSpan={9} className={TD}><Skeleton className="h-7 w-full" /></TableCell>
                       </TableRow>
@@ -535,25 +524,7 @@ export default function DriverManagementPage() {
             <div className={PAGER}>
               <span>共 {query.data?.total ?? 0} 条驱动</span>
               <span className="flex-1" />
-              <span>每页行数</span>
-              <Select
-                value={String(pageSize)}
-                onValueChange={(value) => {
-                  setPageSize(Number(value));
-                  setPage(1);
-                }}
-              >
-                <SelectTrigger className="!h-7 w-[68px] text-xs" aria-label="每页行数">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent align="end">
-                  <SelectGroup>
-                    {[10, 20, 50].map((value) => (
-                      <SelectItem key={value} value={String(value)}>{value}</SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <span>每页 {pageSize} 行</span>
               <span className="min-w-20 text-center font-medium tabular-nums text-foreground">第 {page} / {totalPages} 页</span>
               <Button variant="outline" size="icon" className={PAGER_BTN} disabled={page <= 1} onClick={() => setPage(1)} aria-label="第一页">
                 <ChevronsLeft />
