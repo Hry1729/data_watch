@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import {
+  ArrowUp,
   ArrowLeft,
   ChevronDown,
   ChevronRight,
@@ -62,6 +63,8 @@ export function AppLayout() {
     top: number;
   } | null>(null);
   const flyoutCloseTimerRef = useRef<number | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [titlebarSlot, setTitlebarSlot] = useState<HTMLElement | null>(null);
   const [titlebarStatusSlot, setTitlebarStatusSlot] = useState<HTMLElement | null>(null);
@@ -72,6 +75,11 @@ export function AppLayout() {
   const userMenuRef = useRef<HTMLDivElement>(null);
   const pageMeta = getPageMeta(location.pathname);
   const isSettingsRoute = location.pathname === "/settings";
+  // 切换页面时内容区回到顶部
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+    setShowBackToTop(false);
+  }, [location.pathname]);
   const activeSettingsTab = normalizeSettingsTab(
     new URLSearchParams(location.search).get("tab"),
   );
@@ -221,7 +229,7 @@ export function AppLayout() {
         </div>
 
         <nav
-          className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
+          className="mr-1 min-h-0 flex-1 overflow-y-auto py-3 pl-2 pr-1"
           aria-label={isSettingsRoute ? "设置导航" : "主导航"}
         >
           {isSettingsRoute ? (
@@ -454,8 +462,8 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
-        <header className="flex h-12 shrink-0 items-center bg-transparent px-4">
+      <section className="relative mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+        <header className="dw-acrylic-header absolute left-0 right-2 top-0 z-20 isolate flex h-12 items-center px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>
@@ -477,9 +485,29 @@ export function AppLayout() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto px-4 pb-4">
+        <main
+          ref={mainRef}
+          onScroll={(event) => setShowBackToTop(event.currentTarget.scrollTop > 320)}
+          className="min-h-0 flex-1 overflow-auto px-4 pb-4 pt-12 [scroll-padding-top:3.5rem]"
+        >
           <Outlet />
         </main>
+
+        {/* 长页面滚动后显示「回到顶部」 */}
+        <button
+          type="button"
+          onClick={() => mainRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+          aria-label="回到顶部"
+          title="回到顶部"
+          tabIndex={showBackToTop ? 0 : -1}
+          aria-hidden={!showBackToTop}
+          className={[
+            "absolute bottom-5 right-6 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-card text-muted-foreground shadow-[var(--card-shadow)] ring-1 ring-border/60 transition-all duration-200 hover:text-brand",
+            showBackToTop ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0",
+          ].join(" ")}
+        >
+          <ArrowUp className="h-4 w-4" />
+        </button>
       </section>
     </div>
   );
