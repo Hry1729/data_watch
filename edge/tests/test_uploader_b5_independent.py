@@ -200,20 +200,21 @@ async def test_mixed_ack_then_commit_unknown_keeps_ack_identity(tmp_path: Path) 
             assert rows[batch_id]["state"] == "sent"
             assert rows[batch_id]["upload_session_id"] == old_session
             assert rows[batch_id]["local_seq"] == old_seqs[batch_id]
-        # 2) 不确定项与其后的缺席帧：未确认，被迁到新会话并重排（不在 sent 集合里）。
-        assert store.current_session_id() != old_session
+        # 2) 不确定项与其后的缺席帧：未确认，**留在原会话、保留原 local_seq**，
+        #    按退避等待重试（Edge 2/15：commit_unknown 不切换 session，不消耗隔离预算）。
+        assert store.current_session_id() == old_session
         for batch_id in order[2:]:
-            assert rows[batch_id]["state"] == "pending"
-            assert rows[batch_id]["upload_session_id"] == store.current_session_id()
-        assert sorted(rows[batch_id]["local_seq"] for batch_id in order[2:]) == [1, 2]
-        # 3) 数据守恒 + 帧身份 + 会话切换完成。
+            assert rows[batch_id]["state"] == "retry_wait"
+            assert rows[batch_id]["upload_session_id"] == old_session
+            assert rows[batch_id]["local_seq"] == old_seqs[batch_id]
+        # 3) 数据守恒 + 帧身份。
         assert_conserved(store, fingerprints)
-        assert store.stats() == {"sent": 2, "pending": 2}
+        assert store.stats() == {"sent": 2, "retry_wait": 2}
         assert store.pending_session_switch() is None
         assert store.operational_status()["sent_records_total"] == 2
-        # 反模式检查：新会话的 local_seq 必须恰好覆盖**全部**未确认帧（连续 1..k），
-        # 即没有「跳过高水位之前数据」造成漏帧。
-        assert store.operational_status()["last_seq"] == 2
+        assert store.operational_status()["last_seq"] == 4
+        with store._lock:
+            store._connection.execute("UPDATE outbox SET next_retry_at=0")
 
         # 4) 重放未确认项：全部收敛为 sent，帧身份不变。
         async with client_for(
@@ -406,9 +407,12 @@ async def test_crash_during_session_switch_then_restart_completes_without_loss(
     assert rows[order[0]]["upload_session_id"] == old_session
     pending = store.pending_session_switch()
     assert pending is not None and pending.old_session_id == old_session
-    assert rows[order[1]]["state"] == "pending"
+    # 退避跨切换保留（Edge 2/15）。
+    assert rows[order[1]]["state"] == "retry_wait"
     assert rows[order[1]]["upload_session_id"] == store.current_session_id()
     assert_conserved(store, fingerprints)
+    with store._lock:
+        store._connection.execute("UPDATE outbox SET next_retry_at=0")
 
     # 真重启：新实例（新 lease owner）先补完切换，再重放未确认帧。
     async with client_for(
