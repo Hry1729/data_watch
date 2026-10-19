@@ -34,7 +34,7 @@ test("title bar and sidebar share one continuous surface with the floating conte
   assert.ok(source.includes('sidebarCollapsed ? "w-16" : "w-60"'));
   assert.match(source, /readSidebarCollapsed/);
   assert.match(source, /<TopbarTools \/>/);
-  assert.match(themeSource, /--sidebar:\s*#EFF1F4;/i);
+  assert.match(themeSource, /--sidebar:\s*#FFFFFF;/i);
 });
 
 test("settings lives in the user popover instead of a standalone sidebar footer link", () => {
