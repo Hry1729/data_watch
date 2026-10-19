@@ -24,3 +24,10 @@ test("module errors stay inside their module grid cell", () => {
   assert.match(overviewSource, /<div className="min-w-0 space-y-1">[\s\S]*showError/);
   assert.doesNotMatch(overviewSource, /return \(\s*<>[\s\S]*<ModuleSummaryCard/);
 });
+
+test("console module cards drop the output chip and metric gauges, trend fills the height", () => {
+  assert.doesNotMatch(cardSource, /NotchGauge|gauge=/);
+  assert.match(cardSource, /\{!compact && \([\s\S]*输出/);
+  assert.match(overviewSource, /<div className="flex min-h-full w-full flex-col gap-4">/);
+  assert.match(overviewSource, /<div className="grid min-h-\[320px\] flex-1">\s*<TrendChart\s+fillHeight/);
+});
