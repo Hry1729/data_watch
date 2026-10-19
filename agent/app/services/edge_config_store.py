@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ class EdgeConfigStore:
         self._initialize()
 
     def revision(self) -> int:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 "SELECT config_revision FROM edge_config_meta WHERE singleton=1"
             ).fetchone()
@@ -111,7 +112,7 @@ class EdgeConfigStore:
             revision,
             now,
         )
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 connection.execute("DELETE FROM edge_assignment_schedule")
@@ -176,13 +177,13 @@ class EdgeConfigStore:
 
     def refresh_schedule(self, now_ms: int | None = None) -> None:
         now = int(time.time() * 1000) if now_ms is None else int(now_ms)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             _refresh_schedule(connection, now)
             connection.commit()
 
     def _initialize(self) -> None:
-        with sqlite3.connect(self.path, timeout=5) as connection:
+        with closing(sqlite3.connect(self.path, timeout=5)) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA busy_timeout=5000")
