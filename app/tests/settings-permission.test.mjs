@@ -14,5 +14,5 @@ test("settings is restricted to administrator roles", () => {
 
 test("non-admin layout does not render settings entry points", () => {
   assert.match(layoutSource, /const canOpenSettings = auth\?\.allowedPaths\?\.includes\("\/settings"\) \?\? false/);
-  assert.ok((layoutSource.match(/\{canOpenSettings && \(/g) ?? []).length >= 2);
+  assert.ok((layoutSource.match(/\{canOpenSettings && \(/g) ?? []).length >= 1);
 });

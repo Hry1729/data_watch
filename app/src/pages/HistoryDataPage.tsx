@@ -39,6 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ChartTipCard, CountChip, CTRL, HEAD_ROW, LegendPill, OUTLINE_BTN, PRIMARY_BTN, SegTabs, SERIES_COLORS, SoftBadge, TABLE_FRAME, TABLE_TEXT, TD, TH } from "@/components/DevicePageUi";
+import { PointValueTile, PointValueTileRow } from "@/components/PointValueTile";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -636,7 +637,21 @@ export default function HistoryDataPage() {
   const submittedQuery = lastQueryRef.current?.query;
 
   const aggregateLabel = ({ avg: "平均值", max: "最大值", min: "最小值", last: "最新值" } as Record<string, string>)[submittedQuery?.aggregate ?? aggregate] ?? aggregate;
-  const metaBySeq = new Map((chart?.series ?? []).map((series) => [series.varSeq, { unit: series.unit, dataType: series.dataType }]));
+  // 数值卡：取查询区间内每个点位的最新非空值（查询前显示「—」）
+  const latestBySeq = new Map((chart?.series ?? []).map((series) => {
+    let latest: [number, number] | null = null;
+    for (const [time, value] of series.data) {
+      if (value == null) continue;
+      const timestamp = parseHistoryTime(time);
+      if (!latest || timestamp >= latest[0]) latest = [timestamp, value];
+    }
+    const value = latest == null ? null : isBoolSeries(series) ? latest[1] >= 0.5 : latest[1];
+    return [series.varSeq, { unit: series.unit, dataType: series.dataType, value, time: latest ? new Date(latest[0]).toLocaleTimeString("zh-CN", { hour12: false }) : undefined }];
+  }));
+  const seriesColor = (varSeq: number, fallbackIndex: number) => {
+    const index = (chart?.series ?? []).findIndex((series) => series.varSeq === varSeq);
+    return COLORS[(index >= 0 ? index : fallbackIndex) % COLORS.length];
+  };
   const matrixColumnColor = (prop: string) => {
     const index = (chart?.series ?? []).findIndex((series) => `v${series.varSeq}` === prop);
     return index >= 0 ? COLORS[index % COLORS.length] : null;
@@ -665,7 +680,9 @@ export default function HistoryDataPage() {
         </div>
         </div>
         <CardContent className="p-3">
-          {selectedPointItems.length ? <div className="flex gap-2 overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]">{selectedPointItems.map((point, index) => { const meta = metaBySeq.get(point.varSeq); return <div key={point.varSeq} className="flex h-9 max-w-[260px] shrink-0 items-center gap-2 whitespace-nowrap rounded-[10px] bg-muted/55 px-3"><span className="size-2 shrink-0 rounded-full" style={{ background: COLORS[index % COLORS.length] }} /><span className="truncate text-[12.5px] font-medium">{point.pointName}</span><span className="truncate font-mono text-[10.5px] text-muted-foreground">{[point.ioAddress, meta?.dataType, meta?.unit].filter(Boolean).join(" · ")}</span></div>; })}</div> : <div className="flex h-9 items-center justify-center gap-2 text-[13px] text-muted-foreground"><Search className="size-4 opacity-50" /><span className="font-medium text-foreground">已选点位</span>暂未选择查询点位</div>}
+          <PointValueTileRow empty={<><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></>}>
+            {selectedPointItems.map((point, index) => { const latest = latestBySeq.get(point.varSeq); return <PointValueTile key={point.varSeq} name={point.pointName} color={seriesColor(point.varSeq, index)} ioAddress={point.ioAddress} dataType={latest?.dataType} unit={latest?.unit} value={latest?.value ?? null} aside={latest?.time} />; })}
+          </PointValueTileRow>
         </CardContent>
       </Card>
 

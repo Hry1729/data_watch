@@ -55,6 +55,7 @@ import { useRealtimeWebSocket } from "@/hooks/useRealtimeWebSocket";
 import { monitorClient } from "@/lib/monitor-client";
 import { useDevicePicker } from "@/hooks/useDevicePicker";
 import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
+import { PointValueTile, PointValueTileRow } from "@/components/PointValueTile";
 import { saveDownload } from "@/lib/save-download";
 import { decimateTimeSeries } from "@/components/charts/decimate-time-series";
 import type { RealtimeDataItem } from "@/types/device-monitor";
@@ -134,12 +135,6 @@ function chartValue(value: string | number | boolean) {
   if (!value.trim() || value === "--") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function formatValue(value: string | number | boolean) {
-  if (typeof value === "boolean") return value ? "ON" : "OFF";
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  return value || "--";
 }
 
 function formatSyncTime(timestamp: number | null) {
@@ -314,39 +309,6 @@ function BoolLanes({ points, samples, viewWindowMs }: { points: ColoredPoint[]; 
           </Fragment>
         );
       })}
-    </div>
-  );
-}
-
-/** 顶部数值卡：最新值 + Δ 箭头，数值跳变时闪烁 */
-function LiveTile({ point, previous }: { point: ColoredPoint; previous: number | null }) {
-  const isBool = (point.dataType ?? "").toUpperCase() === "BOOL";
-  const current = chartValue(point.value);
-  const delta = current != null && previous != null ? current - previous : null;
-  const threshold = isBool ? 0.5 : Math.max(0.3, Math.abs(current ?? 0) * 0.005);
-  const flash = delta != null && Math.abs(delta) >= threshold;
-  const flashKey = useRef(0);
-  const lastFlash = useRef<string | number | boolean | null>(null);
-  if (flash && lastFlash.current !== point.value) { flashKey.current += 1; lastFlash.current = point.value; }
-  const bad = !(point.quality == null || point.quality === 0);
-  return (
-    <div className="relative min-w-0 overflow-hidden rounded-[10px] bg-muted/55 px-3 py-2.5">
-      {flashKey.current > 0 && <span key={flashKey.current} className="pointer-events-none absolute inset-0 rounded-[inherit] bg-brand/15 opacity-0 animate-in duration-800 ease-out" />}
-      <div className="flex items-center gap-1.5 text-xs font-medium">
-        <span className="min-w-0 flex-1 truncate">{point.pointName}</span>
-        <span className="size-2 shrink-0 rounded-full" style={{ background: point.color }} />
-      </div>
-      <div className="mt-1 flex items-baseline gap-1 leading-[1.2]">
-        {isBool && typeof point.value === "boolean" ? (
-          <span className={`inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-semibold ${point.value ? "bg-success-soft text-success" : "bg-muted text-muted-foreground"}`}><span className="size-1.5 rounded-full bg-current" />{formatValue(point.value)}</span>
-        ) : (
-          <span key={flashKey.current} className={`truncate font-mono text-[22px] font-semibold tracking-[-0.02em] tabular-nums ${bad ? "text-destructive" : "text-foreground"}`}>{formatValue(point.value)}</span>
-        )}
-        <span className={`ml-auto shrink-0 text-[11px] font-medium ${isBool ? "text-muted-foreground" : delta != null && delta > 0.05 ? "text-success" : delta != null && delta < -0.05 ? "text-warning" : "text-muted-foreground"}`}>
-          {isBool ? (delta ? "刚刚切换" : "") : delta == null || Math.abs(delta) < 0.05 ? "—" : `${delta > 0 ? "▲" : "▼"} ${Math.abs(delta).toFixed(2)}`}
-        </span>
-      </div>
-      <p className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">{point.ioAddress} · {point.dataType || "--"}</p>
     </div>
   );
 }
@@ -591,7 +553,9 @@ export default function RealtimeMonitorPage() {
         </div>
       </div>
         <CardContent className="p-3">
-          {coloredPoints.length ? <div className="overflow-x-auto overflow-y-hidden pb-1 [scrollbar-width:thin]"><div className="grid grid-flow-col auto-cols-[minmax(180px,calc((100%-3.125rem)/6))] gap-2.5">{coloredPoints.map((point) => <LiveTile key={point.varSeq} point={point} previous={previousSample ? (previousSample[`v${point.varSeq}`] as number | null) ?? null : null} />)}</div></div> : <div className="flex h-[74px] flex-col items-center justify-center gap-1 text-[13px] text-muted-foreground"><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></div>}
+          <PointValueTileRow empty={<><p className="font-medium text-foreground">实时监测点</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择监控点位</div></>}>
+            {coloredPoints.map((point) => <PointValueTile key={point.varSeq} name={point.pointName} color={point.color} ioAddress={point.ioAddress} dataType={point.dataType} value={point.value} bad={!(point.quality == null || point.quality === 0)} previous={previousSample ? (previousSample[`v${point.varSeq}`] as number | null) ?? null : null} />)}
+          </PointValueTileRow>
         </CardContent>
       </Card>
 

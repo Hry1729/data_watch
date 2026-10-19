@@ -67,11 +67,11 @@ export function ConnectionStatusBar() {
                 <span
                   tabIndex={0}
                   aria-label={`${service.label}：${style.label}${detail ? `，${detail}` : ""}`}
-                  className="relative flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center text-foreground outline-none"
+                  className="relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center text-foreground outline-none"
                 >
                   <service.Icon className="h-4 w-4 shrink-0" />
                   <span
-                    className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-2 ring-white dark:ring-sidebar"
+                    className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full ring-2 ring-sidebar"
                     style={{ backgroundColor: style.color }}
                   />
                 </span>

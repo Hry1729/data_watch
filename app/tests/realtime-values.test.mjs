@@ -5,7 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const source = await readFile(new URL("../src/pages/RealtimeMonitorPage.tsx", import.meta.url), "utf8");
-const functions = source.slice(source.indexOf("function normalizePointValue("), source.indexOf("function formatValue("));
+const functions = source.slice(source.indexOf("function normalizePointValue("), source.indexOf("function formatSyncTime("));
 const context = {};
 runInNewContext(ts.transpileModule(functions + "\nglobalThis.normalize = normalizePointValue; globalThis.chart = chartValue;", {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },

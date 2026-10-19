@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
-import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
 import { cn } from "@/lib/utils";
 
 const DEVICE_TYPE_LABELS: Record<string, string> = {
@@ -47,19 +46,8 @@ function getDeviceTone(connectStatus?: string, deviceStatus?: string) {
   return "bg-destructive text-white";
 }
 
-/* 色块墙：最小色块边长与间距（px），列数随宽度自适应 */
-const TILE_MIN = 46;
-const TILE_GAP = 6;
-const DEFAULT_PAGE_SIZE = 150;
-
-/* 按色块墙可视区估算一页能放下的设备数（取整到 10，至少 40） */
-function estimatePageSize(width: number, height: number) {
-  if (width <= 0 || height <= 0) return DEFAULT_PAGE_SIZE;
-  const cols = Math.max(1, Math.floor((width + TILE_GAP) / (TILE_MIN + TILE_GAP)));
-  const tile = (width - TILE_GAP * (cols - 1)) / cols;
-  const rows = Math.max(1, Math.floor((height + TILE_GAP) / (tile + TILE_GAP)));
-  return Math.max(40, Math.floor((cols * rows) / 10) * 10);
-}
+/* 一次拉全量设备：按页循环直到取完（单页上限 500，避免后端分页上限截断） */
+const FETCH_PAGE_SIZE = 500;
 
 function LegendCount({ dot, label, value }: { dot?: string; label: string; value: number | null }) {
   return (
@@ -76,33 +64,24 @@ export default function DeviceCommunicationPage() {
   const [keyword, setKeyword] = useState("");
   const [deviceType, setDeviceType] = useState("all");
   const [status, setStatus] = useState("all");
-  const [page, setPage] = useState(1);
-  const wallRef = useRef<HTMLDivElement>(null);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  useEffect(() => {
-    const node = wallRef.current;
-    if (!node) return;
-    let current = DEFAULT_PAGE_SIZE;
-    const update = () => {
-      const next = estimatePageSize(node.clientWidth, node.clientHeight);
-      if (next === current) return;
-      current = next;
-      setPageSize(next);
-      setPage(1);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
   const load = useCallback(
-    (token: string, signal: AbortSignal) => backendClient.deviceList(token, {
-      pageNo: page, pageSize, keyword: keyword.trim() || undefined,
-      deviceTypeExact: deviceType === "all" ? undefined : deviceType,
-      connectStatus: status === "all" || status === "disabled" ? undefined : status,
-      deviceStatus: status === "disabled" ? "disabled" : undefined,
-    }, signal),
-    [deviceType, keyword, page, pageSize, status],
+    async (token: string, signal: AbortSignal) => {
+      const filter = {
+        keyword: keyword.trim() || undefined,
+        deviceTypeExact: deviceType === "all" ? undefined : deviceType,
+        connectStatus: status === "all" || status === "disabled" ? undefined : status,
+        deviceStatus: status === "disabled" ? "disabled" : undefined,
+      };
+      const first = await backendClient.deviceList(token, { ...filter, pageNo: 1, pageSize: FETCH_PAGE_SIZE }, signal);
+      const list = [...first.list];
+      for (let pageNo = 2; list.length < first.total && (pageNo - 1) * FETCH_PAGE_SIZE < first.total; pageNo += 1) {
+        const next = await backendClient.deviceList(token, { ...filter, pageNo, pageSize: FETCH_PAGE_SIZE }, signal);
+        if (!next.list.length) break;
+        list.push(...next.list);
+      }
+      return { ...first, list };
+    },
+    [deviceType, keyword, status],
   );
   const query = useBackendQuery(load, { intervalMs: 30_000 });
   const devices = query.data?.list ?? [];
@@ -140,9 +119,9 @@ export default function DeviceCommunicationPage() {
           <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
             <div className="relative w-[150px] shrink-0">
               <Search className="absolute left-[9px] top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input className="h-8 pl-[30px] text-[13px]" placeholder="编号 / 名称" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} />
+              <Input className="h-8 pl-[30px] text-[13px]" placeholder="编号 / 名称" value={keyword} onChange={(event) => { setKeyword(event.target.value) }} />
             </div>
-            <Select value={deviceType} onValueChange={(value) => { setDeviceType(value); setPage(1); }}>
+            <Select value={deviceType} onValueChange={(value) => { setDeviceType(value) }}>
               <SelectTrigger className="w-28"><SelectValue placeholder="全部类型" /></SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -151,7 +130,7 @@ export default function DeviceCommunicationPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Select value={status} onValueChange={(value) => { setStatus(value); setPage(1); }}>
+            <Select value={status} onValueChange={(value) => { setStatus(value) }}>
               <SelectTrigger className="w-28"><SelectValue placeholder="全部状态" /></SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -163,11 +142,11 @@ export default function DeviceCommunicationPage() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={() => { setKeyword(""); setDeviceType("all"); setStatus("all"); setPage(1); }}>重置</Button>
+            <Button variant="outline" size="sm" onClick={() => { setKeyword(""); setDeviceType("all"); setStatus("all") }}>重置</Button>
           </div>
         </div>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-0 px-5 pb-1 pt-1">
-          <div ref={wallRef} className="min-h-0 flex-1 overflow-auto">
+          <div className="min-h-0 flex-1 overflow-auto">
             {query.loading ? (
               <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(46px,1fr))] gap-1.5">
                 {Array.from({ length: 40 }, (_, index) => <Skeleton key={index} className="aspect-square w-full rounded-[7px]" />)}
@@ -212,9 +191,6 @@ export default function DeviceCommunicationPage() {
             ) : (
               <p className="py-16 text-center text-sm text-muted-foreground">暂无设备数据</p>
             )}
-          </div>
-          <div className="mt-5 border-t border-border pb-4 pt-3.5">
-            <DeviceCatalogPagination total={query.data?.total ?? 0} page={page} pageSize={pageSize} loading={query.loading} onPageChange={setPage} />
           </div>
         </CardContent>
       </Card>

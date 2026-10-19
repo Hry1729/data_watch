@@ -65,7 +65,7 @@
 }
 
 :root {
-    --background: #F7F9FC;
+    --background: #F5F8FC;
     --foreground: oklch(0.148 0.004 228.8);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.148 0.004 228.8);
@@ -100,11 +100,11 @@
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
     --radius: 0.625rem;
-    --sidebar: oklch(1 0 0);
+    --sidebar: #EFF1F4;
     --sidebar-foreground: oklch(0.148 0.004 228.8);
     --sidebar-primary: oklch(0.546 0.245 262.881);
     --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
-    --sidebar-accent: oklch(0.963 0.002 197.1);
+    --sidebar-accent: #E3E6EB;
     --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
     --sidebar-border: oklch(0.925 0.005 214.3);
     --sidebar-ring: oklch(0.723 0.014 214.4);
@@ -114,13 +114,13 @@
     --legend-muted-foreground: oklch(0.552 0.016 285.938);
     --legend-track: oklch(0.92 0.004 286.32);
     /* 卡片阴影:墨色(深藏青)染的柔漫射,替代硬描边 */
-    --card-shadow: 0 1px 2px rgba(26, 31, 54, 0.04), 0 10px 28px -12px rgba(26, 31, 54, 0.14);
+    --card-shadow: 0 1px 2px rgba(26, 31, 54, 0.04), 0 8px 24px -14px rgba(26, 31, 54, 0.16);
     /* 内容浮动面板:1px 描边 + 极轻投影,与卡片阴影区分 */
-    --inset-shadow: 0 1px 2px rgba(26, 31, 54, 0.05), 0 0 0 1px var(--border);
+    --inset-shadow: 0 1px 3px rgba(26, 31, 54, 0.06);
 }
 
 .dark {
-    --background: oklch(0.148 0.004 228.8);
+    --background: oklch(0.172 0.005 228.8);
     --foreground: oklch(0.987 0.002 197.1);
     --card: oklch(0.218 0.008 223.9);
     --card-foreground: oklch(0.987 0.002 197.1);
@@ -143,11 +143,11 @@
     --chart-3: oklch(0.546 0.245 262.881);
     --chart-4: oklch(0.488 0.243 264.376);
     --chart-5: oklch(0.424 0.199 265.638);
-    --sidebar: oklch(0.218 0.008 223.9);
+    --sidebar: oklch(0.13 0.003 228.8);
     --sidebar-foreground: oklch(0.987 0.002 197.1);
     --sidebar-primary: oklch(0.623 0.214 259.815);
     --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
-    --sidebar-accent: oklch(0.275 0.011 216.9);
+    --sidebar-accent: oklch(0.215 0.008 220);
     --sidebar-accent-foreground: oklch(0.987 0.002 197.1);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.56 0.021 213.5);

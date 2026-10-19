@@ -13,17 +13,28 @@ test("title bar uses the packaged Tauri application icon", async () => {
   assert.match(titleBarSource, /<img[^>]+src=\{appIconUrl\}/);
 });
 
-test("application title bar and navigation shell use white light-theme surfaces", async () => {
+test("title bar and sidebar share one continuous surface with the floating content panel", async () => {
   const [titleBarSource, themeSource] = await Promise.all([
     readFile(new URL("../src/components/TitleBar.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/index.css", import.meta.url), "utf8"),
   ]);
-  assert.match(titleBarSource, /bg-white[^"]*dark:bg-card/);
+  assert.match(titleBarSource, /bg-sidebar/);
+  assert.doesNotMatch(titleBarSource, /border-b/);
+  assert.match(titleBarSource, /id=\{TITLEBAR_SLOT_ID\}/);
+  assert.match(source, /titlebarSlot && createPortal\([\s\S]{0,700}折叠导航栏/);
+  assert.match(source, /刷新当前页面[\s\S]{0,200}titlebarSlot,/);
+  assert.doesNotMatch(source, /border-[bt] border-sidebar-border/);
+  assert.doesNotMatch(source, /ChevronUp/);
+  assert.match(source, /createPortal\(<ConnectionStatusBar \/>, titlebarStatusSlot\)/);
+  assert.match(titleBarSource, /id=\{TITLEBAR_STATUS_SLOT_ID\}/);
+  assert.doesNotMatch(titleBarSource, /Data Watch Console/);
+  assert.doesNotMatch(source, /aria-label="设置"/);
+  assert.match(source, /<ThemeToggle \/>/);
   assert.match(source, /flex h-full min-w-0 overflow-hidden bg-sidebar/);
   assert.ok(source.includes('sidebarCollapsed ? "w-16" : "w-60"'));
   assert.match(source, /readSidebarCollapsed/);
   assert.match(source, /<TopbarTools \/>/);
-  assert.match(themeSource, /--sidebar:\s*oklch\(1 0 0\);/);
+  assert.match(themeSource, /--sidebar:\s*#EFF1F4;/i);
 });
 
 test("settings lives in the user popover instead of a standalone sidebar footer link", () => {
