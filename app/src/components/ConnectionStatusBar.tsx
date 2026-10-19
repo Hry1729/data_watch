@@ -50,7 +50,7 @@ export function ConnectionStatusBar() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      <span className="inline-flex shrink-0 items-center" aria-label={`数据库状态：${summary}`}>
+      <span className="inline-flex shrink-0 items-center gap-1.5" aria-label={`数据库状态：${summary}`}>
         {SERVICES.map((service, index) => {
           const health = healths[index];
           const style = styles[index];
@@ -67,7 +67,7 @@ export function ConnectionStatusBar() {
                 <span
                   tabIndex={0}
                   aria-label={`${service.label}：${style.label}${detail ? `，${detail}` : ""}`}
-                  className="relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center text-foreground outline-none"
+                  className="relative flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:bg-sidebar-accent"
                 >
                   <service.Icon className="h-4 w-4 shrink-0" />
                   <span

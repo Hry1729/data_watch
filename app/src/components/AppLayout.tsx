@@ -167,7 +167,7 @@ export function AppLayout() {
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        className="h-7 w-7 rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
         onClick={() => updateSidebarCollapsed(!sidebarCollapsed)}
         aria-label={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
         title={sidebarCollapsed ? "展开导航栏" : "折叠导航栏"}
@@ -181,7 +181,7 @@ export function AppLayout() {
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        className="h-7 w-7 rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
         onClick={refreshCurrentPage}
         aria-label="刷新当前页面"
         title="刷新当前页面"
@@ -454,7 +454,7 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="mb-2 mr-2 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+      <section className="mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
         <header className="flex h-12 shrink-0 items-center bg-transparent px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
