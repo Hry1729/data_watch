@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CONNECTION_HEALTH_REFRESH_EVENT } from "@/hooks/useConnectionHealth";
 import { agentClient, type EdgeLocalSettings } from "@/lib/agent-client";
+import { buildConfigPatch } from "@/lib/config-patch";
 import type { ConnectionConfig, DbConfig } from "@/types";
 
 type DbTarget = "redis" | "mysql" | "tdengine";
@@ -185,6 +186,8 @@ function DatabaseCard({
 export default function EdgeSettingsPage() {
   const [settings, setSettings] = useState<EdgeLocalSettings | null>(null);
   const [databases, setDatabases] = useState(DEFAULT_DATABASES);
+  // 最近一次从 Agent 成功加载（或成功应用）的配置；为 null 表示从未加载成功，禁止测试应用与保存
+  const [loadedDatabases, setLoadedDatabases] = useState<Record<DbTarget, DbForm> | null>(null);
   const [passwordDirty, setPasswordDirty] = useState<Record<DbTarget, boolean>>({ redis: false, mysql: false, tdengine: false });
   const [tests, setTests] = useState(INITIAL_TESTS);
   const [retentionDays, setRetentionDays] = useState("7");
@@ -211,11 +214,18 @@ export default function EdgeSettingsPage() {
       setLocalError("边缘本机配置加载失败");
     }
     if (databaseResult.status === "fulfilled") {
-      setDatabases(databaseForms(databaseResult.value));
+      const loaded = databaseForms(databaseResult.value);
+      setDatabases(loaded);
+      setLoadedDatabases(loaded);
       setPasswordDirty({ redis: false, mysql: false, tdengine: false });
       setDatabaseError(null);
     } else {
-      setDatabaseError("中心数据库配置加载失败");
+      // H6：加载失败时禁止保存，避免把默认值（127.0.0.1/root）覆盖到真实配置
+      const reason = databaseResult.reason;
+      const detail = reason && typeof reason === "object" && "message" in reason && reason.message
+        ? `：${String(reason.message)}`
+        : "";
+      setDatabaseError(`中心数据库配置加载失败${detail}。为避免覆盖现有配置，已禁用测试与保存，请刷新页面重新加载`);
     }
     setLoading(false);
   }, []);
@@ -223,6 +233,17 @@ export default function EdgeSettingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const canSaveDatabases = loadedDatabases !== null && databaseError === null;
+
+  /** 只提交相对已加载配置改动过的字段（Agent PUT /admin/config 为逐字段 partial update） */
+  function databasePatch(baseline: Record<DbTarget, DbForm>, targets: DbTarget[]): Partial<ConnectionConfig> {
+    return buildConfigPatch(Object.fromEntries(targets.map((target) => [target, {
+      baseline: databasePayload(baseline[target], false),
+      current: databasePayload(databases[target], passwordDirty[target]),
+      includePassword: passwordDirty[target],
+    }]))) as Partial<ConnectionConfig>;
+  }
 
   function updateDatabase(target: DbTarget, field: keyof DbForm, value: string) {
     setDatabases((current) => ({
@@ -238,6 +259,10 @@ export default function EdgeSettingsPage() {
   }
 
   async function testDatabase(target: DbTarget) {
+    if (!canSaveDatabases || !loadedDatabases) {
+      toast.error("中心数据库配置未成功加载，不能测试并应用");
+      return;
+    }
     const validation = validateDatabase(target, databases[target]);
     if (validation) {
       setTests((current) => ({ ...current, [target]: { status: "disconnected", error: validation } }));
@@ -255,7 +280,9 @@ export default function EdgeSettingsPage() {
         return;
       }
 
-      await agentClient.putConfig({ [target]: payload as DbConfig } as Partial<ConnectionConfig>);
+      await agentClient.putConfig(databasePatch(loadedDatabases, [target]));
+      const applied = { ...databases[target], password: "" };
+      setLoadedDatabases((current) => current && { ...current, [target]: applied });
       setDatabases((current) => ({
         ...current,
         [target]: { ...current[target], password: "" },
@@ -273,6 +300,10 @@ export default function EdgeSettingsPage() {
   }
 
   async function saveDatabases() {
+    if (!canSaveDatabases || !loadedDatabases) {
+      toast.error("中心数据库配置未成功加载，不能保存");
+      return;
+    }
     for (const target of Object.keys(databases) as DbTarget[]) {
       const validation = validateDatabase(target, databases[target]);
       if (validation) {
@@ -282,10 +313,11 @@ export default function EdgeSettingsPage() {
     }
     setSavingDatabases(true);
     try {
-      await agentClient.putConfig({
-        redis: databasePayload(databases.redis, passwordDirty.redis) as DbConfig,
-        mysql: databasePayload(databases.mysql, passwordDirty.mysql) as DbConfig,
-        tdengine: databasePayload(databases.tdengine, passwordDirty.tdengine) as DbConfig,
+      await agentClient.putConfig(databasePatch(loadedDatabases, ["redis", "mysql", "tdengine"]));
+      setLoadedDatabases({
+        redis: { ...databases.redis, password: "" },
+        mysql: { ...databases.mysql, password: "" },
+        tdengine: { ...databases.tdengine, password: "" },
       });
       setDatabases((current) => ({
         redis: { ...current.redis, password: "" },
@@ -293,7 +325,6 @@ export default function EdgeSettingsPage() {
         tdengine: { ...current.tdengine, password: "" },
       }));
       setPasswordDirty({ redis: false, mysql: false, tdengine: false });
-      setDatabaseError(null);
       window.dispatchEvent(new Event(CONNECTION_HEALTH_REFRESH_EVENT));
       toast.success("中心数据库连接已保存");
     } catch (reason) {
@@ -384,7 +415,7 @@ export default function EdgeSettingsPage() {
           <h2 className="text-sm font-semibold text-foreground">中心数据库连接</h2>
           {databaseError && <p className="mt-1 text-xs text-destructive" role="alert">{databaseError}</p>}
         </div>
-        <Button onClick={() => void saveDatabases()} disabled={loading || savingDatabases}>
+        <Button onClick={() => void saveDatabases()} disabled={loading || savingDatabases || !canSaveDatabases}>
           <Save className="size-4" />
           {savingDatabases ? "保存中" : "保存连接"}
         </Button>
@@ -396,7 +427,7 @@ export default function EdgeSettingsPage() {
           target={target}
           form={databases[target]}
           test={tests[target]}
-          disabled={loading || savingDatabases}
+          disabled={loading || savingDatabases || !canSaveDatabases}
           onChange={(field, value) => updateDatabase(target, field, value)}
           onPasswordChange={(value) => updatePassword(target, value)}
           onTest={() => void testDatabase(target)}
