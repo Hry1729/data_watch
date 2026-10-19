@@ -52,3 +52,14 @@ test('app import request limit accepts the exact byte boundary and rejects the n
   assert.doesNotThrow(() => assertImportRequestSize(exactPayload))
   assert.throws(() => assertImportRequestSize({ rows: ['x'.repeat(MAX_IMPORT_REQUEST_BYTES - emptyPayloadBytes + 1)] }), /请求不能超过/)
 })
+
+// H4：npm 上的 xlsx@0.18.5 有 CVE-2023-30533（原型污染，0.19.3 修复）与 CVE-2024-22363（ReDoS，0.20.2 修复）。
+// 必须使用 SheetJS 官方 CDN 发布的 0.20.3 及以上版本。
+test('app bundles a SheetJS release with CVE-2023-30533 / CVE-2024-22363 fixed', async () => {
+  const XLSX = await import('xlsx')
+  const [major, minor, patch] = String(XLSX.version).split('.').map(Number)
+  assert.ok(major > 0 || minor > 20 || (minor === 20 && patch >= 3), `xlsx ${XLSX.version} < 0.20.3`)
+  const { readFile } = await import('node:fs/promises')
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.match(pkg.dependencies.xlsx, /^https:\/\/cdn\.sheetjs\.com\/xlsx-0\.20\.\d+\/xlsx-0\.20\.\d+\.tgz$/)
+})
