@@ -52,3 +52,25 @@ def test_batch_rejects_mixed_sessions() -> None:
     payload["items"].append(second)
     with pytest.raises(RequestValidationError, match="one upload_session"):
         UploadBatch.from_dict(payload)
+
+
+def test_quality_only_latest_keys_are_accepted() -> None:
+    """高-3：坏质量无值的点只在 latest_qualities/latest_timestamps 中出现。"""
+    payload = base_payload()
+    item = payload["items"][0]
+    item["latest_values"] = {"1": "12.5"}
+    item["latest_qualities"] = {"1": 0, "2": 8}
+    item["latest_timestamps"] = {"1": 1721800000000, "2": 1721800000000}
+    batch = UploadBatch.from_dict(payload)
+    assert batch.items[0].envelope_error is None
+    assert batch.items[0].latest_qualities == {"1": 0, "2": 8}
+
+
+def test_latest_values_must_be_covered_by_qualities() -> None:
+    payload = base_payload()
+    item = payload["items"][0]
+    item["latest_values"] = {"1": "12.5", "3": "x"}
+    item["latest_qualities"] = {"1": 0}
+    item["latest_timestamps"] = {"1": 1721800000000}
+    batch = UploadBatch.from_dict(payload)
+    assert "latest_values" in (batch.items[0].envelope_error or "")
