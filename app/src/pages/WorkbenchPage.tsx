@@ -1,10 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   BellRing,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -27,7 +24,6 @@ import {
   Area,
   ComposedChart,
   Bar,
-  BarChart,
   CartesianGrid,
   Line,
   XAxis,
@@ -86,11 +82,6 @@ const trendConfig = {
   collectCount: { label: "采集量", color: "var(--chart-4)" },
   alarmCount: { label: "告警数", color: "var(--chart-2)" },
   onlineDeviceCount: { label: "在线设备数", color: "var(--chart-3)" },
-} satisfies ChartConfig;
-
-const distributionConfig = {
-  online: { label: "在线", color: "var(--chart-3)" },
-  offline: { label: "离线", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
 const RANGE_OPTIONS: { value: DashboardTrendRange; label: string }[] = [
@@ -193,86 +184,130 @@ function PanelFallback({ loading, error, onRetry }: { loading: boolean; error: s
   return <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂无数据</div>;
 }
 
+function OnlineRateGauge({ value }: { value: number }) {
+  const clamped = Math.max(0, Math.min(100, value));
+  const length = Math.PI * 40;
+  return (
+    <svg viewBox="0 0 96 56" className="h-14 w-24" aria-hidden>
+      <path
+        d="M 8 52 A 40 40 0 0 1 88 52"
+        fill="none"
+        stroke="var(--muted)"
+        strokeLinecap="round"
+        strokeWidth="8"
+      />
+      <path
+        d="M 8 52 A 40 40 0 0 1 88 52"
+        fill="none"
+        stroke="var(--brand)"
+        strokeLinecap="round"
+        strokeWidth="8"
+        strokeDasharray={`${(clamped / 100) * length} ${length}`}
+      />
+    </svg>
+  );
+}
+
 function StatCard({
   title,
   value,
+  unit,
   detail,
   icon: Icon,
   loading,
+  viz,
 }: {
   title: string;
   value: string;
+  unit?: string;
   detail: string;
   icon: typeof Server;
   loading: boolean;
+  viz?: ReactNode;
 }) {
   return (
-    <Card size="sm" className="bg-card">
-      <CardContent className="flex min-h-24 items-center justify-between gap-3 py-2">
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{title}</p>
-          {loading ? <Skeleton className="mt-2 h-7 w-24" /> : <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>}
-          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
+    <Card size="sm" className="relative min-h-[132px]">
+      <CardContent className="flex flex-col gap-1 px-4 py-1">
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <Icon className="size-4" />
+          <span className="truncate">{title}</span>
         </div>
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon className="size-6" />
-        </div>
+        {loading ? (
+          <Skeleton className="mt-2 h-8 w-24" />
+        ) : (
+          <p className="mt-1 text-[28px] font-semibold leading-tight tracking-tight tabular-nums">
+            {value}
+            {unit && <span className="ml-1 text-sm font-medium text-muted-foreground">{unit}</span>}
+          </p>
+        )}
+        <p className="truncate text-xs text-muted-foreground">{detail}</p>
       </CardContent>
+      {viz && <div className="pointer-events-none absolute bottom-3 right-4">{viz}</div>}
     </Card>
   );
 }
 
 
 const PIPELINE_STAGE_META: Record<PipelineStageKey, { label: string; icon: typeof Server }> = {
-  collector: { label: "Collector", icon: RadioTower },
-  uploader: { label: "Uploader", icon: CloudUpload },
-  ingest: { label: "Ingest", icon: GitMerge },
+  collector: { label: "采集", icon: RadioTower },
+  uploader: { label: "上行", icon: CloudUpload },
+  ingest: { label: "汇聚", icon: GitMerge },
   redis: { label: "Redis", icon: Layers3 },
-  writer: { label: "Writer", icon: Save },
-  tdengine: { label: "TDengine", icon: Database },
+  writer: { label: "入库", icon: Save },
+  tdengine: { label: "存储", icon: Database },
 };
 
-const PIPELINE_GRID_POSITIONS = [
-  "col-start-1 row-start-1",
-  "col-start-3 row-start-1",
-  "col-start-5 row-start-1",
-  "col-start-5 row-start-3",
-  "col-start-3 row-start-3",
-  "col-start-1 row-start-3",
-] as const;
-
-const PIPELINE_STATUS_CLASSES = {
-  healthy: { node: "border-emerald-200 bg-emerald-50/40", icon: "text-emerald-600", dot: "bg-emerald-500" },
-  warning: { node: "border-amber-200 bg-amber-50/50", icon: "text-amber-600", dot: "animate-pulse bg-amber-400" },
-  critical: { node: "border-red-200 bg-red-50/50", icon: "text-red-600", dot: "bg-red-500" },
-  unknown: { node: "border-border bg-muted/30", icon: "text-muted-foreground", dot: "bg-muted-foreground/60" },
-  inactive: { node: "border-border bg-muted/20", icon: "text-muted-foreground/60", dot: "bg-muted-foreground/35" },
+const PIPELINE_STATUS_META = {
+  healthy: { label: "正常", dot: "bg-success", badge: "border-success/30 bg-success-soft text-success" },
+  warning: { label: "告警", dot: "bg-warning", badge: "border-warning/30 bg-warning-soft text-warning" },
+  critical: { label: "异常", dot: "bg-destructive", badge: "border-destructive/30 bg-destructive/5 text-destructive" },
+  unknown: { label: "未知", dot: "bg-muted-foreground/60", badge: "text-muted-foreground" },
+  inactive: { label: "未启用", dot: "bg-muted-foreground/35", badge: "text-muted-foreground/70" },
 } as const;
 
-function PipelineStageNode({ stage }: { stage: PipelineStageHealth }) {
-  const meta = PIPELINE_STAGE_META[stage.key];
-  const styles = PIPELINE_STATUS_CLASSES[stage.status];
-  const Icon = meta.icon;
+function PipelineTimeline({ stages }: { stages: PipelineStageHealth[] }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          tabIndex={0}
-          role="status"
-          aria-label={`${meta.label}：${stage.detail}`}
-          className={`relative z-10 flex h-20 min-w-0 flex-col items-center justify-center rounded-md border px-1.5 py-2 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring ${styles.node}`}
-        >
-          <span className={`absolute right-1.5 top-1.5 size-2 rounded-full ${styles.dot}`} />
-          <Icon className={`mb-1 size-4 shrink-0 ${styles.icon}`} />
-          <span className="max-w-full truncate text-[10px] font-semibold">{meta.label}</span>
-          <span className="mt-0.5 max-w-full truncate text-[9px] text-muted-foreground">{stage.detail}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-56">
-        <p className="font-medium">{meta.label} · {stage.detail}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{stage.description}</p>
-      </TooltipContent>
-    </Tooltip>
+    <TooltipProvider delayDuration={200}>
+      <ol className="flex flex-col">
+        {stages.map((stage, index) => {
+          const meta = PIPELINE_STAGE_META[stage.key];
+          const styles = PIPELINE_STATUS_META[stage.status];
+          return (
+            <li
+              key={stage.key}
+              className={[
+                "relative grid min-h-[36px] grid-cols-[16px_minmax(0,1fr)_auto_auto] items-center gap-x-3 rounded-lg px-2",
+                stage.status === "warning" ? "bg-warning-soft/50" : "",
+              ].join(" ")}
+            >
+              <span className="relative flex h-full items-center justify-center">
+                {index < stages.length - 1 && (
+                  <span className="absolute left-1/2 top-1/2 h-full w-px -translate-x-1/2 bg-border" />
+                )}
+                <span className={`relative z-10 size-2 rounded-full ${styles.dot}`} />
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="min-w-0 cursor-help truncate text-[13px] font-medium">
+                    {meta.label}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-56">
+                  <p className="font-medium">{meta.label} · {stage.detail}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{stage.description}</p>
+                </TooltipContent>
+              </Tooltip>
+              <span className="max-w-[120px] truncate text-right text-xs tabular-nums text-muted-foreground">
+                {stage.detail}
+              </span>
+              <Badge variant="outline" className={`w-14 justify-center font-normal ${styles.badge}`}>
+                {styles.label}
+              </Badge>
+            </li>
+          );
+        })}
+      </ol>
+    </TooltipProvider>
   );
 }
 
@@ -293,6 +328,7 @@ export function WorkbenchPage() {
   const onlineRate = dashboard.overview?.deviceTotal
     ? (dashboard.overview.onlineDeviceTotal / dashboard.overview.deviceTotal) * 100
     : 0;
+  const alertDiff = dashboard.overview?.systemAlertComparePrev?.countDiff ?? 0;
 
   const trendData = useMemo(() => {
     const series = new Map(dashboard.trend?.series?.map((item) => [item.metricKey, item.data]) ?? []);
@@ -325,25 +361,29 @@ export function WorkbenchPage() {
   );
 
   return (
-    <div className="mx-auto w-full max-w-[1680px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
+    <div className="mx-auto w-full max-w-[1680px] space-y-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="设备总数"
           value={formatNumber(dashboard.overview?.deviceTotal)}
+          unit="台"
           detail={`${formatNumber(dashboard.overview?.onlineDeviceTotal)} 台在线 · ${formatNumber(dashboard.overview?.offlineDeviceTotal)} 台离线`}
           icon={Server}
           loading={dashboard.loading}
         />
         <StatCard
           title="在线率"
-          value={`${onlineRate.toFixed(1)}%`}
+          value={onlineRate.toFixed(1)}
+          unit="%"
           detail={`${formatNumber(dashboard.overview?.riskDeviceTotal)} 台设备需要关注`}
           icon={Cpu}
           loading={dashboard.loading}
+          viz={<OnlineRateGauge value={onlineRate} />}
         />
         <StatCard
           title="采集点位"
           value={formatNumber(dashboard.overview?.pointTotal)}
+          unit="个"
           detail="当前已配置采集点位"
           icon={Database}
           loading={dashboard.loading}
@@ -351,7 +391,8 @@ export function WorkbenchPage() {
         <StatCard
           title="近24小时系统告警"
           value={formatNumber(dashboard.overview?.systemAlertTotal)}
-          detail={`较上一周期 ${dashboard.overview?.systemAlertComparePrev?.countDiff ?? 0} 条`}
+          unit="条"
+          detail={`较上一周期 ${alertDiff > 0 ? "↑" : alertDiff < 0 ? "↓" : ""}${Math.abs(alertDiff)} 条`}
           icon={BellRing}
           loading={dashboard.loading}
         />
@@ -440,31 +481,60 @@ export function WorkbenchPage() {
       </Card>
 
       <div data-dashboard-row="overview-charts" className="grid gap-4 lg:grid-cols-3">
-        <Card data-dashboard-section="distribution" className="@container/card">
+        <Card data-dashboard-section="distribution">
           <CardHeader>
             <CardTitle>设备类型分布</CardTitle>
             <CardDescription>各类型设备在线与离线数量</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-1 flex-col justify-center gap-3">
             {distributionData.length ? (
-              <ChartContainer config={distributionConfig} className="h-[220px] w-full aspect-auto">
-                <BarChart data={distributionData} margin={{ left: 0, right: 8, top: 8 }} accessibilityLayer>
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="name"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={10}
-                    interval={0}
-                    tickFormatter={(value) => String(value).length > 6 ? `${String(value).slice(0, 6)}…` : String(value)}
-                  />
-                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={32} />
-                  <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
-                  <ChartLegend content={<ChartLegendContent />} />
-                  <Bar dataKey="online" stackId="devices" fill="var(--color-online)" radius={[0, 0, 3, 3]} />
-                  <Bar dataKey="offline" stackId="devices" fill="var(--color-offline)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ChartContainer>
+              <>
+                {distributionData.map((row) => {
+                  const total = row.online + row.offline;
+                  return (
+                    <div
+                      key={row.name}
+                      className="grid grid-cols-[72px_minmax(0,1fr)_64px] items-center gap-2.5 text-xs"
+                    >
+                      <span className="truncate text-muted-foreground" title={row.name}>{row.name}</span>
+                      <div className="flex h-3.5 overflow-hidden rounded-full bg-muted">
+                        {row.online > 0 && (
+                          <div className="h-full bg-brand" style={{ flex: row.online }} />
+                        )}
+                        {row.offline > 0 && (
+                          <div
+                            className="h-full"
+                            style={{
+                              flex: row.offline,
+                              backgroundImage:
+                                "repeating-linear-gradient(135deg, var(--muted-foreground) 0, var(--muted-foreground) 1px, transparent 1px, transparent 4px)",
+                            }}
+                          />
+                        )}
+                      </div>
+                      <span className="text-right tabular-nums">
+                        {row.online} / {total}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div className="flex items-center gap-4 pt-1 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2.5 rounded-[2px] bg-brand" />
+                    在线
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className="size-2.5 rounded-[2px]"
+                      style={{
+                        backgroundImage:
+                          "repeating-linear-gradient(135deg, var(--muted-foreground) 0, var(--muted-foreground) 1px, transparent 1px, transparent 3px)",
+                      }}
+                    />
+                    离线
+                  </span>
+                </div>
+              </>
             ) : (
               <PanelFallback loading={dashboard.panelLoading.distribution} error={dashboard.errors.distribution} onRetry={dashboard.refresh} />
             )}
@@ -482,7 +552,7 @@ export function WorkbenchPage() {
               </Button>
             </CardAction>
           </CardHeader>
-          <CardContent className="flex min-h-[220px] items-center justify-center">
+          <CardContent className="flex min-h-[220px] flex-1 items-center justify-center">
             {dashboard.health ? (
               <div className="flex w-full max-w-lg flex-col items-center justify-center gap-5">
                 <PieChart
@@ -517,47 +587,19 @@ export function WorkbenchPage() {
             <CardTitle>数据链路健康</CardTitle>
             <CardDescription>采集到入库的全链路状态</CardDescription>
           </CardHeader>
-          <CardContent className="flex min-h-[220px] flex-col justify-center gap-4">
+          <CardContent className="flex min-h-[220px] flex-1 flex-col justify-center gap-2">
             {pipeline.loading && !pipeline.data ? (
-              <Skeleton className="h-20 w-full" />
+              <Skeleton className="h-52 w-full" />
             ) : pipeline.error ? (
               <PanelFallback loading={false} error={pipeline.error} onRetry={pipeline.refresh} />
             ) : pipeline.data ? (
-              <TooltipProvider delayDuration={200}>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-[minmax(0,1fr)_18px_minmax(0,1fr)_18px_minmax(0,1fr)] grid-rows-[80px_18px_80px] items-center gap-x-1">
-                    {pipeline.data.stages.map((stage, index) => (
-                      <div key={stage.key} className={"min-w-0 " + (PIPELINE_GRID_POSITIONS[index] ?? "")}>
-                        <PipelineStageNode stage={stage} />
-                      </div>
-                    ))}
-                    <div aria-hidden className="col-start-2 row-start-1 flex items-center">
-                      <span className="h-px flex-1 bg-border" />
-                      <ArrowRight className="-ml-px size-3 shrink-0 text-muted-foreground/70" />
-                    </div>
-                    <div aria-hidden className="col-start-4 row-start-1 flex items-center">
-                      <span className="h-px flex-1 bg-border" />
-                      <ArrowRight className="-ml-px size-3 shrink-0 text-muted-foreground/70" />
-                    </div>
-                    <div aria-hidden className="col-start-5 row-start-2 flex h-full flex-col items-center">
-                      <span className="w-px flex-1 bg-border" />
-                      <ArrowDown className="-mt-px size-3 shrink-0 text-muted-foreground/70" />
-                    </div>
-                    <div aria-hidden className="col-start-4 row-start-3 flex items-center">
-                      <ArrowLeft className="-mr-px size-3 shrink-0 text-muted-foreground/70" />
-                      <span className="h-px flex-1 bg-border" />
-                    </div>
-                    <div aria-hidden className="col-start-2 row-start-3 flex items-center">
-                      <ArrowLeft className="-mr-px size-3 shrink-0 text-muted-foreground/70" />
-                      <span className="h-px flex-1 bg-border" />
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between border-t pt-3 text-[10px] text-muted-foreground">
-                    <span>六级链路状态聚合</span>
-                    <span>更新 {formatTime(pipeline.data.generatedAt)}</span>
-                  </div>
+              <>
+                <PipelineTimeline stages={pipeline.data.stages} />
+                <div className="flex items-center justify-between border-t pt-2 text-[10px] text-muted-foreground">
+                  <span>六级链路状态聚合</span>
+                  <span>更新 {formatTime(pipeline.data.generatedAt)}</span>
                 </div>
-              </TooltipProvider>
+              </>
             ) : (
               <PanelFallback loading={false} error={null} onRetry={pipeline.refresh} />
             )}
