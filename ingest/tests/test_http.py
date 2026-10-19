@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 from dataclasses import replace
@@ -10,10 +11,11 @@ import pytest
 from ingest.app.config import IngestSettings
 from ingest.app.http_compat import IngestASGI
 from ingest.app.main import create_app
-from ingest.app.redis_store import RedisProcessResult
+from ingest.app.redis_store import IngestRedisStore, RedisProcessResult
 from ingest.app.repository import ValidationDecision
 from ingest.app.schemas import AckResult
 from ingest.app.service import IngestService
+from ingest.tests.test_redis_store import FakeRedis
 
 
 class AllowAuthenticator:
@@ -408,3 +410,43 @@ async def test_matching_latest_keys_are_accepted() -> None:
     assert response.status_code == 200
     assert response.json()["results"][0]["status"] == "ack"
     assert store.process_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_matched_latest_keys_missing_values_are_rejected_by_real_store() -> None:
+    """R1：键一致但没有值，真实 redis_store 不得 KeyError；该条 rejected_consumed，其余接受。"""
+    session_id = str(uuid4())
+    client = FakeRedis()
+    client.eval_result = json.dumps(["ack", "ack"])
+    store = IngestRedisStore(client, settings())
+    response = await _post_ingest(
+        _batch_with_items(
+            _item_with_latest(
+                local_seq=1,
+                session_id=session_id,
+                qualities={"1": 0},
+                timestamps={"1": 1721800000000},
+                values={"1": "12.5"},
+            ),
+            _item_with_latest(
+                local_seq=2,
+                session_id=session_id,
+                qualities={"orphan": 8},
+                timestamps={"orphan": 1721800001000},
+            ),
+        ),
+        store,
+    )
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [item["local_seq"] for item in results] == [1, 2]
+    assert results[0]["status"] == "ack"
+    assert results[1]["status"] == "rejected_consumed"
+    assert "orphan" in results[1]["reason"]
+    assert "latest keys missing values" in results[1]["reason"]
+    _script, numkeys, args = client.eval_call
+    sent = json.loads(args[numkeys + 2])
+    rejected = next(item for item in sent if item["local_seq"] == 2)
+    assert rejected["action"] == "consume_reject"
+    assert "orphan" not in rejected["latest_updates"]

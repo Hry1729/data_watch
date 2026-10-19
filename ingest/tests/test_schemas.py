@@ -66,6 +66,20 @@ def test_quality_only_latest_keys_are_accepted() -> None:
     assert batch.items[0].latest_qualities == {"1": 0, "2": 8}
 
 
+def test_latest_qualities_without_timestamps_are_accepted() -> None:
+    """旧载荷：只有 latest_qualities，没有 latest_timestamps，仍然接受。"""
+    payload = base_payload()
+    item = payload["items"][0]
+    item["latest_values"] = {"1": "12.5", "str_var": "ALARM"}
+    item["latest_qualities"] = {"1": 192, "str_var": 192}
+    batch = UploadBatch.from_dict(payload)
+    parsed = batch.items[0]
+    assert parsed.envelope_error is None
+    assert parsed.latest_timestamps is None
+    assert parsed.latest_qualities == {"1": 192, "str_var": 192}
+    assert parsed.latest_values == {"1": "12.5", "str_var": "ALARM"}
+
+
 def test_latest_values_must_be_covered_by_qualities() -> None:
     payload = base_payload()
     item = payload["items"][0]

@@ -76,10 +76,14 @@ class UploadItem:
             # 只给 latest_qualities、不给时间戳是既有合法载荷，不在这里拒绝。
             mismatch = _latest_key_mismatch_message(latest_qualities, latest_timestamps)
             if mismatch:
-                latest_values = None
-                latest_qualities = None
-                latest_timestamps = None
                 raise RequestValidationError(mismatch)
+            # 键一致、但没有 latest_values，且这些键也不在 values 里：
+            # redis_store 不会补质量点，随后按下标写时间戳会 KeyError。
+            missing_values = _latest_keys_missing_values(
+                values, latest_values, latest_qualities, latest_timestamps
+            )
+            if missing_values:
+                raise RequestValidationError(f"latest keys missing values: {missing_values}")
             for label, mapping in (("latest_qualities", latest_qualities), ("latest_timestamps", latest_timestamps)):
                 if mapping is not None and (latest_values is None or not set(latest_values) <= set(mapping)):
                     raise RequestValidationError(f"{label} keys must cover latest_values")
@@ -100,6 +104,10 @@ class UploadItem:
             values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
             qualities = None
             envelope_error = str(exc)
+            # 本条已拒绝：latest 映射不再交给 redis_store，避免整批 KeyError 变成 500。
+            latest_values = None
+            latest_qualities = None
+            latest_timestamps = None
 
         return cls(
             batch_id=batch_id,
@@ -259,6 +267,25 @@ def _latest_key_mismatch_message(
 
 def _is_latest_key_mismatch(item: UploadItem) -> bool:
     return bool(item.envelope_error and item.envelope_error.startswith(_LATEST_KEY_MISMATCH))
+
+
+def _latest_keys_missing_values(
+    values: dict[str, str],
+    latest_values: dict[str, str] | None,
+    qualities: dict[str, int] | None,
+    timestamps: dict[str, int] | None,
+) -> list[str] | None:
+    """两边键一致且没有 latest_values 时，找出既不在 values 里的点。
+
+    latest_values 存在时，质量点由 redis_store 补上，不能在这里拒绝。
+    没给时间戳的旧载荷也不在这里拒绝。
+    """
+    if latest_values is not None or qualities is None or timestamps is None:
+        return None
+    if set(qualities) != set(timestamps):
+        return None
+    missing = sorted(key for key in timestamps if key not in values)
+    return missing or None
 
 
 def _string_map(value: Any, name: str) -> dict[str, str]:
