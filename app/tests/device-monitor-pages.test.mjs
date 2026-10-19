@@ -5,8 +5,8 @@ import test from "node:test";
 import { getPageMeta, placeholderPages } from "../src/config/navigation.ts";
 
 const pages = [
-  ["DeviceCommunicationPage.tsx", "/device/communication", ["设备总数", "在线比例", "离线比例", "未用比例"]],
-  ["DriverManagementPage.tsx", "/device/drivers", ["驱动总数", "驱动名称", "说明", "关联设备"]],
+  ["DeviceCommunicationPage.tsx", "/device/communication", ["设备通讯", "总数", "在线", "离线", "异常", "未启用"]],
+  ["DriverManagementPage.tsx", "/device/drivers", ["驱动列表", "驱动名称", "说明", "关联设备"]],
   ["DeviceManagementPage.tsx", "/device/devices", ["设备总数", "汇总", "新增设备", "设备编号"]],
   ["PointManagementPage.tsx", "/device/points", ["汇总", "新增点位", "点位名称", "设备号"]],
   ["RealtimeMonitorPage.tsx", "/device/realtime", ["当前设备", "选择点位", "中心实时连接", "实时监测点", "实时趋势"]],
@@ -52,9 +52,11 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /暂未选择监控点位/);
   assert.match(source, /max-w-56/);
   assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
-  // 点位数值卡：灰底圆角卡片 6 列网格，窄屏横向滚动
+  // 点位数值卡：灰底圆角卡片，始终单行，多了横向滚动（细滚动条）
   assert.match(source, /rounded-\[10px\] bg-muted\/55 px-3 py-2\.5/);
-  assert.match(source, /grid min-w-\[720px\] grid-cols-6 gap-2\.5/);
+  assert.match(source, /overflow-x-auto overflow-y-hidden pb-1 \[scrollbar-width:thin\]/);
+  assert.match(source, /grid grid-flow-col auto-cols-/);
+  assert.doesNotMatch(source, /grid-cols-6/);
   assert.match(source, /flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0/);
   assert.match(source, /border-b px-5 py-3\.5/);
   assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
@@ -74,10 +76,14 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /搜索设备名称或编号/);
   assert.match(source, /快捷时间范围/);
   assert.match(source, /setRecentRange\(Number\(value\), setStartTime, setEndTime\)/);
-  assert.match(source, /<Card className="gap-0 py-0">/);
-  // 已选点位卡：4 列灰底卡片，含 最小/平均/最大
-  assert.match(source, /grid grid-cols-2 gap-2\.5 lg:grid-cols-4/);
-  assert.match(source, /\["最小", stats\?\.min/);
+  assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
+  // 已选点位：单行胶囊，多了横向滚动；不再显示 最小/平均/最大
+  assert.match(source, /flex gap-2 overflow-x-auto overflow-y-hidden pb-1 \[scrollbar-width:thin\]/);
+  assert.doesNotMatch(source, /"最小"/);
+  // 图表卡撑满剩余高度；Bool 点位用状态泳道
+  assert.match(source, /<Card className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0">/);
+  assert.match(source, /function HistoryBoolLanes/);
+  assert.match(source, /isBoolSeries/);
   assert.match(source, /!flex shrink-0 items-center gap-3 border-b px-5 py-3\.5/);
   assert.match(source, /折线图/);
   assert.match(source, /aria-label="时间对齐颗粒度"/);
@@ -91,19 +97,24 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /暂无原始数据/);
 });
 
-test("device communication uses compact stat cards", async () => {
+test("device communication drops KPI cards and shows status counts in the card legend", async () => {
   const source = await readFile(new URL("../src/pages/DeviceCommunicationPage.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /function KpiCard/);
-  assert.match(source, /label="设备总数"/);
-  assert.match(source, /label="在线比例"/);
-  assert.match(source, /grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4/);
+  assert.doesNotMatch(source, /MonitorKpiCard|function KpiCard/);
+  assert.match(source, /function LegendCount/);
+  for (const [label, value] of [["总数", "total"], ["在线", "online"], ["离线", "offline"], ["异常", "unstable"], ["未启用", "disabled"]]) {
+    assert.match(source, new RegExp(`<LegendCount[^>]*label="${label}" value=\\{summary\\.data \\? ${value} : null\\}`));
+  }
+  // 色块墙按可视区估算每页数量
+  assert.match(source, /function estimatePageSize/);
+  assert.match(source, /new ResizeObserver\(update\)/);
+  assert.match(source, /\[deviceType, keyword, page, pageSize, status\]/);
 });
 
-test("device communication renders grouped full-width twenty-column square status tiles", async () => {
+test("device communication renders grouped full-width auto-fill square status tiles", async () => {
   const source = await readFile(new URL("../src/pages/DeviceCommunicationPage.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /grid-cols-\[repeat\(20,minmax\(0,1fr\)\)\]/);
+  assert.match(source, /grid-cols-\[repeat\(auto-fill,minmax\(46px,1fr\)\)\]/);
   assert.match(source, /grid w-full/);
   assert.match(source, /aspect-square/);
   assert.doesNotMatch(source, /h-8 w-14/);
@@ -153,7 +164,8 @@ test("driver management uses a full-height paginated table with truncated descri
   const source = await readFile(new URL("../src/pages/DriverManagementPage.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /可用驱动/);
-  assert.match(source, /label="驱动总数"/);
+  assert.doesNotMatch(source, /KpiTile/);
+  assert.match(source, /驱动列表/);
   assert.doesNotMatch(source, /max-w-\[1500px\]/);
   // 安装/卸载后需刷新列表（共享壳层刷新 + 本页 query.refresh）
   assert.match(source, /query\.refresh\(\)/);
@@ -169,13 +181,14 @@ test("driver management uses a full-height paginated table with truncated descri
   assert.match(source, /pageNo: page/);
   assert.match(source, /pageSize/);
   assert.match(source, /totalPages/);
-  assert.match(source, /每页行数/);
+  assert.match(source, /useAdaptivePageSize\(\{ rowHeight: 48 \}\)/);
+  assert.match(source, /ref=\{tableViewportRef\}/);
+  assert.match(source, /每页 \{pageSize\} 行/);
   assert.match(source, /共 \{query\.data\?\.total \?\? 0\} 条驱动/);
   assert.match(source, /ChevronsLeft/);
   assert.match(source, /ChevronLeft/);
   assert.match(source, /ChevronRight/);
   assert.match(source, /ChevronsRight/);
-  assert.match(source, /\[10, 20, 50\]/);
   assert.match(source, /source === "bundled"/);
   assert.match(source, /item\.aliases/);
   assert.match(source, /protected: item\.protected/);
@@ -237,15 +250,16 @@ test("device and point management keep the selected-item deletion action without
 test("device list keeps filters inside the card and sizes pages from the table viewport", async () => {
   for (const file of ["DeviceManagementPage.tsx"]) {
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
-    assert.match(source, /useAdaptivePageSize/);
+    assert.match(source, /useAdaptivePageSize\(\{ rowHeight: 52 \}\)/);
     assert.match(source, /ref=\{tableViewportRef\}/);
     assert.match(source, /Input className=\{`\$\{CTRL\} pl-8`\}/);
     assert.match(source, /SelectTrigger className=\{`\$\{CTRL\} w-24`\}/);
     assert.match(source, /<Table className=\{`w-full table-fixed \$\{TABLE_TEXT\}`\}/);
     assert.match(source, /<TableRow key=\{row\.id\} className=\{`h-\[52px\]/);
     assert.match(source, /<div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5">/);
-    assert.match(source, /<Card className="flex min-h-0 flex-col gap-0 py-0">[\s\S]*?<Tabs/);
-    assert.match(source, /<Card className="flex min-h-0 flex-col gap-0 py-0">[\s\S]*?ref=\{tableViewportRef\}/);
+    assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">[\s\S]*?<Tabs/);
+    assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">[\s\S]*?ref=\{tableViewportRef\}/);
+    assert.match(source, /overflow-x-auto overflow-y-hidden \[scrollbar-width:none\]"><TabsList/);
   }
 });
 test("point management pages and filters devices on the server before counting points", async () => {
@@ -254,6 +268,10 @@ test("point management pages and filters devices on the server before counting p
   const routerSource = await readFile(new URL("../../backend/app/api/routes/catalog.py", import.meta.url), "utf8");
   const serviceSource = await readFile(new URL("../../backend/app/services/catalog.py", import.meta.url), "utf8");
   assert.doesNotMatch(pointSource, /pointList\(token, \{[^}]*pageSize:\s*1000/);
+  // 点位表按视口高度自动计算每页行数（行高 40px），不再固定 10 行
+  assert.match(pointSource, /useAdaptivePageSize\(\{ rowHeight: 40 \}\)/);
+  assert.match(pointSource, /ref=\{tableViewportRef\}/);
+  assert.doesNotMatch(pointSource, /const pageSize = 10;/);
   assert.match(pointSource, /pageNo:\s*page/);
   assert.match(pointSource, /deviceType: activeType === "all" \? undefined : activeType/);
   assert.match(pointSource, /connectStatus: connectStatus === "all" \? undefined : connectStatus/);
