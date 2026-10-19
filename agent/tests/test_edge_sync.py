@@ -170,3 +170,58 @@ def test_repeated_identical_sync_failure_is_logged_once(
     failures = [r for r in caplog.records if "Edge center sync failed" in r.getMessage()]
     assert len(calls) == 5
     assert len(failures) == 1
+
+
+def test_storage_unavailable_still_sends_degraded_heartbeat(tmp_path) -> None:
+    """D9：Storage status/revision 查询失败不得让整次心跳中断，改为降级心跳。"""
+    import asyncio
+
+    identity = generate_identity()
+    cfg = {
+        "edge": {
+            "center_url": "http://center",
+            "node_uuid": identity.node_uuid,
+            "private_key_enc": identity.private_key_pem,
+            "registered": True,
+            "applied_revision": 3,
+        }
+    }
+    sent = []
+
+    def transport(method, url, body, headers):
+        sent.append((url, json.loads(body.decode("utf-8")) if body else None))
+        return 200, {"code": 200, "data": {"desiredRevision": 5}}
+
+    class DownStore:
+        def status(self):
+            raise RuntimeError("Edge Storage unavailable: connection refused")
+
+        def revision(self):
+            raise RuntimeError("Edge Storage unavailable: connection refused")
+
+        def refresh_schedule(self, _now_ms):
+            raise AssertionError("must not touch Storage while it is unavailable")
+
+        def apply(self, _snapshot):
+            raise AssertionError("must not apply config while Storage is unavailable")
+
+    service = _sync_service(
+        tmp_path,
+        load_config=lambda: cfg,
+        mutate_config=lambda mutator: mutator(cfg) or cfg,
+        transport=transport,
+        config_store=DownStore(),
+    )
+
+    result = asyncio.run(service.run_once())
+
+    assert [url for url, _ in sent] == [
+        f"http://center/api/distributed/edge/{identity.node_uuid}/heartbeat"
+    ]
+    payload = sent[0][1]
+    assert payload["storageStatus"] == "unavailable"
+    assert payload["appliedRevision"] == 3
+    assert result["status"] == "approved"
+    assert result["appliedRevision"] == 3
+    assert "Edge Storage unavailable" in cfg["edge"]["last_sync_error"]
+    assert cfg["edge"]["applied_revision"] == 3
