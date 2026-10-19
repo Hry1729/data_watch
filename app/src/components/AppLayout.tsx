@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ConnectionStatusBar } from "@/components/ConnectionStatusBar";
 import { TopbarTools } from "@/components/TopbarTools";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { TITLEBAR_SLOT_ID } from "@/components/TitleBar";
+import { TITLEBAR_SLOT_ID, TITLEBAR_STATUS_SLOT_ID } from "@/components/TitleBar";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { getPageMeta } from "@/config/navigation";
@@ -64,8 +64,10 @@ export function AppLayout() {
   const flyoutCloseTimerRef = useRef<number | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [titlebarSlot, setTitlebarSlot] = useState<HTMLElement | null>(null);
+  const [titlebarStatusSlot, setTitlebarStatusSlot] = useState<HTMLElement | null>(null);
   useEffect(() => {
     setTitlebarSlot(document.getElementById(TITLEBAR_SLOT_ID));
+    setTitlebarStatusSlot(document.getElementById(TITLEBAR_STATUS_SLOT_ID));
   }, []);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const pageMeta = getPageMeta(location.pathname);
@@ -189,10 +191,12 @@ export function AppLayout() {
     </>,
     titlebarSlot,
   );
+  const titlebarStatus = titlebarStatusSlot && createPortal(<ConnectionStatusBar />, titlebarStatusSlot);
 
   return (
     <div className="flex h-full min-w-0 overflow-hidden bg-sidebar">
       {titlebarControls}
+      {titlebarStatus}
       <aside
         className={[
           "flex shrink-0 flex-col bg-sidebar text-sidebar-foreground transition-[width] duration-200",
@@ -344,9 +348,6 @@ export function AppLayout() {
         </nav>
 
         <div className="shrink-0 p-2">
-          <div className={["mb-1 flex", sidebarCollapsed ? "justify-center" : "px-1"].join(" ")}>
-            <ConnectionStatusBar vertical={sidebarCollapsed} />
-          </div>
           <div ref={userMenuRef} className="relative">
             {userMenuOpen && (
               <div
@@ -411,18 +412,6 @@ export function AppLayout() {
                 )}
               </button>
               <div className={["flex shrink-0 items-center gap-0.5", sidebarCollapsed ? "flex-col" : ""].join(" ")}>
-                {canOpenSettings && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 rounded-3xl hover:bg-muted"
-                    onClick={() => navigate(settingsPath)}
-                    aria-label="设置"
-                    title="设置"
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                )}
                 <ThemeToggle />
               </div>
             </div>
