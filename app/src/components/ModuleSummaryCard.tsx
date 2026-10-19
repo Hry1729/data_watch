@@ -96,9 +96,6 @@ const MODULE_META: Record<ModuleName, {
   },
 };
 
-/** 内存小仪表满刻度（状态里只有 memory_mb；按系统内存占比需后端返回 memory_percent） */
-const MEMORY_GAUGE_CAP_MB = 1024;
-
 // ─── 状态 Pill（4 态色彩区分）────────────────────────────────────────────────
 
 const STATUS_META: Record<
@@ -145,40 +142,6 @@ function StatusBadge({ status }: { status: ModuleStatusValue }) {
   );
 }
 
-// ─── 刻度小仪表（半圆缺口，概念稿 notch）──────────────────────────────────────
-
-function NotchGauge({ percent }: { percent: number }) {
-  const width = 66;
-  const height = 40;
-  const count = 18;
-  const cx = width / 2;
-  const cy = height - 4;
-  const outer = Math.min(width / 2 - 2, height - 6);
-  const inner = outer * 0.7;
-  const pct = Math.max(0, Math.min(100, percent));
-  const color = pct > 70 ? "var(--warning)" : "var(--brand)";
-  return (
-    <svg width={width} height={height} className="pointer-events-none absolute bottom-2 right-2.5" aria-hidden>
-      {Array.from({ length: count }, (_, i) => {
-        const angle = Math.PI + (Math.PI * i) / (count - 1);
-        const on = i / (count - 1) <= pct / 100 + 1e-6;
-        return (
-          <line
-            key={i}
-            x1={cx + inner * Math.cos(angle)}
-            y1={cy + inner * Math.sin(angle)}
-            x2={cx + outer * Math.cos(angle)}
-            y2={cy + outer * Math.sin(angle)}
-            stroke={on ? color : "var(--muted)"}
-            strokeWidth={2.6}
-            strokeLinecap="round"
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
 // ─── Metric 小格（模块卡内嵌 3 格）──────────────────────────────────────────
 
 function MetricCell({
@@ -186,14 +149,12 @@ function MetricCell({
   icon: Icon,
   value,
   loading,
-  gauge,
   narrow = false,
 }: {
   label: string;
   icon: ComponentType<{ className?: string }>;
   value: ReactNode;
   loading?: boolean;
-  gauge?: number | null;
   /** 三列卡片内的窄格：数字略小并允许换行 */
   narrow?: boolean;
 }) {
@@ -213,7 +174,6 @@ function MetricCell({
           {value}
         </div>
       )}
-      {!loading && gauge != null && <NotchGauge percent={gauge} />}
     </div>
   );
 }
@@ -229,11 +189,13 @@ function ModuleHeader({
   status,
   loading,
   showPid,
+  compact = false,
 }: {
   name: ModuleName;
   status: ModuleStatus;
   loading: boolean;
   showPid: boolean;
+  /** 控制台两列卡片：不显示“输出”行 */
   compact?: boolean;
 }) {
   const { label, subtitle, targetLabel, icon: Icon } = MODULE_META[name];
@@ -245,10 +207,12 @@ function ModuleHeader({
       <div className="min-w-0 flex-1">
         <CardTitle className="truncate text-base font-semibold leading-[1.3] tracking-[-0.01em] text-foreground">{label}</CardTitle>
         <p className="mt-0.5 truncate text-[13px] text-muted-foreground">{subtitle}</p>
-        <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          输出
-          <span className="rounded-full bg-muted px-2 py-px font-medium text-foreground">{targetLabel}</span>
-        </div>
+        {!compact && (
+          <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            输出
+            <span className="rounded-full bg-muted px-2 py-px font-medium text-foreground">{targetLabel}</span>
+          </div>
+        )}
       </div>
 
       {/* 右：可选 PID chip + 状态 Pill */}
@@ -305,7 +269,7 @@ export interface ModuleSummaryCardProps {
   loading?: boolean;
   /** "日志"按钮文案 */
   logButtonLabel?: string;
-  /** 两列控制台使用：指标格较宽，显示内存 / CPU 刻度小仪表 */
+  /** 两列控制台使用：指标格较宽、不显示“输出”行 */
   compact?: boolean;
   // 回调
   onStart?:   () => void;
@@ -353,7 +317,7 @@ export function ModuleSummaryCard({
     <Card
       className={cn("w-full gap-4 bg-card p-5", compact && "h-full")}
     >
-      <ModuleHeader name={name} status={status} loading={loading} showPid={false} />
+      <ModuleHeader name={name} status={status} loading={loading} showPid={false} compact={compact} />
 
       {/* 3 个运行指标格 */}
       <div className="grid grid-cols-3 gap-2.5">
@@ -370,7 +334,6 @@ export function ModuleSummaryCard({
           icon={MemoryStick}
           value={hasMemory ? <>{status.memory_mb.toFixed(0)}<small className={UNIT_CLASS}>MB</small></> : "—"}
           loading={loading}
-          gauge={compact && hasMemory ? (status.memory_mb / MEMORY_GAUGE_CAP_MB) * 100 : null}
         />
         <MetricCell
           label="CPU 使用率"
@@ -378,7 +341,6 @@ export function ModuleSummaryCard({
           icon={Cpu}
           value={<>{cpu.toFixed(1)}<small className={UNIT_CLASS}>%</small></>}
           loading={loading}
-          gauge={compact ? cpu : null}
         />
       </div>
 
