@@ -183,16 +183,41 @@ class _ScriptedSession:
 
 
 @pytest.mark.asyncio
-async def test_assignment_rejects_clock_anomaly_target() -> None:
+async def test_assignment_rejects_adding_device_to_clock_anomaly_target() -> None:
+    # H2：时钟异常只拦"新增 / 迁入"。
     session = _ScriptedSession(
-        [_ScriptedResult(row={"status": "approved", "clock_anomaly": 1})]
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 1}),
+            _ScriptedResult(rows=[{"device_id": 7, "assignment_epoch": 2}]),
+        ]
     )
 
     with pytest.raises(ApiError, match="时钟异常"):
         await DistributedNodeService(session).assign_devices(
             "3911959d-3e0d-45a4-880a-d3c7df3a2d65",
-            [],
+            [7, 8],
         )
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_clock_anomaly_node_can_still_remove_devices() -> None:
+    # H2：修复前任何变更（包括 unassign）都被 409 拒绝，设备会卡在时钟异常的节点上。
+    # 原用例 test_assignment_rejects_clock_anomaly_target 固化的正是"空集合也拒绝"，已改为本用例。
+    node_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 1}),
+            _ScriptedResult(rows=[{"device_id": 7, "assignment_epoch": 2}]),
+            _ScriptedResult(),
+            _ScriptedResult(),
+        ]
+    )
+
+    result = await DistributedNodeService(session).assign_devices(node_uuid, [])
+
+    assert result["removedDeviceIds"] == [7]
+    assert session.commits == 1
 
 
 @pytest.mark.asyncio
@@ -285,7 +310,59 @@ async def test_assignment_occupancy_lists_current_owner() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cross_node_assignment_is_rejected() -> None:
+async def test_cross_node_assignment_migrates_with_coordinated_cutover() -> None:
+    # H1：原用例 test_cross_node_assignment_is_rejected 固化了"其他节点 active 即 409"，
+    # 这使后面的迁移分支成为死代码，运维只能两步迁移、两边同时采集。现在其他节点上 active 的
+    # 设备直接迁移：旧分配退役、新分配的 effective_at/cutover_at 与旧分配的 cutover_at 相同。
+    target_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    source_uuid = "7f510f16-dca6-4ed0-932f-6e8d6948a111"
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 0}),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(rows=[(7, 1)]),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(row={"node_uuid": source_uuid, "assignment_epoch": 1}),
+            _ScriptedResult(),
+            _ScriptedResult(scalar=2),
+            _ScriptedResult(),
+            _ScriptedResult(),
+            _ScriptedResult(),
+        ]
+    )
+
+    result = await DistributedNodeService(session).assign_devices(target_uuid, [7])
+
+    assert result["migratedDeviceIds"] == [7]
+    assert result["cutoverAt"] is not None
+    assert session.commits == 1
+    occupancy_sql = next(
+        sql for sql, _params in session.executions if "device_id IN" in sql and "node_uuid<>:node_uuid" in sql
+    )
+    # 占用检查不再把其他节点上的 active 当作冲突（否则迁移分支永远走不到）
+    assert "'active'" not in occupancy_sql
+    retire = next(params for sql, params in session.executions if "SET status='retired'" in sql)
+    insert = next(params for sql, params in session.executions if "INSERT INTO device_assignment" in sql)
+    assert retire["node_uuid"] == source_uuid
+    assert insert["node_uuid"] == target_uuid
+    assert insert["effective_at"] == insert["cutover_at"] == retire["cutover_at"]
+    bumped = {
+        params["node_uuid"] for sql, params in session.executions if "config_version=config_version + 1" in sql
+    }
+    assert bumped == {source_uuid, target_uuid}
+    # 新旧节点的采集窗口围绕同一切换点衔接（Ingest 按 cutover_at 严格切分）
+    old_from, old_until = _assignment_schedule(
+        {"cutover_at": retire["cutover_at"], "assignment_status": "retired", "has_successor": 1}
+    )
+    new_from, new_until = _assignment_schedule(
+        {"cutover_at": insert["cutover_at"], "assignment_status": "active", "has_successor": 0}
+    )
+    assert old_from is None and new_until is None
+    assert new_from < old_until and old_until - new_from == 2 * 30_000
+
+
+@pytest.mark.asyncio
+async def test_cross_node_preparing_assignment_is_still_rejected() -> None:
     target_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
     source_uuid = "7f510f16-dca6-4ed0-932f-6e8d6948a111"
     session = _ScriptedSession(
@@ -297,10 +374,107 @@ async def test_cross_node_assignment_is_rejected() -> None:
         ]
     )
 
-    with pytest.raises(ApiError, match="已分配给其他边缘节点"):
+    with pytest.raises(ApiError, match="准备中"):
         await DistributedNodeService(session).assign_devices(target_uuid, [7])
 
     assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_two_step_migration_inherits_pending_cutover() -> None:
+    # H1：先在 A 上 unassign（A 退役、cutover 在将来），再在 B 上 assign。
+    # 修复前 B 的新分配 cutover_at=NULL、立即采集，与 A 重叠约 60~90 秒。
+    target_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    source_uuid = "7f510f16-dca6-4ed0-932f-6e8d6948a111"
+    pending_cutover = datetime.now(timezone(timedelta(hours=8))).replace(tzinfo=None) + timedelta(seconds=45)
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 0}),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(rows=[(7, 1)]),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(row=None),
+            _ScriptedResult(row={"node_uuid": source_uuid, "cutover_at": pending_cutover}),
+            _ScriptedResult(scalar=3),
+            _ScriptedResult(),
+            _ScriptedResult(),
+            _ScriptedResult(),
+        ]
+    )
+
+    await DistributedNodeService(session).assign_devices(target_uuid, [7])
+
+    insert = next(params for sql, params in session.executions if "INSERT INTO device_assignment" in sql)
+    assert insert["effective_at"] == pending_cutover
+    assert insert["cutover_at"] == pending_cutover
+    bumped = {
+        params["node_uuid"] for sql, params in session.executions if "config_version=config_version + 1" in sql
+    }
+    # A 的 collect_until 因出现后继而变化，也要重新下发
+    assert bumped == {source_uuid, target_uuid}
+
+
+@pytest.mark.asyncio
+async def test_fresh_assignment_without_pending_handover_starts_immediately() -> None:
+    target_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 0}),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(rows=[(7, 1)]),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(row=None),
+            _ScriptedResult(row=None),
+            _ScriptedResult(scalar=1),
+            _ScriptedResult(),
+            _ScriptedResult(),
+        ]
+    )
+
+    await DistributedNodeService(session).assign_devices(target_uuid, [7])
+
+    insert = next(params for sql, params in session.executions if "INSERT INTO device_assignment" in sql)
+    assert insert["cutover_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_incremental_modes_merge_with_locked_current_assignments() -> None:
+    # M4：add/remove 在节点行锁（FOR UPDATE）之后基于当前分配合并，而不是由客户端读-改-写。
+    node_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    current = [{"device_id": 3, "assignment_epoch": 1}, {"device_id": 7, "assignment_epoch": 1}]
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 0}),
+            _ScriptedResult(rows=current),
+            _ScriptedResult(rows=[(3, 1)]),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(),
+            _ScriptedResult(row={"node_uuid": node_uuid, "assignment_epoch": 1}),
+            _ScriptedResult(),
+        ]
+    )
+    result = await DistributedNodeService(session).assign_devices(node_uuid, [7], mode="remove")
+    assert result["deviceIds"] == [3]
+    assert result["removedDeviceIds"] == [7]
+
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"status": "approved", "clock_anomaly": 0}),
+            _ScriptedResult(rows=current),
+            _ScriptedResult(rows=[(3, 1), (7, 1), (9, 1)]),
+            _ScriptedResult(rows=[]),
+            _ScriptedResult(row={"node_uuid": node_uuid, "assignment_epoch": 1}),
+            _ScriptedResult(row={"node_uuid": node_uuid, "assignment_epoch": 1}),
+            _ScriptedResult(row=None),
+            _ScriptedResult(row=None),
+            _ScriptedResult(scalar=1),
+            _ScriptedResult(),
+            _ScriptedResult(),
+        ]
+    )
+    result = await DistributedNodeService(session).assign_devices(node_uuid, [9], mode="add")
+    assert result["deviceIds"] == [3, 7, 9]
+    assert result["removedDeviceIds"] == []
 
 def test_assignment_schedule_uses_strict_cutover_window() -> None:
     cutover = datetime(2026, 8, 1, 12, 0, 0)
