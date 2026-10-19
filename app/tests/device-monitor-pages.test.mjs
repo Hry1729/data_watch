@@ -48,16 +48,17 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /设备类型/);
   assert.match(source, /设备编号/);
   assert.match(source, /搜索设备名称或编号/);
-  assert.match(source, /!flex shrink-0 items-center justify-end/);
+  assert.match(source, /!flex shrink-0 items-center gap-3 border-b/);
   assert.match(source, /暂未选择监控点位/);
   assert.match(source, /max-w-56/);
   assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
-  assert.match(source, /w-40 shrink-0 rounded-md border bg-card px-2\.5 py-1\.5/);
-  assert.match(source, /flex min-w-max gap-2 pb-2 pr-2/);
+  // 点位数值卡：灰底圆角卡片 6 列网格，窄屏横向滚动
+  assert.match(source, /rounded-\[10px\] bg-muted\/55 px-3 py-2\.5/);
+  assert.match(source, /grid min-w-\[720px\] grid-cols-6 gap-2\.5/);
   assert.match(source, /flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden py-0/);
-  assert.match(source, /border-b px-4 py-2\.5/);
+  assert.match(source, /border-b px-5 py-3\.5/);
   assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
-  assert.match(source, /grid grid-cols-1 gap-x-6 gap-y-2 px-2 py-1 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4/);
+  assert.match(source, /grid grid-cols-1 gap-x-6 gap-y-2 px-1\.5 pb-0\.5 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4/);
   assert.match(source, /xl:justify-self-end/);
   assert.match(source, /selectedDevice \? selectedDevice\.deviceCode : "选择设备"/);
   assert.match(source, /最后同步时间：\$\{formatSyncTime/);
@@ -74,16 +75,18 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /快捷时间范围/);
   assert.match(source, /setRecentRange\(Number\(value\), setStartTime, setEndTime\)/);
   assert.match(source, /<Card className="gap-0 py-0">/);
-  assert.match(source, /flex min-w-max gap-2 pb-2 pr-2/);
-  assert.match(source, /!flex shrink-0 items-center justify-end gap-3 border-b px-4 py-2\.5/);
+  // 已选点位卡：4 列灰底卡片，含 最小/平均/最大
+  assert.match(source, /grid grid-cols-2 gap-2\.5 lg:grid-cols-4/);
+  assert.match(source, /\["最小", stats\?\.min/);
+  assert.match(source, /!flex shrink-0 items-center gap-3 border-b px-5 py-3\.5/);
   assert.match(source, /折线图/);
   assert.match(source, /aria-label="时间对齐颗粒度"/);
-  assert.match(source, /className="h-7 w-\[110px\]" aria-label="快捷时间范围"/);
-  assert.match(source, /className="flex items-center gap-1" aria-label="时间范围"/);
-  assert.equal((source.match(/className="h-7 w-\[148px\]"/g) ?? []).length, 2);
-  assert.match(source, /className="!h-7 w-20" aria-label="时间对齐颗粒度"/);
+  assert.match(source, /w-\[110px\] !text-xs`\} aria-label="快捷时间范围"/);
+  assert.match(source, /aria-label="时间范围"/);
+  assert.equal((source.match(/type="datetime-local" value=\{(startTime|endTime)\}/g) ?? []).length, 2);
+  assert.match(source, /w-\[88px\]`\} aria-label="时间对齐颗粒度"/);
   assert.match(source, /currentDevice \? currentDevice\.deviceCode \?\? currentDevice\.name : "选择设备"/);
-  assert.match(source, /ml-auto flex items-center gap-1/);
+  assert.match(source, /ml-auto flex items-center gap-2/);
   assert.match(source, /每页 200 行/);
   assert.match(source, /暂无原始数据/);
 });
@@ -94,19 +97,19 @@ test("device communication uses compact stat cards", async () => {
   assert.match(source, /function KpiCard/);
   assert.match(source, /label="设备总数"/);
   assert.match(source, /label="在线比例"/);
-  assert.match(source, /grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4/);
+  assert.match(source, /grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4/);
 });
 
-test("device communication renders grouped full-width fifteen-column square status tiles", async () => {
+test("device communication renders grouped full-width twenty-column square status tiles", async () => {
   const source = await readFile(new URL("../src/pages/DeviceCommunicationPage.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /grid-cols-\[repeat\(15,minmax\(0,1fr\)\)\]/);
+  assert.match(source, /grid-cols-\[repeat\(20,minmax\(0,1fr\)\)\]/);
   assert.match(source, /grid w-full/);
   assert.match(source, /aspect-square/);
   assert.doesNotMatch(source, /h-8 w-14/);
   assert.doesNotMatch(source, /max-w-\[1680px\]/);
   assert.match(source, /device\.deviceCode/);
-  assert.match(source, /bg-success-soft text-success/);
+  assert.match(source, /bg-\[color-mix\(in_oklab,var\(--success\)_14%,var\(--card\)\)\]/);
   assert.match(source, /bg-warning text-white/);
   assert.match(source, /bg-destructive text-white/);
   assert.match(source, /bg-muted text-muted-foreground/);
@@ -140,10 +143,10 @@ test("device communication header contains legend and filters without a local re
   assert.match(header, /placeholder="全部类型"/);
   assert.match(header, /placeholder="全部状态"/);
   assert.doesNotMatch(source, /RefreshCw|query\.refresh/);
-  assert.match(header, /<div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 pt-4">/);
+  assert.match(header, /<div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 pt-1">/);
   assert.match(header, /ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2/);
-  assert.match(header, /relative w-36 shrink-0/);
-  assert.equal((header.match(/SelectTrigger className="w-24"/g) ?? []).length, 2);
+  assert.match(header, /relative w-\[150px\] shrink-0/);
+  assert.equal((header.match(/SelectTrigger className="w-28"/g) ?? []).length, 2);
   assert.match(header, /<Button variant="outline" size="sm"[\s\S]*?>重置<\/Button>/);
 });
 test("driver management uses a full-height paginated table with truncated description tooltips", async () => {
@@ -226,7 +229,9 @@ test("device and point management build type tabs from current system devices", 
 test("device and point management keep the selected-item deletion action without a batch label", async () => {
   for (const file of ["DeviceManagementPage.tsx", "PointManagementPage.tsx"]) {
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
-    assert.match(source, /<Button variant="destructive" size="sm" disabled=\{!selectedIds\.length\} onClick=\{\(\) => setBatchDeleteOpen\(true\)\}>[\s\S]*?删除[\s\S]*?<\/Button>/);
+    assert.match(source, /<Button variant="destructive" size="sm" className=\{DANGER_BTN\} disabled=\{!selectedIds\.length\} onClick=\{\(\) => setBatchDeleteOpen\(true\)\}>[\s\S]*?删除[\s\S]*?<\/Button>/);
+    // 已选数量以徽标显示在删除按钮内
+    assert.match(source, /删除\s*\{selectedIds\.length > 0 && <SelectedCount count=\{selectedIds\.length\} \/>\}/);
   }
 });
 test("device list keeps filters inside the card and sizes pages from the table viewport", async () => {
@@ -234,13 +239,13 @@ test("device list keeps filters inside the card and sizes pages from the table v
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
     assert.match(source, /useAdaptivePageSize/);
     assert.match(source, /ref=\{tableViewportRef\}/);
-    assert.match(source, /Input className="h-8 pl-9"/);
-    assert.match(source, /SelectTrigger className="!h-8 w-24"/);
-    assert.match(source, /<Table className="w-full table-fixed"/);
-    assert.match(source, /<TableRow key=\{row\.id\} className="h-10"/);
-    assert.match(source, /<div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-4">/);
-    assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col">[\s\S]*?<Tabs/);
-    assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col">[\s\S]*?ref=\{tableViewportRef\}/);
+    assert.match(source, /Input className=\{`\$\{CTRL\} pl-8`\}/);
+    assert.match(source, /SelectTrigger className=\{`\$\{CTRL\} w-24`\}/);
+    assert.match(source, /<Table className=\{`w-full table-fixed \$\{TABLE_TEXT\}`\}/);
+    assert.match(source, /<TableRow key=\{row\.id\} className=\{`h-\[52px\]/);
+    assert.match(source, /<div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5">/);
+    assert.match(source, /<Card className="flex min-h-0 flex-col gap-0 py-0">[\s\S]*?<Tabs/);
+    assert.match(source, /<Card className="flex min-h-0 flex-col gap-0 py-0">[\s\S]*?ref=\{tableViewportRef\}/);
   }
 });
 test("point management pages and filters devices on the server before counting points", async () => {
