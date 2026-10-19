@@ -221,7 +221,7 @@ export function AppLayout() {
         </div>
 
         <nav
-          className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
+          className="mr-1 min-h-0 flex-1 overflow-y-auto py-3 pl-2 pr-1"
           aria-label={isSettingsRoute ? "设置导航" : "主导航"}
         >
           {isSettingsRoute ? (
@@ -454,8 +454,8 @@ export function AppLayout() {
         document.body,
       )}
 
-      <section className="mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
-        <header className="flex h-12 shrink-0 items-center bg-transparent px-4">
+      <section className="relative mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
+        <header className="dw-acrylic-header absolute left-0 right-2 top-0 z-20 isolate flex h-12 items-center px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>
@@ -477,7 +477,7 @@ export function AppLayout() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-auto px-4 pb-4">
+        <main className="min-h-0 flex-1 overflow-auto px-4 pb-4 pt-12 [scroll-padding-top:3.5rem]">
           <Outlet />
         </main>
       </section>
