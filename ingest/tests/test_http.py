@@ -112,6 +112,75 @@ async def test_ingest_http_bad_request_shape() -> None:
 
     assert response.status_code == 400
     assert response.json()["status"] == "bad_request"
+    # 某条记录本身非法：scope=item（边缘按记录级隔离）。
+    assert response.json()["scope"] == "item"
+
+
+@pytest.mark.asyncio
+async def test_ingest_http_batch_level_bad_request_is_scoped_batch() -> None:
+    """Edge 6：与具体记录无关的 400 标注 scope=batch。"""
+    app = create_app(runtime_provider, settings())
+    transport = httpx.ASGITransport(app=app)
+    payload = upload_payload()
+    payload["node_uuid"] = "not-a-uuid"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/ingest", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["scope"] == "batch"
+
+
+@pytest.mark.asyncio
+async def test_ingest_http_transient_store_failure_is_503() -> None:
+    """S1：Redis 暂时性持久化故障返回 503（边缘按传输失败退避重试）。"""
+    from ingest.app.redis_store import TransientStoreError
+
+    class TransientService(FakeService):
+        async def ingest(self, batch, *, nonce: str):
+            raise TransientStoreError("Redis AOF persistence not confirmed")
+
+    async def transient_runtime():
+        return SimpleNamespace(
+            authenticator=AllowAuthenticator(),
+            service=TransientService(),
+        )
+
+    app = create_app(transient_runtime, settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/ingest", json=upload_payload())
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "store_unavailable"
+    assert "persistence" in response.json()["reason"]
+
+
+@pytest.mark.asyncio
+async def test_unhandled_error_is_logged_and_returns_500(caplog) -> None:
+    """S3：兜底 500 必须留下带方法与路径的异常日志。"""
+    import logging
+
+    class BrokenService(FakeService):
+        async def get_active_session(self, node_uuid):
+            raise RuntimeError("mysql connection lost")
+
+    async def broken_runtime():
+        return SimpleNamespace(
+            authenticator=AllowAuthenticator(),
+            service=BrokenService(),
+        )
+
+    app = create_app(broken_runtime, settings())
+    transport = httpx.ASGITransport(app=app)
+    node = str(uuid4())
+    caplog.set_level(logging.ERROR, logger="ingest.app.http_compat")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/ingest/session/{node}")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal Server Error"}
+    assert f"GET /ingest/session/{node}" in caplog.text
+    assert "mysql connection lost" in caplog.text
 
 
 @pytest.mark.asyncio
