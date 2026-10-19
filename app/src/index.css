@@ -115,6 +115,8 @@
     --legend-track: oklch(0.92 0.004 286.32);
     /* 卡片阴影:墨色(深藏青)染的柔漫射,替代硬描边 */
     --card-shadow: 0 1px 2px rgba(26, 31, 54, 0.04), 0 10px 28px -12px rgba(26, 31, 54, 0.14);
+    /* 内容浮动面板:1px 描边 + 极轻投影,与卡片阴影区分 */
+    --inset-shadow: 0 1px 2px rgba(26, 31, 54, 0.05), 0 0 0 1px var(--border);
 }
 
 .dark {
@@ -165,7 +167,8 @@
     --legend-muted-foreground: oklch(0.705 0.015 286.067);
     --legend-track: oklch(0.274 0.006 286.033);
     /* 深色底上墨色染不可见,改用纯黑 */
-    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 10px 28px -12px rgba(0, 0, 0, 0.6);
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 28px -12px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    --inset-shadow: 0 0 0 1px var(--border);
 }
 
 @layer base {
