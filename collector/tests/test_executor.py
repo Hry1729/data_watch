@@ -745,9 +745,10 @@ def test_partial_block_failure_writes_bad_latest_but_not_history_value():
     stream_call = redis_writer.write_window_stream.call_args
     assert stream_call.args[7] == {"ok": "12"}
     assert stream_call.args[8] == {"ok": QUALITY_GOOD}
-    assert stream_call.args[6]["values"] == {"ok": "12", "failed": ""}
+    # 高-3：读失败的点不伪造 ""：window 不带它，latest 只写 t/q（无 "v"）
+    assert stream_call.args[6]["values"] == {"ok": "12"}
     latest_fields = redis_writer.write_latest.call_args.args[2]
-    assert latest_fields["failed"]["v"] == ""
+    assert "v" not in latest_fields["failed"]
     assert latest_fields["failed"]["q"] == QUALITY_BAD
 
 
