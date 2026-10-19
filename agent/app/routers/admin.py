@@ -141,6 +141,16 @@ def _db_env(cfg: dict, section: str) -> dict[str, str]:
     return env
 
 
+def _stream_contract(cfg: dict) -> tuple[int, int]:
+    """H3：Ingest 写、Writer 读的 Redis DB 与 stream 分片数的唯一来源（config.toml [redis]）。"""
+    redis = cfg.get("redis") or {}
+    db = int(redis.get("db") or 0)
+    shard_count = int(redis.get("stream_shard_count") or 4)
+    if db < 0 or shard_count < 1:
+        raise ValueError(f"invalid [redis] db={db} / stream_shard_count={shard_count}")
+    return db, shard_count
+
+
 def _collector_env() -> dict[str, str]:
     """中心式 Collector 用 MySQL/Redis；边缘 Collector 只用本地 SQLite。"""
     try:
@@ -153,21 +163,32 @@ def _collector_env() -> dict[str, str]:
             }
         cfg = load_config()
         return {**_db_env(cfg, "mysql"), **_db_env(cfg, "redis")}
-    except Exception:
-        return {}
+    except Exception as exc:
+        # D6：不得吞成空 env——子进程会回退到空密码的 settings.toml 并崩溃循环。
+        logger.exception("Cannot build collector environment")
+        raise ProcessManagerError(
+            f"无法构造 collector 启动环境（配置读取或凭据解密失败，请在引导/配置页重新录入）: {exc}"
+        ) from exc
 
 
 def _writer_env() -> dict[str, str]:
     """writer 需要 mysql + redis + tdengine 连接。"""
     try:
         cfg = load_config()
+        redis_db, shard_count = _stream_contract(cfg)
         return {
             **_db_env(cfg, "mysql"),
             **_db_env(cfg, "redis"),
+            "DATAWATCH_REDIS_DB": str(redis_db),
+            "DATAWATCH_REDIS_STREAM_SHARD_COUNT": str(shard_count),
             **_db_env(cfg, "tdengine"),
         }
-    except Exception:
-        return {}
+    except Exception as exc:
+        # D6：同 _collector_env，失败即拒绝启动并留下根因日志。
+        logger.exception("Cannot build writer environment")
+        raise ProcessManagerError(
+            f"无法构造 writer 启动环境（配置读取或凭据解密失败，请在引导/配置页重新录入）: {exc}"
+        ) from exc
 
 def _uploader_env() -> dict[str, str]:
     cfg = load_config()
@@ -218,13 +239,15 @@ def _ingest_env() -> dict[str, str]:
     redis = cfg.get("redis") or {}
     redis_password = dpapi_decrypt(str(redis.get("password_enc") or ""))
     auth = ":" + urllib.parse.quote(redis_password, safe="") + "@" if redis_password else ""
+    redis_db, shard_count = _stream_contract(cfg)
     return {
         "MYSQL_HOST": str(mysql.get("host") or ""),
         "MYSQL_PORT": str(mysql.get("port") or ""),
         "MYSQL_USER": str(mysql.get("user") or ""),
         "MYSQL_PASSWORD": dpapi_decrypt(str(mysql.get("password_enc") or "")),
         "MYSQL_DATABASE": str(mysql.get("database") or ""),
-        "INGEST_REDIS_URL": f"redis://{auth}{redis.get('host') or '127.0.0.1'}:{redis.get('port') or 6379}/0",
+        "INGEST_REDIS_URL": f"redis://{auth}{redis.get('host') or '127.0.0.1'}:{redis.get('port') or 6379}/{redis_db}",
+        "INGEST_STREAM_SHARD_COUNT": str(shard_count),
         "INGEST_MAX_OFFLINE_RETENTION_DAYS": str(
             (cfg.get("ingest") or {}).get("max_offline_retention_days") or 7
         ),
@@ -258,7 +281,8 @@ async def _ensure_edge_storage(request: Request) -> None:
 
 def _require_driver_idle(name, request):
     installer = getattr(request.app.state, "driver_installer", None)
-    if name in {"collector", "storage"} and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
+    # D4：门禁只管 Collector；Storage 与驱动无关，被锁会让整条边缘数据链停摆。
+    if name == "collector" and installer is not None and (installer._lock.locked() or installer.recovery_blocked or installer.recovery_status()["incomplete"]):
         raise HTTPException(status_code=409, detail="驱动事务进行中或等待恢复，暂不能操作采集进程")
 
 
@@ -293,9 +317,9 @@ async def start_process(name: str, request: Request, _user: str = Depends(get_cu
 
     # writer 路径完全不碰 sidecar_manager；但两者都需 Agent 下发解密后的连接 env。
     extra_args = await _extra_args_for(request, name)
-    env = _process_env(name)
 
     try:
+        env = _process_env(name)
         options = {"recovering": True} if recovering else {}
         info = await pm.start(name, extra_args=extra_args, env=env, **options)
         if recovering and info.status != "running":
@@ -347,9 +371,9 @@ async def restart_process(name: str, request: Request, _user: str = Depends(get_
 
     # collector 走差量重启：prepare（起新/停删/留不变）后只 bounce collector；writer 不变。
     extra_args = await _extra_args_for(request, name)
-    env = _process_env(name)
 
     try:
+        env = _process_env(name)
         await pm.restart(name, extra_args=extra_args, env=env)
     except ProcessManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
