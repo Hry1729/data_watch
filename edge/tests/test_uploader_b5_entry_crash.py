@@ -5,9 +5,11 @@
 （``StorageEngine`` + ``StorageHttpServer``，进程内本地回环）、真实 SQLite outbox
 文件、真实 HTTP 中心（本测试内的 fake，仅替代中心，不连现场栈）。
 
-注入的故障：中心对 ``/ingest`` 返回「ack + commit_unknown」，随后在
+注入的故障：中心对 ``/ingest`` 返回「ack + seq_reject」，随后在
 ``/ingest/session_switch`` 上**不再应答并保持挂起**，测试在此时把子进程
 ``kill()``（TerminateProcess，无清理机会）→ 精确复现「切换中崩溃」。
+（Edge 2/15 之后 ``commit_unknown`` 在同一 session 内重试、不再切换，
+因此改用仍会触发切换的 ``seq_reject`` 注入。）
 
 断言要点：
 1. 崩溃前已被中心 ACK 的帧必须已是 ``sent``，且保留**旧会话身份**与**原 local_seq**
@@ -219,9 +221,9 @@ def test_real_entry_crash_during_session_switch_preserves_frame_identity(
     old_session = _metadata(database, "upload_session_id")
     assert old_session
 
-    # --- 中心（fake）：第一条 /ingest 返回 ack + commit_unknown 并截止 ---------
+    # --- 中心（fake）：第一条 /ingest 返回 ack + seq_reject 并截止 -------------
     def mixed_results(items: list[dict]) -> list[dict]:
-        return [_ack(items[0], "ack"), _ack(items[1], "commit_unknown")]
+        return [_ack(items[0], "ack"), _ack(items[1], "seq_reject")]
 
     center = _Center(mixed_results, hang_on_switch=True)
     center_thread = threading.Thread(target=center.serve_forever, daemon=True)
@@ -262,7 +264,8 @@ def test_real_entry_crash_during_session_switch_preserves_frame_identity(
         new_session = _metadata(database, "upload_session_id")
         assert new_session and new_session != old_session
         for batch_id in order[1:]:
-            assert rows[batch_id]["state"] == "pending", rows
+            # 退避跨切换保留（Edge 2/15）。
+            assert rows[batch_id]["state"] == "retry_wait", rows
             assert rows[batch_id]["upload_session_id"] == new_session
         assert sorted(rows[batch_id]["local_seq"] for batch_id in order[1:]) == [1, 2]
         # 切换未完成（中心未确认）→ 重启必须补完，而不是丢弃。
@@ -272,7 +275,7 @@ def test_real_entry_crash_during_session_switch_preserves_frame_identity(
         # 3) 数据守恒 + 帧身份。
         assert set(rows) == set(fingerprints)
         assert sum(_counts(database).values()) == 3
-        assert _counts(database) == {"sent": 1, "pending": 2}
+        assert _counts(database) == {"sent": 1, "retry_wait": 2}
         assert {
             batch_id: hashlib.sha256(bytes(row["payload"])).hexdigest()
             for batch_id, row in rows.items()

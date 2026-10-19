@@ -3,6 +3,7 @@
 from app.models.base import Base
 from app.models.collector import CollectorSetting
 from app.models.auth import (
+    SysBootstrapState,
     SysDataPermission,
     SysMenu,
     SysPermission,
@@ -23,6 +24,7 @@ __all__ = [
     "CollectorSetting",
     "LogRetentionPolicy",
     "OperationLog",
+    "SysBootstrapState",
     "SysDataPermission",
     "SysMenu",
     "SysPermission",

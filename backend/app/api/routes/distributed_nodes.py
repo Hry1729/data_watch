@@ -181,7 +181,16 @@ async def assign_devices(
     credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
 ):
     await _admin(credentials)
+    # M4：addDeviceIds / removeDeviceIds 为增量操作，由后端在节点行锁内合并当前分配；
+    # deviceIds 仍为整体替换。
+    mode = "set"
     device_ids = payload.get("deviceIds")
+    for key, key_mode in (("addDeviceIds", "add"), ("removeDeviceIds", "remove")):
+        if key in payload:
+            if device_ids is not None or mode != "set":
+                raise ApiError(400, "deviceIds、addDeviceIds、removeDeviceIds 只能三选一")
+            mode = key_mode
+            device_ids = payload.get(key)
     if not isinstance(device_ids, list):
         raise ApiError(400, "deviceIds 必须是数组")
     session_factory = get_mysql_session_factory()
@@ -189,6 +198,7 @@ async def assign_devices(
         data = await DistributedNodeService(session).assign_devices(
             node_uuid,
             device_ids,
+            mode=mode,
         )
         await _publish_control_invalidation({"scope": "assignments"})
         return success_response(data=data)

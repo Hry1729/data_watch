@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 from dataclasses import replace
@@ -10,7 +11,11 @@ import pytest
 from ingest.app.config import IngestSettings
 from ingest.app.http_compat import IngestASGI
 from ingest.app.main import create_app
+from ingest.app.redis_store import IngestRedisStore, RedisProcessResult
+from ingest.app.repository import ValidationDecision
 from ingest.app.schemas import AckResult
+from ingest.app.service import IngestService
+from ingest.tests.test_redis_store import FakeRedis
 
 
 class AllowAuthenticator:
@@ -112,6 +117,75 @@ async def test_ingest_http_bad_request_shape() -> None:
 
     assert response.status_code == 400
     assert response.json()["status"] == "bad_request"
+    # 某条记录本身非法：scope=item（边缘按记录级隔离）。
+    assert response.json()["scope"] == "item"
+
+
+@pytest.mark.asyncio
+async def test_ingest_http_batch_level_bad_request_is_scoped_batch() -> None:
+    """Edge 6：与具体记录无关的 400 标注 scope=batch。"""
+    app = create_app(runtime_provider, settings())
+    transport = httpx.ASGITransport(app=app)
+    payload = upload_payload()
+    payload["node_uuid"] = "not-a-uuid"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/ingest", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["scope"] == "batch"
+
+
+@pytest.mark.asyncio
+async def test_ingest_http_transient_store_failure_is_503() -> None:
+    """S1：Redis 暂时性持久化故障返回 503（边缘按传输失败退避重试）。"""
+    from ingest.app.redis_store import TransientStoreError
+
+    class TransientService(FakeService):
+        async def ingest(self, batch, *, nonce: str):
+            raise TransientStoreError("Redis AOF persistence not confirmed")
+
+    async def transient_runtime():
+        return SimpleNamespace(
+            authenticator=AllowAuthenticator(),
+            service=TransientService(),
+        )
+
+    app = create_app(transient_runtime, settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/ingest", json=upload_payload())
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "store_unavailable"
+    assert "persistence" in response.json()["reason"]
+
+
+@pytest.mark.asyncio
+async def test_unhandled_error_is_logged_and_returns_500(caplog) -> None:
+    """S3：兜底 500 必须留下带方法与路径的异常日志。"""
+    import logging
+
+    class BrokenService(FakeService):
+        async def get_active_session(self, node_uuid):
+            raise RuntimeError("mysql connection lost")
+
+    async def broken_runtime():
+        return SimpleNamespace(
+            authenticator=AllowAuthenticator(),
+            service=BrokenService(),
+        )
+
+    app = create_app(broken_runtime, settings())
+    transport = httpx.ASGITransport(app=app)
+    node = str(uuid4())
+    caplog.set_level(logging.ERROR, logger="ingest.app.http_compat")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/ingest/session/{node}")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal Server Error"}
+    assert f"GET /ingest/session/{node}" in caplog.text
+    assert "mysql connection lost" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -157,3 +231,222 @@ async def test_lifespan_reports_startup_failure() -> None:
             "message": "mapping gate failed",
         }
     ]
+
+
+class RedisStoreSpy:
+    """替身 redis_store：记录 process_items 收到的条目。"""
+
+    def __init__(self) -> None:
+        self.process_calls = 0
+        self.entries = []
+
+    async def process_items(self, node_uuid, entries, *, nonce):
+        self.process_calls += 1
+        self.entries = list(entries)
+        for item, _action in entries:
+            # 键不一致的 latest 不能进 redis，否则会在 latest_updates 上 KeyError。
+            if item.envelope_error:
+                assert item.latest_timestamps is None
+                assert item.latest_qualities is None
+        return [
+            RedisProcessResult(status="rejected_consumed" if action == "consume_reject" else "ack")
+            for _item, action in entries
+        ]
+
+    async def switch_session(self, node_uuid, old_session_id, new_session_id):
+        return "switched"
+
+    async def get_active_session(self, node_uuid):
+        return None
+
+
+class _AcceptRepository:
+    async def validate_items(self, node_uuid, items):
+        return [ValidationDecision.accept() for _ in items]
+
+    async def touch_node(self, node_uuid) -> None:
+        return None
+
+
+def _runtime_with_store(store: RedisStoreSpy):
+    service = IngestService(_AcceptRepository(), store, max_batch_items=500)
+
+    async def provider():
+        return SimpleNamespace(authenticator=AllowAuthenticator(), service=service)
+
+    return provider
+
+
+def _item_with_latest(
+    *,
+    local_seq: int,
+    session_id: str,
+    qualities: dict[str, int] | None,
+    timestamps: dict[str, int] | None,
+    values: dict[str, str] | None = None,
+) -> dict:
+    item = upload_payload()["items"][0]
+    item["local_seq"] = local_seq
+    item["upload_session_id"] = session_id
+    item["batch_id"] = str(uuid4())
+    if values is not None:
+        item["latest_values"] = values
+    if qualities is not None:
+        item["latest_qualities"] = qualities
+    if timestamps is not None:
+        item["latest_timestamps"] = timestamps
+    return item
+
+
+def _batch_with_items(*items: dict) -> dict:
+    payload = upload_payload()
+    payload["items"] = list(items)
+    return payload
+
+
+async def _post_ingest(payload: dict, store: RedisStoreSpy):
+    app = create_app(_runtime_with_store(store), settings())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post("/ingest", json=payload)
+
+
+@pytest.mark.asyncio
+async def test_batch_latest_key_mismatch_is_400_scope_batch() -> None:
+    """整批每条 latest 键都不一致：400 且 scope=batch，不进入 redis_store。"""
+    session_id = str(uuid4())
+    store = RedisStoreSpy()
+    response = await _post_ingest(
+        _batch_with_items(
+            _item_with_latest(
+                local_seq=1,
+                session_id=session_id,
+                qualities={"1": 0},
+                timestamps={"1": 1721800000000, "slow": 1721800001000},
+            ),
+            _item_with_latest(
+                local_seq=2,
+                session_id=session_id,
+                qualities={"1": 0, "q_only": 8},
+                timestamps={"1": 1721800000000},
+            ),
+        ),
+        store,
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["status"] == "bad_request"
+    assert body["scope"] == "batch"
+    assert "slow" in body["reason"] or "q_only" in body["reason"]
+    assert "latest_qualities and latest_timestamps keys must match" in body["reason"]
+    assert store.process_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("qualities", "timestamps", "mismatched_key", "direction"),
+    [
+        ({"1": 0}, {"1": 1721800000000, "slow": 1721800001000}, "slow", "missing quality: ['slow']"),
+        ({"1": 0, "q_only": 8}, {"1": 1721800000000}, "q_only", "extra quality: ['q_only']"),
+        (None, {"1": 1721800000000, "slow": 1721800001000}, "slow", "missing quality: ['1', 'slow']"),
+    ],
+    ids=["timestamp_without_quality", "quality_without_timestamp", "timestamps_without_qualities"],
+)
+async def test_item_latest_key_mismatch_is_rejected_consumed(
+    qualities, timestamps, mismatched_key, direction
+) -> None:
+    """单条键不一致按 rejected_consumed 拒绝，同批其他记录仍接受。"""
+    session_id = str(uuid4())
+    store = RedisStoreSpy()
+    response = await _post_ingest(
+        _batch_with_items(
+            _item_with_latest(
+                local_seq=1,
+                session_id=session_id,
+                qualities={"1": 0, "2": 8},
+                timestamps={"1": 1721800000000, "2": 1721800000000},
+                values={"1": "12.5"},
+            ),
+            _item_with_latest(
+                local_seq=2,
+                session_id=session_id,
+                qualities=qualities,
+                timestamps=timestamps,
+            ),
+        ),
+        store,
+    )
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [item["local_seq"] for item in results] == [1, 2]
+    assert results[0]["status"] == "ack"
+    assert results[1]["status"] == "rejected_consumed"
+    assert mismatched_key in results[1]["reason"]
+    assert direction in results[1]["reason"]
+    assert store.process_calls == 1
+    assert store.entries[1][0].latest_timestamps is None
+
+
+@pytest.mark.asyncio
+async def test_matching_latest_keys_are_accepted() -> None:
+    """键一致（含仅质量点）仍然接受，并正常进入存储。"""
+    session_id = str(uuid4())
+    store = RedisStoreSpy()
+    response = await _post_ingest(
+        _batch_with_items(
+            _item_with_latest(
+                local_seq=1,
+                session_id=session_id,
+                qualities={"1": 0, "2": 8},
+                timestamps={"1": 1721800000000, "2": 1721800000000},
+                values={"1": "12.5"},
+            ),
+        ),
+        store,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "ack"
+    assert store.process_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_matched_latest_keys_missing_values_are_rejected_by_real_store() -> None:
+    """R1：键一致但没有值，真实 redis_store 不得 KeyError；该条 rejected_consumed，其余接受。"""
+    session_id = str(uuid4())
+    client = FakeRedis()
+    client.eval_result = json.dumps(["ack", "ack"])
+    store = IngestRedisStore(client, settings())
+    response = await _post_ingest(
+        _batch_with_items(
+            _item_with_latest(
+                local_seq=1,
+                session_id=session_id,
+                qualities={"1": 0},
+                timestamps={"1": 1721800000000},
+                values={"1": "12.5"},
+            ),
+            _item_with_latest(
+                local_seq=2,
+                session_id=session_id,
+                qualities={"orphan": 8},
+                timestamps={"orphan": 1721800001000},
+            ),
+        ),
+        store,
+    )
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [item["local_seq"] for item in results] == [1, 2]
+    assert results[0]["status"] == "ack"
+    assert results[1]["status"] == "rejected_consumed"
+    assert "orphan" in results[1]["reason"]
+    assert "latest keys missing values" in results[1]["reason"]
+    _script, numkeys, args = client.eval_call
+    sent = json.loads(args[numkeys + 2])
+    rejected = next(item for item in sent if item["local_seq"] == 2)
+    assert rejected["action"] == "consume_reject"
+    assert "orphan" not in rejected["latest_updates"]

@@ -8,7 +8,12 @@ MAX_TIMESTAMP_MS = 253402300799999
 
 
 class RequestValidationError(ValueError):
-    pass
+    # 400 的作用范围：``batch``（与具体记录无关）或 ``item``（某条记录本身非法）。
+    scope = "batch"
+
+
+class ItemValidationError(RequestValidationError):
+    scope = "item"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +69,24 @@ class UploadItem:
                 latest_qualities = _int_map(payload.get("latest_qualities"), "latest_qualities")
             if "latest_timestamps" in payload:
                 latest_timestamps = _int_map(payload["latest_timestamps"], "latest_timestamps")
+            # 高-3：坏质量且无值的点只出现在 latest_qualities / latest_timestamps（仅更新质量），
+            # 因此要求 latest_values 的键是它们的子集，且两者都给出时键集合一致。
+            # 只给 latest_timestamps，或两边键不一致时，只记到本条 envelope_error，并丢掉 latest 映射，
+            # 避免 redis_store 在 latest_updates[var_id] 上 KeyError 把整批打成 500。
+            # 只给 latest_qualities、不给时间戳是既有合法载荷，不在这里拒绝。
+            mismatch = _latest_key_mismatch_message(latest_qualities, latest_timestamps)
+            if mismatch:
+                raise RequestValidationError(mismatch)
+            # 键一致、但没有 latest_values，且这些键也不在 values 里：
+            # redis_store 不会补质量点，随后按下标写时间戳会 KeyError。
+            missing_values = _latest_keys_missing_values(
+                values, latest_values, latest_qualities, latest_timestamps
+            )
+            if missing_values:
+                raise RequestValidationError(f"latest keys missing values: {missing_values}")
             for label, mapping in (("latest_qualities", latest_qualities), ("latest_timestamps", latest_timestamps)):
-                if mapping is not None and (latest_values is None or set(mapping) != set(latest_values)):
-                    raise RequestValidationError(f"{label} keys must match latest_values")
+                if mapping is not None and (latest_values is None or not set(latest_values) <= set(mapping)):
+                    raise RequestValidationError(f"{label} keys must cover latest_values")
             if latest_qualities is not None and any(v < 0 or v > 65535 for v in latest_qualities.values()):
                 raise RequestValidationError("invalid latest quality")
             if latest_timestamps is not None and any(v < 0 or v > MAX_TIMESTAMP_MS for v in latest_timestamps.values()):
@@ -84,6 +104,10 @@ class UploadItem:
             values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
             qualities = None
             envelope_error = str(exc)
+            # 本条已拒绝：latest 映射不再交给 redis_store，避免整批 KeyError 变成 500。
+            latest_values = None
+            latest_qualities = None
+            latest_timestamps = None
 
         return cls(
             batch_id=batch_id,
@@ -123,7 +147,10 @@ class UploadBatch:
         raw_items = payload.get("items")
         if not isinstance(raw_items, list) or not raw_items:
             raise RequestValidationError("items must be a non-empty array")
-        items = tuple(UploadItem.from_dict(item) for item in raw_items if isinstance(item, dict))
+        try:
+            items = tuple(UploadItem.from_dict(item) for item in raw_items if isinstance(item, dict))
+        except RequestValidationError as exc:
+            raise ItemValidationError(str(exc)) from exc
         if len(items) != len(raw_items):
             raise RequestValidationError("each item must be an object")
         sessions = {item.upload_session_id for item in items}
@@ -132,6 +159,10 @@ class UploadBatch:
         seqs = [item.local_seq for item in items]
         if len(set(seqs)) != len(seqs):
             raise RequestValidationError("local_seq must be unique within a request")
+        # 每一条都是 latest 键不一致：整批无法按记录裁决，返回 scope=batch 的 400。
+        # 只有其中一部分坏时留给服务层按 rejected_consumed 逐条 ACK，其余照常接受。
+        if len(items) > 1 and all(_is_latest_key_mismatch(item) for item in items):
+            raise RequestValidationError(items[0].envelope_error or _LATEST_KEY_MISMATCH)
         return cls(node_uuid=node_uuid, request_id=request_id, items=items)
 
 
@@ -208,6 +239,53 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+_LATEST_KEY_MISMATCH = "latest_qualities and latest_timestamps keys must match"
+
+
+def _latest_key_mismatch_message(
+    qualities: dict[str, int] | None,
+    timestamps: dict[str, int] | None,
+) -> str | None:
+    """没给时间戳时不比较（只给质量是既有合法载荷）。
+    给了时间戳却缺质量，或两边键集合不同，都算出点名。
+    """
+    if timestamps is None:
+        return None
+    quality_keys = set(qualities or {})
+    timestamp_keys = set(timestamps)
+    if qualities is not None and quality_keys == timestamp_keys:
+        return None
+    missing_quality = sorted(timestamp_keys - quality_keys)
+    extra_quality = sorted(quality_keys - timestamp_keys)
+    return (
+        f"{_LATEST_KEY_MISMATCH}"
+        f" (missing quality: {missing_quality}; extra quality: {extra_quality})"
+    )
+
+
+def _is_latest_key_mismatch(item: UploadItem) -> bool:
+    return bool(item.envelope_error and item.envelope_error.startswith(_LATEST_KEY_MISMATCH))
+
+
+def _latest_keys_missing_values(
+    values: dict[str, str],
+    latest_values: dict[str, str] | None,
+    qualities: dict[str, int] | None,
+    timestamps: dict[str, int] | None,
+) -> list[str] | None:
+    """两边键一致且没有 latest_values 时，找出既不在 values 里的点。
+
+    latest_values 存在时，质量点由 redis_store 补上，不能在这里拒绝。
+    没给时间戳的旧载荷也不在这里拒绝。
+    """
+    if latest_values is not None or qualities is None or timestamps is None:
+        return None
+    if set(qualities) != set(timestamps):
+        return None
+    missing = sorted(key for key in timestamps if key not in values)
+    return missing or None
 
 
 def _string_map(value: Any, name: str) -> dict[str, str]:

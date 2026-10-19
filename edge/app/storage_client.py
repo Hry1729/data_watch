@@ -46,6 +46,15 @@ class StorageUnauthorized(StorageUnavailable):
     """
 
 
+class StorageRejected(StorageUnavailable):
+    """Edge Storage 以 HTTP 400 拒绝了命令（确定性错误，例如
+    ``no active assignment for device X``、磁盘水位拒写、checksum 不一致）。
+
+    重试不会改变结果，因此不重试；异常消息带上服务端 ``error``。它是
+    ``StorageUnavailable`` 的子类，只关心「本次调用没有成功」的既有调用方无需改动。
+    """
+
+
 def storage_base_url() -> str:
     return os.environ.get("DATAWATCH_EDGE_STORAGE_URL", "http://127.0.0.1:7073").rstrip("/")
 
@@ -435,6 +444,7 @@ class EdgeStorageClient:
         if self._token:
             headers[IPC_TOKEN_HEADER] = self._token
         last_error: Exception | None = None
+        last_reason: str | None = None
         for _attempt in range(2):
             try:
                 with self._request_lock:
@@ -443,6 +453,13 @@ class EdgeStorageClient:
                         content=encoded,
                         headers=headers,
                     )
+                if response.is_error:
+                    # 先取服务端信封里的真实原因，再按状态码分类。
+                    last_reason = (
+                        f"HTTP {response.status_code} {action}: {_error_reason(response)}"
+                    )
+                    if response.status_code == 400:
+                        raise StorageRejected(f"Edge Storage rejected {last_reason}")
                 response.raise_for_status()
                 envelope = msgspec.json.decode(response.content)
                 if not isinstance(envelope, dict):
@@ -474,7 +491,8 @@ class EdgeStorageClient:
                 last_error = exc
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 last_error = exc
-        raise StorageUnavailable(f"Edge Storage unavailable: {last_error}") from last_error
+        detail = last_reason if isinstance(last_error, httpx.HTTPStatusError) else last_error
+        raise StorageUnavailable(f"Edge Storage unavailable: {detail}") from last_error
 
     @staticmethod
     def _record(data: dict[str, Any]) -> OutboxRecord:
@@ -511,3 +529,14 @@ class EdgeStorageClient:
             old_session_id=str(data["old_session_id"]),
             new_session_id=str(data["new_session_id"]),
         )
+
+
+def _error_reason(response: httpx.Response) -> str:
+    """服务端错误信封 ``{"ok": false, "error": "..."}`` 中的 ``error``；取不到时退回响应文本。"""
+    try:
+        envelope = msgspec.json.decode(response.content)
+    except msgspec.DecodeError:
+        envelope = None
+    if isinstance(envelope, dict) and envelope.get("error"):
+        return str(envelope["error"])
+    return response.text[:500] or response.reason_phrase

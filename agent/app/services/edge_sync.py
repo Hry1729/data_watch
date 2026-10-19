@@ -266,12 +266,21 @@ class EdgeSyncService:
             transport=self._transport,
         )
         outbox = self._local_store.outbox_status()
-        storage = (
-            await asyncio.to_thread(self._config_store.status)
-            if hasattr(self._config_store, "status")
-            else {}
-        )
-        applied = await asyncio.to_thread(self._config_store.revision)
+        # D9：Storage 重启/迁移/繁忙时 status/revision 会失败；此时仍发降级心跳
+        # （storageStatus=unavailable，appliedRevision 取 config.toml 记录），不让节点在中心"离线"。
+        storage_error = ""
+        try:
+            storage = (
+                await asyncio.to_thread(self._config_store.status)
+                if hasattr(self._config_store, "status")
+                else {}
+            )
+            applied = await asyncio.to_thread(self._config_store.revision)
+        except Exception as exc:
+            logger.warning("Edge Storage status unavailable, sending degraded heartbeat: %s", exc)
+            storage_error = str(exc) or type(exc).__name__
+            storage = {}
+            applied = int(edge.get("applied_revision") or 0)
         heartbeat = await client.heartbeat(
             {
                 "appliedRevision": applied,
@@ -281,7 +290,7 @@ class EdgeSyncService:
                 "outboxWatermark": outbox["watermark"],
                 "outboxDroppedRecords": outbox["dropped_records"],
                 "collectorStatus": self._process_status("collector"),
-                "storageStatus": self._process_status("storage"),
+                "storageStatus": "unavailable" if storage_error else self._process_status("storage"),
                 "uploaderStatus": self._process_status("uploader"),
                 "storageQueueDepth": int(storage.get("writer_queue_depth") or 0),
                 "storageCommitP99Ms": float(storage.get("commit_p99_ms") or 0),
@@ -290,9 +299,13 @@ class EdgeSyncService:
                 "lastError": str(edge.get("last_sync_error") or ""),
             }
         )
+        desired = int(heartbeat.get("desiredRevision") or 0)
+        if storage_error:
+            # Storage 不可用时不做排程刷新/配置下发，下一轮 Storage 恢复后再收敛。
+            self._record_sync(status="approved", error=storage_error, applied_revision=applied)
+            return {"status": "approved", "appliedRevision": applied, "desiredRevision": desired}
         center_time_ms = int(heartbeat.get("centerTimeMs") or int(time.time() * 1000))
         await asyncio.to_thread(self._config_store.refresh_schedule, center_time_ms)
-        desired = int(heartbeat.get("desiredRevision") or 0)
         if desired != applied:
             snapshot = await client.config(applied)
             if snapshot.get("changed"):

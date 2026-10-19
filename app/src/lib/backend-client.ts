@@ -75,7 +75,7 @@ import {
   isAllowedBackendMethod,
   isAllowedBackendPath,
   MAX_BACKEND_REQUEST_BYTES,
-  normalizeBackendOrigin,
+  validateBackendOrigin,
   requestBodyByteLength,
 } from "@/lib/backend-proxy-policy";
 import { stripClientPassword } from "@/lib/password-contract";
@@ -226,6 +226,11 @@ export interface BackendClient {
 
 let _backendBaseUrl = import.meta.hot?.data.backendBaseUrl ?? "";
 let _backendOriginReady: Promise<void> = Promise.resolve();
+let _backendBaseUrlError: string | null = null;
+
+function backendUrlMissingMessage(): string {
+  return _backendBaseUrlError ?? "后端地址未配置";
+}
 
 if (import.meta.hot) {
   import.meta.hot.dispose((data) => {
@@ -234,8 +239,11 @@ if (import.meta.hot) {
 }
 
 export function setBackendBaseUrl(url: string) {
-  const normalized = normalizeBackendOrigin(url || "");
+  const check = validateBackendOrigin(url || "");
+  const normalized = check.origin;
   _backendBaseUrl = normalized ?? "";
+  // M2：非法地址不再静默置空，保留原因供后续请求报错
+  _backendBaseUrlError = url && check.error ? `后端地址无效（${url}）：${check.error}` : null;
   if (!normalized) {
     _backendOriginReady = Promise.resolve();
     return;
@@ -248,7 +256,7 @@ export function setBackendBaseUrl(url: string) {
 
 export function getBackendWebSocketUrl(path = "/api/device-monitor/ws/realtime-push") {
   if (!_backendBaseUrl) {
-    throw { type: "network_error", message: "后端地址未配置" } satisfies AppError;
+    throw { type: "network_error", message: backendUrlMissingMessage() } satisfies AppError;
   }
   const base = _backendBaseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
@@ -281,7 +289,7 @@ async function backendFetchOnce<T>(
 ): Promise<T> {
   if (!_backendBaseUrl) {
     // 地址未就绪（运行期配置尚未注入或引导未完成）
-    throw { type: "network_error", message: "后端地址未配置" } satisfies AppError;
+    throw { type: "network_error", message: backendUrlMissingMessage() } satisfies AppError;
   }
   // backend 登录返回的 token 已带 "Bearer " 前缀，规范化避免出现 "Bearer Bearer ..."
   const authorization = token
@@ -358,7 +366,7 @@ async function backendDownload(path: string, token: string, signal?: AbortSignal
 
 async function backendDownloadOnce(path: string, token: string, signal?: AbortSignal) {
   if (!_backendBaseUrl) {
-    throw { type: "network_error", message: "后端地址未配置" } satisfies AppError;
+    throw { type: "network_error", message: backendUrlMissingMessage() } satisfies AppError;
   }
   const authorization = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
   let result: [number, number[], string | null];

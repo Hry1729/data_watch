@@ -150,7 +150,8 @@
             <div class="point-card-address">{{ point.ioAddress }}</div>
             <div
               class="point-card-value"
-              :style="{ color: isQualityAbnormal(realtimeQuality.get(point.varSeq)) ? '#d44f63' : getPointColor(point.varSeq) }"
+              :class="{ 'is-absent': isPointValueAbsent(point) }"
+              :style="pointValueStyle(point)"
             >
               {{ formatPointValue(point) }}
             </div>
@@ -308,6 +309,12 @@ import { useRoute } from 'vue-router'
 import { useUserStore } from '@/store/modules/user'
 import { expandRealtimeSamples, type RealtimeSample } from '@/utils/realtime-samples'
 import { isQualityAbnormal } from '@/utils/realtime-quality'
+import {
+  formatMissingValueWithQuality,
+  formatStoredPointValue,
+  isRealtimeValueAbsent,
+  normalizeWsPointValue
+} from '@/utils/realtime-point-value'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
@@ -730,14 +737,24 @@ const getPointUnit = (point: PointInfo) => {
   return ''
 }
 
+const isPointValueAbsent = (point: PointInfo) =>
+  isRealtimeValueAbsent(realtimeValues.value.get(point.varSeq))
+
 const formatPointValue = (point: PointInfo) => {
   const value = realtimeValues.value.get(point.varSeq)
-  if (value === undefined) return '--'
-  const unit = getPointUnit(point)
-  if (typeof value === 'number') {
-    return `${value.toFixed(2)}${unit ? ' ' + unit : ''}`
+  if (isRealtimeValueAbsent(value)) {
+    return formatMissingValueWithQuality(realtimeQuality.value.get(point.varSeq))
   }
-  return `${value}${unit ? ' ' + unit : ''}`
+  return formatStoredPointValue(value, getPointUnit(point))
+}
+
+const pointValueStyle = (point: PointInfo) => {
+  if (isPointValueAbsent(point)) return undefined
+  return {
+    color: isQualityAbnormal(realtimeQuality.value.get(point.varSeq))
+      ? '#d44f63'
+      : getPointColor(point.varSeq)
+  }
 }
 
 const formatTimestamp = (now: Date) => {
@@ -1332,19 +1349,6 @@ const queuePerspectiveUpdate = (records: RealtimeDataRecord[]) => {
   })
 }
 
-const normalizeWsPointValue = (dataType: string | undefined, value: unknown) => {
-  const type = (dataType || '').toUpperCase()
-  if (type === 'BOOL') {
-    if (typeof value === 'boolean') return value
-    return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase())
-  }
-  if (['INT', 'DINT', 'WORD', 'DWORD', 'REAL', 'FLOAT'].includes(type)) {
-    const num = Number(value)
-    return Number.isFinite(num) ? num : String(value ?? '')
-  }
-  return value as string | number | boolean
-}
-
 // WebSocket 消息处理
 const handleWsMessage = (payload: Record<string, unknown>) => {
   if (payload.action === 'pong' || payload.type === 'pong') return
@@ -1459,12 +1463,17 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
     const quality = item.quality as number | undefined
 
     if (varSeq !== undefined) {
+      if (!isRealtimeValueAbsent(value)) {
+        if (writeImmediate) {
+          realtimeValues.value.set(varSeq, value as number | string)
+        } else {
+          pendingValues.set(varSeq, value as number | string)
+        }
+      }
       if (writeImmediate) {
-        realtimeValues.value.set(varSeq, value as number | string)
         if (typeof quality === 'number') realtimeQuality.value.set(varSeq, quality)
-      } else {
-        pendingValues.set(varSeq, value as number | string)
-        if (typeof quality === 'number') pendingQuality.set(varSeq, quality)
+      } else if (typeof quality === 'number') {
+        pendingQuality.set(varSeq, quality)
       }
 
       // 保留收到的新采样，包括未变化的值；latest推送仍不等于完整历史序列。
@@ -2309,6 +2318,11 @@ watch(separateBoolChart, async () => {
 .point-card-value {
   font-size: 20px;
   font-weight: 600;
+
+  &.is-absent {
+    color: var(--art-gray-600);
+    font-weight: 500;
+  }
 }
 
 .empty-points {

@@ -21,9 +21,9 @@ def install_account_commands(
         ctx: typer.Context,
         password_stdin: bool = typer.Option(False, "--password-stdin"),
     ) -> None:
-        def operation(session) -> dict[str, bool]:
+        def operation(session) -> dict:
             old_password, new_password = _read_passwords(password_stdin)
-            session.request(
+            result = session.request(
                 "POST",
                 "/api/user/password/change",
                 json_body={
@@ -31,6 +31,9 @@ def install_account_commands(
                     "newPassword": new_password,
                 },
             )
+            # --dry-run 没有真正发送请求：返回（已脱敏的）预览结果，不报告"已修改"（M7）。
+            if isinstance(result, dict) and result.get("dryRun") is True:
+                return result
             return {"passwordChanged": True}
 
         run_authorized(

@@ -10,7 +10,8 @@
 现在的语义：
 - ``MISSING_RESULT``           → 显式发出 value=None + QUALITY_BAD 的标记点（保持既有行为）
 - ``DriverSample(None, GOOD)`` → 本轮无新样本，静默跳过（不计数）
-- ``DriverSample(None, 坏质量)``→ **可见**：计数 + 告警，仍不发点（不伪造值）
+- ``DriverSample(None, 坏质量)``→ **可见**：计数 + 告警，发出 value=None 的质量点
+  （高-3：只更新 latest 质量，不进 stream，不伪造值）
 - 裸 ``None``                  → 归一化为坏质量后按上一行走（不再伪装成 GOOD）
 - 合法零值（0 / 0.0 / False / ""）→ QUALITY_GOOD 且**原值保留**，绝不与 None 混淆
 """
@@ -119,7 +120,9 @@ def test_declared_read_failure_is_visible_but_not_fabricated(quality: int) -> No
         {},
         native_quality=True,
     )
-    assert points == [], "读取失败不得伪造出点位值"
+    assert len(points) == 1, "读取失败必须以质量点可见"
+    assert points[0].value is None, "读取失败不得伪造出点位值"
+    assert points[0].quality == quality
     assert metrics.increments.get("missing_sample_quality_count") == 1, "失败必须可见"
 
 
@@ -128,7 +131,9 @@ def test_bare_none_through_parse_result_is_visible() -> None:
     points = _executor(metrics)._parse_result(
         "DEV1", _ScanTask({"v1": None}), {}, native_quality=False
     )
-    assert points == []
+    assert len(points) == 1
+    assert points[0].value is None
+    assert points[0].quality == QUALITY_BAD
     assert metrics.increments.get("missing_sample_quality_count") == 1
 
 

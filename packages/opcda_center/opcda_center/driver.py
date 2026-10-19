@@ -82,7 +82,7 @@ class OpcDaCenterDriver(BaseDriver):
         # 使用连接池获取客户端（同一代理端口共享连接）
         pool = get_ipc_pool()
         self._ipc_client = await pool.get_client(proxy_host, proxy_port)
-        self._ipc_client.timeout = self._timeout
+        # 客户端按代理端口共享：超时按请求传入，不写回共享对象（高-5）
         self._owns_client = False  # 标记客户端来自连接池，不要在 disconnect 时关闭
 
         # 验证必需配置
@@ -100,6 +100,7 @@ class OpcDaCenterDriver(BaseDriver):
             self._opc_server,
             self._vm_host,
             self._update_rate_ms,
+            timeout=self._timeout,
         )
         if not success:
             raise ConnectionError(
@@ -161,6 +162,7 @@ class OpcDaCenterDriver(BaseDriver):
                     item_ids,
                     opc_server=self._opc_server,
                     vm_host=self._vm_host,
+                    timeout=self._timeout,
                 )
                 return results
             except Exception as e:

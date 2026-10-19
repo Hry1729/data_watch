@@ -119,14 +119,14 @@ async def test_mixed_ack_and_seq_reject_commits_ack_before_switching(
     assert rows[confirmed]["state"] == "sent"
     assert rows[confirmed]["upload_session_id"] == old_session
     assert rows[confirmed]["local_seq"] == 1
-    # 2) 未确认项被迁到新会话并重排为 1，仍在本地。
-    assert rows[unconfirmed]["state"] == "pending"
+    # 2) 未确认项被迁到新会话并重排为 1，仍在本地（退避跨切换保留，Edge 2/15）。
+    assert rows[unconfirmed]["state"] == "retry_wait"
     assert rows[unconfirmed]["upload_session_id"] == store.current_session_id()
     assert rows[unconfirmed]["upload_session_id"] != old_session
     assert rows[unconfirmed]["local_seq"] == 1
     # 3) 数据守恒 + 会话切换已完成。
     assert sum(store.stats().values()) == 2
-    assert store.stats() == {"sent": 1, "pending": 1}
+    assert store.stats() == {"sent": 1, "retry_wait": 1}
     assert store.pending_session_switch() is None
     assert store.operational_status()["sent_records_total"] == 1
     store.close()

@@ -50,8 +50,9 @@ def _normalize_driver_sample(
 
     Returns:
         (value, quality, timestamp, protocol_quality) 四元组。
-        value 为 None 时调用方应跳过不构造 DataPoint，因为 writer v2 契约
-        无法表达"只有质量没有数值"的点。
+        value 为 None 且质量为 GOOD 时调用方应跳过（本轮无样本）；value 为 None 且
+        坏质量时调用方发出只更新 latest 质量的点（不进 stream，writer v2 契约无法表达
+        "只有质量没有数值"的历史点）。
 
     Notes:
         - 裸值走快路径，不构造 DriverSample，避免给普通驱动加分配开销。
@@ -290,7 +291,8 @@ class TaskExecutor:
                 self._total_errors += 1
                 self._metrics.increment("redis_write_error_count")
                 logger.error(
-                    "Redis write failed after successful read for task %s device %s: %s",
+                    "%s write failed after successful read for task %s device %s: %s",
+                    self._sink_name(),
                     task.task_name,
                     device.device_id,
                     exc,
@@ -524,7 +526,7 @@ class TaskExecutor:
             for p in points:
                 var_points[p.variable_id] = p
 
-            scan_rate_ms = int(scan_task.scan_rate * 1000)
+            scan_rate_ms = round(scan_task.scan_rate * 1000)
             device_code = device.device_id
             device_type = device.device_type.lower()
 
@@ -545,13 +547,22 @@ class TaskExecutor:
                 by_group[gc][var_id] = (point, var.data_type, var.is_storage)
 
             for group_code, var_data in by_group.items():
-                # latest Hash：所有点位
+                # latest Hash：所有点位。value=None（坏质量无值）只写 t/q，不带 "v"：
+                # 不伪造 0 / ""；边缘 outbox 按 '"v" in field' 把它排除出 latest_values，
+                # 但 latest_qualities / latest_timestamps 照常上传。
                 fields = {
-                    var_id: {
-                        "v": self._format_point_value(point.value),
-                        "t": self._timestamp_to_millis(point.timestamp),
-                        "q": int(getattr(point, "quality", 0)),
-                    }
+                    var_id: (
+                        {
+                            "v": self._format_point_value(point.value),
+                            "t": self._timestamp_to_millis(point.timestamp),
+                            "q": int(getattr(point, "quality", 0)),
+                        }
+                        if point.value is not None
+                        else {
+                            "t": self._timestamp_to_millis(point.timestamp),
+                            "q": int(getattr(point, "quality", 0)),
+                        }
+                    )
                     for var_id, (point, _, _) in var_data.items()
                 }
                 ts_ms = max(field["t"] for field in fields.values())
@@ -567,6 +578,7 @@ class TaskExecutor:
                     "values": {
                         var_id: self._format_point_value(point.value)
                         for var_id, (point, _, _) in var_data.items()
+                        if point.value is not None
                     },
                 }
                 # stream：过滤 STRING 类型
@@ -592,8 +604,14 @@ class TaskExecutor:
 
         except Exception as exc:
             # 不在此吞掉异常：交由 execute() 的写入分支统一计错并记录 summary
-            logger.error("Redis write failed for device %s: %s", device.device_id, exc)
+            logger.error("%s write failed for device %s: %s", self._sink_name(), device.device_id, exc)
             raise
+
+    def _sink_name(self) -> str:
+        """日志用的实际写出目标：边缘模式（EdgeOutboxWriter）是 Edge Storage，其余是 Redis。"""
+        if getattr(self._redis_writer, "storage_path", None) == "sqlite_outbox":
+            return "Edge Storage"
+        return "Redis"
 
     @staticmethod
     def _timestamp_to_millis(timestamp: Any) -> int:
@@ -653,16 +671,17 @@ class TaskExecutor:
                         # quality=GOOD ⇒ 视为本轮无样本（契约：不进入历史），静默跳过；
                         # 其余（BAD / STALE / NOT_CONNECTED / CONFIG_DECODE_ERROR）必须**可见**：
                         # 既不能像修复前那样无条件 continue 把失败语义丢掉，也不得伪造为 0。
-                        if quality != QUALITY_GOOD:
-                            self._metrics.increment("missing_sample_quality_count")
-                            logger.warning(
-                                "Variable %s on device %s produced no value with quality %s; "
-                                "keeping previous latest and not fabricating a value",
-                                variable.variable_id,
-                                device_id,
-                                quality,
-                            )
-                        continue
+                        # 高-3：发出 value=None 的点，_write_to_redis 只写质量（latest-only，不进 stream）。
+                        if quality == QUALITY_GOOD:
+                            continue
+                        self._metrics.increment("missing_sample_quality_count")
+                        logger.warning(
+                            "Variable %s on device %s produced no value with quality %s; "
+                            "writing quality-only latest, not fabricating a value",
+                            variable.variable_id,
+                            device_id,
+                            quality,
+                        )
                     points.append(DataPoint(
                         device_id=device_id,
                         variable_id=variable.variable_id,
@@ -694,7 +713,9 @@ class TaskExecutor:
                 value, quality, timestamp, protocol_quality = _normalize_driver_sample(
                     val, now, native_quality
                 )
-                if value is None:
+                # 高-3：value=None + 坏质量不再丢弃，发出质量点（latest-only，不伪造值）；
+                # value=None + GOOD 仍视为本轮无样本。
+                if value is None and quality == QUALITY_GOOD:
                     continue
                 point = DataPoint(
                     device_id=device_id,

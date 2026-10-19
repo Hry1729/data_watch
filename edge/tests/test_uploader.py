@@ -180,7 +180,13 @@ async def test_seq_reject_switches_session_without_discarding_backlog(tmp_path: 
 
     assert store.current_session_id() != old_session
     assert store.pending_session_switch() is None
-    assert store.stats() == {"pending": 2}
+    # 退避跨 session 切换保留（Edge 2/15），不会在下一周期立即重放。
+    assert store.stats() == {"retry_wait": 2}
+    with store._lock:
+        assert all(
+            row["next_retry_at"] is not None
+            for row in store._connection.execute("SELECT next_retry_at FROM outbox")
+        )
     with store._lock:
         rows = store._connection.execute(
             "SELECT local_seq, upload_session_id FROM outbox ORDER BY local_seq"
@@ -346,7 +352,7 @@ async def test_batch_contract_rejection_isolates_single_bad_record(tmp_path):
         items = json.loads(request.content)["items"]
         calls.append([item["local_seq"] for item in items])
         if any(item["local_seq"] == 2 for item in items):
-            return httpx.Response(400, text="bad item")
+            return httpx.Response(400, json={"status": "bad_request", "reason": "bad item", "scope": "item"})
         return httpx.Response(200, json={"results": [dict(batch_id=item["batch_id"], upload_session_id=item["upload_session_id"], local_seq=item["local_seq"], status="ack", durability="redis-aof") for item in items]})
     client = httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler))
     uploader = Uploader(store, replace(settings(tmp_path), retry_base_ms=0), client=client, signer=FakeSigner())
@@ -362,7 +368,7 @@ async def test_batch_contract_rejection_isolates_single_bad_record(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["seq_reject", "commit_unknown"])
+@pytest.mark.parametrize("status", ["seq_reject"])
 async def test_uncertain_head_never_quarantines_following_records(tmp_path, status):
     import json
     from unittest.mock import AsyncMock
@@ -424,3 +430,170 @@ async def test_oversized_head_switches_session_before_good_frame(tmp_path):
             assert rows[1]["reject_count"] == cfg.max_attempts - 1
         finally:
             store.close()
+
+
+def _ack_all(items, status="ack"):
+    return {"results": [dict(batch_id=item["batch_id"], upload_session_id=item["upload_session_id"], local_seq=item["local_seq"], status=status, durability="redis-aof") for item in items]}
+
+
+@pytest.mark.asyncio
+async def test_commit_unknown_retries_same_session_with_backoff_without_reject_budget(tmp_path):
+    """Edge 2/15：commit_unknown 不切换 session、不清退避、不消耗 reject_count。"""
+    import json
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 2)
+    cfg = settings(tmp_path)
+    # 预算只差一次就耗尽：旧实现会把首条判 dead。
+    store._connection.execute("UPDATE outbox SET reject_count=?", (cfg.max_attempts - 1,))
+    session_id = store.current_session_id()
+    paths = []
+    def handler(request):
+        paths.append(request.url.path)
+        items = json.loads(request.content)["items"]
+        return httpx.Response(200, json={"results": [dict(batch_id=items[0]["batch_id"], upload_session_id=items[0]["upload_session_id"], local_seq=items[0]["local_seq"], status="commit_unknown", reason="Redis AOF persistence not confirmed")]})
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, cfg, client=client, signer=FakeSigner())
+        await uploader.run_cycle()
+        # 退避生效：紧接着的周期不会再发请求。
+        await uploader.run_cycle()
+    assert paths == ["/ingest"]
+    assert store.current_session_id() == session_id
+    assert store.pending_session_switch() is None
+    rows = store._connection.execute("SELECT local_seq, upload_session_id, state, reject_count, attempt_count, last_error, next_retry_at FROM outbox ORDER BY local_seq").fetchall()
+    assert [row["local_seq"] for row in rows] == [1, 2]
+    assert {row["upload_session_id"] for row in rows} == {session_id}
+    assert [row["state"] for row in rows] == ["retry_wait", "retry_wait"]
+    assert [row["reject_count"] for row in rows] == [cfg.max_attempts - 1] * 2
+    assert [row["attempt_count"] for row in rows] == [1, 1]
+    assert {row["last_error"] for row in rows} == {"commit_unknown"}
+    assert all(row["next_retry_at"] is not None for row in rows)
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_rejected_consumed_latest_mismatch_is_dead_and_not_retried(tmp_path):
+    """latest 键不一致的记录被中心 rejected_consumed 后，边缘记 dead，不再重试。"""
+    import json
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 2)
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        items = json.loads(request.content)["items"]
+        results = []
+        for item in items:
+            if item["local_seq"] == 2:
+                results.append(dict(
+                    batch_id=item["batch_id"],
+                    upload_session_id=item["upload_session_id"],
+                    local_seq=item["local_seq"],
+                    status="rejected_consumed",
+                    reason="malformed_envelope:latest_qualities and latest_timestamps keys must match (missing quality: ['slow'])",
+                ))
+            else:
+                results.append(dict(
+                    batch_id=item["batch_id"],
+                    upload_session_id=item["upload_session_id"],
+                    local_seq=item["local_seq"],
+                    status="ack",
+                    durability="redis-aof",
+                ))
+        return httpx.Response(200, json={"results": results})
+
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+        await uploader.run_cycle()
+        await uploader.run_cycle()
+
+    assert paths == ["/ingest"]
+    rows = store._connection.execute(
+        "SELECT local_seq, state, last_error FROM outbox ORDER BY local_seq"
+    ).fetchall()
+    assert rows[0]["state"] == "sent"
+    assert rows[1]["state"] == "dead"
+    assert "slow" in (rows[1]["last_error"] or "")
+    assert "retry_wait" not in {row["state"] for row in rows}
+    store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        lambda: httpx.Response(400, json={"status": "bad_request", "reason": "node_uuid must be a UUID", "scope": "batch"}),
+        lambda: httpx.Response(400, text="<html>400 Bad Request</html>"),
+    ],
+    ids=["center-batch-scope", "proxy-without-scope"],
+)
+async def test_batch_level_400_never_consumes_record_reject_budget(tmp_path, response):
+    """Edge 6：批级 400 与记录无关，不消耗 reject_count，单条也不会被判 dead。"""
+    from dataclasses import replace
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 1)
+    cfg = replace(settings(tmp_path), max_attempts=2, retry_base_ms=0)
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(lambda request: response())) as client:
+        uploader = Uploader(store, cfg, client=client, signer=FakeSigner())
+        for _ in range(4):
+            await uploader.run_cycle()
+    row = store._connection.execute("SELECT state, reject_count, attempt_count, last_error, http_status FROM outbox").fetchone()
+    assert row["state"] == "retry_wait"
+    assert row["reject_count"] == 0
+    assert row["attempt_count"] == 4
+    assert row["last_error"] == "http_400_batch_rejected"
+    assert row["http_status"] == 400
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_level_400_halves_batch_until_center_accepts(tmp_path):
+    """中心调低 max_batch_items 时（批级 400），批次减半直到被接受，不判 dead。"""
+    import json
+    from dataclasses import replace
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 4)
+    calls = []
+    def handler(request):
+        items = json.loads(request.content)["items"]
+        calls.append(len(items))
+        if len(items) > 1:
+            return httpx.Response(400, json={"status": "bad_request", "reason": "batch exceeds max_batch_items", "scope": "batch"})
+        return httpx.Response(200, json=_ack_all(items))
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, replace(settings(tmp_path), retry_base_ms=0), client=client, signer=FakeSigner())
+        for _ in range(3):
+            await uploader.run_cycle()
+    assert calls[:3] == [4, 2, 1]
+    assert store.stats() == {"sent": 4}
+    assert store._connection.execute("SELECT MAX(reject_count) FROM outbox").fetchone()[0] == 0
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_413_halves_batch_and_logs_single_oversized_record(tmp_path, caplog):
+    """Edge 18：413 时批次减半；单条仍 413 时打出明确错误，记录保留重试、不判 dead。"""
+    import json
+    from dataclasses import replace
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 4)
+    calls = []
+    def handler(request):
+        items = json.loads(request.content)["items"]
+        calls.append([item["local_seq"] for item in items])
+        if len(items) > 1 or items[0]["local_seq"] == 3:
+            return httpx.Response(413, json={"detail": "Request body too large"})
+        return httpx.Response(200, json=_ack_all(items))
+    caplog.set_level(logging.WARNING)
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, replace(settings(tmp_path), retry_base_ms=0, max_attempts=2), client=client, signer=FakeSigner())
+        for _ in range(5):
+            await uploader.run_cycle()
+    assert calls[:4] == [[1, 2, 3, 4], [1, 2], [1], [2]]
+    assert [3] in calls
+    rows = store._connection.execute("SELECT local_seq, state, reject_count, http_status FROM outbox ORDER BY local_seq").fetchall()
+    assert [(row["local_seq"], row["state"]) for row in rows] == [(1, "sent"), (2, "sent"), (3, "retry_wait"), (4, "retry_wait")]
+    assert rows[2]["reject_count"] == 0
+    assert rows[2]["http_status"] == 413
+    assert "413 for a single record" in caplog.text
+    store.close()
+

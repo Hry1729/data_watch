@@ -106,8 +106,28 @@ class OpcDaIpcClient:
                     self._connected = False
                     logger.info("IPC 客户端已断开")
 
-    async def _send_request(self, request: IpcRequest) -> IpcResponse:
-        """发送请求并接收响应"""
+    def _discard_connection(self) -> None:
+        """丢弃当前连接：缓冲区里可能残留上一请求的响应，绝不能再复用。"""
+        self._connected = False
+        writer = self._writer
+        self._writer = None
+        self._reader = None
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def _send_request(
+        self, request: IpcRequest, timeout: Optional[float] = None
+    ) -> IpcResponse:
+        """发送请求并接收响应
+
+        timeout 按请求传入（None 用 self.timeout）：连接按代理端口被多个设备共享，
+        不能把某个设备的超时写回共享对象。
+        """
+        if timeout is None:
+            timeout = self.timeout
         async with self._lock:
             if not self.is_connected:
                 raise ConnectionError("未连接到代理进程")
@@ -119,6 +139,9 @@ class OpcDaIpcClient:
             # 协议格式: 4字节长度 + JSON 数据
             length_header = len(request_bytes).to_bytes(4, byteorder="big")
 
+            # 高-5：任何非正常返回（超时、取消、帧错误、解析失败、request_id 不符）
+            # 都丢弃连接：请求可能已发出、响应留在缓冲区，复用会让之后每次都读到上一次的响应。
+            completed = False
             try:
                 assert self._reader is not None
                 assert self._writer is not None
@@ -128,34 +151,39 @@ class OpcDaIpcClient:
                 # 读取响应长度。同一 StreamReader 不支持并发读取，必须由 _lock 串行化。
                 response_length_bytes = await asyncio.wait_for(
                     self._reader.readexactly(4),
-                    timeout=self.timeout,
+                    timeout=timeout,
                 )
                 response_length = int.from_bytes(response_length_bytes, byteorder="big")
                 if response_length <= 0 or response_length > _MAX_RESPONSE_BYTES:
-                    self._connected = False
                     raise ValueError(f"响应帧长非法: {response_length}")
 
                 # 读取响应数据
                 response_bytes = await asyncio.wait_for(
                     self._reader.readexactly(response_length),
-                    timeout=self.timeout,
+                    timeout=timeout,
                 )
                 response_json = json.loads(response_bytes.decode("utf-8"))
                 response = IpcResponse.from_dict(response_json)
+                if response.request_id != request.request_id:
+                    raise ConnectionError(
+                        f"响应 request_id 不匹配: expected={request.request_id} "
+                        f"got={response.request_id}"
+                    )
 
+                completed = True
                 return response
 
             except asyncio.TimeoutError:
-                self._connected = False
                 raise TimeoutError(f"请求超时: {request.request_type}")
             except asyncio.IncompleteReadError as e:
-                self._connected = False
                 raise ConnectionError(f"连接中断(读取不完整): {e}")
             except json.JSONDecodeError as e:
                 raise ValueError(f"响应解析失败: {e}")
             except ConnectionResetError as e:
-                self._connected = False
                 raise ConnectionError(f"连接被重置: {e}")
+            finally:
+                if not completed:
+                    self._discard_connection()
 
     async def ping(self) -> bool:
         """心跳检测"""
@@ -174,6 +202,7 @@ class OpcDaIpcClient:
         opc_server: str,
         vm_host: str,
         update_rate_ms: int = 500,
+        timeout: Optional[float] = None,
     ) -> bool:
         """
         连接到远程 OPC DA 服务器
@@ -182,6 +211,7 @@ class OpcDaIpcClient:
             opc_server: OPC Server ProgID
             vm_host: OPC VM 主机地址
             update_rate_ms: 订阅更新速率（毫秒）
+            timeout: 本次请求超时（秒），None 用客户端默认值
 
         Returns:
             是否连接成功
@@ -195,7 +225,7 @@ class OpcDaIpcClient:
         )
 
         try:
-            response = await self._send_request(request)
+            response = await self._send_request(request, timeout=timeout)
             if response.status == ResponseStatus.OK:
                 logger.info(
                     "已连接到 OPC DA 服务器: %s@%s",
@@ -227,6 +257,7 @@ class OpcDaIpcClient:
         item_ids: List[str],
         opc_server: Optional[str] = None,
         vm_host: Optional[str] = None,
+        timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         读取多个点位
@@ -235,6 +266,7 @@ class OpcDaIpcClient:
             item_ids: 点位 ID 列表
             opc_server: OPC Server ProgID（可选，如未连接需提供）
             vm_host: OPC VM 主机地址（可选，如未连接需提供）
+            timeout: 本次请求超时（秒），None 用客户端默认值
 
         Returns:
             {item_id: value} 字典，失败时值为 None
@@ -258,7 +290,7 @@ class OpcDaIpcClient:
         )
 
         try:
-            response = await self._send_request(request)
+            response = await self._send_request(request, timeout=timeout)
 
             if response.status != ResponseStatus.OK:
                 logger.error("读取点位失败: %s", response.error)

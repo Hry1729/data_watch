@@ -272,7 +272,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 continue
 
             group_code = getattr(var, "group_code", "g001")
-            scan_rate_ms = max(1, int(float(getattr(var, "scan_rate", 1.0)) * 1000))
+            scan_rate_ms = max(1, round(float(getattr(var, "scan_rate", 1.0)) * 1000))
             ts_ms = _timestamp_to_millis(point.timestamp)
             device_code = getattr(device, "device_id", device_id)
             device_type = str(getattr(device, "device_type", "")).lower()
@@ -342,31 +342,26 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             frame_label = f"{device_code}/{group_code}/{scan_rate_ms}ms"
 
             def write_frame() -> None:
-                # 写顺序：window -> stream -> latest。latest 必须最后写，
+                # 写顺序：window+stream -> latest。latest 必须最后写，
                 # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
+                # 高-1：与 executor 主路径一致，write_window_stream 与 write_latest 在同一线程配对；
+                # EdgeOutboxWriter 据此一帧只做一次 commit_frame，latest 带全部点（含 STRING / is_storage=0）。
                 try:
-                    self.redis_writer.write_window(device_code, group_code, scan_rate_ms, frame)
+                    self.redis_writer.write_window_stream(
+                        device_code,
+                        device_type,
+                        group_code,
+                        scan_rate_ms,
+                        frame_data["ts"],
+                        config_version,
+                        frame,
+                        frame_data["stream_values"],
+                        frame_data["stream_qualities"],
+                    )
                 except Exception as exc:
-                    errors.append(f"redis write_window failed for {frame_label}: {exc}")
-                    logger.error("redis write_window failed for %s: %s", frame_label, exc)
+                    errors.append(f"redis write_window_stream failed for {frame_label}: {exc}")
+                    logger.error("redis write_window_stream failed for %s: %s", frame_label, exc)
                     return
-
-                if frame_data["stream_values"]:
-                    try:
-                        self.redis_writer.write_stream(
-                            device_code,
-                            device_type,
-                            group_code,
-                            scan_rate_ms,
-                            frame_data["ts"],
-                            config_version,
-                            frame_data["stream_values"],
-                            frame_data["stream_qualities"],
-                        )
-                    except Exception as exc:
-                        errors.append(f"redis write_stream failed for {frame_label}: {exc}")
-                        logger.error("redis write_stream failed for %s: %s", frame_label, exc)
-                        return
 
                 latest_fields = by_latest.get(
                     (device_code, group_code, scan_rate_ms, generation)

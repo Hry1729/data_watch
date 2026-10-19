@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 
 from app.core.config import data_root
+from app.services.process_manager import ProcessManagerError
 
 
 # S3: the Edge Storage IPC endpoint authenticates every caller, so the Agent uses
@@ -19,6 +20,9 @@ IPC_ROLE = "agent"
 IPC_TOKEN_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN"
 IPC_TOKEN_FILE_ENV = "DATAWATCH_EDGE_STORAGE_TOKEN_FILE"
 IPC_TOKEN_FILE_NAME = "storage-ipc-tokens.json"
+# D5：Storage 先 bind 再做可能很长的索引迁移，冷启动/大 outbox 时远超 5s；
+# 就绪等待使用独立的启动超时，不与日常调用的单请求超时共用。
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 60.0
 
 
 class StorageUnavailable(RuntimeError):
@@ -64,24 +68,39 @@ def ipc_token() -> str | None:
 class EdgeStorageClient:
     """Agent-side client for the local Edge Storage command endpoint."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:7073", *, timeout_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:7073",
+        *,
+        timeout_seconds: float = 10.0,
+        startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.startup_timeout_seconds = startup_timeout_seconds
         self._token = ipc_token()
 
     def status(self) -> dict[str, Any]:
         return dict(self._command("status"))
 
-    def wait_ready(self, timeout_seconds: float = 5.0) -> dict[str, Any]:
+    def wait_ready(self, timeout_seconds: float | None = None) -> dict[str, Any]:
+        # 抛 ProcessManagerError：启动/恢复调用方只处理这一类（D5）。
+        if timeout_seconds is None:
+            timeout_seconds = self.startup_timeout_seconds
         deadline = time.monotonic() + timeout_seconds
         last_error: RuntimeError | None = None
         while time.monotonic() < deadline:
             try:
                 return self.status()
+            except StorageUnauthorized as exc:
+                # 服务在跑但令牌被拒，重试无意义。
+                raise ProcessManagerError(f"Edge Storage 拒绝 IPC 凭据: {exc}") from exc
             except RuntimeError as exc:
                 last_error = exc
                 time.sleep(0.1)
-        raise RuntimeError(f"Edge Storage did not become ready: {last_error}")
+        raise ProcessManagerError(
+            f"Edge Storage 未在 {timeout_seconds:g}s 内就绪（可能仍在迁移）: {last_error}"
+        )
 
     def revision(self) -> int:
         return int(self._command("config.revision"))

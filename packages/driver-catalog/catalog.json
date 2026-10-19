@@ -76,7 +76,7 @@
       "protocol": "opcda_center",
       "name": "opcda_center",
       "description": "DataWatch opcda_center 只读采集驱动",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "publisher": "datawatch",
       "aliases": [
         "opcda_center"
@@ -89,9 +89,9 @@
         "source_timestamp"
       ],
       "readWriteType": "只读",
-      "archive": "opcda_center-1.0.0.zip",
-      "sha256": "9776f3a804a19709bdbbb8f319d81b86d84e0600c7e74ec296a9ee65c9851a36",
-      "tree_sha256": "b37b7af2a3e9040ebd3215f0cb1cb2a44e5addeefa603227bfcdb0bcd843d238"
+      "archive": "opcda_center-1.0.1.zip",
+      "sha256": "e954aa8eb33e99ea3459f76f3132c1c054d2bd84d5c548e51859c76aa49b6c5c",
+      "tree_sha256": "1e747b3d40b2ef1cc1b81154b359c0859ecc83a79b991403ab60cd9ae3227322"
     },
     {
       "id": "modbus_tcp",
@@ -121,5 +121,5 @@
       "public_key": "6E8AnH97GOPkFaq5i5ND4nIsc8ofu4JM7NElZmCHR6w="
     }
   ],
-  "build_id": "0007824d2845dfae24ea4849227b0a961023416164ef7d7feccdfe0fd32da344"
+  "build_id": "5279d9302bd66cea7f8aa1865f23676ed79679be99069d955c8436e7c1bc6bfe"
 }

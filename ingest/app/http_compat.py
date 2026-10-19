@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
@@ -8,6 +9,9 @@ from typing import Any
 import msgspec
 
 from turboapi import JSONResponse, TurboAPI
+
+
+logger = logging.getLogger(__name__)
 
 
 class Headers(dict[str, str]):
@@ -125,6 +129,7 @@ class IngestASGI(TurboAPI):
         try:
             result = await self._invoke(route.handler, request, path_params)
         except Exception:
+            logger.exception("Unhandled error handling %s %s", method, path)
             result = JSONResponse(
                 status_code=500,
                 content={"detail": "Internal Server Error"},

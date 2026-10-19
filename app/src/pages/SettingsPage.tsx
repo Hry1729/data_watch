@@ -9,6 +9,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { agentClient } from "@/lib/agent-client";
 import { backendClient } from "@/lib/backend-client";
+import { buildConfigPatch } from "@/lib/config-patch";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -54,7 +55,7 @@ interface PasswordDirty {
   tdengine: boolean;
 }
 
-// ─── 默认表单值（getConfig 失败时的 fallback） ────────────────────────────────
+// ─── 默认表单值（仅作加载前占位；getConfig 失败时禁止保存，不会被提交） ──────────
 
 const DEFAULT_FORM: FormState = {
   redis:    { host: "127.0.0.1", port: "6379", user: "",     password: "", database: "0"            },
@@ -593,11 +594,13 @@ function moduleLabel(name: ModuleName): string {
 function SaveCard({
   saving,
   restartModules,
+  disabled,
   onSave,
   onSaveAndRestart,
 }: {
   saving: boolean;
   restartModules: ModuleName[];
+  disabled: boolean;
   onSave: () => void;
   onSaveAndRestart: (name: ModuleName) => void;
 }) {
@@ -608,7 +611,7 @@ function SaveCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="default" size="sm" className="gap-1.5" disabled={saving} onClick={onSave}>
+          <Button variant="default" size="sm" className="gap-1.5" disabled={saving || disabled} onClick={onSave}>
             <Save className="h-3.5 w-3.5" />
             保存
           </Button>
@@ -618,7 +621,7 @@ function SaveCard({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={saving}
+              disabled={saving || disabled}
               onClick={() => onSaveAndRestart(name)}
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -647,6 +650,8 @@ export function SettingsPage() {
   const [configLoading, setConfigLoading] = useState(true);
   const [configError,   setConfigError]   = useState<string | null>(null);
   const [form,          setForm]          = useState<FormState>(DEFAULT_FORM);
+  // 最近一次从 Agent 成功加载（或成功保存）的配置；为 null 表示从未加载成功，禁止保存
+  const [loadedForm,    setLoadedForm]    = useState<FormState | null>(null);
   const [passwordDirty, setPasswordDirty] = useState<PasswordDirty>({ redis: false, mysql: false, tdengine: false });
   const [saving,        setSaving]        = useState(false);
   // collector 运行参数（stream_maxlen，存 MySQL，走 backend API，独立于 agentClient 连接配置）
@@ -661,7 +666,9 @@ export function SettingsPage() {
       .getConfig()
       .then((cfg) => {
         if (!formDirtyRef.current) {
-          setForm(configToForm(cfg));
+          const loaded = configToForm(cfg);
+          setForm(loaded);
+          setLoadedForm(loaded);
           setPasswordDirty({ redis: false, mysql: false, tdengine: false });
         }
         setConfigError(null);
@@ -669,8 +676,9 @@ export function SettingsPage() {
       .catch((err: unknown) => {
         const e = err as AppError;
         if (e.type === "unauthorized") { logout(); return; }
-        // 加载失败：显示提示，保留 DEFAULT_FORM，用户仍可编辑保存
-        setConfigError("加载配置失败，当前显示默认值");
+        // H6：加载失败时禁止保存，避免把默认值（127.0.0.1/root）覆盖到真实配置
+        const reason = e && "message" in e && e.message ? `：${e.message}` : "";
+        setConfigError(`加载配置失败${reason}。为避免覆盖现有配置，已禁用保存，请刷新页面重新加载`);
       })
       .finally(() => setConfigLoading(false));
   }, [logout, refreshVersion]);
@@ -700,8 +708,10 @@ export function SettingsPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [navigate]);
 
-  /** 构建 PUT /admin/config 的请求体 */
-  function buildPayload(): Partial<ConnectionConfig> {
+  const canSave = loadedForm !== null && configError === null;
+
+  /** 构建 PUT /admin/config 的请求体：只包含相对已加载配置改动过的字段 */
+  function buildPayload(baseline: FormState): Partial<ConnectionConfig> {
     // 密码 partial update 契约（spec §Key Entities / plan §4.x）：
     //   - dirty=false：请求体不包含 password key → Agent 保留原密码
     //   - dirty=true ：请求体包含 password: f.password → Agent 覆盖为新值
@@ -717,21 +727,27 @@ export function SettingsPage() {
       };
       return dirty ? { ...base, password: f.password } : base;
     }
-    return {
-      redis:    dbSection(form.redis,    passwordDirty.redis),
-      mysql:    dbSection(form.mysql,    passwordDirty.mysql),
-      tdengine: dbSection(form.tdengine, passwordDirty.tdengine),
-      ...(BUILD_ROLE === "distributed-center"
-        ? { ingest: { executable: form.ingest.executable, working_dir: form.ingest.working_dir } }
-        : { collector: { executable: form.collector.executable, working_dir: form.collector.working_dir } }),
-      writer: { executable: form.writer.executable, working_dir: form.writer.working_dir },
-    };
+    const db = (name: keyof PasswordDirty) => ({
+      baseline: dbSection(baseline[name], false),
+      current: dbSection(form[name], passwordDirty[name]),
+      includePassword: passwordDirty[name],
+    });
+    const processModule = BUILD_ROLE === "distributed-center" ? "ingest" : "collector";
+    return buildConfigPatch({
+      redis:    db("redis"),
+      mysql:    db("mysql"),
+      tdengine: db("tdengine"),
+      [processModule]: { baseline: baseline[processModule], current: form[processModule] },
+      writer: { baseline: baseline.writer, current: form.writer },
+    }) as Partial<ConnectionConfig>;
   }
 
   async function handleSave() {
+    if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
     setSaving(true);
     try {
-      await agentClient.putConfig(buildPayload());
+      await agentClient.putConfig(buildPayload(loadedForm));
+      setLoadedForm(form);
       formDirtyRef.current = false;
       setPasswordDirty({ redis: false, mysql: false, tdengine: false });
       toast.success("配置已保存");
@@ -769,11 +785,13 @@ export function SettingsPage() {
 
   async function handleSaveAndRestart(name: ModuleName) {
     const label = name === "collector" ? "Collector" : name === "ingest" ? "Ingest" : "Writer";
+    if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
     setSaving(true);
 
     // 第一步：保存配置
     try {
-      await agentClient.putConfig(buildPayload());
+      await agentClient.putConfig(buildPayload(loadedForm));
+      setLoadedForm(form);
       formDirtyRef.current = false;
       setPasswordDirty({ redis: false, mysql: false, tdengine: false });
     } catch (err) {
@@ -833,7 +851,7 @@ export function SettingsPage() {
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
     <div className="px-6 pb-6 space-y-6" style={{ maxWidth: 1200 }}>
-      {/* 加载失败 inline 提示（非阻塞：表单仍可编辑） */}
+      {/* 加载失败 inline 提示（保存已禁用，需刷新重新加载） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
           {configError}
@@ -907,6 +925,7 @@ export function SettingsPage() {
       {showSaveCard && (
         <SaveCard
           saving={saving}
+          disabled={!canSave}
           restartModules={restartModules}
           onSave={handleSave}
           onSaveAndRestart={handleSaveAndRestart}

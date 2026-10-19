@@ -17,6 +17,8 @@ log_level          = "INFO"
 host               = "127.0.0.1"
 port               = 6379
 password_enc       = ""            # DPAPI 加密后的 base64；空串=无密码
+db                 = 0             # 实时 stream 所在 DB：Agent 同时下发给 Ingest(写) 与 Writer(读)
+stream_shard_count = 4             # 每个点组的 stream 分片数：同上，两侧必须一致
 
 [mysql]
 host               = "127.0.0.1"

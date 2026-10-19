@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.core.config import get_settings
+from app.core.time_utils import LOCAL_TZ
 
 
 @dataclass
@@ -59,7 +60,12 @@ class ExportTaskManager:
                             if isinstance(task_data["created_at"], (int, float)):
                                 task_data["created_at"] = datetime.fromtimestamp(task_data["created_at"], tz=timezone.utc)
                             elif isinstance(task_data["created_at"], str):
-                                task_data["created_at"] = datetime.fromisoformat(task_data["created_at"])
+                                created_at = datetime.fromisoformat(task_data["created_at"])
+                                # M10：created_at 统一为带时区时间。旧文件中不带时区的值按项目约定
+                                # 视为 UTC+8（Asia/Shanghai），否则与 aware 时间相减会让清理协程崩溃。
+                                if created_at.tzinfo is None:
+                                    created_at = created_at.replace(tzinfo=LOCAL_TZ)
+                                task_data["created_at"] = created_at
                         self.tasks[task_id] = ExportTask(**task_data)
             except Exception as e:
                 print(f"Error loading tasks: {e}")

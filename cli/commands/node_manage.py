@@ -6,7 +6,6 @@ import typer
 
 from cli.commands.common import run_authorized
 from cli.commands.infrastructure import nodes_app
-from cli.errors import CliError, EXIT_API
 from cli.files import load_json_object, require_confirmation
 
 
@@ -184,22 +183,17 @@ def _replace_assignments(
         int(session.resolver.resolve_catalog_device(device)["id"])
         for device in devices
     }
-    if mode == "set":
-        device_ids = requested_ids
-    else:
-        current = session.request(
-            "GET", f"/api/distributed/nodes/{node_uuid}/assignments"
-        )
-        existing_ids = _assignment_device_ids(current)
-        device_ids = (
-            existing_ids | requested_ids
-            if mode == "add"
-            else existing_ids - requested_ids
-        )
+    # M4：assign/unassign 用增量字段，由后端在节点行锁内合并当前分配，
+    # 不再"先 GET 再整体 PUT"，并发操作不会互相覆盖。
+    body_key = {
+        "set": "deviceIds",
+        "add": "addDeviceIds",
+        "remove": "removeDeviceIds",
+    }[mode]
     return session.request(
         "PUT",
         f"/api/distributed/nodes/{node_uuid}/assignments",
-        json_body={"deviceIds": sorted(device_ids)},
+        json_body={body_key: sorted(requested_ids)},
     )
 
 def _set_node_status(
@@ -228,16 +222,3 @@ def _set_node_status(
         operation=operation,
     )
 
-
-def _assignment_device_ids(payload: Any) -> set[int]:
-    raw_items = payload.get("items") if isinstance(payload, dict) else None
-    if not isinstance(raw_items, list):
-        raise CliError("api_error", "节点分配响应格式错误", EXIT_API)
-    try:
-        return {
-            int(item["deviceId"])
-            for item in raw_items
-            if isinstance(item, dict) and int(item.get("deviceId") or 0) > 0
-        }
-    except (KeyError, TypeError, ValueError) as exc:
-        raise CliError("api_error", "节点分配响应格式错误", EXIT_API) from exc

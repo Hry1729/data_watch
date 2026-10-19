@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
+import {
+  formatMissingValueWithQuality,
+  formatStoredPointValue,
+  isRealtimeValueAbsent,
+  normalizeWsPointValue
+} from '../src/utils/realtime-point-value'
 
 const source = readFileSync(new URL('../src/views/device_monitor/realtime/index.vue', import.meta.url), 'utf8')
 const script = source.split('<script setup lang="ts">')[1].split('</script>')[0]
@@ -32,6 +38,7 @@ function harness(options: { deviceId?: number; runtime?: () => Promise<unknown>;
     '@/store/modules/setting': { useSettingStore: () => ({}) }, '@/api/device-monitor': api,
     '../history/perspective-runtime': { ensurePerspectiveViewerRuntime: options.runtime ?? (async () => ({ perspective: { worker: async () => ({ terminate() {} }) } })) },
     '@/utils/realtime-samples': { expandRealtimeSamples: () => [] }, '@/utils/realtime-quality': { isQualityAbnormal: () => false },
+    '@/utils/realtime-point-value': { formatMissingValueWithQuality, formatStoredPointValue, isRealtimeValueAbsent, normalizeWsPointValue },
     'element-plus': { ElMessage: { success() {}, error() {} } }, '@element-plus/icons-vue': {},
     '@/components/core/base/art-svg-icon/index.vue': {}
   }

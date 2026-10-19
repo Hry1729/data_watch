@@ -861,7 +861,10 @@ async def test_fake_center_dead_frame_replays_as_a_new_sequence(tmp_path) -> Non
         items = json.loads(request.content)["items"]
         seen.append(items)
         if len(seen) == 1:
-            return httpx.Response(400, text="bad contract")
+            return httpx.Response(
+                400,
+                json={"status": "bad_request", "reason": "bad contract", "scope": "item"},
+            )
         return httpx.Response(
             200,
             json={

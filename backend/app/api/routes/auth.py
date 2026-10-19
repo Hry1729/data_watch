@@ -24,6 +24,11 @@ async def login(
     userName: str,
     password: str,
 ):
+    # M5：密码只能放在请求体里，query 中的密码会进入代理和访问日志。
+    if request.query_params.get("password") is not None:
+        from app.core.exceptions import ApiError
+
+        raise ApiError(400, "password must be sent in the request body")
     login_payload = LoginPayload.from_dict({"userName": userName, "password": password})
     session_factory = get_mysql_session_factory()
     async with session_factory() as session:

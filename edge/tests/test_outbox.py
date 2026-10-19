@@ -65,6 +65,69 @@ def test_upload_interval_tracks_fastest_enabled_assignment(tmp_path: Path) -> No
     store.close()
 
 
+def test_upload_interval_keeps_draining_backlog_when_all_assignments_disabled(
+    tmp_path: Path,
+) -> None:
+    """Edge 9：采集全部停用后，只要还有未确认积压就按默认间隔继续上传。"""
+    from edge.app.outbox import DEFAULT_UPLOAD_INTERVAL_MS
+
+    store = OutboxStore(tmp_path / "edge.db")
+    configure(store, "QC100", 1, 100)
+    append(store)
+    store.configure_assignment("QC100", 1, 100, 2, enabled=False)
+    assert store.upload_interval_ms() == DEFAULT_UPLOAD_INTERVAL_MS
+
+    claimed = store.claim_batch(
+        target_seq=store.snapshot_target_seq(),
+        lease_owner="owner",
+        lease_ms=60_000,
+        max_items=10,
+        max_bytes=1024 * 1024,
+    )
+    store.mark_sent(claimed[0], "owner")
+    assert store.upload_interval_ms() is None
+    store.close()
+
+
+def test_session_switch_preserves_retry_backoff(tmp_path: Path) -> None:
+    """Edge 2/15：session 切换只重编号，不清除 retry_wait / next_retry_at。"""
+    now = [1000]
+    store = OutboxStore(tmp_path / "edge.db", clock_ms=lambda: now[0])
+    configure(store, "QC100", 1, 100)
+    append(store)
+    append(store)
+    first, second = store.claim_batch(
+        target_seq=2, lease_owner="owner", lease_ms=60_000, max_items=10, max_bytes=1024 * 1024
+    )
+    store.mark_retry(first, "owner", error="seq_reject", http_status=200, delay_ms=5_000)
+    store.mark_sent(second, "owner")
+    store.claim_batch(
+        target_seq=2, lease_owner="owner", lease_ms=60_000, max_items=10, max_bytes=1024 * 1024
+    )
+
+    state = store.prepare_session_switch()
+    row = store._connection.execute(
+        "SELECT upload_session_id, local_seq, state, next_retry_at FROM outbox WHERE batch_id=?",
+        (first.batch_id,),
+    ).fetchone()
+    assert row["upload_session_id"] == state.new_session_id
+    assert row["local_seq"] == 1
+    assert row["state"] == "retry_wait"
+    assert row["next_retry_at"] == 6_000
+    store.complete_session_switch(state)
+    # 退避未到期前不得被 claim。
+    assert store.claim_batch(
+        target_seq=store.snapshot_target_seq(), lease_owner="owner", lease_ms=60_000,
+        max_items=10, max_bytes=1024 * 1024,
+    ) == []
+    now[0] = 6_000
+    assert [r.batch_id for r in store.claim_batch(
+        target_seq=store.snapshot_target_seq(), lease_owner="owner", lease_ms=60_000,
+        max_items=10, max_bytes=1024 * 1024,
+    )] == [first.batch_id]
+    store.close()
+
+
 def test_claim_is_ordered_and_retry_wait_blocks_later_rows(tmp_path: Path) -> None:
     now = [1000]
     store = OutboxStore(tmp_path / "edge.db", clock_ms=lambda: now[0])

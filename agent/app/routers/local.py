@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from dataclasses import asdict
 from typing import Literal
 
@@ -15,6 +14,8 @@ from app.core.role import build_role
 from app.services.edge_local_store import EdgeLocalStore
 from app.services.edge_sync import CenterClient, EdgeIdentity, generate_identity, identity_public_key
 from app.services.process_manager import ProcessManagerError
+from app.services.sidecar_manager import collector_lifecycle
+from app.routers.admin import _uploader_env
 
 
 router = APIRouter(prefix="/local", tags=["local"])
@@ -324,30 +325,18 @@ async def rotate_identity(
     mutate_config(apply)
     restarted = False
     pm = request.app.state.pm
-    if "uploader" in pm.modules and pm.status("uploader").status == "running":
-        encoded = base64.b64encode(replacement.private_key_pem.encode("utf-8")).decode("ascii")
-        env = {
-            "DATAWATCH_DATA_ROOT": str(data_root()),
-            "DATAWATCH_EDGE_DB": str(data_root() / "edge" / "edge.db"),
-            "DATAWATCH_CENTER_URL": center_url,
-            "DATAWATCH_NODE_UUID": node_uuid,
-            "DATAWATCH_UPLOADER_PRIVATE_KEY_B64": encoded,
-            "DATAWATCH_MAX_OFFLINE_RETENTION_DAYS": str(
-                edge.get("max_offline_retention_days") or 7
-            ),
-            "DATAWATCH_OUTBOX_MAINTENANCE_SECONDS": str(
-                edge.get("outbox_maintenance_seconds") or 60
-            ),
-        }
-        try:
-            await pm.restart("uploader", env=env)
-            restarted = True
-        except ProcessManagerError as exc:
-            return {
-                **result,
-                "uploaderRestarted": False,
-                "warning": str(exc),
-            }
+    # Edge 12：复用 admin 的统一 env 构造（含自定义 DATAWATCH_EDGE_STORAGE_URL）与同一生命周期锁。
+    async with collector_lifecycle(pm):
+        if "uploader" in pm.modules and pm.status("uploader").status == "running":
+            try:
+                await pm.restart("uploader", env=_uploader_env())
+                restarted = True
+            except ProcessManagerError as exc:
+                return {
+                    **result,
+                    "uploaderRestarted": False,
+                    "warning": str(exc),
+                }
     return {**result, "uploaderRestarted": restarted}
 
 

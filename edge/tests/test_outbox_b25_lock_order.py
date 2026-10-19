@@ -298,8 +298,11 @@ def test_two_processes_contending_for_the_lock_write_no_state_when_losing(
     seed(store, 3)
     assert len(claim_all(store, "crashed-owner")) == 3
     assert store.stats() == {"inflight": 3}
-    # 让胜出实例保持空闲：没有启用的 assignment 时 upload_interval_ms() 为 None。
+    # 让胜出实例保持空闲：Edge 9 之后有积压时即使 assignment 全部停用也会继续上传，
+    # 因此再把快照目标序号置 0，使 claim_batch 取不到任何行（仅测试脚手架）。
     store.configure_assignment("QC100", 7, 100, 1, enabled=False)
+    with store._lock:
+        store._connection.execute("UPDATE metadata SET value='0' WHERE key='last_seq'")
     store.close()
 
     engine = StorageEngine(database, max_queue=256)
@@ -384,6 +387,9 @@ def test_split_data_root_cannot_hijack_the_live_lease_of_the_same_outbox(
     seed(store, 2)
     assert len(claim_all(store, "crashed-owner")) == 2
     store.configure_assignment("QC100", 7, 100, 1, enabled=False)
+    # 同上：有积压时会继续上传（Edge 9），置 0 目标序号让胜出实例保持空闲。
+    with store._lock:
+        store._connection.execute("UPDATE metadata SET value='0' WHERE key='last_seq'")
     store.close()
 
     engine = StorageEngine(database, max_queue=256)

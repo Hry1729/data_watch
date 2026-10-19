@@ -45,7 +45,8 @@ class DistributedNodeService:
             raise ApiError(400, "注册码有效期必须在 1 到 1440 分钟之间")
         code = secrets.token_urlsafe(24)
         code_hash = _sha256(code)
-        expires_at = datetime.now() + timedelta(minutes=expires_minutes)
+        # L2：与其余分布式逻辑一致，存库用中心时区（UTC+8）的 naive 时间，不依赖进程本地时区。
+        expires_at = datetime.now(_CENTER_TIMEZONE).replace(tzinfo=None) + timedelta(minutes=expires_minutes)
         await self.session.execute(
             text(
                 """
@@ -65,7 +66,7 @@ class DistributedNodeService:
         return {
             "registrationCode": code,
             "nodeName": name,
-            "expiresAt": expires_at.isoformat(),
+            "expiresAt": expires_at.replace(tzinfo=_CENTER_TIMEZONE).isoformat(),
         }
 
     async def register_node(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -108,7 +109,7 @@ class DistributedNodeService:
             ):
                 raise ApiError(409, "节点身份与已提交注册不一致")
             return {"nodeUuid": node_uuid, "status": str(existing_row["status"])}
-        if row["expires_at"] < datetime.now():
+        if row["expires_at"] < datetime.now(_CENTER_TIMEZONE).replace(tzinfo=None):
             raise ApiError(400, "注册码已过期")
         node_name = requested_name or str(row["node_name"])
         try:
@@ -316,14 +317,17 @@ class DistributedNodeService:
         self,
         node_uuid: str,
         device_ids: list[int],
+        *,
+        mode: str = "set",
     ) -> dict[str, Any]:
+        """mode=set 整体替换；add/remove 在节点行锁内基于当前分配做增量（M4，避免读-改-写丢失更新）。"""
         node_uuid = _uuid(node_uuid)
-        unique_ids = sorted(
-            {
-                _integer_field(value, "deviceIds", minimum=1)
-                for value in device_ids
-            }
-        )
+        if mode not in {"set", "add", "remove"}:
+            raise ApiError(400, "分配模式只允许 set、add 或 remove")
+        requested_ids = {
+            _integer_field(value, "deviceIds", minimum=1)
+            for value in device_ids
+        }
         node = await self.session.execute(
             text(
                 "SELECT status, clock_anomaly FROM sys_node "
@@ -336,8 +340,6 @@ class DistributedNodeService:
             raise ApiError(404, "节点不存在")
         if node_row["status"] != "approved":
             raise ApiError(409, "仅已批准节点可分配设备")
-        if bool(node_row.get("clock_anomaly")):
-            raise ApiError(409, "目标节点时钟异常，禁止分配或迁移设备")
 
         now = datetime.now(_CENTER_TIMEZONE).replace(tzinfo=None)
         cutover_at = now + _CUTOVER_LEAD
@@ -359,6 +361,15 @@ class DistributedNodeService:
         )
         target_rows = target_assignments.mappings().all()
         target_ids = {int(row["device_id"]) for row in target_rows}
+        if mode == "add":
+            unique_ids = sorted(target_ids | requested_ids)
+        elif mode == "remove":
+            unique_ids = sorted(target_ids - requested_ids)
+        else:
+            unique_ids = sorted(requested_ids)
+        # H2：时钟异常只拦"新增 / 迁入"；撤销或迁出始终允许，否则设备会被卡在异常节点上。
+        if bool(node_row.get("clock_anomaly")) and set(unique_ids) - target_ids:
+            raise ApiError(409, "目标节点时钟异常，禁止分配或迁移设备")
 
         if unique_ids:
             statement = text(
@@ -378,13 +389,14 @@ class DistributedNodeService:
             ):
                 raise ApiError(400, "包含不存在或已禁用的设备")
 
+            # H1：其他节点上 active 的设备走下面的迁移分支（协调切换点）；只拒绝仍在 preparing 的。
             occupancy_statement = text(
                 """
                 SELECT device_id, node_uuid
                 FROM device_assignment
                 WHERE device_id IN :device_ids
                   AND node_uuid<>:node_uuid
-                  AND status IN ('active', 'preparing')
+                  AND status='preparing'
                 FOR UPDATE
                 """
             ).bindparams(bindparam("device_ids", expanding=True))
@@ -393,7 +405,7 @@ class DistributedNodeService:
                 {"device_ids": unique_ids, "node_uuid": node_uuid},
             )
             if occupied.mappings().all():
-                raise ApiError(409, "设备已分配给其他边缘节点")
+                raise ApiError(409, "设备正在其他边缘节点准备中，暂不能迁移")
 
         for row in target_rows:
             device_id = int(row["device_id"])
@@ -437,6 +449,28 @@ class DistributedNodeService:
                 continue
 
             source_node_uuid = str(current["node_uuid"]) if current is not None else None
+            device_cutover_at = cutover_at
+            if current is None:
+                # H1：两步迁移（先在旧节点 unassign，再在新节点 assign）时继承旧节点尚未到达的切换点，
+                # 新节点从切换点才开始采集，避免两边同时采集。
+                pending = await self.session.execute(
+                    text(
+                        """
+                        SELECT node_uuid, cutover_at FROM device_assignment
+                        WHERE device_id=:device_id AND node_uuid<>:node_uuid
+                          AND status='retired' AND cutover_at > :now
+                        ORDER BY assignment_epoch DESC
+                        LIMIT 1 FOR UPDATE
+                        """
+                    ),
+                    {"device_id": device_id, "node_uuid": node_uuid, "now": now},
+                )
+                handover = pending.mappings().first()
+                if handover is not None:
+                    source_node_uuid = str(handover["node_uuid"])
+                    device_cutover_at = handover["cutover_at"]
+                    # 旧节点的 collect_until 会因出现后继而变化，需要重新下发配置。
+                    changed_nodes.add(source_node_uuid)
             if current is not None:
                 await self.session.execute(
                     text(
@@ -486,8 +520,8 @@ class DistributedNodeService:
                     "device_id": device_id,
                     "node_uuid": node_uuid,
                     "epoch": epoch,
-                    "effective_at": cutover_at if source_node_uuid else now,
-                    "cutover_at": cutover_at if source_node_uuid else None,
+                    "effective_at": device_cutover_at if source_node_uuid else now,
+                    "cutover_at": device_cutover_at if source_node_uuid else None,
                 },
             )
             changed_nodes.add(node_uuid)

@@ -82,33 +82,29 @@ namespace OpcDaProxyService
         /// </summary>
         public List<Dictionary<string, object>> ReadItems(List<string> itemIds, string opcServer, string vmHost)
         {
-            // 如果指定了服务器但未连接，先连接
-            if (!string.IsNullOrEmpty(opcServer))
+            // 同一代理端口上可能连着多个 ProgID：必须按 opcServer + vmHost 精确取连接，
+            // 不能取字典里的第一个（否则点会发到别的服务器，静默读错数据）。
+            if (string.IsNullOrEmpty(opcServer))
             {
-                string key = GetConnectionKey(opcServer, vmHost);
-                lock (_lock)
-                {
-                    if (!_connections.ContainsKey(key))
-                    {
-                        Connect(opcServer, vmHost, _config.UpdateRateMs);
-                    }
-                }
+                Program.LogError("ReadItems requires opc_server");
+                return new List<Dictionary<string, object>>();
             }
 
-            // 找到可用的连接
+            string key = GetConnectionKey(opcServer, vmHost);
             OpcServerConnection connection = null;
             lock (_lock)
             {
-                foreach (var conn in _connections.Values)
+                // 未连接则先连接
+                if (!_connections.TryGetValue(key, out connection))
                 {
-                    connection = conn;
-                    break;
+                    Connect(opcServer, vmHost, _config.UpdateRateMs);
+                    _connections.TryGetValue(key, out connection);
                 }
             }
 
             if (connection == null)
             {
-                Program.LogError("No OPC connection available");
+                Program.LogError("No OPC connection available for " + key);
                 return new List<Dictionary<string, object>>();
             }
 
