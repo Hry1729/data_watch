@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import {
   CheckCircle2,
   CircleDashed,
@@ -31,6 +32,7 @@ import { Progress } from "@/components/ui/progress";
 import { agentClient } from "@/lib/agent-client";
 import type { BootstrapTarget } from "@/lib/agent-client";
 import { setBackendBaseUrl } from "@/lib/backend-client";
+import { validateBackendOrigin } from "@/lib/backend-proxy-policy";
 import type { AppError } from "@/types";
 
 const DEFAULTS = {
@@ -53,6 +55,18 @@ const TARGETS: Array<{
   { key: "redis", title: "Redis", description: "实时缓存与队列", icon: Database },
   { key: "tdengine", title: "TDengine", description: "时序数据存储", icon: Database },
 ];
+
+/** M6：失败原因原样展示（Agent 返回的 detail / 网络错误信息），不再统一成笼统提示 */
+function errorMessage(error: unknown, fallback: string): string {
+  const appError = error as AppError;
+  if (appError?.type === "api_error") {
+    return appError.message ? appError.message : `${fallback}（HTTP ${appError.status}）`;
+  }
+  if (appError?.type === "network_error" && appError.message) return appError.message;
+  if (appError?.type === "agent_unreachable") return "无法连接本机 Agent";
+  if (error instanceof Error && error.message) return error.message;
+  return fallback;
+}
 
 function StatusBadge({ status }: { status: TestStatus }) {
   if (status === "success") {
@@ -118,12 +132,15 @@ export function BootstrapPage() {
   });
   const [finishing, setFinishing] = useState(false);
   const [retesting, setRetesting] = useState(false);
+  // M6：每个检测项的表单版本号；表单一改就递增，旧检测结果返回时版本不符即丢弃
+  const formVersionRef = useRef<Record<BootstrapTarget, number>>({ backend: 0, mysql: 0, redis: 0, tdengine: 0 });
 
   const passedCount = TARGETS.filter(({ key }) => status[key] === "success").length;
   const allPassed = passedCount === TARGETS.length;
   const activeTarget = TARGETS.find(({ key }) => key === selectedTarget) ?? TARGETS[0];
 
   function resetStatus(target: BootstrapTarget) {
+    formVersionRef.current[target] += 1;
     setStatus((current) => current[target] === "idle" ? current : { ...current, [target]: "idle" });
     setErrors((current) => current[target] === null ? current : { ...current, [target]: null });
   }
@@ -141,11 +158,23 @@ export function BootstrapPage() {
     }
   }
 
-  async function handleTest(target: BootstrapTarget) {
+  async function handleTest(target: BootstrapTarget, formVersion = formVersionRef.current[target]) {
+    const isCurrent = () => formVersionRef.current[target] === formVersion;
+    if (!isCurrent()) return false;
+    if (target === "backend") {
+      const check = validateBackendOrigin(backend.base_url);
+      if (check.error) {
+        setStatus((current) => ({ ...current, backend: "failed" }));
+        setErrors((current) => ({ ...current, backend: `后端地址无效：${check.error}` }));
+        return false;
+      }
+    }
     setStatus((current) => ({ ...current, [target]: "testing" }));
     setErrors((current) => ({ ...current, [target]: null }));
     try {
       const result = await agentClient.postBootstrapTestConnection(testPayload(target));
+      // 检测期间表单已被修改：结果属于旧配置，丢弃
+      if (!isCurrent()) return false;
       if (result.success) {
         setStatus((current) => ({ ...current, [target]: "success" }));
         return true;
@@ -158,8 +187,9 @@ export function BootstrapPage() {
         navigate("/error", { replace: true });
         return false;
       }
+      if (!isCurrent()) return false;
       setStatus((current) => ({ ...current, [target]: "failed" }));
-      setErrors((current) => ({ ...current, [target]: "连接测试失败，请检查配置" }));
+      setErrors((current) => ({ ...current, [target]: errorMessage(err, "连接测试失败，请检查配置") }));
     }
     return false;
   }
@@ -167,19 +197,26 @@ export function BootstrapPage() {
   async function handleRetestAll() {
     if (retesting) return;
     setRetesting(true);
+    // 以开始时的表单版本为准：中途改过的项不会被旧配置的检测结果覆盖
+    const versions = { ...formVersionRef.current };
     for (const target of TARGETS) {
       setSelectedTarget(target.key);
-      await handleTest(target.key);
+      await handleTest(target.key, versions[target.key]);
     }
     setRetesting(false);
   }
 
   async function handleFinish() {
     if (!allPassed || finishing) return;
+    const backendCheck = validateBackendOrigin(backend.base_url);
+    if (!backendCheck.origin) {
+      toast.error(`后端地址无效：${backendCheck.error}`);
+      return;
+    }
     setFinishing(true);
     try {
       await agentClient.putBootstrapConfig({
-        backend: { base_url: backend.base_url },
+        backend: { base_url: backendCheck.origin },
         mysql: { host: mysql.host, port: mysqlPort(), user: mysql.user, password: mysql.password, database: mysql.database },
         redis: { host: redis.host, port: redisPort(), password: redis.password },
         tdengine: { host: tdengine.host, port: tdenginePort(), user: tdengine.user, password: tdengine.password, database: tdengine.database },
@@ -187,12 +224,18 @@ export function BootstrapPage() {
       await agentClient.postBootstrapFinish();
       const { in_bootstrap } = await agentClient.getBootstrapStatus();
       if (!in_bootstrap) {
-        setBackendBaseUrl(backend.base_url);
+        setBackendBaseUrl(backendCheck.origin);
         navigate("/login", { replace: true });
+      } else {
+        toast.error("初始化未完成：Agent 仍处于引导状态，请查看 Agent 日志后重试");
       }
     } catch (err) {
       const appError = err as AppError;
-      if (appError?.type === "agent_unreachable") navigate("/error", { replace: true });
+      if (appError?.type === "agent_unreachable") {
+        navigate("/error", { replace: true });
+        return;
+      }
+      toast.error(`初始化失败：${errorMessage(err, "请检查配置后重试")}`);
     } finally {
       setFinishing(false);
     }
