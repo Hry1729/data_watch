@@ -62,8 +62,8 @@ export default function HelpPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
-    <div className="w-full space-y-4">
-      <Card className="gap-0 px-6 py-6">
+    <div className="flex min-h-full w-full flex-col gap-4">
+      <Card className="shrink-0 gap-0 px-6 py-6">
         <CardTitleRow icon={CircleHelp} title="帮助中心" />
         <p className="mt-1.5 text-[13px] text-muted-foreground">
           本页内容为占位示意，正式的使用手册与联机帮助待后续版本接入。
@@ -94,7 +94,7 @@ export default function HelpPage() {
         </ol>
       </Card>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+      <div className="grid flex-1 items-stretch gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <Card className="gap-0 px-5 py-5">
           <CardTitleRow icon={MonitorSmartphone} title="常见问题" />
           <div className="mt-4 overflow-hidden rounded-[10px] bg-[color-mix(in_oklab,var(--muted)_55%,transparent)]">
@@ -126,7 +126,7 @@ export default function HelpPage() {
             </p>
           </Card>
 
-          <Card className="gap-0 px-5 py-5">
+          <Card className="flex-1 gap-0 px-5 py-5">
             <CardTitleRow icon={Mail} title="联系我们" />
             <p className="mt-3 text-[13px] leading-relaxed text-muted-foreground">
               使用中遇到问题，请把操作步骤、页面截图与「系统日志」中的报错时间一并提供给现场技术支持。
