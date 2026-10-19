@@ -1,5 +1,7 @@
-import { useState } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useMemo, useState } from "react";
+import { Activity, AlarmClock, Database, MapPin, Plug } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -9,6 +11,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { TrendChart } from "@/components/TrendChart";
+import {
+  MONITOR_TABLE_SCROLL_CLASS,
+  MONITOR_TD_CLASS,
+  MONITOR_TH_CLASS,
+  MonitorKpiCard,
+  StatusDot,
+  formatCount,
+} from "@/components/MonitorKpiCard";
 import { LogPanel } from "@/components/LogPanel";
 import { LogViewToggle, type LogView } from "@/components/LogViewToggle";
 import { ModuleDbLogPanel } from "@/components/ModuleDbLogPanel";
@@ -19,44 +29,19 @@ import { useModuleMetrics } from "@/hooks/useModuleMetrics";
 import { useModuleRates, rateTrendState } from "@/hooks/useModuleRates";
 import type { CollectorTaskRow } from "@/types";
 
-// ─── 指标卡片 ─────────────────────────────────────────────────────────────────
-
-function MetricCard({
-  label,
-  value,
-  unit,
-  detail,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  detail: string;
-}) {
-  return (
-    <Card size="sm">
-      <CardContent className="px-4 py-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="mt-2 text-2xl font-semibold leading-none tabular-nums">
-          {value}
-          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
-        </p>
-        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─── 连接状态 chip ──────────────────────────────────────────────────────────────
+// ─── 连接状态 ──────────────────────────────────────────────────────────────────
 
 function ConnectStatusChip({ status }: { status: CollectorTaskRow["connectStatus"] }) {
   const map = {
-    online: { label: "在线", color: "var(--success)" },
-    unstable: { label: "不稳定", color: "var(--warning)" },
-    offline: { label: "离线", color: "var(--muted-foreground)" },
+    online: { label: "在线", tone: "success" },
+    unstable: { label: "不稳定", tone: "warning" },
+    offline: { label: "离线", tone: "off" },
   } as const;
-  const { label, color } = map[status];
-  return <span style={{ color }}>{label}</span>;
+  const { label, tone } = map[status];
+  return <StatusDot tone={tone} label={label} />;
 }
+
+const COUNT_BADGE_CLASS = "h-5 rounded-md px-2 text-xs font-medium";
 
 // ─── 页面 ─────────────────────────────────────────────────────────────────────
 
@@ -93,6 +78,14 @@ export function CollectorPage() {
     refresh: dbRefresh,
   } = useModuleDbLogs("collector");
 
+  const taskCounts = useMemo(() => ({
+    online: tasks.filter((t) => t.connectStatus === "online").length,
+    unstable: tasks.filter((t) => t.connectStatus === "unstable").length,
+    offline: tasks.filter((t) => t.connectStatus === "offline").length,
+  }), [tasks]);
+
+  const logToggle = <LogViewToggle value={logView} onChange={setLogView} />;
+
   return (
     <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden">
       {showError && (
@@ -102,103 +95,120 @@ export function CollectorPage() {
       )}
 
       <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
-        <MetricCard
+        <MonitorKpiCard
           label="最短周期"
-          value={metrics?.scanRateMs != null ? String(metrics.scanRateMs) : "—"}
+          icon={AlarmClock}
+          value={metrics?.scanRateMs != null ? formatCount(metrics.scanRateMs) : "—"}
           unit="ms"
           detail="最快扫描周期"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="设备连接"
-          value={metrics ? String(metrics.onlineDevices) : "—"}
-          unit={metrics ? `/ ${metrics.totalDevices}` : undefined}
+          icon={Plug}
+          value={metrics ? formatCount(metrics.onlineDevices) : "—"}
+          unit={metrics ? `/ ${formatCount(metrics.totalDevices)}` : undefined}
           detail={onlineRate != null ? `在线率 ${onlineRate}% · ${metrics ? metrics.totalDevices - metrics.onlineDevices : 0} 台未连接` : "—"}
         />
-        <MetricCard
+        <MonitorKpiCard
           label="采集点位"
-          value={metrics ? metrics.pointTotal.toLocaleString() : "—"}
+          icon={MapPin}
+          value={metrics ? formatCount(metrics.pointTotal) : "—"}
           detail="已配置采集点位"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="Redis 写入批次"
-          value={cRate?.current != null ? String(cRate.current) : "—"}
-          unit={cRate?.unit}
+          icon={Database}
+          value={formatCount(cRate?.current)}
+          unit={cRate?.unit ?? "批次/min"}
           detail="写入 Redis Stream"
         />
-        <MetricCard
+        <MonitorKpiCard
           label="Redis 有效点数"
-          value={cPointRate?.current != null ? String(cPointRate.current) : "—"}
-          unit={cPointRate?.unit}
+          icon={Activity}
+          value={formatCount(cPointRate?.current)}
+          unit={cPointRate?.unit ?? "点/min"}
           detail="写入 Redis Stream"
         />
       </div>
 
-      {/* ⑤ 主体：左侧任务表 + 趋势图 / 右侧日志 */}
+      {/* 主体：左侧任务表 + 趋势图 / 右侧日志（上下与左列齐平） */}
       <div className="grid min-h-0 flex-1 overflow-hidden grid-cols-5 items-stretch gap-4">
         {/* 左侧（3/5） */}
-        <div className="col-span-3 grid min-h-0 grid-rows-[260px_minmax(0,1fr)] gap-4 overflow-hidden p-px">
-          <Card className="flex h-full min-h-0 flex-col">
-            <CardHeader>
-              <CardTitle>采集任务</CardTitle>
-              <CardDescription>按设备展示扫描周期、点位与最新采集时间</CardDescription>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col">
-              <div className="h-full overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">设备</TableHead>
-                      <TableHead className="text-xs">分组</TableHead>
-                      <TableHead className="text-xs">协议</TableHead>
-                      <TableHead className="text-xs">周期</TableHead>
-                      <TableHead className="text-xs text-right">点位</TableHead>
-                      <TableHead className="text-xs">最新时间</TableHead>
-                      <TableHead className="text-xs">状态</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {metricsError && !metrics ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-destructive py-6">
-                          {metricsError}
-                        </TableCell>
-                      </TableRow>
-                    ) : metricsLoading && !metrics ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
-                          加载中…
-                        </TableCell>
-                      </TableRow>
-                    ) : tasks.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
-                          暂无数据
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      tasks.map((t) => (
-                        <TableRow key={t.deviceCode}>
-                          <TableCell className="text-xs font-mono">{t.deviceCode}</TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{t.groupName || "—"}</TableCell>
-                          <TableCell className="text-xs">{t.protocol || "—"}</TableCell>
-                          <TableCell className="text-xs font-mono">{t.scanRateMs != null ? `${t.scanRateMs}ms` : "—"}</TableCell>
-                          <TableCell className="text-xs text-right font-mono">{t.pointCount.toLocaleString()}</TableCell>
-                          <TableCell className="text-xs font-mono">{t.lastCollectTime || "—"}</TableCell>
-                          <TableCell className="text-xs">
-                            <ConnectStatusChip status={t.connectStatus} />
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+        <div className="col-span-3 grid min-h-0 grid-rows-[360px_minmax(0,1fr)] gap-4 overflow-hidden p-px">
+          <Card className="flex h-full min-h-0 flex-col gap-0 py-0">
+            <div className="flex items-start gap-3 px-5 pt-5">
+              <div className="min-w-0">
+                <CardTitle className="text-sm font-semibold leading-none">采集任务</CardTitle>
+                <CardDescription className="mt-1.5 text-[13px] leading-5">按设备展示扫描周期、点位与最新采集时间</CardDescription>
               </div>
-            </CardContent>
+              {tasks.length > 0 && (
+                <div className="ml-auto flex shrink-0 gap-2">
+                  <Badge className={`${COUNT_BADGE_CLASS} bg-success-soft text-success`}>在线 {taskCounts.online}</Badge>
+                  <Badge className={`${COUNT_BADGE_CLASS} bg-warning-soft text-warning`}>不稳定 {taskCounts.unstable}</Badge>
+                  <Badge className={`${COUNT_BADGE_CLASS} bg-muted text-muted-foreground`}>离线 {taskCounts.offline}</Badge>
+                </div>
+              )}
+            </div>
+            <div className={`mt-3 ${MONITOR_TABLE_SCROLL_CLASS}`}>
+              <Table>
+                <TableHeader className="[&_tr]:border-b-0">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className={MONITOR_TH_CLASS}>设备</TableHead>
+                    <TableHead className={MONITOR_TH_CLASS}>分组</TableHead>
+                    <TableHead className={MONITOR_TH_CLASS}>协议</TableHead>
+                    <TableHead className={MONITOR_TH_CLASS}>周期</TableHead>
+                    <TableHead className={`${MONITOR_TH_CLASS} text-right`}>点位</TableHead>
+                    <TableHead className={MONITOR_TH_CLASS}>最新时间</TableHead>
+                    <TableHead className={MONITOR_TH_CLASS}>状态</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {metricsError && !metrics ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-xs text-destructive py-6">
+                        {metricsError}
+                      </TableCell>
+                    </TableRow>
+                  ) : metricsLoading && !metrics ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
+                        加载中…
+                      </TableCell>
+                    </TableRow>
+                  ) : tasks.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center text-xs text-muted-foreground/70 py-6">
+                        暂无数据
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    tasks.map((t) => (
+                      <TableRow key={t.deviceCode}>
+                        <TableCell className={`${MONITOR_TD_CLASS} font-mono`}>{t.deviceCode}</TableCell>
+                        <TableCell className={`${MONITOR_TD_CLASS} text-muted-foreground`}>{t.groupName || "—"}</TableCell>
+                        <TableCell className={MONITOR_TD_CLASS}>
+                          {t.protocol ? (
+                            <Badge variant="outline" className="h-5 rounded-md bg-transparent px-2 text-xs font-normal dark:bg-transparent">{t.protocol}</Badge>
+                          ) : "—"}
+                        </TableCell>
+                        <TableCell className={`${MONITOR_TD_CLASS} font-mono`}>{t.scanRateMs != null ? `${t.scanRateMs}ms` : "—"}</TableCell>
+                        <TableCell className={`${MONITOR_TD_CLASS} text-right font-mono tabular-nums`}>{t.pointCount.toLocaleString("en-US")}</TableCell>
+                        <TableCell className={`${MONITOR_TD_CLASS} font-mono tabular-nums ${t.connectStatus === "offline" ? "text-muted-foreground" : ""}`}>{t.lastCollectTime || "—"}</TableCell>
+                        <TableCell className={MONITOR_TD_CLASS}>
+                          <ConnectStatusChip status={t.connectStatus} />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
           </Card>
 
           <TrendChart
             fillHeight
             title="采集写入趋势"
+            description="Collector 写入 Redis Stream 的批次速率"
             unit={cRate?.unit ?? "批次/min"}
             state={rateTrendState(cRate, ratesLoading, ratesError)}
             data={cRate?.series ?? []}
@@ -207,7 +217,7 @@ export function CollectorPage() {
         </div>
 
         {/* 右侧日志面板（2/5）：实时 WS / 历史 DB 切换，默认实时 */}
-        <div className="col-span-2 flex h-full min-h-0 overflow-hidden">
+        <div className="col-span-2 flex h-full min-h-0 overflow-hidden p-px">
           {logView === "realtime" ? (
             <LogPanel
               lines={lines}
@@ -215,7 +225,7 @@ export function CollectorPage() {
               autoScroll={autoScroll}
               onAutoScrollChange={setAutoScroll}
               onClear={clear}
-              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+              headerExtra={logToggle}
             />
           ) : (
             <ModuleDbLogPanel
@@ -223,7 +233,7 @@ export function CollectorPage() {
               loading={dbLoading}
               error={dbError}
               onRefresh={dbRefresh}
-              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+              headerExtra={logToggle}
             />
           )}
         </div>
