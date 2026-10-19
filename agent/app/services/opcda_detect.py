@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any, List, Mapping
 
@@ -97,7 +98,15 @@ def detect_edge_endpoints(edge_db_path: str | Path) -> List[str]:
     if not path.exists():
         return []
     try:
-        with sqlite3.connect(path, timeout=CONNECT_TIMEOUT_SECONDS) as connection:
+        # M8：只读连接 + 显式关闭；Agent 不得成为 Storage 单写者之外的写连接。
+        with closing(
+            sqlite3.connect(
+                path.resolve().as_uri() + "?mode=ro",
+                uri=True,
+                timeout=CONNECT_TIMEOUT_SECONDS,
+            )
+        ) as connection:
+            connection.execute("PRAGMA query_only=ON")
             rows = connection.execute(
                 """
                 SELECT endpoint, protocol
