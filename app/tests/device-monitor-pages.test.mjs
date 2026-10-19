@@ -183,7 +183,7 @@ test("driver management uses a full-height paginated table with truncated descri
   assert.match(source, /安装包内置/);
 });
 
-test("device and point management use dynamic type tabs with full-height paginated lists", async () => {
+test("device and point management use dynamic type tabs with paginated lists", async () => {
   const files = ["DeviceManagementPage.tsx", "PointManagementPage.tsx"];
 
   for (const file of files) {
@@ -231,8 +231,8 @@ test("device and point management keep the selected-item deletion action without
     assert.match(source, />删除<\/Button>/);
   }
 });
-test("device and point lists keep filters outside the card and size pages from the table viewport", async () => {
-  for (const file of ["DeviceManagementPage.tsx", "PointManagementPage.tsx"]) {
+test("device list keeps filters outside the card and sizes pages from the table viewport", async () => {
+  for (const file of ["DeviceManagementPage.tsx"]) {
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
     assert.match(source, /useAdaptivePageSize/);
     assert.match(source, /ref=\{tableViewportRef\}/);

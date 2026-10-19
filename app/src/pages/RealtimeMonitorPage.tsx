@@ -486,7 +486,7 @@ export default function RealtimeMonitorPage() {
       {running && (realtimeSocket.source === "local" || !socketConnected || realtimeSocket.deviceOffline) && (
         <Alert variant={realtimeSocket.source === "local" ? "default" : "destructive"}>
           <WifiOff className="size-4" />
-          <AlertDescription>{realtimeSocket.source === "local" ? "中心不可达，正在显示本机 SQLite 实时值" : !socketConnected ? realtimeSocket.error ?? "中心实时连接已断开，正在重连..." : "设备数据离线，等待采集恢复..."}</AlertDescription>
+          <AlertDescription>{realtimeSocket.source === "local" ? "正在显示本机 SQLite 实时值；此模式不需要边缘节点直连 Redis" : !socketConnected ? realtimeSocket.error ?? "中心实时连接已断开，正在重连..." : "设备数据离线，等待采集恢复..."}</AlertDescription>
         </Alert>
       )}
 
@@ -522,13 +522,15 @@ export default function RealtimeMonitorPage() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>选择设备</DialogTitle><DialogDescription>按设备类型、设备编号或名称筛选后确认切换。</DialogDescription></DialogHeader>
           <div className="grid gap-4">
-            <div className="space-y-2"><Label>设备类型</Label><Select value={draftDeviceType} onValueChange={(value) => { setDraftDeviceType(value); setDraftDeviceId(""); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem>{deviceTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></div>
-            <div className="flex flex-col gap-2"><Label>设备编号</Label><Select value={draftDeviceId} onValueChange={setDraftDeviceId} disabled={devicePicker.loading}><SelectTrigger><SelectValue placeholder={devicePicker.loading ? "加载设备中…" : "选择设备编号"} /></SelectTrigger><SelectContent><SelectGroup>{selectedDevice && !filteredDevices.some((device) => device.id === selectedDevice.id) && <SelectItem value={String(selectedDevice.id)}>{selectedDevice.deviceCode} · {selectedDevice.deviceName}</SelectItem>}{filteredDevices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
-            <div className="space-y-2"><Label>搜索</Label><div className="relative"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" value={deviceSearch} onChange={(event) => setDeviceSearch(event.target.value)} placeholder="搜索设备名称或编号" /></div></div>
-            {devicePicker.error && <p role="alert" className="text-sm text-destructive">{devicePicker.error}</p>}
-            <DeviceCatalogPagination total={devicePicker.data?.total ?? 0} page={devicePicker.page} pageSize={devicePicker.pageSize} loading={devicePicker.loading} onPageChange={devicePicker.setPage} />
+            <div className="space-y-2"><Label>设备类型</Label><Select value={draftDeviceType} onValueChange={(value) => { setDraftDeviceType(value); setDraftDeviceId(""); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部类型</SelectItem>{deviceTypes.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
+            <div className="flex flex-col gap-2"><Label>设备编号</Label><Select value={draftDeviceId} onValueChange={setDraftDeviceId} disabled={devicePicker.loading}><SelectTrigger className="w-full"><SelectValue placeholder={devicePicker.loading ? "加载设备中…" : "选择设备编号"} /></SelectTrigger><SelectContent position="popper" align="start" className="max-h-64"><SelectGroup>{filteredDevices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectGroup></SelectContent></Select></div>
+            <div className="space-y-2"><Label>搜索</Label><div className="relative"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" value={deviceSearch} onChange={(event) => { setDeviceSearch(event.target.value); setDraftDeviceId(""); }} placeholder="搜索设备名称或编号" /></div></div>
+            {types.error && <div role="alert" className="flex items-center gap-2 text-sm text-destructive"><span>设备类型加载失败，请检查中心服务版本和日志。</span><Button variant="outline" size="sm" onClick={types.refresh}>重试</Button></div>}
+            {devicePicker.error && <div role="alert" className="flex items-center gap-2 text-sm text-destructive"><span>{devicePicker.error}</span><Button variant="outline" size="sm" onClick={devicePicker.refresh}>重试</Button></div>}
+            {!devicePicker.loading && !devicePicker.error && !filteredDevices.length && <p role="status" className="text-sm text-muted-foreground">没有匹配的设备，请调整类型或搜索条件。</p>}
+            <DeviceCatalogPagination total={devicePicker.data?.total ?? 0} page={devicePicker.page} pageSize={devicePicker.pageSize} loading={devicePicker.loading} onPageChange={(page) => { devicePicker.setPage(page); setDraftDeviceId(""); }} />
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setDeviceDialogOpen(false)}>取消</Button><Button onClick={confirmDeviceSelection} disabled={!draftDeviceId}>确认</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setDeviceDialogOpen(false)}>取消</Button><Button onClick={confirmDeviceSelection} disabled={devicePicker.loading || Boolean(devicePicker.error) || !filteredDevices.some((device) => String(device.id) === draftDeviceId)}>确认</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
