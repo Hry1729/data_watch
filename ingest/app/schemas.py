@@ -8,7 +8,12 @@ MAX_TIMESTAMP_MS = 253402300799999
 
 
 class RequestValidationError(ValueError):
-    pass
+    # 400 的作用范围：``batch``（与具体记录无关）或 ``item``（某条记录本身非法）。
+    scope = "batch"
+
+
+class ItemValidationError(RequestValidationError):
+    scope = "item"
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,9 +69,17 @@ class UploadItem:
                 latest_qualities = _int_map(payload.get("latest_qualities"), "latest_qualities")
             if "latest_timestamps" in payload:
                 latest_timestamps = _int_map(payload["latest_timestamps"], "latest_timestamps")
+            # 高-3：坏质量且无值的点只出现在 latest_qualities / latest_timestamps（仅更新质量），
+            # 因此要求 latest_values 的键是它们的子集，且两者键集合一致。
+            if (
+                latest_qualities is not None
+                and latest_timestamps is not None
+                and set(latest_qualities) != set(latest_timestamps)
+            ):
+                raise RequestValidationError("latest_qualities and latest_timestamps keys must match")
             for label, mapping in (("latest_qualities", latest_qualities), ("latest_timestamps", latest_timestamps)):
-                if mapping is not None and (latest_values is None or set(mapping) != set(latest_values)):
-                    raise RequestValidationError(f"{label} keys must match latest_values")
+                if mapping is not None and (latest_values is None or not set(latest_values) <= set(mapping)):
+                    raise RequestValidationError(f"{label} keys must cover latest_values")
             if latest_qualities is not None and any(v < 0 or v > 65535 for v in latest_qualities.values()):
                 raise RequestValidationError("invalid latest quality")
             if latest_timestamps is not None and any(v < 0 or v > MAX_TIMESTAMP_MS for v in latest_timestamps.values()):
@@ -123,7 +136,10 @@ class UploadBatch:
         raw_items = payload.get("items")
         if not isinstance(raw_items, list) or not raw_items:
             raise RequestValidationError("items must be a non-empty array")
-        items = tuple(UploadItem.from_dict(item) for item in raw_items if isinstance(item, dict))
+        try:
+            items = tuple(UploadItem.from_dict(item) for item in raw_items if isinstance(item, dict))
+        except RequestValidationError as exc:
+            raise ItemValidationError(str(exc)) from exc
         if len(items) != len(raw_items):
             raise RequestValidationError("each item must be an object")
         sessions = {item.upload_session_id for item in items}
