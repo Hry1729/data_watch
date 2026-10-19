@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
 import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
-import { MonitorKpiCard } from "@/components/MonitorKpiCard";
 import { cn } from "@/lib/utils";
 
 const DEVICE_TYPE_LABELS: Record<string, string> = {
@@ -48,12 +47,28 @@ function getDeviceTone(connectStatus?: string, deviceStatus?: string) {
   return "bg-destructive text-white";
 }
 
-function KpiCard({ label, value, unit, detail }: { label: string; value: string; unit?: string; detail: string }) {
-  return <MonitorKpiCard size="lg" label={label} value={value} unit={unit} detail={detail} />;
+/* 色块墙：最小色块边长与间距（px），列数随宽度自适应 */
+const TILE_MIN = 46;
+const TILE_GAP = 6;
+const DEFAULT_PAGE_SIZE = 150;
+
+/* 按色块墙可视区估算一页能放下的设备数（取整到 10，至少 40） */
+function estimatePageSize(width: number, height: number) {
+  if (width <= 0 || height <= 0) return DEFAULT_PAGE_SIZE;
+  const cols = Math.max(1, Math.floor((width + TILE_GAP) / (TILE_MIN + TILE_GAP)));
+  const tile = (width - TILE_GAP * (cols - 1)) / cols;
+  const rows = Math.max(1, Math.floor((height + TILE_GAP) / (tile + TILE_GAP)));
+  return Math.max(40, Math.floor((cols * rows) / 10) * 10);
 }
 
-function formatPercent(value: number | null) {
-  return value == null ? "—" : value.toFixed(1);
+function LegendCount({ dot, label, value }: { dot?: string; label: string; value: number | null }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      {dot && <span className={cn("size-[9px] rounded-[3px]", dot)} />}
+      {label}
+      <b className="font-semibold tabular-nums text-foreground">{value == null ? "—" : value}</b>
+    </span>
+  );
 }
 
 export default function DeviceCommunicationPage() {
@@ -62,7 +77,24 @@ export default function DeviceCommunicationPage() {
   const [deviceType, setDeviceType] = useState("all");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
-  const pageSize = 150;
+  const wallRef = useRef<HTMLDivElement>(null);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  useEffect(() => {
+    const node = wallRef.current;
+    if (!node) return;
+    let current = DEFAULT_PAGE_SIZE;
+    const update = () => {
+      const next = estimatePageSize(node.clientWidth, node.clientHeight);
+      if (next === current) return;
+      current = next;
+      setPageSize(next);
+      setPage(1);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   const load = useCallback(
     (token: string, signal: AbortSignal) => backendClient.deviceList(token, {
       pageNo: page, pageSize, keyword: keyword.trim() || undefined,
@@ -70,7 +102,7 @@ export default function DeviceCommunicationPage() {
       connectStatus: status === "all" || status === "disabled" ? undefined : status,
       deviceStatus: status === "disabled" ? "disabled" : undefined,
     }, signal),
-    [deviceType, keyword, page, status],
+    [deviceType, keyword, page, pageSize, status],
   );
   const query = useBackendQuery(load, { intervalMs: 30_000 });
   const devices = query.data?.list ?? [];
@@ -92,46 +124,18 @@ export default function DeviceCommunicationPage() {
   const disabled = summary.data?.disabledCount ?? 0;
   const unstable = summary.data?.unstableCount ?? 0;
   const types = typeCatalog.data ?? [];
-  const onlinePercent = summary.data ? (total ? online / total * 100 : 0) : null;
-  const offlinePercent = summary.data ? (total ? offline / total * 100 : 0) : null;
-  const disabledPercent = summary.data ? (total ? disabled / total * 100 : 0) : null;
-
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-4">
-      <div className="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard
-          label="设备总数"
-          value={summary.data ? String(total) : "—"}
-          detail={summary.data ? `${online} 在线 · ${unstable} 异常 · ${offline} 离线 · ${disabled} 未启用` : "—"}
-        />
-        <KpiCard
-          label="在线比例"
-          value={formatPercent(onlinePercent)}
-          unit={onlinePercent == null ? undefined : "%"}
-          detail={summary.data ? `${online} / ${total} 台` : "—"}
-        />
-        <KpiCard
-          label="离线比例"
-          value={formatPercent(offlinePercent)}
-          unit={offlinePercent == null ? undefined : "%"}
-          detail={summary.data ? `${offline} / ${total} 台` : "—"}
-        />
-        <KpiCard
-          label="未用比例"
-          value={formatPercent(disabledPercent)}
-          unit={disabledPercent == null ? undefined : "%"}
-          detail={summary.data ? `${disabled} / ${total} 台` : "—"}
-        />
-      </div>
-
       <Card className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 pt-1">
           <CardTitle className="text-[15px] font-semibold leading-none">设备通讯</CardTitle>
           <div className="flex flex-wrap items-center gap-x-3.5 gap-y-2 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1.5"><span className="size-[9px] rounded-[3px] bg-success" />在线</span>
-            <span className="flex items-center gap-1.5"><span className="size-[9px] rounded-[3px] bg-destructive" />离线</span>
-            <span className="flex items-center gap-1.5"><span className="size-[9px] rounded-[3px] bg-warning" />异常</span>
-            <span className="flex items-center gap-1.5"><span className="size-[9px] rounded-[3px] bg-muted-foreground/50" />未启用</span>
+            <LegendCount label="总数" value={summary.data ? total : null} />
+            <span className="text-border">·</span>
+            <LegendCount dot="bg-success" label="在线" value={summary.data ? online : null} />
+            <LegendCount dot="bg-destructive" label="离线" value={summary.data ? offline : null} />
+            <LegendCount dot="bg-warning" label="异常" value={summary.data ? unstable : null} />
+            <LegendCount dot="bg-muted-foreground/50" label="未启用" value={summary.data ? disabled : null} />
           </div>
           <div className="ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
             <div className="relative w-[150px] shrink-0">
@@ -163,9 +167,9 @@ export default function DeviceCommunicationPage() {
           </div>
         </div>
         <CardContent className="flex min-h-0 flex-1 flex-col gap-0 px-5 pb-1 pt-1">
-          <div className="min-h-0 flex-1 overflow-auto">
+          <div ref={wallRef} className="min-h-0 flex-1 overflow-auto">
             {query.loading ? (
-              <div className="grid w-full grid-cols-[repeat(20,minmax(0,1fr))] gap-1.5">
+              <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(46px,1fr))] gap-1.5">
                 {Array.from({ length: 40 }, (_, index) => <Skeleton key={index} className="aspect-square w-full rounded-[7px]" />)}
               </div>
             ) : query.error ? (
@@ -181,7 +185,7 @@ export default function DeviceCommunicationPage() {
                         <Badge className="h-5 rounded-md bg-muted px-2 text-xs font-medium tabular-nums text-muted-foreground">{rows.length}</Badge>
                         <span className="text-xs tabular-nums text-muted-foreground">在线 {onlineCount} / {rows.length}</span>
                       </div>
-                      <div className="grid w-full grid-cols-[repeat(20,minmax(0,1fr))] gap-1.5">
+                      <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(46px,1fr))] gap-1.5">
                         {rows.map((device) => (
                           <button
                             key={device.id}
