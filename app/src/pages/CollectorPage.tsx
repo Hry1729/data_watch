@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -8,25 +8,39 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrendChart } from "@/components/TrendChart";
 import { LogPanel } from "@/components/LogPanel";
+import { LogViewToggle, type LogView } from "@/components/LogViewToggle";
 import { ModuleDbLogPanel } from "@/components/ModuleDbLogPanel";
 import { useModuleStatus } from "@/hooks/useModuleStatus";
 import { useWebSocketLog } from "@/hooks/useWebSocketLog";
 import { useModuleDbLogs } from "@/hooks/useModuleDbLogs";
 import { useModuleMetrics } from "@/hooks/useModuleMetrics";
-import { useModuleRates, rateTrendState, rateCardValue } from "@/hooks/useModuleRates";
+import { useModuleRates, rateTrendState } from "@/hooks/useModuleRates";
 import type { CollectorTaskRow } from "@/types";
 
 // ─── 指标卡片 ─────────────────────────────────────────────────────────────────
 
-function MetricCard({ label, value }: { label: string; value: string }) {
+function MetricCard({
+  label,
+  value,
+  unit,
+  detail,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  detail: string;
+}) {
   return (
-    <Card className="bg-card">
-      <CardContent className="px-4 py-3">
-        <p className="text-xs text-muted-foreground mb-1">{label}</p>
-        <p className="text-xl font-bold text-foreground">{value}</p>
+    <Card size="sm">
+      <CardContent className="px-4 py-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p className="mt-2 text-2xl font-semibold leading-none tabular-nums">
+          {value}
+          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
+        </p>
+        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
       </CardContent>
     </Card>
   );
@@ -48,6 +62,7 @@ function ConnectStatusChip({ status }: { status: CollectorTaskRow["connectStatus
 
 export function CollectorPage() {
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logView, setLogView] = useState<LogView>("realtime");
 
   // 进程状态轮询（T015）
   const { data, loading, error } = useModuleStatus("collector");
@@ -62,6 +77,10 @@ export function CollectorPage() {
   const { data: rates, loading: ratesLoading, error: ratesError } = useModuleRates();
   const cRate = rates?.collector;
   const cPointRate = rates?.collectorPoints;
+  const onlineRate =
+    metrics && metrics.totalDevices > 0
+      ? ((metrics.onlineDevices / metrics.totalDevices) * 100).toFixed(1)
+      : null;
 
   // 实时日志 WS（T016）
   const { lines, wsStatus, clear } = useWebSocketLog("collector");
@@ -75,20 +94,43 @@ export function CollectorPage() {
   } = useModuleDbLogs("collector");
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 pb-4">
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden">
       {showError && (
         <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}
         </p>
       )}
 
-      {/* ④ 指标卡片：3 张接真，速率卡占位 */}
-      <div className="grid shrink-0 grid-cols-5 gap-3">
-        <MetricCard label="最短周期" value={metrics?.scanRateMs != null ? `${metrics.scanRateMs} ms` : "—"} />
-        <MetricCard label="设备连接" value={metrics ? `${metrics.onlineDevices} / ${metrics.totalDevices}` : "—"} />
-        <MetricCard label="采集点位" value={metrics ? metrics.pointTotal.toLocaleString() : "—"} />
-        <MetricCard label="Redis 写入批次" value={rateCardValue(cRate)} />
-        <MetricCard label="Redis 有效点数" value={rateCardValue(cPointRate)} />
+      <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
+        <MetricCard
+          label="最短周期"
+          value={metrics?.scanRateMs != null ? String(metrics.scanRateMs) : "—"}
+          unit="ms"
+          detail="最快扫描周期"
+        />
+        <MetricCard
+          label="设备连接"
+          value={metrics ? String(metrics.onlineDevices) : "—"}
+          unit={metrics ? `/ ${metrics.totalDevices}` : undefined}
+          detail={onlineRate != null ? `在线率 ${onlineRate}% · ${metrics ? metrics.totalDevices - metrics.onlineDevices : 0} 台未连接` : "—"}
+        />
+        <MetricCard
+          label="采集点位"
+          value={metrics ? metrics.pointTotal.toLocaleString() : "—"}
+          detail="已配置采集点位"
+        />
+        <MetricCard
+          label="Redis 写入批次"
+          value={cRate?.current != null ? String(cRate.current) : "—"}
+          unit={cRate?.unit}
+          detail="写入 Redis Stream"
+        />
+        <MetricCard
+          label="Redis 有效点数"
+          value={cPointRate?.current != null ? String(cPointRate.current) : "—"}
+          unit={cPointRate?.unit}
+          detail="写入 Redis Stream"
+        />
       </div>
 
       {/* ⑤ 主体：左侧任务表 + 趋势图 / 右侧日志 */}
@@ -98,6 +140,7 @@ export function CollectorPage() {
           <Card className="flex h-full min-h-0 flex-col">
             <CardHeader>
               <CardTitle>采集任务</CardTitle>
+              <CardDescription>按设备展示扫描周期、点位与最新采集时间</CardDescription>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col">
               <div className="h-full overflow-y-auto">
@@ -165,29 +208,24 @@ export function CollectorPage() {
 
         {/* 右侧日志面板（2/5）：实时 WS / 历史 DB 切换，默认实时 */}
         <div className="col-span-2 flex h-full min-h-0 overflow-hidden">
-          <Tabs defaultValue="realtime" className="flex h-full w-full flex-col gap-2">
-            <TabsList className="w-full">
-              <TabsTrigger value="realtime">实时</TabsTrigger>
-              <TabsTrigger value="history">历史</TabsTrigger>
-            </TabsList>
-            <TabsContent value="realtime" className="flex min-h-0 overflow-hidden p-px">
-              <LogPanel
-                lines={lines}
-                wsStatus={wsStatus}
-                autoScroll={autoScroll}
-                onAutoScrollChange={setAutoScroll}
-                onClear={clear}
-              />
-            </TabsContent>
-            <TabsContent value="history" className="flex min-h-0 overflow-hidden p-px">
-              <ModuleDbLogPanel
-                rows={dbRows}
-                loading={dbLoading}
-                error={dbError}
-                onRefresh={dbRefresh}
-              />
-            </TabsContent>
-          </Tabs>
+          {logView === "realtime" ? (
+            <LogPanel
+              lines={lines}
+              wsStatus={wsStatus}
+              autoScroll={autoScroll}
+              onAutoScrollChange={setAutoScroll}
+              onClear={clear}
+              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+            />
+          ) : (
+            <ModuleDbLogPanel
+              rows={dbRows}
+              loading={dbLoading}
+              error={dbError}
+              onRefresh={dbRefresh}
+              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+            />
+          )}
         </div>
       </div>
     </div>

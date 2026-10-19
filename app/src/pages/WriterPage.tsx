@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -8,26 +8,44 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrendChart } from "@/components/TrendChart";
 import { LogPanel } from "@/components/LogPanel";
+import { LogViewToggle, type LogView } from "@/components/LogViewToggle";
 import { ModuleDbLogPanel } from "@/components/ModuleDbLogPanel";
 import { useModuleStatus } from "@/hooks/useModuleStatus";
 import { useWebSocketLog } from "@/hooks/useWebSocketLog";
 import { useModuleDbLogs } from "@/hooks/useModuleDbLogs";
 import { useModuleMetrics } from "@/hooks/useModuleMetrics";
-import { useModuleRates, rateTrendState, rateCardValue } from "@/hooks/useModuleRates";
+import { useModuleRates, rateTrendState } from "@/hooks/useModuleRates";
 import type { WriterStreamRow } from "@/types";
 
 // ─── 指标卡片 ─────────────────────────────────────────────────────────────────
 
-function MetricCard({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "warning" }) {
-  const color = tone === "warning" ? "var(--warning)" : "var(--foreground)";
+function MetricCard({
+  label,
+  value,
+  unit,
+  detail,
+  tone = "normal",
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  detail: string;
+  tone?: "normal" | "warning";
+}) {
   return (
-    <Card className="bg-card">
-      <CardContent className="px-4 py-3">
-        <p className="text-xs text-muted-foreground mb-1">{label}</p>
-        <p className="text-xl font-bold" style={{ color }}>{value}</p>
+    <Card size="sm">
+      <CardContent className="px-4 py-1">
+        <p className="text-xs text-muted-foreground">{label}</p>
+        <p
+          className="mt-2 text-2xl font-semibold leading-none tabular-nums"
+          style={{ color: tone === "warning" ? "var(--warning)" : undefined }}
+        >
+          {value}
+          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
+        </p>
+        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
       </CardContent>
     </Card>
   );
@@ -48,6 +66,7 @@ function StreamStatusChip({ status }: { status: WriterStreamRow["status"] }) {
 
 export function WriterPage() {
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logView, setLogView] = useState<LogView>("realtime");
 
   // 真实状态轮询
   const { data, loading, error } = useModuleStatus("writer");
@@ -75,20 +94,46 @@ export function WriterPage() {
   } = useModuleDbLogs("writer", "storage");
 
   return (
-    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden px-6 pb-4">
+    <div className="flex h-full min-h-0 max-w-[1400px] flex-col gap-4 overflow-hidden">
       {showError && (
         <p className="text-xs text-destructive mt-1 px-1" role="alert">
           {error}
         </p>
       )}
 
-      {/* ④ 指标卡片：3 张接真，速率卡占位 */}
-      <div className="grid shrink-0 grid-cols-5 gap-3">
-        <MetricCard label="Stream Lag" value={metrics ? String(metrics.streamLagTotal) : "—"} tone={(metrics?.streamLagTotal ?? 0) >= 5000 ? "warning" : "normal"} />
-        <MetricCard label="PEL Pending" value={metrics ? String(metrics.pelPendingTotal) : "—"} tone={(metrics?.pelPendingTotal ?? 0) >= 5000 ? "warning" : "normal"} />
-        <MetricCard label="Redis 读取" value={rateCardValue(wRate)} />
-        <MetricCard label="TDengine 入库" value={rateCardValue(wLandedRate)} />
-        <MetricCard label="DLQ" value={metrics ? String(metrics.dlqTotal) : "—"} />
+      <div className="grid shrink-0 grid-cols-2 gap-3 lg:grid-cols-5">
+        <MetricCard
+          label="Stream Lag"
+          value={metrics ? String(metrics.streamLagTotal) : "—"}
+          unit="条"
+          detail="阈值 5,000"
+          tone={(metrics?.streamLagTotal ?? 0) >= 5000 ? "warning" : "normal"}
+        />
+        <MetricCard
+          label="PEL Pending"
+          value={metrics ? String(metrics.pelPendingTotal) : "—"}
+          unit="条"
+          detail="阈值 5,000"
+          tone={(metrics?.pelPendingTotal ?? 0) >= 5000 ? "warning" : "normal"}
+        />
+        <MetricCard
+          label="Redis 读取"
+          value={wRate?.current != null ? String(wRate.current) : "—"}
+          unit={wRate?.unit}
+          detail="从 Redis Stream 消费"
+        />
+        <MetricCard
+          label="TDengine 入库"
+          value={wLandedRate?.current != null ? String(wLandedRate.current) : "—"}
+          unit={wLandedRate?.unit}
+          detail="写入 TDengine"
+        />
+        <MetricCard
+          label="DLQ"
+          value={metrics ? String(metrics.dlqTotal) : "—"}
+          unit="条"
+          detail="死信队列"
+        />
       </div>
 
       {/* ⑤ 主体：左侧 Stream 表 + 趋势图 / 右侧日志 */}
@@ -98,6 +143,7 @@ export function WriterPage() {
           <Card className="flex h-full min-h-0 flex-col">
             <CardHeader>
               <CardTitle>Stream 消费任务</CardTitle>
+              <CardDescription>各 Stream 的消费位点与积压状态</CardDescription>
             </CardHeader>
             <CardContent className="flex min-h-0 flex-1 flex-col">
               <div className="h-full overflow-y-auto">
@@ -159,29 +205,24 @@ export function WriterPage() {
 
         {/* 右侧日志面板（2/5）：实时 WS / 历史 DB 切换，默认实时 */}
         <div className="col-span-2 flex h-full min-h-0 overflow-hidden">
-          <Tabs defaultValue="realtime" className="flex h-full w-full flex-col gap-2">
-            <TabsList className="w-full">
-              <TabsTrigger value="realtime">实时</TabsTrigger>
-              <TabsTrigger value="history">历史</TabsTrigger>
-            </TabsList>
-            <TabsContent value="realtime" className="flex min-h-0 overflow-hidden p-px">
-              <LogPanel
-                lines={lines}
-                wsStatus={wsStatus}
-                autoScroll={autoScroll}
-                onAutoScrollChange={setAutoScroll}
-                onClear={clear}
-              />
-            </TabsContent>
-            <TabsContent value="history" className="flex min-h-0 overflow-hidden p-px">
-              <ModuleDbLogPanel
-                rows={dbRows}
-                loading={dbLoading}
-                error={dbError}
-                onRefresh={dbRefresh}
-              />
-            </TabsContent>
-          </Tabs>
+          {logView === "realtime" ? (
+            <LogPanel
+              lines={lines}
+              wsStatus={wsStatus}
+              autoScroll={autoScroll}
+              onAutoScrollChange={setAutoScroll}
+              onClear={clear}
+              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+            />
+          ) : (
+            <ModuleDbLogPanel
+              rows={dbRows}
+              loading={dbLoading}
+              error={dbError}
+              onRefresh={dbRefresh}
+              headerExtra={<LogViewToggle value={logView} onChange={setLogView} />}
+            />
+          )}
         </div>
       </div>
     </div>

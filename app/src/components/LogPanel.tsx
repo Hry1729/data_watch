@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef } from "react";
+import { forwardRef, useEffect, useRef, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,13 +25,15 @@ export interface LogPanelProps {
   onAutoScrollChange: (v: boolean) => void;
   /** 清空回调（T016 接入后实现；静态阶段传 undefined） */
   onClear?: () => void;
+  /** 标题右侧额外控件（如实时/历史切换） */
+  headerExtra?: ReactNode;
 }
 
 // ─── 组件（forwardRef 供父组件 scrollIntoView）────────────────────────────────
 
 export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
   function LogPanel(
-    { lines, wsStatus, autoScroll, onAutoScrollChange, onClear },
+    { lines, wsStatus, autoScroll, onAutoScrollChange, onClear, headerExtra },
     ref
   ) {
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -54,6 +56,7 @@ export const LogPanel = forwardRef<HTMLDivElement, LogPanelProps>(
           <CardTitle>实时日志</CardTitle>
           <CardAction>
           <div className="flex items-center gap-3">
+            {headerExtra}
             {/* 自动滚动 */}
             <div className="flex items-center gap-1.5">
               <Switch

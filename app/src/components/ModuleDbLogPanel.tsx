@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,8 @@ export interface ModuleDbLogPanelProps {
   loading: boolean;
   error: string | null;
   onRefresh: () => void;
+  /** 标题右侧额外控件（如实时/历史切换） */
+  headerExtra?: ReactNode;
 }
 
 // ─── 组件（DB system_log 历史视图，结构对齐 LogPanel 外壳；collector/writer 通用）──
@@ -29,6 +32,7 @@ export function ModuleDbLogPanel({
   loading,
   error,
   onRefresh,
+  headerExtra,
 }: ModuleDbLogPanelProps) {
   return (
     <Card className="h-full min-h-0 w-full">
@@ -36,6 +40,8 @@ export function ModuleDbLogPanel({
       <CardHeader>
         <CardTitle>历史日志（system_log）</CardTitle>
         <CardAction>
+        <div className="flex items-center gap-2">
+        {headerExtra}
         <Button
           variant="ghost"
           size="icon"
@@ -48,6 +54,7 @@ export function ModuleDbLogPanel({
             className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`}
           />
         </Button>
+        </div>
         </CardAction>
       </CardHeader>
 
