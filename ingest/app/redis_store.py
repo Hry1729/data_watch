@@ -6,7 +6,14 @@ from typing import Callable
 
 import msgspec
 import redis.asyncio as redis
-from redis.exceptions import RedisError
+from redis.exceptions import (
+    BusyLoadingError,
+    ConnectionError as RedisConnectionError,
+    OutOfMemoryError,
+    ReadOnlyError,
+    RedisError,
+    TimeoutError as RedisTimeoutError,
+)
 
 from data_watch_shared.stream_envelope import build_latest_updates, stream_key
 
@@ -198,6 +205,24 @@ class CommitUnknownError(RuntimeError):
     pass
 
 
+class TransientStoreError(CommitUnknownError):
+    """暂时性持久化故障：连接/超时、OOM、LOADING/READONLY、WAITAOF 报错或未确认。
+
+    与确定性的数据裁决（``rejected_consumed`` 等）分开：HTTP 层映射为 503，
+    边缘按传输失败在同一 session 内退避重试，不消耗坏数据隔离预算。
+    已执行的 EVAL 在同一 session 重放时由 hw 判为 ``duplicate``，不会重复写入。
+    """
+
+
+_TRANSIENT_REDIS_ERRORS = (
+    RedisConnectionError,
+    RedisTimeoutError,
+    BusyLoadingError,
+    OutOfMemoryError,
+    ReadOnlyError,
+)
+
+
 class NonceReplayError(RuntimeError):
     pass
 
@@ -319,6 +344,15 @@ class IngestRedisStore:
                 assignment_epoch=item.assignment_epoch,
                 qualities=realtime_quals,
             )
+            if item.latest_values is not None and item.latest_qualities is not None:
+                # 高-3：只有质量没有值的点生成不带 "v" 的 latest（与 collector 直写 Redis 形态一致）
+                for var_id, quality in item.latest_qualities.items():
+                    if var_id not in latest_updates:
+                        latest_updates[var_id] = {
+                            "t": item.ts,
+                            "q": int(quality),
+                            "e": item.assignment_epoch,
+                        }
             if item.latest_timestamps is not None:
                 for var_id, timestamp in item.latest_timestamps.items():
                     latest_updates[var_id]["t"] = timestamp
@@ -363,11 +397,21 @@ class IngestRedisStore:
                 # EVAL reserves a new nonce even for duplicate batches. The
                 # same connection's AOF offset includes all preceding writes.
                 pipe.execute_command("WAITAOF", 1, 0, 2000)
-                result, persisted = await pipe.execute()
-                if not isinstance(persisted, (list, tuple)) or int(persisted[0]) < 1:
-                    raise CommitUnknownError("Redis AOF persistence not confirmed")
+                # 逐条取结果，才能区分「EVAL 失败」与「EVAL 已执行、WAITAOF 失败」。
+                result, persisted = await pipe.execute(raise_on_error=False)
+        except _TRANSIENT_REDIS_ERRORS as exc:
+            raise TransientStoreError(str(exc)) from exc
         except RedisError as exc:
             raise CommitUnknownError(str(exc)) from exc
+        if isinstance(result, _TRANSIENT_REDIS_ERRORS):
+            raise TransientStoreError(str(result)) from result
+        if isinstance(result, Exception):
+            raise CommitUnknownError(str(result)) from result
+        if isinstance(persisted, Exception):
+            # AOF 未开启、Redis < 7.2 不支持 WAITAOF 等：运维配置问题，按暂时性处理。
+            raise TransientStoreError(f"Redis WAITAOF failed: {persisted}") from persisted
+        if not isinstance(persisted, (list, tuple)) or int(persisted[0]) < 1:
+            raise TransientStoreError("Redis AOF persistence not confirmed")
         statuses = msgspec.json.decode(_decode_result(result))
         if statuses == ["nonce_replay"]:
             raise NonceReplayError("nonce already used")
