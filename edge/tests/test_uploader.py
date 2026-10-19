@@ -471,6 +471,53 @@ async def test_commit_unknown_retries_same_session_with_backoff_without_reject_b
 
 
 @pytest.mark.asyncio
+async def test_rejected_consumed_latest_mismatch_is_dead_and_not_retried(tmp_path):
+    """latest 键不一致的记录被中心 rejected_consumed 后，边缘记 dead，不再重试。"""
+    import json
+    store = OutboxStore(tmp_path / "edge.db")
+    seed(store, 2)
+    paths = []
+
+    def handler(request):
+        paths.append(request.url.path)
+        items = json.loads(request.content)["items"]
+        results = []
+        for item in items:
+            if item["local_seq"] == 2:
+                results.append(dict(
+                    batch_id=item["batch_id"],
+                    upload_session_id=item["upload_session_id"],
+                    local_seq=item["local_seq"],
+                    status="rejected_consumed",
+                    reason="malformed_envelope:latest_qualities and latest_timestamps keys must match (missing quality: ['slow'])",
+                ))
+            else:
+                results.append(dict(
+                    batch_id=item["batch_id"],
+                    upload_session_id=item["upload_session_id"],
+                    local_seq=item["local_seq"],
+                    status="ack",
+                    durability="redis-aof",
+                ))
+        return httpx.Response(200, json={"results": results})
+
+    async with httpx.AsyncClient(base_url="https://center.test", transport=httpx.MockTransport(handler)) as client:
+        uploader = Uploader(store, settings(tmp_path), client=client, signer=FakeSigner())
+        await uploader.run_cycle()
+        await uploader.run_cycle()
+
+    assert paths == ["/ingest"]
+    rows = store._connection.execute(
+        "SELECT local_seq, state, last_error FROM outbox ORDER BY local_seq"
+    ).fetchall()
+    assert rows[0]["state"] == "sent"
+    assert rows[1]["state"] == "dead"
+    assert "slow" in (rows[1]["last_error"] or "")
+    assert "retry_wait" not in {row["state"] for row in rows}
+    store.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response",
     [
