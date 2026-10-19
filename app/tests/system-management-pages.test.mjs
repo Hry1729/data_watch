@@ -26,3 +26,11 @@ test("system-management pages contain their approved operational regions", async
     assert.match(source, /<Dialog/);
   }
 });
+
+test("user management fills the content height and derives its page size from it", async () => {
+  const source = await readFile(new URL("../src/pages/UserManagementPage.tsx", import.meta.url), "utf8");
+  assert.match(source, /<Card className="flex min-h-0 flex-1 flex-col/);
+  assert.match(source, /function fitPageSize\(/);
+  assert.match(source, /new ResizeObserver\(/);
+  assert.match(source, /useBackendQuery\(loadUsers, \{ enabled: sizeReady \}\)/);
+});
