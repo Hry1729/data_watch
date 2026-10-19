@@ -14,6 +14,50 @@ from typing import Any
 ONLINE_MAX_AGE_MS = 60_000
 UNSTABLE_MAX_AGE_MS = 120_000
 
+# 显示口径与中心 catalog._normalize_data_type 一致：BOOLEAN/Boolean 归到 BOOL，
+# FLOAT 归到 REAL（两者在 S7 驱动里是同一种解码）。其余类型按原样显示，
+# 未知类型不再伪装成 STRING。
+DATA_TYPE_ALIASES = {
+    "BOOLEAN": "BOOL",
+    "FLOAT": "REAL",
+}
+
+
+def display_data_type(value: Any) -> str:
+    """把库里的 var_type 归一成显示口径。"""
+    normalized = "" if value is None else str(value).strip().upper()
+    if not normalized:
+        return "STRING"
+    return DATA_TYPE_ALIASES.get(normalized, normalized)
+
+
+def display_point_name(point_name: Any, var_seq: int) -> str:
+    """中心没下发名称（旧快照）或名称为空时，回退为「点位 {var_seq}」。"""
+    name = "" if point_name is None else str(point_name).strip()
+    return name or f"点位 {var_seq}"
+
+
+def data_type_expression(column: str) -> str:
+    """生成与 display_data_type 同口径的 SQL 表达式（筛选与显示必须一致）。"""
+    base = f"UPPER(COALESCE(NULLIF(TRIM({column}), ''), 'STRING'))"
+    cases = " ".join(
+        f"WHEN '{alias}' THEN '{canonical}'"
+        for alias, canonical in DATA_TYPE_ALIASES.items()
+    )
+    return f"CASE {base} {cases} ELSE {base} END"
+
+
+def point_name_expression(connection: sqlite3.Connection, alias: str = "") -> str:
+    """现场旧库可能还没补点位名称列，缺列时按空名回退，避免查询直接报错。"""
+    prefix = f"{alias}." if alias else ""
+    try:
+        columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(edge_variable)")
+        }
+    except sqlite3.OperationalError:
+        return "''"
+    return f"{prefix}point_name" if "point_name" in columns else "''"
+
 
 class EdgeLocalStore:
     """Read-only operational queries for the Edge Agent API."""
@@ -246,15 +290,17 @@ class EdgeLocalStore:
             conditions.append("d.device_code=?")
             params.append(device_code)
         if data_type and data_type != "all":
-            conditions.append("UPPER(v.data_type)=?")
-            params.append(data_type.upper())
+            conditions.append(f"{data_type_expression('v.data_type')}=?")
+            params.append(display_data_type(data_type))
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         try:
             with closing(self._connect()) as connection:
+                point_name = point_name_expression(connection, "v")
                 rows = connection.execute(
-                    """
+                    f"""
                     SELECT v.variable_id, d.device_pk, d.device_code, v.var_seq,
-                           v.address, v.data_type, d.protocol
+                           v.address, v.data_type, d.protocol,
+                           {point_name} AS point_name
                     FROM edge_variable AS v
                     JOIN edge_device AS d ON d.device_code=v.device_code
                     """
@@ -267,7 +313,8 @@ class EdgeLocalStore:
         needle = keyword.strip().lower()
         items = []
         for row in rows:
-            point_name = str(row["var_seq"])
+            var_seq = int(row["var_seq"])
+            point_name = display_point_name(row["point_name"], var_seq)
             if needle and needle not in f"{point_name} {row['address']} {row['device_code']}".lower():
                 continue
             items.append(
@@ -275,10 +322,10 @@ class EdgeLocalStore:
                     "id": int(row["variable_id"]),
                     "deviceId": int(row["device_pk"]),
                     "deviceCode": str(row["device_code"]),
-                    "varSeq": int(row["var_seq"]),
+                    "varSeq": var_seq,
                     "pointName": point_name,
                     "ioAddress": str(row["address"]),
-                    "dataType": str(row["data_type"]).upper(),
+                    "dataType": display_data_type(row["data_type"]),
                     "description": "",
                     "isReadonly": True,
                     "driverName": str(row["protocol"]),
@@ -337,9 +384,11 @@ class EdgeLocalStore:
                 ).fetchone()
                 if device is None:
                     return self._empty_realtime(device_id)
+                point_name = point_name_expression(connection)
                 points = connection.execute(
-                    """
-                    SELECT variable_id, var_seq, address, data_type
+                    f"""
+                    SELECT variable_id, var_seq, address, data_type,
+                           {point_name} AS point_name
                     FROM edge_variable
                     WHERE device_code=? AND group_code=?
                     ORDER BY var_seq
@@ -363,12 +412,14 @@ class EdgeLocalStore:
                 {
                     "pointId": int(point["variable_id"]),
                     "varSeq": int(point["var_seq"]),
-                    "pointName": str(point["var_seq"]),
+                    "pointName": display_point_name(
+                        point["point_name"], int(point["var_seq"])
+                    ),
                     "ioAddress": str(point["address"]),
                     "value": value.get("v", "--"),
                     "updateTime": self._format_ms(timestamp),
                     "quality": value.get("q"),
-                    "dataType": str(point["data_type"]).upper(),
+                    "dataType": display_data_type(point["data_type"]),
                 }
             )
         return {
@@ -506,9 +557,11 @@ class EdgeLocalStore:
             "series": [
                 {
                     "varSeq": int(point["var_seq"]),
-                    "name": str(point["var_seq"]),
+                    "name": display_point_name(
+                        point["point_name"], int(point["var_seq"])
+                    ),
                     "unit": "",
-                    "dataType": str(point["data_type"]).upper(),
+                    "dataType": display_data_type(point["data_type"]),
                     "data": series_data[int(point["var_seq"])],
                 }
                 for point in point_rows
@@ -560,9 +613,11 @@ class EdgeLocalStore:
         columns.extend(
             {
                 "prop": f"v{int(point['var_seq'])}",
-                "label": str(point["var_seq"]),
+                "label": display_point_name(
+                    point["point_name"], int(point["var_seq"])
+                ),
                 "varSeq": int(point["var_seq"]),
-                "dataType": str(point["data_type"]).upper(),
+                "dataType": display_data_type(point["data_type"]),
             }
             for point in point_rows
         )
@@ -656,9 +711,11 @@ class EdgeLocalStore:
         if not selected:
             return []
         placeholders = ",".join("?" for _ in selected)
+        point_name = point_name_expression(connection)
         return connection.execute(
             f"""
-            SELECT variable_id, var_seq, data_type
+            SELECT variable_id, var_seq, data_type,
+                   {point_name} AS point_name
             FROM edge_variable
             WHERE device_code=? AND var_seq IN ({placeholders})
             ORDER BY var_seq

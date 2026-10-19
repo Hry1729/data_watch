@@ -600,6 +600,7 @@ async def test_snapshot_keeps_disabled_assigned_device_with_enabled_false() -> N
                         "device_code": "AGV801",
                         "variable_id": 11,
                         "address": "DB1.DBW0",
+                        "point_name": "CraneID",
                         "data_type": "INT",
                         "scan_rate": None,
                         "device_scan_cycle": 400,
@@ -622,6 +623,122 @@ async def test_snapshot_keeps_disabled_assigned_device_with_enabled_false() -> N
     snapshot_sql = "\n".join(sql for sql, _params in session.executions[1:])
     assert "d.enable AS enabled" in snapshot_sql
     assert "d.enable=1" not in snapshot_sql
+
+
+@pytest.mark.asyncio
+async def test_snapshot_carries_point_name_without_changing_ids() -> None:
+    """中心快照必须带上点位名称；variable_id / var_seq / IO 地址都不变。"""
+    node_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"config_version": 9, "read_timeout_ms": None}),
+            _ScriptedResult(
+                rows=[
+                    {
+                        "device_pk": 7,
+                        "device_code": "AGV801",
+                        "endpoint": "127.0.0.1:102",
+                        "rack": 0,
+                        "slot": 1,
+                        "enabled": 1,
+                        "scan_cycle": 400,
+                        "config_version": 3,
+                        "device_type": "AGV",
+                        "protocol": "opcda_center",
+                        "port": 102,
+                        "opc_server": "OPC.SERVER",
+                        "assignment_epoch": 2,
+                        "assignment_status": "active",
+                        "cutover_at": None,
+                        "has_successor": 0,
+                    }
+                ]
+            ),
+            _ScriptedResult(
+                rows=[
+                    {
+                        "device_code": "AGV801",
+                        "variable_id": 52000,
+                        "address": "OPD_Server.AGV801.Fault.Tag30007101",
+                        "point_name": "FLT1001",
+                        "data_type": "Boolean",
+                        "scan_rate": None,
+                        "device_scan_cycle": 400,
+                        "is_storage": 1,
+                        "var_seq": 306,
+                        "group_code": "g001",
+                        "group_config_version": 2,
+                    }
+                ]
+            ),
+        ]
+    )
+
+    result = await DistributedNodeService(session).config_snapshot(node_uuid, None)
+
+    variable = result["devices"][0]["variables"][0]
+    assert variable["point_name"] == "FLT1001"
+    # 内部主键、点位序号、IO 地址都不因名称下发而改变
+    assert variable["variable_id"] == "52000"
+    assert variable["var_seq"] == 306
+    assert variable["address"] == "OPD_Server.AGV801.Fault.Tag30007101"
+    snapshot_sql = "\n".join(sql for sql, _params in session.executions[1:])
+    assert "v.var_name AS point_name" in snapshot_sql
+    assert "v.id AS variable_id" in snapshot_sql
+
+
+@pytest.mark.asyncio
+async def test_snapshot_keeps_blank_point_name_when_center_has_none() -> None:
+    """中心没有 var_name 时下发空名称，边缘据此回退为「点位 {var_seq}」。"""
+    node_uuid = "3911959d-3e0d-45a4-880a-d3c7df3a2d65"
+    session = _ScriptedSession(
+        [
+            _ScriptedResult(row={"config_version": 9, "read_timeout_ms": None}),
+            _ScriptedResult(
+                rows=[
+                    {
+                        "device_pk": 7,
+                        "device_code": "QC100",
+                        "endpoint": "127.0.0.1:102",
+                        "rack": 0,
+                        "slot": 1,
+                        "enabled": 1,
+                        "scan_cycle": 400,
+                        "config_version": 3,
+                        "device_type": "QC",
+                        "protocol": "s7",
+                        "port": 102,
+                        "opc_server": None,
+                        "assignment_epoch": 2,
+                        "assignment_status": "active",
+                        "cutover_at": None,
+                        "has_successor": 0,
+                    }
+                ]
+            ),
+            _ScriptedResult(
+                rows=[
+                    {
+                        "device_code": "QC100",
+                        "variable_id": 11,
+                        "address": "%DB1702.DBW0",
+                        "point_name": None,
+                        "data_type": "INT",
+                        "scan_rate": None,
+                        "device_scan_cycle": 400,
+                        "is_storage": 1,
+                        "var_seq": 1,
+                        "group_code": "g001",
+                        "group_config_version": 2,
+                    }
+                ]
+            ),
+        ]
+    )
+
+    result = await DistributedNodeService(session).config_snapshot(node_uuid, None)
+
+    assert result["devices"][0]["variables"][0]["point_name"] == ""
 
 
 def test_distributed_snapshot_normalizes_opc_da_protocol_aliases() -> None:

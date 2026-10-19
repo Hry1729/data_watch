@@ -17,7 +17,10 @@ from uuid import uuid4
 
 import msgspec
 
-from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA
+from edge.app.snapshot_schema import (
+    CONFIG_SNAPSHOT_SCHEMA,
+    ensure_edge_variable_columns,
+)
 
 
 SENT_RETENTION_MS = 60_000  # 默认 60s 兼容已有直接调用，生产 uploader 传入 24h 参数
@@ -204,6 +207,7 @@ class OutboxStore:
             self._connection.executescript(OUTBOX_SCHEMA)
             self._migrate_outbox_columns(self._connection)
             self._connection.executescript(CONFIG_SNAPSHOT_SCHEMA)
+            ensure_edge_variable_columns(self._connection)
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata(key, value) VALUES('upload_session_id', ?)",
                 (str(uuid4()),),

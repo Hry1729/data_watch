@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.point_types import normalize_data_type
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import LOCAL_TZ, now_local, to_local_naive
 from app.db.redis import get_redis_client
@@ -117,10 +118,10 @@ class MonitorService:
                     "varSeq": var_seq,
                     "pointName": point["point_name"],
                     "ioAddress": point["io_address"],
-                    "value": self._normalize_point_value(point["var_type"], latest_point["value"] if latest_point else None),
+                    "value": self._normalize_point_value(normalize_data_type(point["var_type"]), latest_point["value"] if latest_point else None),
                     "updateTime": self._format_datetime(latest_point["ts"]) if latest_point else "",
                     "quality": latest_point.get("quality") if latest_point else None,
-                    "dataType": point["var_type"],
+                    "dataType": normalize_data_type(point["var_type"]),
                 }
             )
 

@@ -15,9 +15,18 @@ import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { monitorClient } from "@/lib/monitor-client";
 import { useDevicePicker } from "@/hooks/useDevicePicker";
 import { DeviceCatalogPagination } from "@/components/DeviceCatalogPagination";
+import { POINT_DISPLAY_DATA_TYPES } from "@/types/device-monitor";
 import type { PointListItem } from "@/types/device-monitor";
 
-const DATA_TYPES = ["BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"] as const;
+/**
+ * 点位名称：中心/边缘下发真实名称时直接显示；名称为空或旧快照没带名称时
+ * 回退为「点位 {varSeq}」（中心在 var_name 为空时返回的是序号本身）。
+ */
+function displayPointName(row: { pointName: string; varSeq: number }) {
+  return row.pointName && row.pointName !== String(row.varSeq)
+    ? row.pointName
+    : `点位 ${row.varSeq}`;
+}
 
 export default function EdgePointMonitorPage() {
   const [searchParams] = useSearchParams();
@@ -119,7 +128,7 @@ export default function EdgePointMonitorPage() {
           </Button>
           <Select value={dataTypeFilter} onValueChange={(value) => { setDataTypeFilter(value); setPage(1); }}>
             <SelectTrigger className="!h-8 w-32"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectGroup><SelectItem value="all">数据类型（全部）</SelectItem>{DATA_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent>
+            <SelectContent><SelectGroup><SelectItem value="all">数据类型（全部）</SelectItem>{POINT_DISPLAY_DATA_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent>
           </Select>
         </div>
         <div className="flex items-center gap-2">
@@ -137,7 +146,7 @@ export default function EdgePointMonitorPage() {
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
             <Table className="h-full w-full table-fixed">
               <TableHeader><TableRow className="bg-muted/50"><TableHead className="w-[15%] text-center">所属设备</TableHead><TableHead className="text-center">点位名称</TableHead><TableHead className="w-[10%] text-center">点位序号</TableHead><TableHead className="w-[17%] text-center">IO地址</TableHead><TableHead className="w-[11%] text-center">数据类型</TableHead><TableHead className="w-[15%] text-center">驱动名称</TableHead><TableHead className="w-[8%] text-center">只读</TableHead><TableHead className="w-20 text-center">操作</TableHead></TableRow></TableHeader>
-              <TableBody>{points.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={8}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : rows.length ? rows.map((row) => <TableRow key={`${row.id}-${row.deviceId}-${row.varSeq}`} className="h-10"><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{row.pointName === String(row.varSeq) ? `点位 ${row.varSeq}` : row.pointName}</TableCell><TableCell className="text-center">{row.varSeq}</TableCell><TableCell className="truncate text-center font-mono text-xs">{row.ioAddress}</TableCell><TableCell className="text-center"><Badge variant="outline">{row.dataType}</Badge></TableCell><TableCell className="truncate text-center">{row.driverName || "--"}</TableCell><TableCell className="text-center">{row.isReadonly ? "是" : "否"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看详情" onClick={() => setDetail(row)}><Eye className="size-4" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{points.error ?? "暂无点位"}</TableCell></TableRow>}</TableBody>
+              <TableBody>{points.loading ? Array.from({ length: 10 }, (_, index) => <TableRow key={index} className="h-10"><TableCell colSpan={8}><Skeleton className="h-6 w-full" /></TableCell></TableRow>) : rows.length ? rows.map((row) => <TableRow key={`${row.id}-${row.deviceId}-${row.varSeq}`} className="h-10"><TableCell className="truncate text-center font-medium">{row.deviceCode}</TableCell><TableCell className="truncate text-center">{displayPointName(row)}</TableCell><TableCell className="text-center">{row.varSeq}</TableCell><TableCell className="truncate text-center font-mono text-xs">{row.ioAddress}</TableCell><TableCell className="text-center"><Badge variant="outline">{row.dataType}</Badge></TableCell><TableCell className="truncate text-center">{row.driverName || "--"}</TableCell><TableCell className="text-center">{row.isReadonly ? "是" : "否"}</TableCell><TableCell><div className="flex justify-center"><Button variant="ghost" size="icon-sm" title="查看详情" onClick={() => setDetail(row)}><Eye className="size-4" /></Button></div></TableCell></TableRow>) : <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">{points.error ?? "暂无点位"}</TableCell></TableRow>}</TableBody>
             </Table>
           </div>
           <div className="flex flex-col gap-3 pt-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between"><span>共 {points.data?.total ?? 0} 个点位</span><div className="flex flex-wrap items-center gap-2"><span>每页 {pageSize} 行</span><span>第 {page} / {totalPages} 页</span><Button variant="outline" size="icon-sm" title="第一页" disabled={page === 1} onClick={() => setPage(1)}><ChevronsLeft className="size-4" /></Button><Button variant="outline" size="icon-sm" title="上一页" disabled={page === 1} onClick={() => setPage((value) => value - 1)}><ChevronLeft className="size-4" /></Button><Button variant="outline" size="icon-sm" title="下一页" disabled={page === totalPages} onClick={() => setPage((value) => value + 1)}><ChevronRight className="size-4" /></Button><Button variant="outline" size="icon-sm" title="最后一页" disabled={page === totalPages} onClick={() => setPage(totalPages)}><ChevronsRight className="size-4" /></Button></div></div>
@@ -153,7 +162,7 @@ export default function EdgePointMonitorPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)}><DialogContent><DialogHeader><DialogTitle>点位详情</DialogTitle></DialogHeader>{detail && <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">{[["所属设备", detail.deviceCode], ["点位名称", detail.pointName], ["点位序号", detail.varSeq], ["IO地址", detail.ioAddress], ["数据类型", detail.dataType], ["驱动名称", detail.driverName], ["是否只读", detail.isReadonly ? "是" : "否"], ["更新时间", detail.updateTime ?? "--"]].map(([label, value]) => <div key={String(label)}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1">{value}</p></div>)}</div>}</DialogContent></Dialog>
+      <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)}><DialogContent><DialogHeader><DialogTitle>点位详情</DialogTitle></DialogHeader>{detail && <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">{[["所属设备", detail.deviceCode], ["点位名称", displayPointName(detail)], ["点位序号", detail.varSeq], ["IO地址", detail.ioAddress], ["数据类型", detail.dataType], ["驱动名称", detail.driverName], ["是否只读", detail.isReadonly ? "是" : "否"], ["更新时间", detail.updateTime ?? "--"]].map(([label, value]) => <div key={String(label)}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1">{value}</p></div>)}</div>}</DialogContent></Dialog>
     </div>
   );
 }

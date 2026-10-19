@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS edge_variable (
     variable_id TEXT PRIMARY KEY,
     device_code TEXT NOT NULL,
     address TEXT NOT NULL,
+    point_name TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL,
     scan_rate_ms INTEGER NOT NULL,
     is_storage INTEGER NOT NULL,
@@ -79,6 +80,22 @@ def snapshot_checksum(devices: list[dict[str, Any]]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _migrate_edge_variable_columns(connection: sqlite3.Connection) -> None:
+    """为已存在的 edge.db 补齐点位名称列。
+
+    ``CREATE TABLE IF NOT EXISTS`` 不会修改已有表：现场升级前的 edge.db 里的
+    ``edge_variable`` 早于点位名称下发，必须显式补列，否则按名称取点会报
+    no such column。只 ADD COLUMN，不动已有行；重复调用是幂等的。
+    """
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(edge_variable)")
+    }
+    if "point_name" not in columns:
+        connection.execute(
+            "ALTER TABLE edge_variable ADD COLUMN point_name TEXT NOT NULL DEFAULT ''"
+        )
 
 
 class EdgeConfigStore:
@@ -127,7 +144,13 @@ class EdgeConfigStore:
                     device_rows,
                 )
                 connection.executemany(
-                    "INSERT INTO edge_variable VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO edge_variable(
+                        variable_id, device_code, address, point_name, data_type,
+                        scan_rate_ms, is_storage, var_seq, group_code,
+                        group_config_version
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
                     variable_rows,
                 )
                 connection.execute(
@@ -188,6 +211,8 @@ class EdgeConfigStore:
             connection.execute("PRAGMA synchronous=FULL")
             connection.execute("PRAGMA busy_timeout=5000")
             connection.executescript(SCHEMA)
+            _migrate_edge_variable_columns(connection)
+            connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=5)
@@ -249,6 +274,7 @@ def _snapshot_rows(devices: list[dict[str, Any]], revision: int, now: int):
                     variable_id,
                     code,
                     str(variable["address"]),
+                    str(variable.get("point_name") or "").strip(),
                     str(variable.get("data_type") or "INT").upper(),
                     variable_rate,
                     int(bool(variable.get("is_storage", True))),

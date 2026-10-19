@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
+from app.core.point_types import normalize_data_type
 from app.core.time_utils import LOCAL_TZ, parse_local_datetime, to_local_naive
 from app.db.tdengine import TDengineClient
 from app.services.perspective import get_perspective_session_manager
@@ -341,7 +342,7 @@ class HistoryService:
                 {
                     "varSeq": point.var_seq,
                     "name": point.point_name,
-                    "dataType": str(point.var_type),
+                    "dataType": normalize_data_type(point.var_type),
                     "unit": point.unit or "",
                     "data": data_points,
                 }
@@ -610,7 +611,7 @@ class HistoryService:
                     "label": point.point_name,
                     "varSeq": point.var_seq,
                     "unit": point.unit or "",
-                    "dataType": point.var_type or "",
+                    "dataType": normalize_data_type(point.var_type),
                 }
                 for point in points
             ],

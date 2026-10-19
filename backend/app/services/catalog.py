@@ -14,6 +14,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ApiError
+from app.core.point_types import (
+    CREATABLE_DATA_TYPES,
+    data_type_sql_expression,
+    normalize_data_type,
+)
 from app.core.request_metrics import measure_operation
 from app.core.simple_xlsx import WorkbookSheet, build_workbook_bytes, read_workbook_bytes
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
@@ -2444,12 +2449,10 @@ class CatalogService:
 
         data_type = self._normalize_text(params.get("dataType"))
         if data_type:
-            clauses.append(
-                "CASE WHEN UPPER(TRIM(COALESCE(dv.var_type, 'STRING'))) "
-                "IN ('BOOL', 'INT', 'DINT', 'REAL', 'STRING', 'WORD', 'DWORD') "
-                "THEN UPPER(TRIM(COALESCE(dv.var_type, 'STRING'))) ELSE 'STRING' END = :datatype"
-            )
-            bind_values["datatype"] = data_type.upper()
+            # 筛选口径必须和 _normalize_data_type 的显示口径一致，
+            # 否则 BYTE/Boolean 会被当成 STRING 筛出来。
+            clauses.append(f"{data_type_sql_expression('dv.var_type')} = :datatype")
+            bind_values["datatype"] = normalize_data_type(data_type)
 
         keyword = self._normalize_text(params.get("keyword"))
         if keyword:
@@ -2639,7 +2642,8 @@ class CatalogService:
         io_address = self._normalize_text(params.get("ioAddress"))
         data_type = self._normalize_text(params.get("dataType"))
         if data_type:
-            data_type = data_type.upper()
+            # 导出筛选同样按显示口径，Boolean/BYTE 不会被当成 STRING 导出。
+            data_type = normalize_data_type(data_type)
 
         filtered: list[PointCatalogItem] = []
         for item in items:
@@ -3181,14 +3185,12 @@ class CatalogService:
         return normalized
 
     def _normalize_data_type(self, value: Any) -> str:
-        normalized = str(value or "STRING").strip().upper()
-        if normalized in {"BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"}:
-            return normalized
-        return "STRING"
+        """把库里的 var_type 归一成显示口径（口径见 app.core.point_types）。"""
+        return normalize_data_type(value)
 
     def _normalize_requested_data_type(self, value: Any) -> str:
         normalized = str(value or "").strip().upper()
-        if normalized not in {"BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"}:
+        if normalized not in CREATABLE_DATA_TYPES:
             raise ApiError(400, "dataType is invalid")
         return normalized
 

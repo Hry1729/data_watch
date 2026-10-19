@@ -724,6 +724,7 @@ class DistributedNodeService:
             text(
                 f"""
                 SELECT d.device_code, v.id AS variable_id, v.var_address AS address,
+                       v.var_name AS point_name,
                        v.var_type AS data_type, v.scan_rate, v.is_storage,
                        d.scan_cycle AS device_scan_cycle,
                        v.var_seq, g.group_code,
@@ -745,6 +746,7 @@ class DistributedNodeService:
                 {
                     "variable_id": str(row["variable_id"]),
                     "address": str(row["address"]),
+                    "point_name": str(row["point_name"] or "").strip(),
                     "data_type": str(row["data_type"] or "INT").upper(),
                     "scan_rate_ms": _scan_rate_ms(
                         row["scan_rate"],

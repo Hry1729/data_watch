@@ -92,6 +92,39 @@ export interface DeviceForm {
   description?: string;
 }
 
+/** 可通过界面新建/编辑的物理类型（创建后不可修改，和后端白名单一致）。 */
+export type PointDataType = "BOOL" | "INT" | "DINT" | "REAL" | "STRING" | "WORD" | "DWORD";
+
+/**
+ * 列表里显示的数据类型。库里可能写成 Boolean / BYTE 等，中心与边缘统一按
+ * 显示口径归一（BOOLEAN→BOOL、FLOAT→REAL），其余类型原样显示。
+ */
+export type PointDisplayDataType =
+  | PointDataType
+  | "BYTE"
+  | "UINT"
+  | "USINT"
+  | "UDINT"
+  | "TIMER_MS"
+  | "COUNTER";
+
+/** 类型筛选下拉的选项（显示口径全集，和列表显示保持一致）。 */
+export const POINT_DISPLAY_DATA_TYPES: PointDisplayDataType[] = [
+  "BOOL",
+  "BYTE",
+  "INT",
+  "WORD",
+  "UINT",
+  "USINT",
+  "REAL",
+  "DINT",
+  "DWORD",
+  "UDINT",
+  "STRING",
+  "TIMER_MS",
+  "COUNTER",
+];
+
 export interface PointListItem {
   id: number;
   deviceId: number;
@@ -99,7 +132,7 @@ export interface PointListItem {
   varSeq: number;
   pointName: string;
   ioAddress: string;
-  dataType: "BOOL" | "INT" | "DINT" | "REAL" | "STRING" | "WORD" | "DWORD";
+  dataType: PointDisplayDataType;
   description: string;
   isReadonly: boolean;
   driverName: string;
@@ -138,7 +171,8 @@ export interface PointForm {
   varSeq: number;
   pointName: string;
   ioAddress: string;
-  dataType: PointListItem["dataType"];
+  /** 表单里的类型；库里可能是显示口径之外的类型（如 BYTE），后端会拒绝改物理类型。 */
+  dataType: PointDisplayDataType;
   driverName: string;
   isReadonly: boolean;
   description?: string;

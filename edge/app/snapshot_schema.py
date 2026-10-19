@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 
 EDGE_SCHEDULE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS edge_assignment_schedule (
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS edge_variable (
     variable_id TEXT PRIMARY KEY,
     device_code TEXT NOT NULL,
     address TEXT NOT NULL,
+    point_name TEXT NOT NULL DEFAULT '',
     data_type TEXT NOT NULL,
     scan_rate_ms INTEGER NOT NULL,
     is_storage INTEGER NOT NULL,
@@ -60,3 +63,21 @@ CREATE TABLE IF NOT EXISTS edge_device_status (
     updated_at INTEGER NOT NULL
 );
 """ + EDGE_SCHEDULE_SCHEMA
+
+
+def ensure_edge_variable_columns(connection: sqlite3.Connection) -> None:
+    """为已存在的 edge.db 补齐点位名称列。
+
+    ``CREATE TABLE IF NOT EXISTS`` 不会修改已有表：现场升级前的 edge.db 里的
+    ``edge_variable`` 早于点位名称下发，必须显式补列，否则按名称取点会报
+    no such column。只 ADD COLUMN，不动已有行；重复调用是幂等的。
+
+    必须在 ``CONFIG_SNAPSHOT_SCHEMA`` 执行之后调用（表还不存在时补列会失败）。
+    """
+    columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(edge_variable)")
+    }
+    if "point_name" not in columns:
+        connection.execute(
+            "ALTER TABLE edge_variable ADD COLUMN point_name TEXT NOT NULL DEFAULT ''"
+        )

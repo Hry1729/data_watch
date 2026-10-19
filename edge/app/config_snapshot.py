@@ -14,7 +14,11 @@ from typing import Any, NamedTuple
 from core.config import CollectorConfig, DeviceConfig, VariableConfig
 
 
-from edge.app.snapshot_schema import CONFIG_SNAPSHOT_SCHEMA, EDGE_SCHEDULE_SCHEMA
+from edge.app.snapshot_schema import (
+    CONFIG_SNAPSHOT_SCHEMA,
+    EDGE_SCHEDULE_SCHEMA,
+    ensure_edge_variable_columns,
+)
 from edge.app.storage_client import EdgeStorageClient
 
 
@@ -78,6 +82,7 @@ class ConfigSnapshotStore:
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._connection.execute("PRAGMA busy_timeout=5000")
         self._connection.executescript(CONFIG_SNAPSHOT_SCHEMA)
+        ensure_edge_variable_columns(self._connection)
 
     def close(self) -> None:
         with self._lock:
@@ -175,6 +180,7 @@ class ConfigSnapshotStore:
                         variable_id,
                         device_code,
                         str(raw_variable["address"]),
+                        str(raw_variable.get("point_name") or "").strip(),
                         str(raw_variable.get("data_type") or "INT").upper(),
                         variable_scan_rate_ms,
                         int(bool(raw_variable.get("is_storage", True))),
@@ -201,9 +207,10 @@ class ConfigSnapshotStore:
             connection.executemany(
                 """
                 INSERT INTO edge_variable(
-                    variable_id, device_code, address, data_type, scan_rate_ms,
-                    is_storage, var_seq, group_code, group_config_version
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    variable_id, device_code, address, point_name, data_type,
+                    scan_rate_ms, is_storage, var_seq, group_code,
+                    group_config_version
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 variable_rows,
             )
