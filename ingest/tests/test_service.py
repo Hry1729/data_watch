@@ -210,6 +210,21 @@ async def test_commit_unknown_stops_batch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_transient_store_failure_is_not_turned_into_commit_unknown() -> None:
+    """S1：暂时性持久化故障向上抛给 HTTP 层（503），不作为逐条 commit_unknown 返回。"""
+    from ingest.app.redis_store import TransientStoreError
+
+    class TransientStore(MemoryStore):
+        async def process_items(self, node_uuid, entries, *, nonce):
+            raise TransientStoreError("Redis AOF persistence not confirmed")
+
+    service = IngestService(FakeRepository(), TransientStore(), max_batch_items=10)
+    session_id = str(uuid4())
+    with pytest.raises(TransientStoreError):
+        await service.ingest(make_batch(make_item(1, session_id)))
+
+
+@pytest.mark.asyncio
 async def test_malformed_envelope_is_consumed() -> None:
     repository = FakeRepository()
     store = MemoryStore()
