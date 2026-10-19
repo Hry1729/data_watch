@@ -5,6 +5,7 @@ import math
 import shutil
 import sqlite3
 import time
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ class EdgeLocalStore:
                 "fastest_point_scan_rate_ms": None,
                 "devices": [],
             }
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             meta = connection.execute(
                 """
                 SELECT config_revision, checksum, read_timeout_ms, applied_at
@@ -97,7 +98,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return []
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute("SELECT device_pk, device_code, device_type FROM edge_device ORDER BY device_code").fetchall()
         except sqlite3.OperationalError:
             return []
@@ -112,7 +113,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return {"list": [], "total": 0, "pageNo": page_no, "pageSize": page_size}
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
                     SELECT d.device_pk, d.device_code, d.device_type, d.protocol,
@@ -236,7 +237,7 @@ class EdgeLocalStore:
             params.append(data_type.upper())
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
                     SELECT v.variable_id, d.device_pk, d.device_code, v.var_seq,
@@ -283,7 +284,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return []
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     """
                     SELECT group_code, COUNT(*) AS point_count
@@ -311,7 +312,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return self._empty_realtime(device_id)
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 device = connection.execute(
                     """
                     SELECT d.device_pk, d.device_code, d.protocol, s.status
@@ -373,7 +374,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return {"values": {}, "deviceOffline": True}
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 values = self._read_latest_values(connection, device_code, group_code)
         except sqlite3.OperationalError:
             values = {}
@@ -450,7 +451,7 @@ class EdgeLocalStore:
         device_id = int(query["deviceId"])
         selected = [int(value) for value in query.get("varSeqs") or []]
         start_ms, end_ms = self._history_bounds(query)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             device_code = self._device_code(connection, device_id)
             point_rows = self._history_point_rows(connection, device_code, selected)
             if not point_rows:
@@ -513,7 +514,7 @@ class EdgeLocalStore:
             "500ms": 500,
             "1s": 1000,
         }.get(granularity, 1000)
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             device_code = self._device_code(connection, device_id)
             point_rows = self._history_point_rows(connection, device_code, selected)
             rows = connection.execute(
@@ -655,7 +656,7 @@ class EdgeLocalStore:
         if not self.path.exists():
             return self._empty_outbox()
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 counts = {
                     str(row["state"]): int(row["count"])
                     for row in connection.execute(
@@ -731,7 +732,8 @@ class EdgeLocalStore:
         }
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
-            f"file:{self.path.as_posix()}?mode=ro",
+            # M8 / Edge 17：as_uri() 会转义 # % ? 等字符；`with connection` 只提交不关闭，调用方用 closing()。
+            self.path.resolve().as_uri() + "?mode=ro",
             uri=True,
             timeout=2,
         )
