@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { RotateCcw, Save } from "lucide-react";
+import { Lock, Plug, RotateCcw, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
@@ -167,25 +167,33 @@ function FieldRow({
   value,
   onChange,
   type = "text",
-  width = "w-36",
+  width = "w-full",
+  placeholder,
+  mono = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
   width?: string;
+  placeholder?: string;
+  mono?: boolean;
 }) {
+  const password = type === "password";
   return (
-    <div className="flex flex-col gap-1">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        autoComplete={type === "password" ? "off" : undefined}
-        className={`${width} h-8 text-sm`}
-        style={{ borderColor: "var(--border)" }}
-      />
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <Label className="text-[13px] font-normal text-muted-foreground">{label}</Label>
+      <div className="relative">
+        <Input
+          type={type}
+          value={value}
+          placeholder={placeholder ?? (password ? "未修改则保留原密码" : undefined)}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete={password ? "off" : undefined}
+          className={`${width} h-8 bg-background text-[13px] md:text-[13px] ${password ? "pr-8" : ""} ${mono ? "font-mono" : ""}`}
+        />
+        {password && <Lock className="pointer-events-none absolute top-1/2 right-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />}
+      </div>
     </div>
   );
 }
@@ -229,44 +237,50 @@ function SegmentedGroup({
 
 function DbCard({
   title,
+  description,
+  columns,
   status,
   error,
   onTest,
   children,
 }: {
   title: string;
+  description: string;
+  /** 字段网格列宽（概念稿按字段长度分配） */
+  columns: string;
   status: TestStatus;
   error?: string | null;
   onTest: () => void;
   children: React.ReactNode;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <CardTitle>{title}</CardTitle>
-          <StatusBadge status={status} />
-          <div className="ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              disabled={status === "testing"}
-              onClick={onTest}
-            >
-              测试连接
-            </Button>
+    <Card className="gap-0 py-0">
+      <div className="flex items-start gap-3 px-5 pt-5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm leading-5 font-semibold">{title}</p>
+            <StatusBadge status={status} />
           </div>
+          <p className="mt-1 text-[13px] text-muted-foreground">{description}</p>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        <Button
+          variant="outline"
+          className="ml-auto h-8 gap-1.5 bg-background px-3 text-[13px]"
+          disabled={status === "testing"}
+          onClick={onTest}
+        >
+          <Plug className="size-3.5" />
+          测试连接
+        </Button>
+      </div>
+      <div className="space-y-3 px-5 pt-4 pb-5">
         {error && (
           <p className="text-xs text-destructive" role="alert">
             {error}
           </p>
         )}
-        <div className="flex flex-wrap gap-x-6 gap-y-4">{children}</div>
-      </CardContent>
+        <div className="grid gap-4" style={{ gridTemplateColumns: columns }}>{children}</div>
+      </div>
     </Card>
   );
 }
@@ -344,60 +358,66 @@ function DatabaseTab({
       {/* Redis */}
       <DbCard
         title="Redis 实时缓冲"
+        description="实时点位缓冲与 Stream 队列"
+        columns="1.6fr 0.8fr 0.8fr 1.3fr 0.8fr"
         status={redisRow.status}
         error={redisRow.error}
         onTest={() => handleTest("redis", setRedisRow, healthConfig(redis, passwordDirty.redis))}
       >
         <FieldRow label="主机"  value={redis.host}     onChange={(v) => onRedisChange({ ...redis, host: v })} />
-        <FieldRow label="端口"  value={redis.port}     onChange={(v) => onRedisChange({ ...redis, port: v })} width="w-24" />
-        <FieldRow label="DB"    value={redis.database} onChange={(v) => onRedisChange({ ...redis, database: v })} width="w-16" />
+        <FieldRow label="端口"  value={redis.port}     onChange={(v) => onRedisChange({ ...redis, port: v })} />
+        <FieldRow label="DB"    value={redis.database} onChange={(v) => onRedisChange({ ...redis, database: v })} />
         <FieldRow
-          label="密码" type="password" value={redis.password} width="w-36"
+          label="密码" type="password" value={redis.password}
           onChange={(v) => { onRedisChange({ ...redis, password: v }); onPasswordDirty("redis"); }}
         />
         {/* Stream 分片数暂不在 ConnectionConfig 中；T017 保留静态默认 */}
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Stream 分片数</Label>
-          <Input defaultValue="4" className="w-20 h-8 text-sm" style={{ borderColor: "var(--border)" }} />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label className="text-[13px] font-normal text-muted-foreground">Stream 分片数</Label>
+          <Input defaultValue="4" className="h-8 w-full bg-background text-[13px] md:text-[13px]" />
         </div>
       </DbCard>
 
       {/* MySQL */}
       <DbCard
         title="MySQL 配置库"
+        description="设备、点位、用户与菜单等配置数据"
+        columns="1.45fr 0.73fr 0.87fr 1.17fr 1.02fr"
         status={mysqlRow.status}
         error={mysqlRow.error}
         onTest={() => handleTest("mysql", setMysqlRow, healthConfig(mysql, passwordDirty.mysql))}
       >
         <FieldRow label="主机"   value={mysql.host}     onChange={(v) => onMysqlChange({ ...mysql, host: v })} />
-        <FieldRow label="端口"   value={mysql.port}     onChange={(v) => onMysqlChange({ ...mysql, port: v })} width="w-24" />
+        <FieldRow label="端口"   value={mysql.port}     onChange={(v) => onMysqlChange({ ...mysql, port: v })} />
         <FieldRow label="用户"   value={mysql.user}     onChange={(v) => onMysqlChange({ ...mysql, user: v })} />
         <FieldRow
-          label="密码" type="password" value={mysql.password} width="w-36"
+          label="密码" type="password" value={mysql.password}
           onChange={(v) => { onMysqlChange({ ...mysql, password: v }); onPasswordDirty("mysql"); }}
         />
-        <FieldRow label="数据库" value={mysql.database} onChange={(v) => onMysqlChange({ ...mysql, database: v })} width="w-40" />
+        <FieldRow label="数据库" value={mysql.database} onChange={(v) => onMysqlChange({ ...mysql, database: v })} />
       </DbCard>
 
       {/* TDengine */}
       <DbCard
         title="TDengine 时序库"
+        description={`点位历史数据（REST ${tdengine.port}）`}
+        columns="1.13fr 0.56fr 0.7fr 1.06fr 0.92fr 0.78fr"
         status={tdRow.status}
         error={tdRow.error}
         onTest={() => handleTest("tdengine", setTdRow, healthConfig(tdengine, passwordDirty.tdengine))}
       >
         <FieldRow label="主机"   value={tdengine.host}     onChange={(v) => onTdengineChange({ ...tdengine, host: v })} />
-        <FieldRow label="端口"   value={tdengine.port}     onChange={(v) => onTdengineChange({ ...tdengine, port: v })} width="w-24" />
+        <FieldRow label="端口"   value={tdengine.port}     onChange={(v) => onTdengineChange({ ...tdengine, port: v })} />
         <FieldRow label="用户"   value={tdengine.user}     onChange={(v) => onTdengineChange({ ...tdengine, user: v })} />
         <FieldRow
-          label="密码" type="password" value={tdengine.password} width="w-36"
+          label="密码" type="password" value={tdengine.password}
           onChange={(v) => { onTdengineChange({ ...tdengine, password: v }); onPasswordDirty("tdengine"); }}
         />
-        <FieldRow label="数据库" value={tdengine.database} onChange={(v) => onTdengineChange({ ...tdengine, database: v })} width="w-40" />
+        <FieldRow label="数据库" value={tdengine.database} onChange={(v) => onTdengineChange({ ...tdengine, database: v })} />
         {/* Stable 模式暂不在 ConnectionConfig 中；T017 保留静态默认 */}
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Stable 模式</Label>
-          <Input defaultValue="sd{type}" className="w-32 h-8 text-sm font-mono" style={{ borderColor: "var(--border)" }} />
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label className="text-[13px] font-normal text-muted-foreground">Stable 模式</Label>
+          <Input defaultValue="sd{type}" className="h-8 w-full bg-background font-mono text-[13px] md:text-[13px]" />
         </div>
       </DbCard>
     </>
@@ -411,11 +431,12 @@ function BasicTab() {
   const [density, setDensity] = useState("标准");
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>基础设置</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <Card className="gap-0 py-0">
+      <div className="px-5 pt-5">
+        <p className="text-sm leading-5 font-semibold">基础设置</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">仅作用于本机</p>
+      </div>
+      <CardContent className="space-y-3 px-5 pt-4 pb-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Label className="text-sm font-medium">外观主题</Label>
           <SegmentedGroup
@@ -443,43 +464,44 @@ function CollectorTab({
   onChange: (f: ProcessForm) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Collector 配置</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Card className="gap-0 py-0">
+      <div className="px-5 pt-5">
+        <p className="text-sm leading-5 font-semibold">Collector 配置</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">采集进程的启动路径与默认参数</p>
+      </div>
+      <CardContent className="space-y-4 px-5 pt-4 pb-5">
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
+            <Label className="text-[13px] font-normal text-muted-foreground">可执行文件路径</Label>
             <Input
               value={form.executable}
               onChange={(e) => onChange({ ...form, executable: e.target.value })}
-              className="h-8 text-sm font-mono"
-              style={{ borderColor: "var(--border)" }}
+              className="h-8 bg-background text-[13px] md:text-[13px] font-mono"
+             
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">工作目录</Label>
+            <Label className="text-[13px] font-normal text-muted-foreground">工作目录</Label>
             <Input
               value={form.working_dir}
               onChange={(e) => onChange({ ...form, working_dir: e.target.value })}
-              className="h-8 text-sm font-mono"
-              style={{ borderColor: "var(--border)" }}
+              className="h-8 bg-background text-[13px] md:text-[13px] font-mono"
+             
             />
           </div>
           {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认 */}
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">默认采集周期</Label>
-            <Input defaultValue="100ms" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">默认采集周期</Label>
+            <Input defaultValue="100ms" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">日志级别</Label>
-            <Input defaultValue="INFO" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">日志级别</Label>
+            <Input defaultValue="INFO" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
         </div>
 
         <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Redis Key 预览</Label>
+          <Label className="text-[13px] font-normal text-muted-foreground">Redis Key 预览</Label>
           <div
             className="rounded-lg px-3 py-2 space-y-0.5"
             style={{ background: "var(--background)", border: "1px solid var(--border)", fontFamily: "monospace", fontSize: 12 }}
@@ -498,20 +520,20 @@ function CollectorTab({
 
 function IngestTab({ form }: { form: ProcessForm }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Ingest 配置</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-xs text-muted-foreground">进程路径由分布式中心安装目录自动派生。</p>
+    <Card className="gap-0 py-0">
+      <div className="px-5 pt-5">
+        <p className="text-sm leading-5 font-semibold">Ingest 配置</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">进程路径由分布式中心安装目录自动派生。</p>
+      </div>
+      <CardContent className="space-y-4 px-5 pt-4 pb-5">
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
-            <Input value={form.executable} readOnly className="h-8 text-sm font-mono" />
+            <Label className="text-[13px] font-normal text-muted-foreground">可执行文件路径</Label>
+            <Input value={form.executable} readOnly className="h-8 bg-background text-[13px] md:text-[13px] font-mono" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">工作目录</Label>
-            <Input value={form.working_dir} readOnly className="h-8 text-sm font-mono" />
+            <Label className="text-[13px] font-normal text-muted-foreground">工作目录</Label>
+            <Input value={form.working_dir} readOnly className="h-8 bg-background text-[13px] md:text-[13px] font-mono" />
           </div>
         </div>
       </CardContent>
@@ -528,54 +550,55 @@ function WriterTab({
   onChange: (f: ProcessForm) => void;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Writer 配置</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <Card className="gap-0 py-0">
+      <div className="px-5 pt-5">
+        <p className="text-sm leading-5 font-semibold">Writer 配置</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">入库进程路径与写入 TDengine 的批量参数</p>
+      </div>
+      <CardContent className="space-y-4 px-5 pt-4 pb-5">
         <div className="grid grid-cols-2 gap-x-8 gap-y-4">
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">可执行文件路径</Label>
+            <Label className="text-[13px] font-normal text-muted-foreground">可执行文件路径</Label>
             <Input
               value={form.executable}
               onChange={(e) => onChange({ ...form, executable: e.target.value })}
-              className="h-8 text-sm font-mono"
-              style={{ borderColor: "var(--border)" }}
+              className="h-8 bg-background text-[13px] md:text-[13px] font-mono"
+             
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">工作目录</Label>
+            <Label className="text-[13px] font-normal text-muted-foreground">工作目录</Label>
             <Input
               value={form.working_dir}
               onChange={(e) => onChange({ ...form, working_dir: e.target.value })}
-              className="h-8 text-sm font-mono"
-              style={{ borderColor: "var(--border)" }}
+              className="h-8 bg-background text-[13px] md:text-[13px] font-mono"
+             
             />
           </div>
           {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认 */}
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">flush_interval_ms</Label>
-            <Input defaultValue="500" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">flush_interval_ms</Label>
+            <Input defaultValue="500" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">batch_count</Label>
-            <Input defaultValue="200" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">batch_count</Label>
+            <Input defaultValue="200" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">max_buffer_rows</Label>
-            <Input defaultValue="2000" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">max_buffer_rows</Label>
+            <Input defaultValue="2000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">pending_min_idle_ms</Label>
-            <Input defaultValue="30000" className="h-8 text-sm w-28" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">pending_min_idle_ms</Label>
+            <Input defaultValue="30000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">pending_max_retry</Label>
-            <Input defaultValue="5" className="h-8 text-sm w-24" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">pending_max_retry</Label>
+            <Input defaultValue="5" className="h-8 bg-background text-[13px] md:text-[13px] w-24" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">stable pattern</Label>
-            <Input defaultValue="sd{type}" className="h-8 text-sm w-32 font-mono" style={{ borderColor: "var(--border)" }} />
+            <Label className="text-[13px] font-normal text-muted-foreground">stable pattern</Label>
+            <Input defaultValue="sd{type}" className="h-8 bg-background text-[13px] md:text-[13px] w-32 font-mono" />
           </div>
         </div>
       </CardContent>
@@ -606,27 +629,26 @@ function SaveCard({
 }) {
   return (
     <Card className="py-0">
-      <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <span className="text-sm font-medium">保存策略</span>
-        <Button variant="default" size="sm" className="gap-1.5" disabled={saving || disabled} onClick={onSave}>
-          <Save className="h-3.5 w-3.5" />
+      <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+        <span className="mr-2 text-sm font-semibold">保存策略</span>
+        <Button className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90" disabled={saving || disabled} onClick={onSave}>
+          <Save className="size-3.5" />
           保存
         </Button>
         {restartModules.map((name) => (
           <Button
             key={name}
             variant="outline"
-            size="sm"
-            className="gap-1.5"
+            className="h-8 gap-1.5 bg-background px-3 text-[13px]"
             disabled={saving || disabled}
             onClick={() => onSaveAndRestart(name)}
           >
-            <RotateCcw className="h-3.5 w-3.5" />
+            <RotateCcw className="size-3.5" />
             保存并重启 {moduleLabel(name)}
           </Button>
         ))}
         {restartModules.length > 0 && (
-          <span className="ml-auto text-xs text-muted-foreground">重启后生效</span>
+          <span className="text-[13px] text-muted-foreground">重启后生效</span>
         )}
       </CardContent>
     </Card>
@@ -846,7 +868,7 @@ export function SettingsPage() {
 
   // ─── 主视图 ────────────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto w-full max-w-[1200px] space-y-4">
+    <div className="w-full space-y-4">
       {/* 加载失败 inline 提示（保存已禁用，需刷新重新加载） */}
       {configError && (
         <p className="text-xs bg-warning-soft border border-warning/40 text-warning rounded-lg px-3 py-2">
@@ -878,12 +900,12 @@ export function SettingsPage() {
             form={form.collector}
             onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, collector: f })); }}
           />
-          <Card>
-            <CardHeader>
-              <CardTitle>Collector 运行参数</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-xs text-muted-foreground">修改后需重启 Collector 后生效。</p>
+          <Card className="gap-0 py-0">
+            <div className="px-5 pt-5">
+              <p className="text-sm leading-5 font-semibold">Collector 运行参数</p>
+              <p className="mt-1 text-[13px] text-muted-foreground">修改后需重启 Collector 后生效。</p>
+            </div>
+            <CardContent className="space-y-4 px-5 pt-4 pb-5">
               <div className="flex items-end gap-3">
                 <FieldRow
                   label="Stream 上限（每 shard 条数）"
@@ -892,13 +914,11 @@ export function SettingsPage() {
                   width="w-32"
                 />
                 <Button
-                  variant="default"
-                  size="sm"
-                  className="gap-1.5"
+                  className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90"
                   disabled={streamMaxlenSaving}
                   onClick={handleSaveStreamMaxlen}
                 >
-                  <Save className="w-4 h-4" />
+                  <Save className="size-3.5" />
                   {streamMaxlenSaving ? "保存中…" : "保存"}
                 </Button>
               </div>
