@@ -18,7 +18,7 @@ import { Download, RotateCcw, Search } from "lucide-react";
 import { BUILD_ROLE } from "@/config/build-role";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ChartContainer,
@@ -41,6 +41,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePageRefresh } from "@/contexts/PageRefreshContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -520,12 +521,12 @@ export default function HistoryDataPage() {
     }
   }
 
-  const pointSummary = selectedPointItems.length ? selectedPointItems.map((point) => point.pointName).join("、") : "点击选择查询点位";
   const submittedQuery = lastQueryRef.current?.query;
 
   return (
-    <div className="mx-auto w-full max-w-[1800px] space-y-4 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-wrap items-center gap-1">
+    <div className="mx-auto w-full max-w-[1400px] space-y-4">
+      <Card className="gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-1 px-4 pt-4">
         <div className="flex items-center gap-1"><span className="text-xs text-muted-foreground">当前设备</span><Button variant="outline" className="max-w-56" onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span></Button></div>
         <Button variant="outline" onClick={openPointDialog} disabled={!deviceId}><Search className="size-3.5" />选择点位{selectedPoints.length > 0 && <Badge variant="secondary" className="ml-1">{selectedPoints.length}</Badge>}</Button>
         <Select value={quickRange} onValueChange={(value) => { setQuickRange(value); setRecentRange(Number(value), setStartTime, setEndTime); }}>
@@ -540,25 +541,30 @@ export default function HistoryDataPage() {
           <Button variant="outline" onClick={openExportDialog} disabled={!chart?.series.length}><Download className="size-4" />导出</Button>
           <Button onClick={() => void queryHistory()} disabled={loading || !deviceId || !selectedPoints.length}><Search className="size-4" />{loading ? "查询中..." : "查询"}</Button>
         </div>
-      </div>
+        </div>
+        <CardContent className="p-2 pt-2">
 
-      <Card className="gap-0 py-0" title={pointSummary}>
-        <CardContent className="p-2">
-          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point) => <div key={point.varSeq} className="w-40 shrink-0 rounded-md border bg-card px-2.5 py-1.5"><p className="truncate text-[11px] font-medium">{point.pointName}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></div>}
+          {selectedPointItems.length ? <div className="overflow-x-auto"><div className="flex min-w-max gap-2 pb-2 pr-2">{selectedPointItems.map((point) => <div key={point.varSeq} className="w-40 shrink-0 rounded-lg bg-muted/60 px-2.5 py-1.5"><p className="truncate text-[11px] font-medium">{point.pointName}</p><p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{point.ioAddress}</p></div>)}</div></div> : <div className="flex h-20 flex-col items-center justify-center gap-1 text-sm text-muted-foreground"><p className="font-medium text-foreground">已选点位</p><div className="flex items-center gap-2"><Search className="size-4 opacity-50" />暂未选择查询点位</div></div>}
         </CardContent>
       </Card>
 
       <Card className="min-w-0">
-        <CardHeader className="!flex items-center justify-between gap-3 border-b px-4 pb-2 pt-4">
-          <CardTitle>历史趋势图分析</CardTitle>
-          <CardAction>
-            <div className="flex items-center gap-1">{(["line", "area", "bar", "scatter"] as ChartType[]).map((type) => <Button key={type} size="sm" variant={chartType === type ? "secondary" : "ghost"} onClick={() => setChartType(type)}>{type === "line" ? "折线图" : type === "area" ? "面积图" : type === "bar" ? "柱状图" : "散点图"}</Button>)}</div>
-          </CardAction>
+        <CardHeader className="!flex shrink-0 items-center justify-end gap-3 border-b px-4 py-2.5">
+          <ToggleGroup type="single" value={chartType} onValueChange={(value) => { if (value) setChartType(value as ChartType); }} spacing={1} className="rounded-full bg-muted p-0.5">
+            {([["line", "折线图"], ["area", "面积图"], ["bar", "柱状图"], ["scatter", "散点图"]] as const).map(([type, label]) => <ToggleGroupItem key={type} value={type} className="h-6 rounded-full px-2.5 text-xs text-muted-foreground data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm">{label}</ToggleGroupItem>)}
+          </ToggleGroup>
         </CardHeader>
         <CardContent>{loading ? <Skeleton className="h-[420px]" /> : chart?.series.length ? <HistoryChart key={(submittedQuery?.startTime ?? "") + "-" + (submittedQuery?.endTime ?? "")} chart={chart} chartType={chartType} rangeStart={submittedQuery?.startTime ?? apiTime(startTime)} rangeEnd={submittedQuery?.endTime ?? apiTime(endTime)} /> : <div className="flex h-[420px] items-center justify-center text-sm text-muted-foreground">请选择设备、点位和时间范围后查询</div>}</CardContent>
       </Card>
 
-      <Card><CardHeader className="!flex flex-row items-center justify-between space-y-0"><CardTitle className="text-base">历史数据矩阵</CardTitle><CardAction><div className="flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div></CardAction></CardHeader><CardContent className="space-y-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent></Card>
+      <Card className="gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+          <Badge variant="secondary">每页 200 行</Badge>
+          <span className="text-xs text-muted-foreground">已加载 {matrix?.rows.length ?? 0} 行{matrix?.rows.length ? ` · 起始 ${String(matrix.rows[0].ts).replace("T", " ").slice(0, 19)}` : ""}</span>
+          <div className="ml-auto flex items-center gap-2"><Label className="text-xs text-muted-foreground">对齐粒度</Label><Select value={matrixAlign} onValueChange={(value) => { const next = value as AlignGranularity; setMatrixAlign(next); void loadMatrix(next, true); }}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1s">1秒</SelectItem><SelectItem value="500ms">500毫秒</SelectItem><SelectItem value="100ms">100毫秒</SelectItem></SelectContent></Select></div>
+        </div>
+        <CardContent className="space-y-3 pt-3"><div className="max-h-[420px] overflow-auto rounded-md border"><Table><TableHeader className="sticky top-0 z-10 bg-background"><TableRow>{(matrix?.columns ?? [{ prop: "ts", label: "采样时间" }]).map((column) => <TableHead key={column.prop} className={column.prop === "ts" ? "min-w-52" : "min-w-32"}>{column.label}</TableHead>)}</TableRow></TableHeader><TableBody>{matrixLoading && !matrix ? <TableRow><TableCell colSpan={1}><Skeleton className="h-28" /></TableCell></TableRow> : matrix?.rows.length ? matrix.rows.map((row, index) => <TableRow key={`${String(row.ts)}-${index}`}>{matrix.columns.map((column) => <TableCell key={column.prop} className={column.prop === "ts" ? "whitespace-nowrap text-muted-foreground" : "font-mono"}>{String(row[column.prop] ?? "--")}</TableCell>)}</TableRow>) : <TableRow><TableCell colSpan={matrix?.columns.length ?? 1} className="h-28 text-center text-muted-foreground">暂无原始数据</TableCell></TableRow>}</TableBody></Table></div>{matrix?.nextCursor && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMatrix(matrixAlign, false, matrix.nextCursor ?? undefined)} disabled={matrixLoading}>{matrixLoading ? "加载中..." : "加载更多"}</Button></div>}</CardContent>
+      </Card>
 
       <Dialog open={pointDialogOpen} onOpenChange={setPointDialogOpen}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>选择查询点位</DialogTitle><DialogDescription>单次历史查询最多选择 {QUERY_POINT_LIMIT} 个点位。</DialogDescription></DialogHeader><div className="space-y-3"><div className="relative"><Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" /><Input value={pointSearch} onChange={(event) => setPointSearch(event.target.value)} placeholder="搜索点位名称或地址" className="pl-9" /></div><div className="flex items-center justify-between text-xs"><span className="text-muted-foreground">已选择 {draftPoints.length}/{QUERY_POINT_LIMIT}</span><div><Button size="sm" variant="ghost" onClick={() => setDraftPoints(pointList.slice(0, QUERY_POINT_LIMIT).map((point) => point.varSeq))}>全选</Button><Button size="sm" variant="ghost" onClick={() => setDraftPoints([])}>清空</Button></div></div><div className="grid max-h-[360px] grid-cols-2 gap-1 overflow-y-auto rounded-md border p-2">{points.loading ? <Skeleton className="col-span-2 h-48" /> : filteredPoints.length ? filteredPoints.map((point) => { const selected = draftPoints.includes(point.varSeq); const disabled = draftPoints.length >= QUERY_POINT_LIMIT && !selected; return <label key={point.varSeq} className={`flex min-w-0 items-center gap-2 rounded-md px-2 py-2 ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer hover:bg-muted"}`}><Checkbox checked={selected} disabled={disabled} onCheckedChange={(checked) => setDraftPoints((current) => checked ? [...new Set([...current, point.varSeq])].slice(0, QUERY_POINT_LIMIT) : current.filter((value) => value !== point.varSeq))} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{point.pointName}</span><span className="block truncate font-mono text-xs text-muted-foreground">{point.ioAddress}</span></span></label>; }) : <div className="col-span-2 flex h-32 items-center justify-center text-sm text-muted-foreground">没有匹配的点位</div>}</div></div><DialogFooter><Button variant="outline" onClick={() => setPointDialogOpen(false)}>取消</Button><Button onClick={confirmPoints} disabled={!draftPoints.length}>确认</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
