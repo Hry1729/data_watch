@@ -42,11 +42,11 @@ export function TitleBar() {
           className="h-4 w-4 shrink-0 rounded-sm object-cover"
         />
         {/* AppLayout 通过 portal 把「折叠导航栏 / 刷新」按钮放进这里 */}
-        <div id={TITLEBAR_SLOT_ID} className="ml-2 flex items-center gap-0.5" />
+        <div id={TITLEBAR_SLOT_ID} className="ml-2 flex items-center gap-1.5" />
       </div>
       <div className="flex h-full items-center">
         {/* AppLayout 通过 portal 把数据库连接状态放进这里 */}
-        <div id={TITLEBAR_STATUS_SLOT_ID} className="mr-2 flex items-center" />
+        <div id={TITLEBAR_STATUS_SLOT_ID} className="mr-3 flex items-center" />
         <button
           type="button"
           disabled={!appWindow}
