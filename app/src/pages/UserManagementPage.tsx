@@ -4,7 +4,7 @@ import { KeyRound, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -93,41 +93,35 @@ export function UserManagementPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input className="h-7 w-44" value={draft.userName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, userName: event.target.value }))} placeholder="用户名" />
-        <Select value={draft.userGender || "all"} onValueChange={(value) => setDraft((current) => ({ ...current, userGender: value === "all" ? "" : value }))}>
-          <SelectTrigger className="!h-7 w-32"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">性别（全部）</SelectItem>
-            <SelectItem value="male">男</SelectItem>
-            <SelectItem value="female">女</SelectItem>
-            <SelectItem value="unknown">未知</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input className="h-7 w-40" value={draft.userPhone ?? ""} onChange={(event) => setDraft((value) => ({ ...value, userPhone: event.target.value }))} placeholder="手机号" />
-        <Select value={draft.status || "all"} onValueChange={(value) => setDraft((current) => ({ ...current, status: value === "all" ? "" : value }))}>
-          <SelectTrigger className="!h-7 w-36"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">账号状态（全部）</SelectItem>
-            <SelectItem value="1">启用</SelectItem>
-            <SelectItem value="2">禁用</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <Button variant="outline" onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}>重置</Button>
-          <Button onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search className="size-4" />查询</Button>
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
+          <Input className="h-7 w-44" value={draft.userName ?? ""} onChange={(event) => setDraft((value) => ({ ...value, userName: event.target.value }))} placeholder="用户名" />
+          <Select value={draft.userGender || "all"} onValueChange={(value) => setDraft((current) => ({ ...current, userGender: value === "all" ? "" : value }))}>
+            <SelectTrigger className="!h-7 w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">性别（全部）</SelectItem>
+              <SelectItem value="male">男</SelectItem>
+              <SelectItem value="female">女</SelectItem>
+              <SelectItem value="unknown">未知</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input className="h-7 w-40" value={draft.userPhone ?? ""} onChange={(event) => setDraft((value) => ({ ...value, userPhone: event.target.value }))} placeholder="手机号" />
+          <Select value={draft.status || "all"} onValueChange={(value) => setDraft((current) => ({ ...current, status: value === "all" ? "" : value }))}>
+            <SelectTrigger className="!h-7 w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">账号状态（全部）</SelectItem>
+              <SelectItem value="1">启用</SelectItem>
+              <SelectItem value="2">禁用</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setDraft({}); setQuery({ current: 1, size: pageSize }); }}>重置</Button>
+            <Button size="sm" variant="outline" onClick={() => setQuery({ ...draft, current: 1, size: pageSize })}><Search data-icon="inline-start" />查询</Button>
+            <Button size="sm" onClick={openCreate}><Plus data-icon="inline-start" />新增用户</Button>
+          </div>
         </div>
-      </div>
-
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader>
-          <CardTitle>用户列表</CardTitle>
-          <CardAction>
-            <Button onClick={openCreate}><Plus className="size-4" />新增用户</Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <Table>
               <TableHeader className="bg-muted/50">
