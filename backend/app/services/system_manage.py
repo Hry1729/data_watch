@@ -23,6 +23,9 @@ from app.models import (
 from app.schemas.auth import MenuPayload, PasswordResetPayload, PermissionPayload, RoleGrantPayload, RolePayload, UserPayload
 from app.services.auth import AuthService
 
+# 内置角色编码：节点管理、导出文件访问等按编码授权（L6），编码本身不得被改名或被其他角色占用。
+BUILTIN_ROLE_CODES = frozenset({"R_SUPER", "R_ADMIN", "R_USER"})
+
 
 class SystemManageService:
     def __init__(self, session: AsyncSession):
@@ -268,7 +271,9 @@ class SystemManageService:
         role = await self._get_role_or_raise(role_id)
         return self._serialize_role(role)
 
-    async def create_role(self, payload: RolePayload) -> dict[str, int]:
+    async def create_role(self, payload: RolePayload, *, current_user_roles: list[str]) -> dict[str, int]:
+        if payload.role_code in BUILTIN_ROLE_CODES and not self._is_current_super(current_user_roles):
+            raise ApiError(403, "只有超级管理员可以使用内置角色编码")
         duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
         if duplicate is not None:
             raise ApiError(400, "角色编码已存在")
@@ -289,9 +294,14 @@ class SystemManageService:
         role = await self._get_role_or_raise(role_id)
         await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
         if payload.role_code != role.role_code:
+            # 内置角色编码不允许改名（L6）：否则可以腾出 R_ADMIN 等编码再让自定义角色占用。
+            if role.role_code in BUILTIN_ROLE_CODES:
+                raise ApiError(403, "内置角色编码不能修改")
             # 不允许把别的角色改名成 R_SUPER（B21）：编码唯一，一旦成功即等于获得超级身份。
             if payload.role_code == "R_SUPER" and not self._is_current_super(current_user_roles):
                 raise ApiError(403, "只有超级管理员可以授予超级管理员角色")
+            if payload.role_code in BUILTIN_ROLE_CODES and not self._is_current_super(current_user_roles):
+                raise ApiError(403, "只有超级管理员可以使用内置角色编码")
             duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
             if duplicate is not None and duplicate.id != role.id:
                 raise ApiError(400, "角色编码已存在")
@@ -564,10 +574,27 @@ class SystemManageService:
         await self.session.commit()
         return {"id": permission.id}
 
-    async def update_menu_permission(self, menu_id: int, permission_id: int, payload: PermissionPayload) -> dict[str, int]:
+    async def update_menu_permission(
+        self,
+        menu_id: int,
+        permission_id: int,
+        payload: PermissionPayload,
+        *,
+        current_user_id: int,
+        current_user_roles: list[str],
+    ) -> dict[str, int]:
         await self._get_menu_or_raise(menu_id)
         permission = await self._get_permission_or_raise(permission_id)
         if payload.permission_code != permission.permission_code:
+            # L7：改权限编码等于改变"谁持有它"。非超级管理员必须同时持有改前、改后两个编码，
+            # 否则可以把自己已持有的权限改名成任意高权限码，绕开 _assert_can_grant_permissions。
+            if not self._is_current_super(current_user_roles):
+                granted = set(await self.auth_service.fetch_user_permission_codes(current_user_id))
+                missing = sorted(
+                    code for code in (permission.permission_code, payload.permission_code) if code not in granted
+                )
+                if missing:
+                    raise ApiError(403, "修改权限编码需要同时持有改前和改后的权限: " + ", ".join(missing))
             duplicate = await self.session.scalar(
                 select(SysPermission).where(SysPermission.permission_code == payload.permission_code)
             )
