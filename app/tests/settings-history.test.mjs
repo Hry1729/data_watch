@@ -12,6 +12,6 @@ test("settings section switches replace the current history entry", () => {
 });
 
 test("opening settings still pushes an entry so Back returns to the previous page", () => {
-  assert.equal(source.split("navigate(settingsPath)").length - 1, 2);
+  assert.equal(source.split("navigate(settingsPath)").length - 1, 1);
   assert.ok(!source.includes("navigate(settingsPath, { replace: true })"));
 });
