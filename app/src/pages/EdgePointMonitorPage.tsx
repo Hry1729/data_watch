@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -111,9 +111,9 @@ export default function EdgePointMonitorPage() {
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 px-4 pb-4 md:px-6 md:pb-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4">
           <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}>
             <div className="max-w-full overflow-x-auto">
               <TabsList className="w-max">
@@ -130,19 +130,14 @@ export default function EdgePointMonitorPage() {
             <SelectTrigger className="!h-8 w-32"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup><SelectItem value="all">数据类型（全部）</SelectItem>{POINT_DISPLAY_DATA_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectGroup></SelectContent>
           </Select>
-        </div>
-        <div className="flex items-center gap-2">
           <div className="relative w-48"><Search className="absolute left-3 top-2 size-4 text-muted-foreground" /><Input className="h-8 pl-9" placeholder="点位名称 / IO地址" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div>
           <Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}>
             <SelectTrigger className="!h-8 w-24"><SelectValue /></SelectTrigger>
             <SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent>
           </Select>
+          <Badge variant="outline" className={`ml-auto ${source === "local" ? "border-warning/30 bg-warning-soft text-warning" : "border-success/30 bg-success-soft text-success"}`}>{source === "local" ? "本机快照" : "中心数据"}</Badge>
         </div>
-      </div>
-
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader><CardTitle>点位监控</CardTitle><CardAction><Badge variant="outline" className={source === "local" ? "border-warning/30 bg-warning-soft text-warning" : "border-success/30 bg-success-soft text-success"}>{source === "local" ? "本机快照" : "中心数据"}</Badge></CardAction></CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-3">
           <div ref={tableViewportRef} className="min-h-0 flex-1 overflow-auto rounded-lg border [&_[data-slot=table-container]]:h-full">
             <Table className="h-full w-full table-fixed">
               <TableHeader><TableRow className="bg-muted/50"><TableHead className="w-[15%] text-center">所属设备</TableHead><TableHead className="text-center">点位名称</TableHead><TableHead className="w-[10%] text-center">点位序号</TableHead><TableHead className="w-[17%] text-center">IO地址</TableHead><TableHead className="w-[11%] text-center">数据类型</TableHead><TableHead className="w-[15%] text-center">驱动名称</TableHead><TableHead className="w-[8%] text-center">只读</TableHead><TableHead className="w-20 text-center">操作</TableHead></TableRow></TableHeader>
