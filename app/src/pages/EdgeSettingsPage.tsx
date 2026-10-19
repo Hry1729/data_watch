@@ -375,7 +375,7 @@ export default function EdgeSettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 pb-4 md:px-6 md:pb-6">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
       {localError && <p className="text-sm text-destructive" role="alert">{localError}</p>}
 
       <Card>
