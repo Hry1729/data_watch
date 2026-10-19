@@ -35,9 +35,10 @@ class EdgeLocalStore:
                 FROM edge_config_meta WHERE singleton=1
                 """
             ).fetchone()
+            latest_times = self._latest_times_query(connection)
             try:
                 rows = connection.execute(
-                    """
+                    f"""
                     SELECT d.device_code, d.device_type, d.protocol, d.endpoint,
                            d.scan_rate_ms, d.config_version, d.assignment_epoch,
                            d.enabled, s.status, s.message,
@@ -45,7 +46,7 @@ class EdgeLocalStore:
                            MAX(ll.updated_at) AS data_updated_at
                     FROM edge_device AS d
                     LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
-                    LEFT JOIN local_latest AS ll ON ll.device_code=d.device_code
+                    LEFT JOIN ({latest_times}) AS ll ON ll.device_code=d.device_code
                     GROUP BY d.device_code, d.device_type, d.protocol, d.endpoint,
                              d.scan_rate_ms, d.config_version, d.assignment_epoch,
                              d.enabled, s.status, s.message, s.updated_at
@@ -114,14 +115,15 @@ class EdgeLocalStore:
             return {"list": [], "total": 0, "pageNo": page_no, "pageSize": page_size}
         try:
             with closing(self._connect()) as connection:
+                latest_times = self._latest_times_query(connection)
                 rows = connection.execute(
-                    """
+                    f"""
                     SELECT d.device_pk, d.device_code, d.device_type, d.protocol,
                            d.enabled, s.status, s.updated_at AS status_updated_at,
                            MAX(ll.updated_at) AS data_updated_at
                     FROM edge_device AS d
                     LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
-                    LEFT JOIN local_latest AS ll ON ll.device_code=d.device_code
+                    LEFT JOIN ({latest_times}) AS ll ON ll.device_code=d.device_code
                     GROUP BY d.device_pk, d.device_code, d.device_type, d.protocol,
                              d.enabled, s.status, s.updated_at
                     ORDER BY d.device_code
@@ -174,6 +176,17 @@ class EdgeLocalStore:
             "pageNo": page_no,
             "pageSize": page_size,
         }
+
+    @staticmethod
+    def _latest_times_query(connection: sqlite3.Connection) -> str:
+        tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('local_latest', 'local_latest_frame')"
+        )}
+        sources = [f"SELECT device_code, updated_at FROM {table}" for table in sorted(tables)]
+        if not sources:
+            return "SELECT NULL AS device_code, NULL AS updated_at WHERE 0"
+        return " UNION ALL ".join(sources)
 
     def _runtime_connect_status(self, row: sqlite3.Row) -> int:
         if not bool(row["enabled"]):

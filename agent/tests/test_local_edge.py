@@ -132,6 +132,28 @@ def test_devices_falls_back_before_collector_creates_latest_table(tmp_path):
     assert result["devices"][0]["status"] == 0
 
 
+@pytest.mark.parametrize("keep_legacy", [True, False])
+def test_device_status_uses_fresh_frames_after_status_event_expires(tmp_path, monkeypatch, keep_legacy):
+    path = tmp_path / "edge" / "edge.db"
+    _seed(path)
+    monkeypatch.setattr("app.services.edge_local_store.time.time", lambda: 1000)
+    with sqlite3.connect(path) as connection:
+        connection.execute("ALTER TABLE edge_device ADD COLUMN device_pk INTEGER DEFAULT 101")
+        connection.execute("INSERT INTO edge_device_status VALUES('QC01', 1, '', 1000)")
+        connection.execute("CREATE TABLE local_latest_frame (device_code TEXT, updated_at INTEGER)")
+        connection.execute("INSERT INTO local_latest_frame VALUES('QC01', 1000000)")
+        if keep_legacy:
+            connection.execute("INSERT INTO local_latest VALUES('QC01', 'g001', '11', '{}', 1000)")
+        else:
+            connection.execute("DROP TABLE local_latest")
+    store = EdgeLocalStore(path)
+    assert store.devices()["devices"][0]["status"] == 1
+    assert store.monitor_devices()["list"][0]["connectStatus"] == "online"
+    monkeypatch.setattr("app.services.edge_local_store.time.time", lambda: 1130)
+    assert store.devices()["devices"][0]["status"] == 0
+    assert store.monitor_devices()["list"][0]["connectStatus"] == "offline"
+
+
 @pytest.mark.asyncio
 async def test_local_api_is_hidden_from_non_edge_roles(monkeypatch):
     monkeypatch.setenv("DATAWATCH_ROLE", "centralized")
