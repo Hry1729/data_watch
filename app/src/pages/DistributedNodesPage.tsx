@@ -7,15 +7,21 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Clipboard,
+  Cpu,
+  HardDriveDownload,
   KeyRound,
   ListChecks,
+  Network,
   RefreshCcw,
+  Server,
   Settings2,
+  TriangleAlert,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -54,43 +60,65 @@ function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "从未";
 }
 
-function processBadge(label: string, value: string) {
-  if (value === "running") {
-    return <Badge variant="outline" className="border-success/30 bg-success-soft text-success">{label} 运行</Badge>;
-  }
-  if (value === "unknown") {
-    return <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning">{label} 未知</Badge>;
-  }
-  return <Badge variant="outline" className="border-border bg-muted text-muted-foreground">{label} 停止</Badge>;
+function formatClock(value: string): string {
+  return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function formatAgo(value: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)} 小时前`;
+  return `${Math.floor(seconds / 86_400)} 天前`;
+}
+
+const watermarkRank: Record<DistributedNode["outboxWatermark"], number> = { normal: 0, warning: 1, critical: 2, overflow: 3 };
+// 概念稿状态 Badge：浅底 + 同色 28% 描边
+const tagCls = "h-5 rounded-md px-2 text-xs font-medium";
+const tagTone = {
+  brand: "border-brand/30 bg-brand-soft text-brand",
+  success: "border-success/30 bg-success-soft text-success",
+  warning: "border-warning/30 bg-warning-soft text-warning",
+  destructive: "border-destructive/30 bg-destructive-soft text-destructive",
+  idle: "border-border bg-muted text-muted-foreground",
+};
+
+function processChip(label: string, value: string) {
+  const tone = value === "running" ? "text-success" : value === "unknown" ? "text-warning" : "text-muted-foreground";
+  const text = value === "running" ? "运行" : value === "unknown" ? "未知" : "停止";
+  return (
+    <span key={label} className={`inline-flex h-6 items-center gap-1 px-1.5 text-[11px] font-medium whitespace-nowrap [&+&]:shadow-[inset_1px_0_0_var(--card)] ${tone}`}>
+      <i className={`size-1.5 rounded-full ${value === "running" || value === "unknown" ? "bg-current" : "shadow-[inset_0_0_0_1.5px_currentColor]"}`} />
+      {label} {text}
+    </span>
+  );
 }
 
 function approvalBadge(status: DistributedNode["status"]) {
-  if (status === "approved") {
-    return <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary">已批准</Badge>;
-  }
-  if (status === "revoked") {
-    return <Badge variant="outline" className="border-destructive/30 bg-destructive/5 text-destructive">已吊销</Badge>;
-  }
-  return <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning">待审批</Badge>;
+  if (status === "approved") return <Badge variant="outline" className={`${tagCls} ${tagTone.brand}`}>已批准</Badge>;
+  if (status === "revoked") return <Badge variant="outline" className={`${tagCls} ${tagTone.destructive}`}>已吊销</Badge>;
+  return <Badge variant="outline" className={`${tagCls} ${tagTone.warning}`}>待审批</Badge>;
 }
 
 function onlineBadge(online: boolean) {
   return online
-    ? <Badge variant="outline" className="border-success/30 bg-success-soft text-success">在线</Badge>
-    : <Badge variant="outline" className="border-border bg-muted text-muted-foreground">离线</Badge>;
+    ? <Badge variant="outline" className={`${tagCls} ${tagTone.success}`}>在线</Badge>
+    : <Badge variant="outline" className={`${tagCls} ${tagTone.idle}`}>离线</Badge>;
 }
 
-function KpiCard({ label, value, unit, detail }: { label: string; value: string; unit?: string; detail: string }) {
+function KpiCard({ icon: Icon, label, value, unit, detail, badge }: { icon: LucideIcon; label: string; value: string; unit?: string; detail: string; badge?: string }) {
   return (
-    <Card size="sm">
-      <CardContent className="px-4 py-1">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="mt-2 truncate text-2xl font-semibold leading-none tabular-nums">
-          {value}
-          {unit && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
-        </p>
-        <p className="mt-2 truncate text-xs text-muted-foreground">{detail}</p>
-      </CardContent>
+    <Card className="gap-0.5 p-4">
+      <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+        <Icon className="size-[15px] shrink-0" />
+        <span className="truncate">{label}</span>
+        {badge && <span className="ml-auto rounded-full bg-warning-soft px-1.5 py-px text-xs font-medium text-warning">{badge}</span>}
+      </div>
+      <p className="mt-2 truncate text-[28px] leading-[1.15] font-semibold tracking-[-0.03em] tabular-nums">
+        {value}
+        {unit && <small className="ml-0.5 text-sm font-medium tracking-normal text-muted-foreground">{unit}</small>}
+      </p>
+      <p className="truncate text-xs text-muted-foreground" title={detail}>{detail}</p>
     </Card>
   );
 }
@@ -164,6 +192,7 @@ export default function DistributedNodesPage() {
       attention: nodes.filter((node) => node.clockAnomaly || node.appliedRevision !== node.configVersion || node.status === "pending").length,
       assignedDevices: nodes.reduce((sum, node) => sum + node.assignmentCount, 0),
       assignedNodes: nodes.filter((node) => node.assignmentCount > 0).length,
+      worstWatermark: nodes.reduce<DistributedNode["outboxWatermark"]>((worst, node) => (watermarkRank[node.outboxWatermark] > watermarkRank[worst] ? node.outboxWatermark : worst), "normal"),
       topBacklogNode: nodes.reduce<DistributedNode | null>((top, node) => (!top || node.outboxBacklog > top.outboxBacklog ? node : top), null),
     };
   }, [nodes]);
@@ -307,97 +336,121 @@ export default function DistributedNodesPage() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="flex h-full min-h-0 w-full flex-col gap-4">
-      <div className="grid shrink-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid shrink-0 grid-cols-4 gap-4">
         <KpiCard
+          icon={Network}
           label="在线节点"
           value={String(totals.online)}
           unit={`/ ${nodes.length} 台`}
           detail={`${totals.offline} 台离线 · ${totals.pending} 台待审批`}
         />
         <KpiCard
+          icon={HardDriveDownload}
           label="上行积压"
           value={totals.backlog.toLocaleString()}
-          unit="条"
-          detail={totals.topBacklogNode && totals.topBacklogNode.outboxBacklog > 0 ? `主要来自 ${totals.topBacklogNode.nodeName}` : "暂无积压"}
+          badge={totals.worstWatermark !== "normal" ? `水位 ${totals.worstWatermark}` : undefined}
+          detail={totals.topBacklogNode && totals.topBacklogNode.outboxBacklog > 0 ? `条 · 主要来自 ${totals.topBacklogNode.nodeName}` : "条 · 暂无积压"}
         />
         <KpiCard
+          icon={Cpu}
           label="已分配设备"
           value={String(totals.assignedDevices)}
           unit="台"
           detail={`分布在 ${totals.assignedNodes} 个边缘节点`}
         />
         <KpiCard
+          icon={TriangleAlert}
           label="需关注"
           value={String(totals.attention)}
           detail={`时钟异常 ${totals.clockAnomalies} · 配置未应用 ${totals.configPending} · 待审批 ${totals.pending}`}
         />
       </div>
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardHeader>
-          <CardTitle>节点列表</CardTitle>
-          <CardAction className="flex items-center gap-2">
+      <Card className="flex max-h-full min-h-0 flex-col gap-0 py-0">
+        <div className="flex shrink-0 items-center gap-3 border-b px-5 pt-5 pb-3.5">
+          <div className="min-w-0">
+            <p className="text-sm leading-none font-semibold">节点列表</p>
+            <p className="mt-1.5 truncate text-[13px] text-muted-foreground">{nodes.length} 台 / {totals.online} 台在线 / {totals.backlog.toLocaleString()} 条积压 · 30 秒内有心跳视为在线</p>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="outline" size="icon-sm" onClick={() => void syncDeviceStatuses()} disabled={busy}>
-                  <RefreshCcw className="size-4" />
+                <Button variant="outline" size="icon" className="size-8 bg-background" aria-label="同步设备启停状态" onClick={() => void syncDeviceStatuses()} disabled={busy}>
+                  <RefreshCcw className="size-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>同步设备启停状态</TooltipContent>
             </Tooltip>
-            <Button size="sm" onClick={() => { setRegistration(null); setRegistrationOpen(true); }}>
-              <KeyRound className="size-4" />
+            <Button className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90" onClick={() => { setRegistration(null); setRegistrationOpen(true); }}>
+              <KeyRound className="size-3.5" />
               生成注册码
             </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
+          </div>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col px-5 pt-4 pb-5">
           <div className="min-h-0 flex-1 overflow-auto">
           {loading ? (
             <div className="space-y-2"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div>
           ) : (
-            <div className="overflow-hidden rounded-lg border">
-              <Table className="w-full table-fixed">
-                <TableHeader className="bg-muted/50">
-                  <TableRow className="h-10 hover:bg-transparent">
-                    <TableHead className="w-[19%] text-center">节点</TableHead>
-                    <TableHead className="w-[14%] text-center">状态</TableHead>
-                    <TableHead className="w-[13%] text-center">进程</TableHead>
-                    <TableHead className="w-[10%] text-center">配置版本</TableHead>
-                    <TableHead className="w-[9%] text-center">积压</TableHead>
-                    <TableHead className="w-[7%] text-center">设备</TableHead>
-                    <TableHead className="w-[16%] text-center">最近心跳</TableHead>
-                    <TableHead className="w-[12%] text-center">操作</TableHead>
+            <div className="overflow-hidden rounded-[10px] border">
+              <Table className="w-full table-fixed text-[13px]">
+                <colgroup><col className="w-[20%]" /><col className="w-[14%]" /><col className="w-[20%]" /><col className="w-[8%]" /><col className="w-[10%]" /><col className="w-[6%]" /><col className="w-[11%]" /><col className="w-[11%]" /></colgroup>
+                <TableHeader className="bg-[color-mix(in_oklab,var(--muted)_55%,var(--card))]">
+                  <TableRow className="hover:bg-transparent">
+                    {["节点", "状态", "进程", "配置版本", "积压", "设备", "最近心跳", "操作"].map((label, index) => (
+                      <TableHead key={label} className={`h-10 px-3 text-[13px] font-medium text-muted-foreground ${index === 0 ? "text-left" : "text-center"}`}>{label}</TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pagedNodes.map((node) => (
-                    <TableRow key={node.nodeUuid} className="h-14">
-                      <TableCell className="max-w-0 overflow-hidden text-center">
-                        <div className="truncate font-medium">{node.nodeName}</div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">{node.nodeUuid}</div>
-                      </TableCell>
-                      <TableCell className="max-w-0 overflow-hidden text-center">
-                        <div className="flex flex-wrap justify-center gap-1">
-                          {approvalBadge(node.status)}
-                          {onlineBadge(isOnline(node.lastSeenAt))}
-                          {node.clockAnomaly && <Badge variant="outline" className="border-destructive/30 bg-destructive/5 text-destructive">时钟异常</Badge>}
+                  {pagedNodes.map((node) => {
+                    const online = isOnline(node.lastSeenAt);
+                    const lag = node.configVersion !== node.appliedRevision;
+                    const capTone = node.outboxWatermark === "warning" ? "text-warning" : node.outboxWatermark === "normal" ? "text-muted-foreground" : "text-destructive";
+                    const hbTone = !node.lastSeenAt ? "text-muted-foreground" : online ? "text-success" : "text-destructive";
+                    return (
+                    <TableRow key={node.nodeUuid}>
+                      <TableCell className="h-[68px] max-w-0 overflow-hidden px-3 py-0">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className={`grid size-[34px] shrink-0 place-items-center rounded-[9px] ${node.status === "pending" ? "bg-warning-soft text-warning" : online ? "bg-brand-soft text-brand" : "bg-muted text-muted-foreground"}`}><Server className="size-4" /></span>
+                          <div className="min-w-0">
+                            <div className="truncate font-medium">{node.nodeName}</div>
+                            <div className="truncate font-mono text-[11px] text-muted-foreground">{node.nodeUuid}</div>
+                          </div>
                         </div>
                       </TableCell>
-                      <TableCell className="max-w-0 overflow-hidden">
-                        <div className="flex flex-wrap justify-center gap-1">{processBadge("C", node.collectorStatus)}{processBadge("S", node.storageStatus)}{processBadge("U", node.uploaderStatus)}</div>
+                      <TableCell className="max-w-0 overflow-hidden px-3 py-0 text-center whitespace-normal">
+                        <div className="flex flex-wrap justify-center gap-1">
+                          {approvalBadge(node.status)}
+                          {onlineBadge(online)}
+                          {node.clockAnomaly && <Badge variant="outline" className={`${tagCls} ${tagTone.destructive}`}>时钟异常</Badge>}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-center"><span className={node.configVersion === node.appliedRevision ? "" : "text-amber-600"}>{node.appliedRevision} / {node.configVersion}</span></TableCell>
-                      <TableCell className="text-center"><div className="font-mono">{node.outboxBacklog}</div><Badge variant={node.outboxWatermark === "overflow" || node.outboxWatermark === "critical" ? "destructive" : node.outboxWatermark === "warning" ? "secondary" : "outline"}>{node.outboxDiskUsedPercent.toFixed(1)}%</Badge></TableCell>
-                      <TableCell className="text-center">{node.assignmentCount}</TableCell>
-                      <TableCell className="max-w-0 overflow-hidden text-center"><span className="block truncate">{formatTime(node.lastSeenAt)}</span></TableCell>
-                      <TableCell><div className="flex justify-center gap-1">
-                        {node.status !== "approved" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" onClick={() => void updateStatus(node, "approved")} disabled={busy}><Check className="size-4" /></Button></TooltipTrigger><TooltipContent>批准节点</TooltipContent></Tooltip>}
-                        {node.status !== "revoked" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" onClick={() => void updateStatus(node, "revoked")} disabled={busy}><Ban className="size-4" /></Button></TooltipTrigger><TooltipContent>吊销节点</TooltipContent></Tooltip>}
-                        <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" onClick={() => openSettings(node)} disabled={node.status === "revoked"}><Settings2 className="size-4" /></Button></TooltipTrigger><TooltipContent>节点设置</TooltipContent></Tooltip>
-                        <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-sm" onClick={() => void openAssignments(node)} disabled={node.status === "revoked"}><ListChecks className="size-4" /></Button></TooltipTrigger><TooltipContent>分配设备</TooltipContent></Tooltip>
+                      <TableCell className="max-w-0 overflow-hidden px-3 py-0 text-center">
+                        <div className="inline-flex overflow-hidden rounded-lg bg-[color-mix(in_oklab,var(--muted)_55%,transparent)]">{processChip("C", node.collectorStatus)}{processChip("S", node.storageStatus)}{processChip("U", node.uploaderStatus)}</div>
+                      </TableCell>
+                      <TableCell className="px-3 py-0 text-center tabular-nums"><span className={lag ? "text-warning" : ""} title={lag ? "已应用版本落后于配置版本" : undefined}>{node.appliedRevision} / {node.configVersion}</span></TableCell>
+                      <TableCell className="px-3 py-0 text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="font-mono text-[13px] font-semibold">{node.outboxBacklog.toLocaleString()}</span>
+                          <span className={`text-[11px] tabular-nums ${capTone}`} title="Outbox 磁盘占用">磁盘 {node.outboxDiskUsedPercent.toFixed(1)}%</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-3 py-0 text-center font-medium tabular-nums">{node.assignmentCount}</TableCell>
+                      <TableCell className="max-w-0 overflow-hidden px-3 py-0 text-center">
+                        <div className="flex flex-col items-center gap-0.5" title={formatTime(node.lastSeenAt)}>
+                          <span className={`inline-flex items-center gap-1.5 text-[12.5px] font-medium ${hbTone}`}><i className="size-1.5 rounded-full bg-current" />{node.lastSeenAt ? formatAgo(node.lastSeenAt) : "从未"}</span>
+                          {node.lastSeenAt && <span className="text-[11px] whitespace-nowrap text-muted-foreground tabular-nums">{formatClock(node.lastSeenAt)}</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className="px-3 py-0"><div className="flex justify-center gap-0.5">
+                        {node.status !== "approved" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-[30px] text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-4 hover:text-success" onClick={() => void updateStatus(node, "approved")} disabled={busy}><Check /></Button></TooltipTrigger><TooltipContent>批准节点</TooltipContent></Tooltip>}
+                        {node.status !== "revoked" && <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-[30px] text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-4 hover:text-destructive" onClick={() => void updateStatus(node, "revoked")} disabled={busy}><Ban /></Button></TooltipTrigger><TooltipContent>吊销节点</TooltipContent></Tooltip>}
+                        <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-[30px] text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-4" onClick={() => openSettings(node)} disabled={node.status === "revoked"}><Settings2 /></Button></TooltipTrigger><TooltipContent>节点设置</TooltipContent></Tooltip>
+                        <Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon" className="size-[30px] text-muted-foreground hover:text-foreground [&_svg:not([class*='size-'])]:size-4" onClick={() => void openAssignments(node)} disabled={node.status === "revoked"}><ListChecks /></Button></TooltipTrigger><TooltipContent>分配设备</TooltipContent></Tooltip>
                       </div></TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                   {nodes.length === 0 && <TableRow><TableCell colSpan={8} className="h-32 text-center text-muted-foreground">暂无边缘节点</TableCell></TableRow>}
                 </TableBody>
               </Table>
@@ -405,29 +458,24 @@ export default function DistributedNodesPage() {
           )}
           </div>
           {!loading && (
-            <div className="flex flex-col gap-3 px-1 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex shrink-0 items-center gap-3 px-1 pt-3 text-[13px]">
               <span className="text-muted-foreground">共 {nodes.length} 台节点</span>
-              <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">每页行数</span>
-                  <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
-                    <SelectTrigger className="w-20" size="sm" aria-label="每页行数"><SelectValue /></SelectTrigger>
-                    <SelectContent align="end">
-                      {[5, 10, 20].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <span className="min-w-24 text-center font-medium tabular-nums">第 {page} / {totalPages} 页</span>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="icon" className="size-8" disabled={page <= 1} onClick={() => setPage(1)} aria-label="第一页"><ChevronsLeft className="size-4" /></Button>
-                  <Button variant="outline" size="icon" className="size-8" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} aria-label="上一页"><ChevronLeft className="size-4" /></Button>
-                  <Button variant="outline" size="icon" className="size-8" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} aria-label="下一页"><ChevronRight className="size-4" /></Button>
-                  <Button variant="outline" size="icon" className="size-8" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="最后一页"><ChevronsRight className="size-4" /></Button>
-                </div>
-              </div>
+              <span className="flex-1" />
+              <span className="text-muted-foreground">每页行数</span>
+              <Select value={String(pageSize)} onValueChange={(value) => { setPageSize(Number(value)); setPage(1); }}>
+                <SelectTrigger className="!h-[30px] w-[72px] bg-background text-[13px]" aria-label="每页行数"><SelectValue /></SelectTrigger>
+                <SelectContent align="end">
+                  {[5, 10, 20].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <span className="min-w-24 text-center font-medium tabular-nums">第 {page} / {totalPages} 页</span>
+              <Button variant="outline" size="icon" className="size-8 bg-background" disabled={page <= 1} onClick={() => setPage(1)} aria-label="第一页"><ChevronsLeft className="size-4" /></Button>
+              <Button variant="outline" size="icon" className="size-8 bg-background" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} aria-label="上一页"><ChevronLeft className="size-4" /></Button>
+              <Button variant="outline" size="icon" className="size-8 bg-background" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} aria-label="下一页"><ChevronRight className="size-4" /></Button>
+              <Button variant="outline" size="icon" className="size-8 bg-background" disabled={page >= totalPages} onClick={() => setPage(totalPages)} aria-label="最后一页"><ChevronsRight className="size-4" /></Button>
             </div>
           )}
-        </CardContent>
+        </div>
       </Card>
 
       <Dialog open={registrationOpen} onOpenChange={setRegistrationOpen}>
