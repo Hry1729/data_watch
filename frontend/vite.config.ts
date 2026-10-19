@@ -34,11 +34,14 @@ export default ({ mode }: { mode: string }) => {
           ws: true
         }
       },
-      host: true,
+      // 默认只监听本机；局域网联调需显式设置 DATAWATCH_DEV_HOST（true=全部网卡，或指定地址）
+      host: devServerHost(process.env.DATAWATCH_DEV_HOST),
       fs: {
-        // 允许读取仓库根的 docs/（「项目文档」原文位于 frontend 之外）
+        // 允许读取仓库根的 docs/（「项目文档」原文位于 frontend 之外），不放行整个仓库根
         // searchForWorkspaceRoot 复刻 Vite 默认 allow，保持 pnpm 依赖解析不变
-        allow: [searchForWorkspaceRoot(root), resolvePath('..')]
+        allow: [searchForWorkspaceRoot(root), resolvePath('../docs')],
+        // 覆盖 Vite 默认 deny（保留默认项），并拦截 backend.env 这类非 .env 前缀的密钥/配置文件
+        deny: DEV_FS_DENY
       }
     },
     // 路径别名
@@ -161,6 +164,20 @@ export default ({ mode }: { mode: string }) => {
       }
     }
   })
+}
+
+export const DEV_FS_DENY = [
+  '.env',
+  '.env.*',
+  '*.env',
+  '*.env.*',
+  '*.{crt,pem,key,pfx,p12,toml}',
+  '**/.git/**'
+]
+
+export function devServerHost(value: string | undefined): string | boolean {
+  if (!value) return false
+  return value === 'true' ? true : value
 }
 
 function resolvePath(paths: string) {
