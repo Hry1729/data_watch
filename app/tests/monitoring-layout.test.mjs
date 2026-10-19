@@ -16,7 +16,7 @@ for (const page of ["CollectorPage", "WriterPage"]) {
   });
 }
 
-test("monitoring panel clipping containers preserve the shared card ring", async () => {
+test("monitoring panel clipping containers preserve the shared card surface", async () => {
   for (const page of ["CollectorPage", "WriterPage"]) {
     const source = await readFile(
       new URL(`../src/pages/${page}.tsx`, import.meta.url),
@@ -24,7 +24,7 @@ test("monitoring panel clipping containers preserve the shared card ring", async
     );
 
     assert.match(source, /grid-rows-\[260px_minmax\(0,1fr\)\][^"]*overflow-hidden p-px/);
-    assert.equal(source.match(/<TabsContent[^>]*className="flex min-h-0 overflow-hidden p-px"/g)?.length, 2);
+    assert.doesNotMatch(source, /ring-1 ring-foreground\/10/);
   }
 });
 

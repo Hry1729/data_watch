@@ -100,7 +100,7 @@ test("settings save buttons are disabled when the config was not loaded", () => 
   assert.ok(settings.includes("const canSave = loadedForm !== null && configError === null;"));
   assert.ok(settings.includes("disabled={!canSave}"));
   assert.ok(settings.includes("disabled={saving || disabled} onClick={onSave}"));
-  assert.ok(settings.includes("disabled={saving || disabled}\n              onClick={() => onSaveAndRestart(name)}"));
+  assert.match(settings, /disabled=\{saving \|\| disabled\}[\s\S]{0,120}onClick=\{\(\) => onSaveAndRestart\(name\)\}/);
   assert.doesNotMatch(settings, /用户仍可编辑保存/);
 });
 

@@ -104,8 +104,8 @@ test("edge console owns controls and exposes collector and uplink trends", () =>
   assert.ok(consolePage.includes('title="本地采集入队趋势"'));
   assert.ok(consolePage.includes('title="中心确认上行趋势"'));
   assert.ok(consolePage.includes("<ModuleSummaryCard"));
-  assert.ok(consolePage.includes('className="grid grid-cols-2 gap-4"'));
-  assert.ok(consolePage.includes("style={{ maxWidth: 1400 }}"));
+  assert.ok(consolePage.includes('className="grid gap-4 lg:grid-cols-3"'));
+  assert.ok(consolePage.includes('className="mx-auto w-full max-w-[1400px] space-y-4"'));
   assert.ok(!consolePage.includes("        compact"));
 });
 
@@ -147,7 +147,7 @@ test("edge settings retain local policy behavior", () => {
 
 test("edge operations uses compact six-row pagination without page scrolling", () => {
   assert.ok(operations.includes("const PAGE_SIZE = 6"));
-  assert.ok(operations.includes("overflow-hidden px-4 pb-4"));
+  assert.ok(operations.includes('className="flex h-full min-h-0 flex-col gap-4 overflow-hidden"'));
   assert.ok(!operations.includes("min-h-[560px]"));
   assert.ok(operations.includes('<Table className="w-full table-fixed">'));
   assert.ok(operations.includes('<TableHeader className="bg-muted/50">'));

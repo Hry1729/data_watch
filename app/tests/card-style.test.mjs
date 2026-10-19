@@ -5,7 +5,8 @@ import test from "node:test";
 const source = await readFile(new URL("../src/components/ui/card.tsx", import.meta.url), "utf8");
 
 test("shared cards use one soft surface instead of a border", () => {
-  assert.match(source, /group\/card[\s\S]*rounded-3xl bg-card shadow-card/);
+  assert.match(source, /group\/card[\s\S]*rounded-\[12px\] bg-card/);
+  assert.match(source, /shadow-card/);
   assert.doesNotMatch(source, /border border-border/);
   assert.doesNotMatch(source, /ring-1 ring-foreground\/10/);
 });

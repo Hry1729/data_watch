@@ -74,7 +74,8 @@ test("Workbench uses the requested shadcn chart variants", () => {
   assert.match(source, /<Line[\s\S]*dataKey="alarmCount"/);
   assert.doesNotMatch(source, /<AreaChart/);
   assert.match(source, /<Select value=\{dashboard\.trendRange\}/);
-  assert.match(source, /<BarChart[\s\S]*stackId="devices"/);
+  assert.match(source, /data-dashboard-section="distribution"[\s\S]*?grid-cols-\[72px_minmax\(0,1fr\)_64px\]/);
+  assert.match(source, /data-dashboard-section="distribution"[\s\S]*?bg-brand/);
 });
 
 test("Workbench tooltip falls back to the active row for the newest bucket", () => {
@@ -93,11 +94,11 @@ test("Workbench uses the blue preset chart palette instead of neutral grays", ()
   }
 });
 
-test("Workbench stat cards use a solid background and larger icons without changing the right inset", () => {
+test("Workbench stat cards use a solid background and compact icon rows", () => {
   assert.doesNotMatch(source, /bg-gradient-to-t|from-primary\/5/);
-  assert.match(source, /className="bg-card"/);
-  assert.match(source, /className="flex size-10 shrink-0 items-center justify-center/);
-  assert.match(source, /<Icon className="size-6" \/>/);
+  assert.match(source, /<Card size="sm" className="relative min-h-\[132px\]">/);
+  assert.match(source, /<Icon className="size-4" \/>/);
+  assert.match(source, /text-\[28px\] font-semibold/);
 });
 
 test("Workbench cards leave the surface to the shared Card component", () => {
@@ -105,11 +106,11 @@ test("Workbench cards leave the surface to the shared Card component", () => {
 });
 
 test("Workbench cards and controls follow the compact dashboard layout", () => {
-  assert.match(source, /min-h-24 items-center justify-between/);
+  assert.match(source, /min-h-\[132px\]/);
   assert.match(source, /<CardAction>[\s\S]*<ToggleGroup/);
   assert.match(source, /@\[767px\]\/card:flex/);
   assert.match(source, /@\[767px\]\/card:hidden/);
-  assert.match(source, /h-\[220px\] w-full aspect-auto/);
+  assert.match(source, /h-\[280px\] w-full aspect-auto/);
   assert.equal(source.match(/min-h-\[220px\]/g)?.length, 2);
   assert.doesNotMatch(source, /\[260px\]/);
 });
@@ -117,17 +118,14 @@ test("Workbench cards and controls follow the compact dashboard layout", () => {
 
 test("Workbench renders six live pipeline stages with aggregated health colors", () => {
   assert.match(source, /data-dashboard-section="pipeline"/);
-  for (const label of ["Collector", "Uploader", "Ingest", "Redis", "Writer", "TDengine"]) {
+  for (const label of ["采集", "上行", "汇聚", "Redis", "入库", "存储"]) {
     assert.match(source, new RegExp(`label: "${label}"`));
   }
-  assert.match(source, /grid-cols-\[minmax\(0,1fr\)_18px_minmax\(0,1fr\)_18px_minmax\(0,1fr\)\]/);
-  assert.match(source, /grid-rows-\[80px_18px_80px\]/);
-  for (const connector of ["ArrowRight", "ArrowDown", "ArrowLeft"]) {
-    assert.match(source, new RegExp("<" + connector));
-  }
-  assert.match(source, /animate-pulse bg-amber-400/);
-  assert.match(source, /dot: "bg-red-500"/);
-  assert.match(source, /<PipelineStageNode stage=\{stage\}/);
+  assert.match(source, /grid min-h-\[36px\] grid-cols-\[16px_minmax\(0,1fr\)_auto_auto\]/);
+  assert.match(source, /absolute left-1\/2 top-1\/2 h-full w-px/);
+  assert.match(source, /stage\.status === "warning" \? "bg-warning-soft\/50"/);
+  assert.match(source, /dot: "bg-destructive"/);
+  assert.match(source, /<PipelineTimeline stages=\{pipeline\.data\.stages\} \/>/);
   assert.doesNotMatch(source, /data-dashboard-section="risk"|<CardTitle>风险设备<\/CardTitle>/);
   assert.match(pipelineSource, /backendClient\.dashboardEdgePipelineHealth\(token,\s*signal\)/);
   assert.match(pipelineSource, /agentClient\.getConnectionHealth\(signal\)/);
@@ -150,7 +148,8 @@ test("Workbench keeps a gray canvas and prevents smoothed trends from crossing z
 });
 
 test("Workbench overview charts use stacked bars and the interactive Bklit donut", () => {
-  assert.match(source, /data-dashboard-section="distribution"[\s\S]*<BarChart[\s\S]*<ChartLegend[\s\S]*<Bar[\s\S]*<Bar/);
+  assert.match(source, /data-dashboard-section="distribution"[\s\S]*?grid-cols-\[72px_minmax\(0,1fr\)_64px\]/);
+  assert.match(source, /data-dashboard-section="distribution"[\s\S]*?repeating-linear-gradient/);
   assert.match(source, /from "@\/components\/charts\/pie-chart"/);
   assert.match(source, /const \[hoveredIndex, setHoveredIndex\] = useState<number \| null>\(null\)/);
   assert.match(source, /data-dashboard-section="health"[\s\S]*<PieChart[\s\S]*data=\{healthData\}[\s\S]*hoveredIndex=\{hoveredIndex\}[\s\S]*innerRadius=\{45\}[\s\S]*onHoverChange=\{setHoveredIndex\}[\s\S]*size=\{150\}/);
