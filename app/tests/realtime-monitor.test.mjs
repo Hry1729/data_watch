@@ -52,10 +52,12 @@ test("realtime page retains the original monitoring workflow", () => {
 
 test("realtime trend stays inside the viewport and compacts the bool chart", () => {
   assert.match(pageSource, /flex h-full min-h-0[\s\S]*overflow-hidden/);
-  assert.match(pageSource, /grid-rows-\[minmax\(0,1fr\)_96px\]/);
+  // 数值主图占满剩余高度，Bool 点位以紧凑状态泳道单独展示在下方
+  assert.match(pageSource, /className="min-h-\[200px\] flex-1"/);
+  assert.match(pageSource, /function BoolLanes/);
+  assert.match(pageSource, /<BoolLanes points=\{boolColored\}/);
   assert.match(pageSource, /compact \? "h-16 max-h-16"/);
   assert.match(pageSource, /chartType !== "status" && separateBoolChart/);
-  assert.match(pageSource, /compact className="h-full"/);
   assert.doesNotMatch(pageSource, /h-\[420px\]/);
 });
 
