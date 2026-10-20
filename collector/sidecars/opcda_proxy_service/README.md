@@ -476,7 +476,12 @@ Program.Main()
 | `listenPort` | int | TCP 监听端口 | 9090 |
 | `updateRateMs` | int | OPC 组更新速率（毫秒） | 500 |
 | `connectionTimeoutMs` | int | 连接超时（毫秒） | 10000 |
-| `opcServers` | array | **仅供参考**，实际配置从数据库获取 | - |
+| `listenAddress` | string | 监听地址；非回环地址必须同时配置 `authToken`，否则拒绝启动 | `127.0.0.1` |
+| `authToken` | string | 预共享令牌；非空时每个请求须携带相同的 `auth_token` 字段 | 空（不校验） |
+| `frameReadTimeoutMs` | int | 帧内读/写期限（毫秒），防止半帧连接占满并发配额 | 30000 |
+| `opcServers` | array | 目标白名单：connect/read 的 `vm_host` 必须属于其中某项 `vmHost`（本机别名 `""`/`localhost`/`127.0.0.1` 等价）；为空时不限制。点位配置仍从数据库获取 | - |
+
+`shutdown` 请求只接受来自本机回环地址的连接。
 
 ### 7.4 数据库配置（device 表）
 
@@ -591,7 +596,7 @@ OPD_Server.AGV801.Fault.Tag30041800
 代理服务输出格式：
 
 ```
-2025-05-03 14:30:00.123 [INFO] Listening on 0.0.0.0:9090
+2025-05-03 14:30:00.123 [INFO] Listening on 127.0.0.1:9090
 2025-05-03 14:30:05.456 [INFO] Client connected: 127.0.0.1:54321
 2025-05-03 14:30:05.789 [INFO] Connected to OPC server: ZPMC.OPCServer
 2025-05-03 14:30:10.012 [ERROR] Read failed: Invalid item ID

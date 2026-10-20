@@ -230,18 +230,15 @@ def _filter_point(payload: Any, identifier: str) -> dict[str, Any]:
     items = payload.get("data")
     if not isinstance(items, list):
         raise CliError("api_error", "实时点位响应格式错误", EXIT_API)
-    key = _lookup_key(identifier)
+    # B051：调用方传入的是 resolver 已解析的精确 pointId，只按 pointId 精确匹配；
+    # 别名（varSeq/名称/地址）解析只在 resolver 阶段做一次，避免与同组其他点混比误报歧义。
+    key = str(identifier).strip()
     matches = [
         item
         for item in items
         if isinstance(item, dict)
-        and key
-        in {
-            _lookup_key(item.get("pointId")),
-            _lookup_key(item.get("varSeq")),
-            _lookup_key(item.get("pointName")),
-            _lookup_key(item.get("ioAddress")),
-        }
+        and item.get("pointId") is not None
+        and str(item.get("pointId")).strip() == key
     ]
     if not matches:
         raise CliError(
@@ -258,11 +255,3 @@ def _filter_point(payload: Any, identifier: str) -> dict[str, Any]:
             status=409,
         )
     return {**payload, "data": matches, "pointFilter": identifier}
-
-
-def _lookup_key(value: Any) -> str:
-    return "".join(
-        character
-        for character in str(value or "").casefold()
-        if not character.isspace() and character not in {"_", "-"}
-    )

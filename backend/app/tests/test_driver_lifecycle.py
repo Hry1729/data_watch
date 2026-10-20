@@ -30,7 +30,26 @@ def _rowcount_result(rowcount: int):
     return result
 
 
+# 既有卸载用例的安装映射：protocol → canonical driver_id（B019 起卸载必先按 protocol 解析）。
+_INSTALLED_DRIVER_IDS = {"ext": "drv1", "s7": "s7"}
+
+
 class TestDriverLifecycleHttpx(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        patcher = patch.object(
+            DriverLifecycleService,
+            "_fetch_installed_driver",
+            new=AsyncMock(
+                side_effect=lambda protocol: (
+                    {"protocol": protocol, "driver_id": _INSTALLED_DRIVER_IDS[protocol]}
+                    if protocol in _INSTALLED_DRIVER_IDS
+                    else None
+                )
+            ),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_driver_mutations_are_audited(self):
         from app.api.routes.catalog import driver_register, driver_uninstall
 
@@ -842,6 +861,110 @@ class TestDriverLifecycleReconcile(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(stats["cleaned"], 0)
         self.assertEqual(stats["retried"], 0)
+
+
+class TestDriverIdentityAndGeneration(unittest.IsolatedAsyncioTestCase):
+    """B019：protocol 与 driverId 交叉校验；B053：过期卸载补偿不得删除新代际记录。"""
+
+    async def test_explicit_driver_id_mismatching_install_record_is_409(self):
+        service = DriverLifecycleService(AsyncMock())
+        call_agent = AsyncMock()
+        begin = AsyncMock(return_value="op")
+        with patch.object(
+            service, "_fetch_installed_driver",
+            new=AsyncMock(return_value={"protocol": "proto_a", "driver_id": "drv_a"}),
+        ), patch.object(service, "_begin_uninstall_operation", new=begin), patch.object(
+            service, "_call_agent_uninstall", new=call_agent
+        ), patch("app.services.driver_lifecycle._agent_token", return_value="tok"):
+            with self.assertRaises(ApiError) as ctx:
+                await service.uninstall(protocol="proto_a", driver_id="drv_b")
+        self.assertEqual(ctx.exception.code, 409)
+        begin.assert_not_awaited()
+        call_agent.assert_not_awaited()
+
+    async def test_without_install_record_agent_pair_must_match(self):
+        service = DriverLifecycleService(AsyncMock())
+        call_agent = AsyncMock()
+        with patch.object(
+            service, "_fetch_installed_driver", new=AsyncMock(return_value=None)
+        ), patch.object(
+            service, "_list_agent_drivers",
+            new=AsyncMock(return_value=[{"id": "drv_b", "protocol": "proto_b"}]),
+        ), patch.object(service, "_call_agent_uninstall", new=call_agent), patch(
+            "app.services.driver_lifecycle._agent_token", return_value="tok"
+        ):
+            with self.assertRaises(ApiError) as ctx:
+                await service.uninstall(protocol="proto_a", driver_id="drv_b")
+        self.assertEqual(ctx.exception.code, 409)
+        call_agent.assert_not_awaited()
+
+    async def test_canonical_driver_id_is_used_for_gate_and_agent(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        begin = AsyncMock(return_value="op-1")
+        call_agent = AsyncMock(return_value={"status": "uninstalled"})
+        with patch.object(
+            service, "_fetch_installed_driver",
+            new=AsyncMock(return_value={"protocol": "proto_a", "driver_id": "drv_a"}),
+        ), patch.object(service, "_fetch_protocol_row", new=AsyncMock(return_value={"id": 1})), patch.object(
+            service, "_begin_uninstall_operation", new=begin
+        ), patch.object(service, "_call_agent_uninstall", new=call_agent), patch.object(
+            service, "_update_operation_phases", new=AsyncMock()
+        ), patch("app.services.driver_lifecycle._agent_token", return_value="tok"):
+            result = await service.uninstall(protocol="proto_a")
+        self.assertEqual(result["driverId"], "drv_a")
+        self.assertEqual(begin.await_args.kwargs["driver_id"], "drv_a")
+        call_agent.assert_awaited_once_with("drv_a", "tok")
+        delete = next(
+            c for c in session.execute.await_args_list if "DELETE FROM installed_driver" in str(c.args[0])
+        )
+        self.assertIn("lifecycle_operation_id = :operation_id", str(delete.args[0]))
+        self.assertEqual(delete.args[1]["operation_id"], "op-1")
+
+    async def test_stale_reconcile_delete_is_fenced_by_operation_id(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        with patch.object(
+            service, "_fetch_installed_driver_by_id",
+            new=AsyncMock(return_value={"protocol": "proto_a", "driver_id": "drv_a",
+                                        "lifecycle_operation_id": None}),
+        ):
+            ok = await service._reconcile_uninstall({"operation_id": "old-op", "driver_id": "drv_a"})
+        self.assertTrue(ok)
+        [call] = session.execute.await_args_list
+        self.assertIn("lifecycle_operation_id = :operation_id", str(call.args[0]))
+        self.assertEqual(call.args[1], {"protocol": "proto_a", "operation_id": "old-op"})
+
+    async def test_uncertain_reconcile_does_not_redelete_new_generation(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        call_agent = AsyncMock()
+        phases = AsyncMock()
+        with patch.object(
+            service, "_probe_agent_driver", new=AsyncMock(return_value="present")
+        ), patch.object(
+            service, "_fetch_installed_driver_by_id",
+            new=AsyncMock(return_value={"protocol": "proto_a", "driver_id": "drv_a",
+                                        "lifecycle_operation_id": None}),
+        ), patch.object(service, "_call_agent_uninstall", new=call_agent), patch.object(
+            service, "_update_operation_phases", new=phases
+        ), patch("app.services.driver_lifecycle._agent_token", return_value="tok"):
+            outcome = await service._reconcile_uncertain_uninstall(
+                {"operation_id": "old-op", "driver_id": "drv_a"}
+            )
+        self.assertEqual(outcome, "skipped")
+        call_agent.assert_not_awaited()
+        phases.assert_awaited_once_with("old-op", agent_phase="failed", db_phase="failed")
+
+    async def test_reinstall_upsert_resets_uninstall_gate(self):
+        session = AsyncMock()
+        service = DriverLifecycleService(session)
+        await service._upsert_installed_driver(
+            protocol="proto_a", driver_id="drv_a", version="2.0", sha256=""
+        )
+        sql = str(session.execute.await_args.args[0])
+        self.assertIn("lifecycle_status = 'active'", sql)
+        self.assertIn("lifecycle_operation_id = NULL", sql)
 
 
 if __name__ == "__main__":
