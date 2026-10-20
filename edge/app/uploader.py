@@ -32,6 +32,8 @@ from .storage_client import EdgeStorageClient, StorageUnavailable
 
 logger = logging.getLogger(__name__)
 UPLOAD_SUMMARY_INTERVAL_SECONDS = 10.0
+# 维护失败后的重试间隔（秒），不超过正常维护周期。
+_MAINTENANCE_FAILURE_RETRY_SECONDS = 30.0
 
 
 class UploaderPaused(RuntimeError):
@@ -187,14 +189,24 @@ class Uploader:
         now = time.monotonic()
         if now < self._next_maintenance_at:
             return
-        maintenance = await self._store_call(
-            self._store.maintenance,
-            self._settings.max_offline_retention_days,
-            self._settings.sent_retention_ms,
-            self._settings.dead_retention_days,
-            self._settings.dead_max_bytes,
-            node_uuid=self._settings.node_uuid,
-        )
+        try:
+            maintenance = await self._store_call(
+                self._store.maintenance,
+                self._settings.max_offline_retention_days,
+                self._settings.sent_retention_ms,
+                self._settings.dead_retention_days,
+                self._settings.dead_max_bytes,
+                node_uuid=self._settings.node_uuid,
+            )
+        except Exception as exc:
+            # B002：维护失败（如磁盘告警时 dead 自动导出写盘失败）不能挡住上传。
+            # 推迟一小段再重试维护，本轮照常进入上传；存储真不可用时上传路径自会报错退避。
+            logger.error("Edge outbox maintenance failed; upload continues: %s", exc)
+            self._next_maintenance_at = now + min(
+                _MAINTENANCE_FAILURE_RETRY_SECONDS,
+                self._settings.maintenance_interval_seconds,
+            )
+            return
         if maintenance.get("degraded"):
             logger.error(
                 "Edge outbox degraded reasons=%s backlog=%s; upload will retry without dropping data",
@@ -216,7 +228,10 @@ class Uploader:
             if pending_switch is not None:
                 allowed.add(pending_switch.old_session_id)
             if active not in allowed:
-                raise UploaderPaused("another instance owns the node; no takeover attempted")
+                reopened = await self._reopen_rolled_back_switch(active)
+                if reopened is None:
+                    raise UploaderPaused("another instance owns the node; no takeover attempted")
+                pending_switch = reopened
             self._session_conflict = False
         if pending_switch is not None:
             await self._complete_session_switch(pending_switch)
@@ -403,18 +418,19 @@ class Uploader:
                         str(result.get("reason") or "rejected_consumed"),
                     )
                 )
-            elif status == "commit_unknown":
-                # 中心持久化结果不确定（Redis 暂时故障）。同一 session 内退避重试：
-                # 已提交的帧会被中心按 hw 判为 duplicate，不会重复写入；不消耗隔离预算，
-                # 不切换 session。
+            elif status in {"commit_unknown", "retry_later"}:
+                # 中心持久化结果不确定（Redis 暂时故障），或中心控制缓存暂时无法权威确认
+                # （retry_later，B026）。同一 session 内退避重试：已提交的帧会被中心按 hw 判为
+                # duplicate，不会重复写入；不消耗隔离预算，不切换 session。
                 logger.error(
-                    "Upload commit uncertain status=commit_unknown local_seq=%d reason=%s; "
+                    "Upload not committed status=%s local_seq=%d reason=%s; "
                     "retrying in the same session with backoff",
+                    status,
                     record.local_seq,
                     result.get("reason") or "",
                 )
                 await self._persist_confirmed(completions)
-                await self._retry_records(records[index:], "commit_unknown", 200)
+                await self._retry_records(records[index:], status, 200)
                 return False
             elif status == "seq_reject":
                 logger.error(
@@ -680,6 +696,22 @@ class Uploader:
             )
             raise UploaderPaused("active session conflict")
 
+    async def _reopen_rolled_back_switch(self, active: str | None) -> SessionSwitchState | None:
+        """B003：中心 active 回到本机上一次已完成切换的旧 session（中心掉电回滚），
+        重新打开这次切换并重发；其他任何 session 仍按另一实例处理，绝不抢占。"""
+        reopen = getattr(self._store, "reopen_rolled_back_switch", None)
+        if reopen is None or not active:
+            return None
+        state = await self._store_call(reopen, active)
+        if state is not None:
+            logger.warning(
+                "Center active session rolled back to this node's previous session=%s; "
+                "re-sending the completed switch to session=%s",
+                state.old_session_id,
+                state.new_session_id,
+            )
+        return state
+
     async def _reconcile_obsolete_session(self) -> bool:
         current = await self._store_call(self._store.current_session_id)
         path = f"/ingest/session/{self._settings.node_uuid}"
@@ -699,6 +731,10 @@ class Uploader:
             await self._complete_session_switch(pending)
             return (await self._store_call(self._store.pending_session_switch)) is None
         if active is not None:
+            reopened = await self._reopen_rolled_back_switch(active)
+            if reopened is not None:
+                await self._complete_session_switch(reopened)
+                return (await self._store_call(self._store.pending_session_switch)) is None
             self._session_conflict = True
             raise UploaderPaused("another session owns this node; verify the other instance and re-register this node")
         state = await self._store_call(self._store.prepare_session_switch)

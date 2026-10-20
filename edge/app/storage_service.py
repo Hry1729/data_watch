@@ -68,6 +68,7 @@ IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
             "session.pending",
             "session.prepare",
             "session.complete",
+            "session.reopen",
             "session.current",
             "maintenance",
             # 容量视图仍留给 uploader。取回载荷和重放改由 operator 角色持有。
@@ -80,6 +81,7 @@ IPC_ROLE_ACTIONS: dict[str, frozenset[str]] = {
         {
             "outbox.dead_list",
             "outbox.dead_export",
+            "outbox.dead_export_confirm",
             "outbox.dead_export_batch",
             "outbox.dead_replay",
         }
@@ -309,6 +311,10 @@ class IpcAuthenticator:
         return action in IPC_ROLE_ACTIONS.get(role, frozenset())
 
 
+# 在命令线程之外执行的长耗时动作（写盘导出）。
+_OFFLOADED_ACTIONS = frozenset({"outbox.dead_export_batch"})
+
+
 @dataclass(slots=True)
 class _Command:
     action: str
@@ -348,6 +354,7 @@ class StorageEngine:
         # Keep the process alive until accepted commands are drained; close()
         # reports a timeout rather than allowing a daemon thread to vanish.
         self._worker = threading.Thread(target=self._run, name="edge-storage-writer", daemon=False)
+        self._export_worker: threading.Thread | None = None
         self._latencies_ms: deque[float] = deque(maxlen=2000)
         self._recent_frames: deque[tuple[float, int]] = deque(maxlen=10000)
         self._action_counts: Counter[str] = Counter()
@@ -466,6 +473,11 @@ class StorageEngine:
                             break
                         commands.append(following)
                     self._commit_frame_commands(outbox, commands)
+                elif command.action in _OFFLOADED_ACTIONS:
+                    # B027：批量 dead 导出的分页读 + 写盘 + fsync 可能很久，交给独立的
+                    # 单个导出工作线程，命令线程继续处理 frame.commit / snapshot 等请求。
+                    # OutboxStore 自带锁，分页快照与回写 exported_at 仍是短事务串行执行。
+                    self._start_offloaded(outbox, config, command)
                 else:
                     started = time.perf_counter()
                     try:
@@ -492,8 +504,41 @@ class StorageEngine:
                     except Full:
                         pass
         finally:
+            export_worker = self._export_worker
+            if export_worker is not None:
+                # 连接关闭前等导出线程收尾，不能在它读库时关掉连接。
+                export_worker.join()
             config.close()
             outbox.close()
+
+    def _start_offloaded(
+        self,
+        outbox: OutboxStore,
+        config: ConfigSnapshotStore,
+        command: _Command,
+    ) -> None:
+        running = self._export_worker
+        if running is not None and running.is_alive():
+            # 有界：同一时间只跑一个导出，其余直接拒绝，避免导出线程堆积。
+            self._errors_total += 1
+            command.error = RuntimeError("a dead export is already running; retry later")
+            command.done.set()
+            return
+
+        def run() -> None:
+            try:
+                command.result = self._dispatch(outbox, config, command.action, command.payload)
+                self._action_counts[command.action] += 1
+            except Exception as exc:
+                self._errors_total += 1
+                command.error = exc
+                logger.exception("Storage command failed: %s", command.action)
+            finally:
+                command.done.set()
+
+        worker = threading.Thread(target=run, name="edge-storage-export", daemon=False)
+        self._export_worker = worker
+        worker.start()
 
     def _commit_frame_commands(self, outbox: OutboxStore, commands: list[_Command]) -> None:
         # 批量提交不经过 _dispatch，鉴权层写入的 _actor_role 不能进 outbox 信封。
@@ -596,6 +641,11 @@ class StorageEngine:
                 )
             )
             return None
+        if action == "session.reopen":
+            active = payload.get("active_session_id")
+            return _session_payload(
+                outbox.reopen_rolled_back_switch(None if active is None else str(active))
+            )
         if action == "session.current":
             return outbox.current_session_id()
         if action == "maintenance":
@@ -630,6 +680,14 @@ class StorageEngine:
             if record is None:
                 raise ValueError("no dead record matches the given identity")
             return record
+        if action == "outbox.dead_export_confirm":
+            return outbox.confirm_dead_export(
+                str(payload["batch_id"]),
+                str(payload["upload_session_id"]),
+                int(payload["local_seq"]),
+                str(payload["payload_sha256"]),
+                actor_role=actor_role,
+            )
         if action == "outbox.dead_export_batch":
             export_format = str(payload.get("format") or "")
             destination = payload.get("out")

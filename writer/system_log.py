@@ -30,6 +30,7 @@ logger = logging.getLogger("writer.system_log")
 
 _VALID_LEVELS = {"DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"}
 _QUEUE_FULL_WARN_INTERVAL = 60.0
+_STOP_POLL_INTERVAL = 0.2  # 停止信号检查间隔（秒）
 
 # 列顺序镜像后端 SystemLog 模型（backend/app/models/log.py）。
 _INSERT_SQL = (
@@ -63,6 +64,8 @@ class SystemLogWriter:
         self._queue: queue.Queue[Optional[dict[str, Any]]] = queue.Queue(maxsize=queue_max_size)
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        # B028：独立停止信号。满队列时哨兵可能放不进去，工作线程靠它在排空后自行退出。
+        self._stop_requested = threading.Event()
         self._lock = threading.Lock()
         self._conn: Optional[pymysql.connections.Connection] = None
         self._host_name = _clip(socket.gethostname(), 64)
@@ -73,6 +76,7 @@ class SystemLogWriter:
         if self._running:
             return
         self._running = True
+        self._stop_requested.clear()
         self._thread = threading.Thread(
             target=self._run,
             name="writer-system-log",
@@ -134,16 +138,22 @@ class SystemLogWriter:
         "writer stopped" — before exiting. join(timeout) bounds the wait.
         """
         with self._lock:
-            if not self._running:
-                return
+            first_stop = self._running
             self._running = False
-            # 在现有事件之后将哨兵入队，不丢弃任何事件；
-            # 有界阻塞 put 等待工作线程腾出槽位。
-            try:
-                self._queue.put(None, timeout=timeout)
-            except queue.Full:
-                logger.warning("Writer system log queue full, stop sentinel dropped")
+            self._stop_requested.set()
+            if first_stop:
+                # 在现有事件之后将哨兵入队，不丢弃任何事件；
+                # 有界阻塞 put 等待工作线程腾出槽位。
+                try:
+                    self._queue.put(None, timeout=timeout)
+                except queue.Full:
+                    # 哨兵放不进去也能收尾：工作线程排空队列后看到停止信号自行退出。
+                    logger.warning(
+                        "Writer system log queue full, stop sentinel dropped; "
+                        "worker exits after draining")
         thread = self._thread
+        if thread is None and not first_stop:
+            return
         if thread is None:
             self._close_conn()
             return
@@ -160,7 +170,12 @@ class SystemLogWriter:
 
     def _run(self) -> None:
         while True:
-            event = self._queue.get()
+            try:
+                event = self._queue.get(timeout=_STOP_POLL_INTERVAL)
+            except queue.Empty:
+                if self._stop_requested.is_set():
+                    break
+                continue
             if event is None:
                 break
             try:

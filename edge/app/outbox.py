@@ -778,6 +778,39 @@ class OutboxStore:
             connection.execute(
                 "DELETE FROM metadata WHERE key='pending_session_switch_old_id'"
             )
+            # B003：记下本机最近一次已完成切换的旧 session，用来识别「中心掉电回滚到旧 session」，
+            # 与真实的另一实例（不同 session）区分开。
+            connection.execute(
+                "INSERT INTO metadata(key, value) VALUES('last_session_switch_old_id', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (state.old_session_id,),
+            )
+
+    def reopen_rolled_back_switch(self, active_session_id: str | None) -> SessionSwitchState | None:
+        """中心 active 恰好回到本机上一次已完成切换的旧 session 时，重新打开该切换。
+
+        只认本机自己记录的「旧 → 当前」这一次切换；中心的 Lua 也只在 active 仍是旧值时才切，
+        因此不会抢占任何其他 session。已有待完成切换、没有记录或不匹配时返回 None。
+        """
+        if not active_session_id:
+            return None
+        with self._transaction() as connection:
+            pending = connection.execute(
+                "SELECT value FROM metadata WHERE key='pending_session_switch_old_id'"
+            ).fetchone()
+            if pending:
+                return None
+            last = connection.execute(
+                "SELECT value FROM metadata WHERE key='last_session_switch_old_id'"
+            ).fetchone()
+            current = self._metadata(connection, "upload_session_id")
+            if not last or str(last["value"]) != active_session_id or current == active_session_id:
+                return None
+            connection.execute(
+                "INSERT INTO metadata(key, value) VALUES('pending_session_switch_old_id', ?)",
+                (active_session_id,),
+            )
+            return SessionSwitchState(old_session_id=active_session_id, new_session_id=current)
 
     def stats(self) -> dict[str, int]:
         with self._lock:
@@ -842,7 +875,9 @@ class OutboxStore:
     ) -> dict[str, Any] | None:
         """导出单条 dead 记录的完整载荷（base64）；非 dead 或不存在返回 None。
 
-        成功返回后把 ``exported_at`` 记上，并写一条不含载荷的审计。
+        只是查看：响应可能没送达或调用方没保存成功，所以这里**不**记 ``exported_at``
+        （不授予清理凭证），只写一条不含载荷的审计。调用方可靠保存后，用
+        ``confirm_dead_export`` 带上 ``payload_sha256`` 显式确认，才允许保留期后清理。
         """
         with self._transaction() as connection:
             row = connection.execute(
@@ -857,10 +892,6 @@ class OutboxStore:
             raw = bytes(row["payload"] or b"")
             now = self._clock_ms()
             digest = hashlib.sha256(raw).hexdigest()
-            connection.execute(
-                "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
-                (now, batch_id),
-            )
             self._insert_dead_audit(
                 connection,
                 ts=now,
@@ -874,10 +905,55 @@ class OutboxStore:
                 sha256=digest,
             )
         payload = {key: row[key] for key in row.keys() if key != "payload"}
-        payload["exported_at"] = now
         payload["payload_sha256"] = digest
         payload["payload_b64"] = base64.b64encode(raw).decode("ascii")
         return payload
+
+    def confirm_dead_export(
+        self,
+        batch_id: str,
+        upload_session_id: str,
+        local_seq: int,
+        payload_sha256: str,
+        *,
+        actor_role: str = "operator",
+    ) -> bool:
+        """调用方已可靠保存单条导出的载荷后显式确认，才记 ``exported_at``。
+
+        按完整身份（batch_id + session + local_seq）匹配，且载荷 sha256 必须与库内一致；
+        行已不是 dead、身份不符或摘要不符都返回 False，不授予清理凭证。
+        """
+        now = self._clock_ms()
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT payload FROM outbox "
+                "WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'",
+                (batch_id, upload_session_id, int(local_seq)),
+            ).fetchone()
+            digest = (
+                None if row is None else hashlib.sha256(bytes(row["payload"] or b"")).hexdigest()
+            )
+            confirmed = digest is not None and digest == str(payload_sha256)
+            if confirmed:
+                cursor = connection.execute(
+                    "UPDATE outbox SET exported_at=? "
+                    "WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'",
+                    (now, batch_id, upload_session_id, int(local_seq)),
+                )
+                confirmed = int(cursor.rowcount or 0) == 1
+            self._insert_dead_audit(
+                connection,
+                ts=now,
+                actor_role=actor_role,
+                action="export_confirm",
+                batch_id=batch_id,
+                session=upload_session_id,
+                local_seq=int(local_seq),
+                result="ok" if confirmed else "rejected",
+                file_path=None,
+                sha256=digest,
+            )
+        return confirmed
 
     def export_dead_batch(
         self,
@@ -897,6 +973,8 @@ class OutboxStore:
         拒绝目录穿越、符号链接和已存在的文件。分页读出后在事务外写盘并 fsync，
         再开短事务，只给仍然是 dead 且载荷未变的行写 ``exported_at``。
         JSONL 含 ``payload_b64``，可以无损还原；CSV 只有元数据和 payload 的 sha256。
+        只有 JSONL 在落盘并回读校验通过后才记 ``exported_at``（允许保留期后清理）；
+        CSV 是排障视图，不是备份，只写审计、不授予清理凭证。
         """
         if fmt not in {"jsonl", "csv"}:
             raise ValueError("format must be jsonl or csv")
@@ -1094,6 +1172,7 @@ class OutboxStore:
         session_switched = False
         auto_exported = 0
         auto_export_path: str | None = None
+        auto_export_failed = False
         disk_now = self._disk_status()
         with self._transaction() as connection:
             # 清理前先量化 dead 积压。未导出且未重放的行不会进入删除。
@@ -1115,22 +1194,32 @@ class OutboxStore:
         )
         # 超字节上限或磁盘告警：只自动导出并标记 exported_at。写文件不占写事务。
         # 已导出或已重放的行仍要 dead_at 早于保留期截止才删，两条删除路径都看这个条件。
+        # B002：导出失败（磁盘满、目录不可写）只让未备份 dead 继续受保护，
+        # 不能挡住下面独立且安全的 sent 清理，也不能让异常冒泡把上传一起停掉。
         if pressure and unpreserved:
-            written = self._export_dead_rows(
-                self._auto_export_destination(now),
-                fmt="jsonl",
-                where_sql=(
-                    "state='dead' AND exported_at IS NULL AND replayed_at IS NULL"
-                ),
-                params=[],
-                node_uuid=self._resolve_node_uuid(node_uuid),
-                actor_role=actor_role,
-                action="auto_export",
-                now_ms=now,
-            )
-            auto_exported = int(written["count"])
-            if auto_exported:
-                auto_export_path = str(written["path"])
+            try:
+                written = self._export_dead_rows(
+                    self._auto_export_destination(now),
+                    fmt="jsonl",
+                    where_sql=(
+                        "state='dead' AND exported_at IS NULL AND replayed_at IS NULL"
+                    ),
+                    params=[],
+                    node_uuid=self._resolve_node_uuid(node_uuid),
+                    actor_role=actor_role,
+                    action="auto_export",
+                    now_ms=now,
+                )
+            except Exception:
+                auto_export_failed = True
+                logger.exception(
+                    "Edge outbox dead auto-export failed; unexported dead rows stay protected "
+                    "and the export is retried on the next maintenance"
+                )
+            else:
+                auto_exported = int(written["count"])
+                if auto_exported:
+                    auto_export_path = str(written["path"])
         with self._transaction() as connection:
             sent_cursor = connection.execute(
                 """
@@ -1218,6 +1307,8 @@ class OutboxStore:
             degraded_reasons.append("disk_overflow")
         if backlog_expired:
             degraded_reasons.append("backlog_exceeds_retention_window")
+        if auto_export_failed:
+            degraded_reasons.append("dead_auto_export_failed")
         degraded = bool(degraded_reasons)
         if degraded:
             # Retention is an operational signal, not an acknowledgement.
@@ -1258,6 +1349,7 @@ class OutboxStore:
             "dead_purged": dead_purged,
             "dead_auto_exported": auto_exported,
             "dead_auto_export_path": auto_export_path,
+            "dead_auto_export_failed": auto_export_failed,
             "dead_retention_days": dead_days,
             "backlog_expired": backlog_expired,
             "backlog_count": backlog_count,
@@ -1367,15 +1459,21 @@ class OutboxStore:
             params=params,
             node_uuid=node_uuid,
         )
+        # B001：只有完整载荷（JSONL）且回读校验通过才是可恢复备份；CSV 只审计。
+        is_backup = fmt == "jsonl"
+        if is_backup and written_path is not None:
+            self._verify_export_file(written_path, file_sha)
         marked = self._mark_exported_snapshot(
             identities,
             dest=written_path,
             actor_role=actor_role,
             action=action,
             now_ms=now_ms,
+            set_exported=is_backup,
         )
         return {
             "count": marked,
+            "backup": is_backup,
             "path": str(written_path) if written_path is not None else str(destination),
             "sha256": file_sha,
             "format": fmt,
@@ -1489,6 +1587,16 @@ class OutboxStore:
             raise
         return identities, file_digest.hexdigest(), dest
 
+    @staticmethod
+    def _verify_export_file(path: Path, expected_sha256: str) -> None:
+        """回读已发布的导出文件，摘要与写入时一致才算备份完成。"""
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != expected_sha256:
+            raise OSError(f"dead export verification failed: {path}")
+
     def _fsync_export_handle(self, handle) -> None:
         handle.flush()
         os.fsync(handle.fileno())
@@ -1513,6 +1621,7 @@ class OutboxStore:
         actor_role: str,
         action: str,
         now_ms: int,
+        set_exported: bool = True,
     ) -> int:
         if not identities or dest is None:
             return 0
@@ -1521,19 +1630,22 @@ class OutboxStore:
         with self._transaction() as connection:
             for batch_id, session, seq, digest in identities:
                 row = connection.execute(
-                    "SELECT state, payload FROM outbox WHERE batch_id=?",
-                    (batch_id,),
+                    "SELECT state, payload FROM outbox "
+                    "WHERE batch_id=? AND upload_session_id=? AND local_seq=?",
+                    (batch_id, session, seq),
                 ).fetchone()
                 if row is None or row["state"] != "dead":
                     continue
                 if hashlib.sha256(bytes(row["payload"] or b"")).hexdigest() != digest:
                     continue
-                cursor = connection.execute(
-                    "UPDATE outbox SET exported_at=? WHERE batch_id=? AND state='dead'",
-                    (now_ms, batch_id),
-                )
-                if int(cursor.rowcount or 0) != 1:
-                    continue
+                if set_exported:
+                    cursor = connection.execute(
+                        "UPDATE outbox SET exported_at=? "
+                        "WHERE batch_id=? AND upload_session_id=? AND local_seq=? AND state='dead'",
+                        (now_ms, batch_id, session, seq),
+                    )
+                    if int(cursor.rowcount or 0) != 1:
+                        continue
                 self._insert_dead_audit(
                     connection,
                     ts=now_ms,
@@ -1542,7 +1654,7 @@ class OutboxStore:
                     batch_id=batch_id,
                     session=session,
                     local_seq=seq,
-                    result="ok",
+                    result="ok" if set_exported else "ok_view_only",
                     file_path=file_path,
                     sha256=digest,
                 )
@@ -1816,8 +1928,9 @@ class OutboxStore:
             payload["qualities"] = qualities
         if latest_fields is not None:
             # 完整实时字段与历史子集分离
+            # B022：v 为 None 的坏质量点不得被 str() 成 "None" 之类的伪值，只走质量/时间戳。
             payload["latest_values"] = {
-                str(k): str(v["v"]) for k, v in latest_fields.items() if "v" in v
+                str(k): str(v["v"]) for k, v in latest_fields.items() if v.get("v") is not None
             }
             payload["latest_timestamps"] = {str(k): int(v.get("t", ts)) for k, v in latest_fields.items()}
             payload["latest_qualities"] = {

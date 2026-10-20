@@ -62,6 +62,27 @@ class XAutoclaimUnsupported(RuntimeError):
 # 未知/不可读的拓扑**不缓存**（fail-closed：保留数据、下一轮重探）。
 _GROUP_TOPOLOGY_TTL_S = 5.0
 
+def _as_text(value) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8")
+    return str(value)
+
+
+def _parse_stream_id(value) -> tuple[int, int] | None:
+    """把 ``ms-seq`` 形式的 Stream ID 解析成可比较的元组；不可解析返回 None。"""
+    if value is None:
+        return None
+    try:
+        ms, _, seq = _as_text(value).partition("-")
+        return int(ms), int(seq or 0)
+    except (TypeError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _format_stream_id(value: tuple[int, int]) -> str:
+    return f"{value[0]}-{value[1]}"
+
+
 # B8：按**错误类别**（不是次数）判定的永久性 RETRY 原因。命中即推 DLQ，DLQ 写入被接受后才 XACK。
 # 只收录"由该帧内容本身决定、重试不可能成功"的类别：
 #   size —— 单个逻辑帧的 SQL 超出语句上限（本地 ~3MB 预算放不下单行，或单行仍报 0x0219）。
@@ -320,6 +341,12 @@ class StreamConsumer:
         self._pending_stream_cursor = 0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
         self._delete_retry: dict[str, set[str]] = {}  # 已终态且已 ACK，待重试 XDEL 的 entry_id
+        # B025：_delete_retry 只在内存。XACK 后 XDEL 失败再重启，这些条目已不在 PEL，
+        # 正常读取和 pending 回收都看不到；周期清扫按组的 last-delivered-id 与 PEL 下界找回它们。
+        self._acked_sweep_interval_s: float = max(
+            1.0, float(w.get("acked_sweep_interval_s", 60.0)))
+        self._last_acked_sweep: float = time.monotonic()
+        self._acked_sweep_cursor = 0
         # B31：stream_key → (是否只有一个消费组, 查询时刻)。只在**确实读到多个组**时拒绝终态删除。
         self._single_group_cache: dict[str, tuple[bool, float]] = {}
         self._ack_retry_cursor = 0
@@ -496,6 +523,11 @@ class StreamConsumer:
             "(remaining isolated=%d, +%d bytes)",
             len(readmitted), len(self._isolated), readmitted_bytes,
         )
+
+    def _publish_buffer_bytes(self) -> None:
+        """B074：缓冲字节指标与容量预算同口径：主缓冲 + 在途 + 隔离区。"""
+        self._metrics.set_buffer_bytes(
+            self._buffer_bytes + self._inflight_bytes + self._isolated_bytes)
 
     def _remaining_byte_capacity(self) -> int:
         """剩余**载荷**字节额度。
@@ -743,6 +775,17 @@ class StreamConsumer:
             delete_retry_ms += delete_retry_elapsed
             self._metrics.record_stage("delete_retry_outer_ms", delete_retry_elapsed)
 
+            # --- B025：定期清扫已 ACK 但遗留在 Stream 中的条目（每次一个 stream，有界）---
+            if time.monotonic() - self._last_acked_sweep >= self._acked_sweep_interval_s:
+                sweep_key = stream_keys[self._acked_sweep_cursor % len(stream_keys)]
+                self._acked_sweep_cursor = (self._acked_sweep_cursor + 1) % len(stream_keys)
+                sweep_started = time.perf_counter()
+                await self._run_blocking(
+                    self._sweep_acked_entries, sweep_key, self._batch_count
+                )
+                delete_retry_ms += (time.perf_counter() - sweep_started) * 1000
+                self._last_acked_sweep = time.monotonic()
+
             # --- 定期回收空闲的待处理消息（S2）---
             if time.monotonic() - self._last_pending_drain >= self._pending_drain_interval_s:
                 start = self._pending_stream_cursor % len(stream_keys)
@@ -881,9 +924,10 @@ class StreamConsumer:
                     await asyncio.sleep(0.05)
                 idle_ms += (time.perf_counter() - idle_started) * 1000
 
-            # 隔离区里的行在主缓冲一空时尽快重试，避免恢复被拖到下一个回收周期。
-            # 仍在失败的会再次被隔离，且有重试次数上限兜底，不会形成热循环。
-            if not self._buffer and not self._inflight_rows and self._isolated:
+            # B004：隔离区里到期的行每轮按有界配额放回主缓冲，不以主缓冲/在途为空为前提，
+            # 否则持续的健康流量会让它们一直等不到重试。到期由每行 next_retry_at 决定，
+            # 隔离行本来就计入容量与字节预算，放回主缓冲不增加总占用。
+            if self._isolated:
                 self._readmit_isolated()
 
             # --- 达到时间或缓冲区阈值时刷新 ---
@@ -953,7 +997,7 @@ class StreamConsumer:
         logger.info("[consumer] draining pending for stream %s", stream_key)
         # 隔离区里的行也属于待处理集合。必须在计算领取额度之前放回主缓冲：
         # 领取条数按剩余容量算，隔离行占着额度会把读取压成 0，自己永远轮不到重试。
-        if not self._buffer and not self._inflight_rows and self._isolated:
+        if self._isolated:
             self._readmit_isolated()
         try:
             await self._drain_with_xautoclaim(stream_key, consumer_name, max_entries, deadline)
@@ -1609,7 +1653,7 @@ class StreamConsumer:
         )
         self._buffer_bytes += payload_bytes
         self._metrics.record_payload_bytes(payload_bytes)
-        self._metrics.set_buffer_bytes(self._buffer_bytes + self._inflight_bytes)
+        self._publish_buffer_bytes()
         self._estimated_entry_bytes = (7 * self._estimated_entry_bytes + payload_bytes) // 8 or 1
         self._buffered_keys.add(key)
         self._metrics.set_buffer_rows(len(self._buffer))
@@ -1634,7 +1678,7 @@ class StreamConsumer:
         self._inflight_source_ms = min(row.ts for row in buffered)
         self._inflight_bytes = self._buffer_bytes
         self._buffer_bytes = 0
-        self._metrics.set_buffer_bytes(self._inflight_bytes)
+        self._publish_buffer_bytes()
         flush_rows = len(buffered)
         completed = False
         # 提前绑定：异常路径也要在 finally 里参与 flush_other_ms 的残差计算。
@@ -1791,7 +1835,7 @@ class StreamConsumer:
             self._inflight_bytes = 0
             self._inflight_source_ms = None
             self._buffer_bytes = sum(row.payload_bytes for row in self._buffer)
-            self._metrics.set_buffer_bytes(self._buffer_bytes)
+            self._publish_buffer_bytes()
             self._buffered_keys = {
                 (row.stream_key, row.entry_id) for row in self._buffer
             }
@@ -2155,6 +2199,56 @@ class StreamConsumer:
             if not pending:
                 del self._delete_retry[stream_key]
         self._delete_retry_cursor = (start + (visited or 1)) % len(keys)
+
+    def _sweep_acked_entries(self, stream_key: str, max_ids: int) -> int:
+        """B025：删除本组已确认、却仍留在 Stream 里的条目（XACK 成功后 XDEL 失败并重启）。
+
+        仅在**确认恰好一个消费组且就是本组**时执行（XDEL 是全局删除，同 B31）。
+        安全边界：id ≤ last-delivered-id（已投递过）且 < PEL 最小 id（不在 PEL，即已 ACK）。
+        缓冲/隔离/待重试 XACK 的条目都还在 PEL 里，不会被删。返回删除条数；任何异常只记录。
+        """
+        try:
+            groups = self._timed_redis_call(
+                "redis_xinfo_groups", self._r.xinfo_groups, stream_key)
+            if not isinstance(groups, (list, tuple)) or len(groups) != 1:
+                return 0
+            group = groups[0]
+            if not isinstance(group, dict):
+                return 0
+            if _as_text(group.get("name")) != self._group_name:
+                return 0
+            last_delivered = _parse_stream_id(group.get("last-delivered-id"))
+            if last_delivered is None or last_delivered == (0, 0):
+                return 0
+            summary = self._timed_redis_call(
+                "redis_xpending", self._r.xpending, stream_key, self._group_name)
+            if not isinstance(summary, dict):
+                return 0
+            pending_count = int(summary.get("pending") or 0)
+            pending_min = _parse_stream_id(summary.get("min")) if pending_count else None
+            if pending_count and pending_min is None:
+                return 0
+            if pending_min is not None and pending_min <= last_delivered:
+                upper = "(" + _format_stream_id(pending_min)
+            else:
+                upper = _format_stream_id(last_delivered)
+            entries = self._timed_redis_call(
+                "redis_xrange", self._r.xrange, stream_key, "-", upper, max(1, int(max_ids)))
+            if not isinstance(entries, (list, tuple)) or not entries:
+                return 0
+            ids = [_as_text(entry[0]) for entry in entries]
+            self._timed_redis_call("redis_xdel", self._r.xdel, stream_key, *ids)
+        except Exception as exc:
+            logger.warning("[consumer] acked-entry sweep skipped for %s: %s", stream_key, exc)
+            return 0
+        pending = self._delete_retry.get(stream_key)
+        if pending is not None:
+            pending.difference_update(ids)
+            if not pending:
+                self._delete_retry.pop(stream_key, None)
+        logger.info(
+            "[consumer] swept %d acknowledged entr(ies) left in %s", len(ids), stream_key)
+        return len(ids)
 
     # ------------------------------------------------------------------
     # 设置辅助函数

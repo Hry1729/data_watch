@@ -371,6 +371,9 @@ class EdgeConfigManager:
     async def load_devices_and_variables(self) -> tuple[list[DeviceConfig], list[VariableConfig]]:
         await self._refresh_schedule()
         with self._connect() as connection:
+            # B024：meta/设备/点位三条 SELECT 必须落在同一个读事务（同一 WAL 快照）里，
+            # 否则中途提交的新配置会让设备表与点位表来自不同版本。
+            connection.execute("BEGIN")
             meta = connection.execute(
                 "SELECT read_timeout_ms FROM edge_config_meta WHERE singleton=1"
             ).fetchone()
@@ -396,6 +399,7 @@ class EdgeConfigManager:
     async def get_device_config_versions(self) -> dict[str, EdgeDeviceSignature]:
         await self._refresh_schedule()
         with self._connect() as connection:
+            connection.execute("BEGIN")  # B024：meta 与设备行同一读快照
             meta = connection.execute(
                 "SELECT read_timeout_ms FROM edge_config_meta WHERE singleton=1"
             ).fetchone()

@@ -316,6 +316,10 @@ class EdgeStorageClient:
             },
         )
 
+    def reopen_rolled_back_switch(self, active_session_id: str | None) -> SessionSwitchState | None:
+        data = self._command("session.reopen", {"active_session_id": active_session_id})
+        return self._session(data) if data else None
+
     def current_session_id(self) -> str:
         return str(self._command("session.current"))
 
@@ -366,6 +370,25 @@ class EdgeStorageClient:
                     "batch_id": batch_id,
                     "upload_session_id": upload_session_id,
                     "local_seq": local_seq,
+                },
+            )
+        )
+
+    def confirm_dead_export(
+        self,
+        batch_id: str,
+        upload_session_id: str,
+        local_seq: int,
+        payload_sha256: str,
+    ) -> bool:
+        return bool(
+            self._command(
+                "outbox.dead_export_confirm",
+                {
+                    "batch_id": batch_id,
+                    "upload_session_id": upload_session_id,
+                    "local_seq": local_seq,
+                    "payload_sha256": payload_sha256,
                 },
             )
         )

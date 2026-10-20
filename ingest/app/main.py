@@ -173,6 +173,10 @@ def create_app(
             return {"status": status}
         except AuthenticationError as exc:
             return _error(401, "unauthorized", str(exc))
+        except TransientStoreError as exc:
+            # B003：切换未达到持久化等级前不返回 200，边缘保留待完成切换并重试（Lua 幂等）。
+            logger.error("Session switch deferred: transient Redis persistence failure: %s", exc)
+            return _error(503, "store_unavailable", str(exc))
         except (RequestValidationError, ValueError) as exc:
             return _error(400, "bad_request", str(exc))
 

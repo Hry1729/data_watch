@@ -177,8 +177,10 @@ async def test_repeated_illegal_frames_are_bounded_to_one_reread() -> None:
         decisions = await repository.validate_items(
             db.node_uuid, [_item(seq, point_id=99, config_version=1)]
         )
+        # B026：只有真正做了权威重读的那一帧可以永久驳回；限流窗口内后续帧只有旧缓存
+        # 的结论，返回 retry_later（不消费），等窗口过去再权威确认。
         assert [decision.status_override for decision in decisions] == [
-            "rejected_consumed"
+            "rejected_consumed" if seq == 2 else "retry_later"
         ]
 
     # 暖缓存各 1 次；非法点位只触发 mapping 命名空间的一次权威重读，20 帧内不再增加
@@ -464,8 +466,9 @@ async def test_missing_assignment_reread_is_bounded_to_one_per_window() -> None:
         decisions = await repository.validate_items(
             node, [_item(seq, point_id=1, config_version=1)]
         )
+        # B026：限流窗口内未经权威确认的负判断不永久化
         assert [decision.status_override for decision in decisions] == [
-            "rejected_consumed"
+            "rejected_consumed" if seq == 2 else "retry_later"
         ]
 
     assert (db.assignment_reads, db.mapping_reads) == (2, 1)
