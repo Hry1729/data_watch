@@ -39,3 +39,29 @@ export function formatMissingValueWithQuality(quality: number | null | undefined
   if (!label) return MISSING_POINT_VALUE
   return `${MISSING_POINT_VALUE} 质量：${label}`
 }
+
+/**
+ * 实时曲线/导出的样本值：缺值（只有 t/q 的质量异常推送）和非数值字符串保持 null（曲线断点），
+ * 绝不伪造成 0；真实的 0 / false 仍按数值 0 记录，true 记 1。
+ */
+export function toChartSampleValue(value: unknown): number | null {
+  if (isRealtimeValueAbsent(value)) return null
+  if (typeof value === 'boolean') return value ? 1 : 0
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!text) return null
+    const num = Number(text)
+    return Number.isFinite(num) ? num : null
+  }
+  return null
+}
+
+/** 实时导出单元格：有值导出数值；缺值导出占位符并带质量文案，与真实 0 可区分。 */
+export function formatExportSampleValue(
+  value: number | null | undefined,
+  quality: number | null | undefined
+): number | string {
+  if (typeof value === 'number') return value
+  return formatMissingValueWithQuality(quality)
+}

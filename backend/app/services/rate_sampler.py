@@ -31,6 +31,9 @@ logger = logging.getLogger("backend.rate_sampler")
 SAMPLE_INTERVAL_SECONDS = 10
 WINDOW_SECONDS = 600  # 10 分钟
 _MAX_POINTS = WINDOW_SECONDS // SAMPLE_INTERVAL_SECONDS  # 60 点
+COLLECTOR_POINT_WINDOW_SECONDS = 60
+# 采样抖动容差：窗口起点取「至少约 60s 前」的成功采样，避免抖动导致少取一轮
+_COLLECTOR_POINT_WINDOW_MIN_AGE = COLLECTOR_POINT_WINDOW_SECONDS - SAMPLE_INTERVAL_SECONDS / 2
 
 # 单一配置来源：writer/config/settings.toml 的 redis.group_name
 WRITER_GROUP_NAME = get_writer_group_name()
@@ -53,12 +56,15 @@ class RateSampler:
         self._collector_point_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         self._writer_landed_points: deque[tuple[str, int]] = deque(maxlen=_MAX_POINTS)
         # collectorPoints 60s 窗口的累计值缓冲（collector 60s 上报，10s 采样算 60s 增量 = 点/min）
-        self._collector_point_totals: deque[int] = deque(maxlen=_MAX_POINTS)
+        # 每项带成功读取时的 monotonic 时间，窗口按真实时间而非采样个数计算（B036）
+        self._collector_point_totals: deque[tuple[float, int]] = deque(maxlen=_MAX_POINTS)
         # 按 stream key 的上次累计值
         self._prev_added: dict[str, int] = {}
         self._prev_read: dict[str, int] = {}
         # metrics counter 单值累计
         self._prev_writer_landed_total: int | None = None
+        # writer 入库计数基线对应的成功采样时间；与计数基线同步更新（B036）
+        self._prev_writer_landed_monotonic: float | None = None
         self._prev_monotonic: float | None = None
 
     async def sample(self) -> None:
@@ -74,22 +80,41 @@ class RateSampler:
                 self._collector_points.append((label, self._per_min(self._delta_sum(self._prev_added, added), dt)))
                 self._writer_points.append((label, self._per_min(self._delta_sum(self._prev_read, read), dt)))
                 # collectorPoints 60s 窗口：collector 60s 上报累计值，10s 采样算 60s 增量 = 点/min。
-                # 不用相邻 10s 增量（会高估 6 倍），用当前 - 6 个采样前（60s）= 真实 1 分钟增量。
+                # 不用相邻 10s 增量（会高估 6 倍）；窗口起点取约 60s 前的成功采样并按其真实
+                # 时间跨度折算，失败轮不入缓冲时窗口也不会悄悄拉长到 >60s 而被当作 1 分钟。
                 if collector_point_total is not None:
-                    self._collector_point_totals.append(collector_point_total)
-                    if len(self._collector_point_totals) >= 7:
-                        window_delta = collector_point_total - self._collector_point_totals[-7]
-                        self._collector_point_points.append((label, max(0, window_delta)))
-                # writerLanded 10s 相邻增量（writer flush 低频 ~2/秒，10s 采样准）
-                if writer_landed_total is not None and self._prev_writer_landed_total is not None:
-                    self._writer_landed_points.append((label, self._per_min(self._delta_scalar(self._prev_writer_landed_total, writer_landed_total), dt)))
+                    self._collector_point_totals.append((now_mono, collector_point_total))
+                    window_start = self._collector_point_window_start(now_mono)
+                    if window_start is not None:
+                        start_mono, start_total = window_start
+                        self._collector_point_points.append(
+                            (label, self._per_min(collector_point_total - start_total, now_mono - start_mono))
+                        )
+                # writerLanded 10s 相邻增量（writer flush 低频 ~2/秒，10s 采样准）。
+                # 时间跨度用该计数器上次成功读取的时间，失败轮之后恢复时不会把多轮增量除以单轮 dt。
+                if (
+                    writer_landed_total is not None
+                    and self._prev_writer_landed_total is not None
+                    and self._prev_writer_landed_monotonic is not None
+                ):
+                    landed_dt = now_mono - self._prev_writer_landed_monotonic
+                    if landed_dt > 0:
+                        self._writer_landed_points.append((label, self._per_min(self._delta_scalar(self._prev_writer_landed_total, writer_landed_total), landed_dt)))
 
         self._prev_added = added
         self._prev_read = read
         # 仅读成功时更新基线；失败轮保留旧基线，下轮恢复后算的是真实增量而非历史累计
         if writer_landed_total is not None:
             self._prev_writer_landed_total = writer_landed_total
+            self._prev_writer_landed_monotonic = now_mono
         self._prev_monotonic = now_mono
+
+    def _collector_point_window_start(self, now_mono: float) -> tuple[float, int] | None:
+        """返回距今约 60s（不短于容差下限）的最新成功采样；不足一个窗口时返回 None。"""
+        for sample_mono, total in reversed(self._collector_point_totals):
+            if now_mono - sample_mono >= _COLLECTOR_POINT_WINDOW_MIN_AGE:
+                return sample_mono, total
+        return None
 
     def snapshot(self) -> dict[str, Any]:
         return {

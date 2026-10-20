@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
+import os
 import re
 from time import monotonic
 from typing import Any
@@ -144,6 +145,19 @@ def build_edge_pipeline_health(
         "uploader": _summarize_edge_levels(uploader_levels),
         "generatedAt": checked_at.isoformat(timespec="seconds"),
     }
+
+_SYNTHETIC_ALARMS_ENV = "DASHBOARD_SYNTHETIC_ALARMS"
+_DEV_APP_ENVS = {"dev", "development", "local"}
+
+
+def _synthetic_alarms_enabled() -> bool:
+    """联调假告警仅在显式开启且处于开发环境时使用，默认关闭（B035）。"""
+    flag = str(os.getenv(_SYNTHETIC_ALARMS_ENV, "")).strip().lower()
+    if flag not in {"1", "true", "yes", "on"}:
+        return False
+    app_env = str(os.getenv("BACKEND_ENV", "production")).strip().lower()
+    return app_env in _DEV_APP_ENVS
+
 
 class DashboardService:
     def __init__(self, session: AsyncSession, tdengine: TDengineClient):
@@ -494,11 +508,21 @@ class DashboardService:
         if result is not None:
             return result
 
-        return self._build_synthetic_alarm_distribution(
+        # alarm_record 未建表：告警功能未启用，生产路径如实返回 0，不注入假告警。
+        if _synthetic_alarms_enabled():
+            return self._build_synthetic_alarm_distribution(
+                stat_range=stat_range,
+                group_by=group_by,
+                top_n=top_n,
+                include_other=include_other,
+            )
+        return self._build_alarm_distribution_response(
+            records=[],
             stat_range=stat_range,
             group_by=group_by,
             top_n=top_n,
             include_other=include_other,
+            previous_total=0,
         )
 
     async def get_recent_events(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -510,7 +534,10 @@ class DashboardService:
             result = await self._query_recent_alarm_events(limit=limit, fact_tables=fact_tables)
             if result is not None:
                 return result
-            return {"list": self._build_synthetic_recent_events(limit=limit)}
+            # alarm_record 未建表：如实返回空列表；假事件只在显式开发开关下出现。
+            if _synthetic_alarms_enabled():
+                return {"list": self._build_synthetic_recent_events(limit=limit)}
+            return {"list": []}
 
         return {"list": []}
 
@@ -591,12 +618,11 @@ class DashboardService:
                 ).scalar_one()
                 or 0
             )
-        except Exception:
-            return None
+        except Exception as exc:
+            logger.warning("[dashboard] alarm distribution query failed: %s", exc)
+            raise ApiError(503, "告警统计数据暂不可用", status_code=503) from exc
 
         current_records = [dict(row) for row in current_rows]
-        if not current_records:
-            return None
 
         return self._build_alarm_distribution_response(
             records=current_records,
@@ -643,11 +669,9 @@ class DashboardService:
                     {"limit": limit},
                 )
             ).mappings().all()
-        except Exception:
-            return None
-
-        if not rows:
-            return None
+        except Exception as exc:
+            logger.warning("[dashboard] recent alarm events query failed: %s", exc)
+            raise ApiError(503, "告警事件数据暂不可用", status_code=503) from exc
 
         return {
             "list": [self._serialize_alarm_event(dict(row), synthetic=False) for row in rows],

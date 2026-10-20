@@ -116,11 +116,20 @@ async function loadFiles() {
   }
 }
 
+// 请求代号：切文件/改行数/自动刷新交错时，只接受最新请求且参数仍匹配当前选择的响应
+let tailRequestVersion = 0
+
 async function loadTail() {
   if (!enabled.value || !currentFile.value) return
+  const requestVersion = ++tailRequestVersion
+  const file = currentFile.value
+  const lineCount = lines.value
+  const isCurrent = () =>
+    requestVersion === tailRequestVersion && file === currentFile.value && lineCount === lines.value
   loading.value = true
   try {
-    const data = await fetchTdengineLogTail(currentFile.value, lines.value)
+    const data = await fetchTdengineLogTail(file, lineCount)
+    if (!isCurrent()) return
     enabled.value = data.enabled
     if (!data.enabled) {
       reason.value = data.reason
@@ -132,9 +141,10 @@ async function loadTail() {
     await nextTick()
     scrollToBottom()
   } catch {
+    if (!isCurrent()) return
     ElMessage.error('读取日志失败')
   } finally {
-    loading.value = false
+    if (requestVersion === tailRequestVersion) loading.value = false
   }
 }
 
@@ -148,6 +158,8 @@ watch(autoRefresh, (on) => {
 
 onMounted(loadFiles)
 onUnmounted(() => {
+  // 卸载后丢弃在途响应
+  tailRequestVersion += 1
   if (timer) clearInterval(timer)
 })
 </script>

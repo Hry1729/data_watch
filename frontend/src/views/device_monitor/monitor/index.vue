@@ -291,7 +291,9 @@
     } catch (error) {
       console.error('加载设备列表失败:', error)
     } finally {
-      if (!silent && requestVersion === listRequestVersion) loading.value = false
+      // 最新请求完成时（无论是否 silent）负责清除可见 loading：
+      // 手动加载被静默刷新取代后，旧请求因过期不清，最新请求必须收尾，否则骨架永久不消失。
+      if (requestVersion === listRequestVersion) loading.value = false
     }
   }
 
