@@ -411,13 +411,21 @@ export default function RealtimeMonitorPage() {
     if (!points.length) return;
     const sampleAt = Date.now();
     const row: SampleRow = { time: formatSampleTime(sampleAt), sampleAt };
-    points.forEach((point) => { row[`v${point.varSeq}`] = chartValue(point.value); });
-    setSamples((current) => [
-      ...current
-        .filter((sample) => Number(sample.sampleAt ?? 0) >= sampleAt - REALTIME_WINDOW_MS)
-        .slice(-(MAX_REALTIME_SAMPLES - 1)),
-      row,
-    ]);
+    // 实时连接断开时不再把保留的旧值当作新采样：只写一条缺测标记断开曲线，重连后恢复采样并保留空洞
+    const live = realtimeSocket.status === "connected";
+    points.forEach((point) => { row[`v${point.varSeq}`] = live ? chartValue(point.value) : null; });
+    setSamples((current) => {
+      if (!live) {
+        const last = current[current.length - 1];
+        if (!last || points.every((point) => last[`v${point.varSeq}`] === null)) return current;
+      }
+      return [
+        ...current
+          .filter((sample) => Number(sample.sampleAt ?? 0) >= sampleAt - REALTIME_WINDOW_MS)
+          .slice(-(MAX_REALTIME_SAMPLES - 1)),
+        row,
+      ];
+    });
   }, [realtimeSocket.sampleVersion, running]);
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({

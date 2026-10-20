@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleCheck, CircleX, LoaderCircle, PlugZap, Save } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -189,6 +189,8 @@ export default function EdgeSettingsPage() {
   // 最近一次从 Agent 成功加载（或成功应用）的配置；为 null 表示从未加载成功，禁止测试应用与保存
   const [loadedDatabases, setLoadedDatabases] = useState<Record<DbTarget, DbForm> | null>(null);
   const [passwordDirty, setPasswordDirty] = useState<Record<DbTarget, boolean>>({ redis: false, mysql: false, tdengine: false });
+  // 每个数据库表单的编辑版本：测试并应用期间若有新输入，完成后不得清空或丢弃这些编辑
+  const editVersionRef = useRef<Record<DbTarget, number>>({ redis: 0, mysql: 0, tdengine: 0 });
   const [tests, setTests] = useState(INITIAL_TESTS);
   const [retentionDays, setRetentionDays] = useState("7");
   const [maintenanceSeconds, setMaintenanceSeconds] = useState("60");
@@ -246,6 +248,7 @@ export default function EdgeSettingsPage() {
   }
 
   function updateDatabase(target: DbTarget, field: keyof DbForm, value: string) {
+    editVersionRef.current[target] += 1;
     setDatabases((current) => ({
       ...current,
       [target]: { ...current[target], [field]: value },
@@ -269,6 +272,7 @@ export default function EdgeSettingsPage() {
       return;
     }
     setTests((current) => ({ ...current, [target]: { status: "testing", error: null } }));
+    const submittedVersion = editVersionRef.current[target];
     try {
       const payload = databasePayload(databases[target], passwordDirty[target]);
       const result = await agentClient.checkHealth(target, payload);
@@ -283,13 +287,18 @@ export default function EdgeSettingsPage() {
       await agentClient.putConfig(databasePatch(loadedDatabases, [target]));
       const applied = { ...databases[target], password: "" };
       setLoadedDatabases((current) => current && { ...current, [target]: applied });
+      window.dispatchEvent(new Event(CONNECTION_HEALTH_REFRESH_EVENT));
+      if (editVersionRef.current[target] !== submittedVersion) {
+        // 应用期间用户又改了该库表单：保留新输入与 dirty 标记，只报告已应用的旧快照
+        toast.success(`${DB_META[target].title} 已应用测试时的配置，之后的修改尚未保存`);
+        return;
+      }
       setDatabases((current) => ({
         ...current,
         [target]: { ...current[target], password: "" },
       }));
       setPasswordDirty((current) => ({ ...current, [target]: false }));
       setTests((current) => ({ ...current, [target]: { status: "connected", error: null } }));
-      window.dispatchEvent(new Event(CONNECTION_HEALTH_REFRESH_EVENT));
       toast.success(`${DB_META[target].title} 连接成功，配置已应用`);
     } catch (reason) {
       const message = reason && typeof reason === "object" && "message" in reason

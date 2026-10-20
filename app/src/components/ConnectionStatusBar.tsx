@@ -31,6 +31,14 @@ const STATUS_STYLE: Record<ConnectionHealthStatus, { color: string; label: strin
   unknown:      { color: "var(--muted-foreground)", label: "未配置" },
 };
 
+/* 健康检查失败时，上次成功的结果只是旧快照，不能当作当前状态展示 */
+const STALE_STYLE = { color: "var(--muted-foreground)", label: "状态未知" };
+
+function formatLastSuccess(timestamp: number | null): string {
+  if (timestamp == null) return "";
+  return `，最后成功检测 ${new Date(timestamp).toLocaleTimeString("zh-CN", { hour12: false })}`;
+}
+
 function displayHealth(
   item: ServiceHealth | undefined,
   loading: boolean
@@ -41,9 +49,12 @@ function displayHealth(
 
 /* 三个库各一个黑色图标,右下角一个状态点表示连接情况,悬停（或键盘聚焦）显示库名与状态 */
 export function ConnectionStatusBar() {
-  const { data, loading } = useConnectionHealth();
-  const healths = SERVICES.map((service) => displayHealth(data?.[service.key], loading));
-  const styles = healths.map((health) => STATUS_STYLE[health.status]);
+  const { data, loading, error, lastSuccessAt } = useConnectionHealth();
+  const stale = error !== null;
+  const healths: ServiceHealth[] = stale
+    ? SERVICES.map(() => ({ status: "unknown", message: `${error}${formatLastSuccess(lastSuccessAt)}` }))
+    : SERVICES.map((service) => displayHealth(data?.[service.key], loading));
+  const styles = healths.map((health) => (stale ? STALE_STYLE : STATUS_STYLE[health.status]));
   const summary = SERVICES.map(
     (service, index) => `${service.label}${styles[index].label}`
   ).join("，");

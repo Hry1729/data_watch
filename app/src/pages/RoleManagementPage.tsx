@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronDown, KeyRound, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -80,6 +80,9 @@ export function RoleManagementPage() {
   const [grantRole, setGrantRole] = useState<RoleListItem | null>(null);
   const [grant, setGrant] = useState<RoleGrant>({ menuIds: [], permissionIds: [], dataScopes: [] });
   const [grantLoading, setGrantLoading] = useState(false);
+  // 授权数据所属角色 ID 与请求代号：旧角色的迟到响应不得写入当前角色的授权
+  const [grantFor, setGrantFor] = useState<number | null>(null);
+  const grantSeq = useRef(0);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
   const loadRoles = useCallback((activeToken: string, signal: AbortSignal) => backendClient.roleList(activeToken, query, signal), [query]);
@@ -130,15 +133,16 @@ export function RoleManagementPage() {
 
   async function openGrant(role: RoleListItem) {
     if (!token) return;
-    setGrantRole(role); setGrantLoading(true);
-    try { const current = await backendClient.roleGrant(token, role.roleId); setGrant(current); }
-    catch { toast.error("菜单权限加载失败"); setGrantRole(null); }
-    finally { setGrantLoading(false); }
+    const seq = ++grantSeq.current;
+    setGrantRole(role); setGrantFor(null); setGrantLoading(true);
+    try { const current = await backendClient.roleGrant(token, role.roleId); if (seq !== grantSeq.current) return; setGrant(current); setGrantFor(role.roleId); }
+    catch { if (seq !== grantSeq.current) return; toast.error("菜单权限加载失败"); setGrantRole(null); }
+    finally { if (seq === grantSeq.current) setGrantLoading(false); }
   }
 
   async function saveGrant() {
-    if (!token || !grantRole) return;
-    try { await backendClient.updateRoleGrant(token, grantRole.roleId, grant); toast.success("菜单权限已保存"); }
+    if (!token || !grantRole || grantLoading || grantFor !== grantRole.roleId) return;
+    try { await backendClient.updateRoleGrant(token, grantFor, grant); toast.success("菜单权限已保存"); }
     catch { toast.error("权限保存失败"); }
   }
 
@@ -256,7 +260,7 @@ export function RoleManagementPage() {
         </div>
         <div className="flex shrink-0 justify-end gap-2 px-4 pt-3 pb-4">
           <Button variant="outline" className={btnCls} disabled={!grantRole || grantLoading} onClick={() => { if (grantRole) void openGrant(grantRole); }}>取消</Button>
-          <Button className={`${btnCls} ${priCls}`} onClick={() => void saveGrant()} disabled={!grantRole || grantLoading}>保存</Button>
+          <Button className={`${btnCls} ${priCls}`} onClick={() => void saveGrant()} disabled={!grantRole || grantLoading || grantFor !== grantRole.roleId}>保存</Button>
         </div>
       </Card>
 

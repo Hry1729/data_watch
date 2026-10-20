@@ -371,10 +371,10 @@ function DatabaseTab({
           label="密码" type="password" value={redis.password}
           onChange={(v) => { onRedisChange({ ...redis, password: v }); onPasswordDirty("redis"); }}
         />
-        {/* Stream 分片数暂不在 ConnectionConfig 中；T017 保留静态默认 */}
+        {/* Stream 分片数暂不在 ConnectionConfig 中；T017 保留静态默认，控件禁用并标注暂不支持 */}
         <div className="flex min-w-0 flex-col gap-1.5">
-          <Label className="text-[13px] font-normal text-muted-foreground">Stream 分片数</Label>
-          <Input defaultValue="4" className="h-8 w-full bg-background text-[13px] md:text-[13px]" />
+          <Label className="text-[13px] font-normal text-muted-foreground">Stream 分片数（暂不支持）</Label>
+          <Input disabled defaultValue="4" className="h-8 w-full bg-background text-[13px] md:text-[13px]" />
         </div>
       </DbCard>
 
@@ -414,10 +414,10 @@ function DatabaseTab({
           onChange={(v) => { onTdengineChange({ ...tdengine, password: v }); onPasswordDirty("tdengine"); }}
         />
         <FieldRow label="数据库" value={tdengine.database} onChange={(v) => onTdengineChange({ ...tdengine, database: v })} />
-        {/* Stable 模式暂不在 ConnectionConfig 中；T017 保留静态默认 */}
+        {/* Stable 模式暂不在 ConnectionConfig 中；T017 保留静态默认，控件禁用并标注暂不支持 */}
         <div className="flex min-w-0 flex-col gap-1.5">
-          <Label className="text-[13px] font-normal text-muted-foreground">Stable 模式</Label>
-          <Input defaultValue="sd{type}" className="h-8 w-full bg-background font-mono text-[13px] md:text-[13px]" />
+          <Label className="text-[13px] font-normal text-muted-foreground">Stable 模式（暂不支持）</Label>
+          <Input disabled defaultValue="sd{type}" className="h-8 w-full bg-background font-mono text-[13px] md:text-[13px]" />
         </div>
       </DbCard>
     </>
@@ -489,14 +489,14 @@ function CollectorTab({
              
             />
           </div>
-          {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认 */}
+          {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认，控件禁用并标注暂不支持 */}
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">默认采集周期</Label>
-            <Input defaultValue="100ms" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">默认采集周期（暂不支持）</Label>
+            <Input disabled defaultValue="100ms" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">日志级别</Label>
-            <Input defaultValue="INFO" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">日志级别（暂不支持）</Label>
+            <Input disabled defaultValue="INFO" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
         </div>
 
@@ -575,30 +575,30 @@ function WriterTab({
              
             />
           </div>
-          {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认 */}
+          {/* 以下字段暂不在 ConnectionConfig 中；T017 保留静态默认，控件禁用并标注暂不支持 */}
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">flush_interval_ms</Label>
-            <Input defaultValue="500" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">flush_interval_ms（暂不支持）</Label>
+            <Input disabled defaultValue="500" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">batch_count</Label>
-            <Input defaultValue="200" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">batch_count（暂不支持）</Label>
+            <Input disabled defaultValue="200" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">max_buffer_rows</Label>
-            <Input defaultValue="2000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">max_buffer_rows（暂不支持）</Label>
+            <Input disabled defaultValue="2000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">pending_min_idle_ms</Label>
-            <Input defaultValue="30000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
+            <Label className="text-[13px] font-normal text-muted-foreground">pending_min_idle_ms（暂不支持）</Label>
+            <Input disabled defaultValue="30000" className="h-8 bg-background text-[13px] md:text-[13px] w-28" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">pending_max_retry</Label>
-            <Input defaultValue="5" className="h-8 bg-background text-[13px] md:text-[13px] w-24" />
+            <Label className="text-[13px] font-normal text-muted-foreground">pending_max_retry（暂不支持）</Label>
+            <Input disabled defaultValue="5" className="h-8 bg-background text-[13px] md:text-[13px] w-24" />
           </div>
           <div className="flex flex-col gap-1">
-            <Label className="text-[13px] font-normal text-muted-foreground">stable pattern</Label>
-            <Input defaultValue="sd{type}" className="h-8 bg-background text-[13px] md:text-[13px] w-32 font-mono" />
+            <Label className="text-[13px] font-normal text-muted-foreground">stable pattern（暂不支持）</Label>
+            <Input disabled defaultValue="sd{type}" className="h-8 bg-background text-[13px] md:text-[13px] w-32 font-mono" />
           </div>
         </div>
       </CardContent>
@@ -676,6 +676,8 @@ export function SettingsPage() {
   const [streamMaxlen,       setStreamMaxlen]      = useState("50000");
   const [streamMaxlenSaving, setStreamMaxlenSaving] = useState(false);
   const formDirtyRef = useRef(false);
+  // 表单/各库密码的编辑版本：保存在途期间的新编辑不能被保存成功回调清掉 dirty 标记
+  const editVersionRef = useRef({ form: 0, redis: 0, mysql: 0, tdengine: 0 });
   const streamMaxlenDirtyRef = useRef(false);
 
   // 页面进入时加载配置
@@ -760,14 +762,26 @@ export function SettingsPage() {
     }) as Partial<ConnectionConfig>;
   }
 
+  /** 保存成功后只确认已提交的快照：提交后又编辑过的字段保留 dirty，下次保存仍会带上 */
+  function commitSaved(submitted: FormState, versions: typeof editVersionRef.current) {
+    const latest = editVersionRef.current;
+    setLoadedForm(submitted);
+    if (latest.form === versions.form) formDirtyRef.current = false;
+    setPasswordDirty((d) => ({
+      redis: d.redis && latest.redis !== versions.redis,
+      mysql: d.mysql && latest.mysql !== versions.mysql,
+      tdengine: d.tdengine && latest.tdengine !== versions.tdengine,
+    }));
+  }
+
   async function handleSave() {
     if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
     setSaving(true);
+    const submitted = form;
+    const versions = { ...editVersionRef.current };
     try {
       await agentClient.putConfig(buildPayload(loadedForm));
-      setLoadedForm(form);
-      formDirtyRef.current = false;
-      setPasswordDirty({ redis: false, mysql: false, tdengine: false });
+      commitSaved(submitted, versions);
       toast.success("配置已保存");
     } catch (err) {
       const e = err as AppError;
@@ -805,13 +819,13 @@ export function SettingsPage() {
     const label = name === "collector" ? "Collector" : name === "ingest" ? "Ingest" : "Writer";
     if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
     setSaving(true);
+    const submitted = form;
+    const versions = { ...editVersionRef.current };
 
     // 第一步：保存配置
     try {
       await agentClient.putConfig(buildPayload(loadedForm));
-      setLoadedForm(form);
-      formDirtyRef.current = false;
-      setPasswordDirty({ redis: false, mysql: false, tdengine: false });
+      commitSaved(submitted, versions);
     } catch (err) {
       const e = err as AppError;
       if (e.type === "unauthorized") { logout(); return; }
@@ -841,8 +855,14 @@ export function SettingsPage() {
     }
   }
 
-  function markPasswordDirty(db: keyof PasswordDirty) {
+  function markFormDirty() {
     formDirtyRef.current = true;
+    editVersionRef.current.form += 1;
+  }
+
+  function markPasswordDirty(db: keyof PasswordDirty) {
+    markFormDirty();
+    editVersionRef.current[db] += 1;
     setPasswordDirty((d) => ({ ...d, [db]: true }));
   }
 
@@ -887,9 +907,9 @@ export function SettingsPage() {
             redis={form.redis}
             mysql={form.mysql}
             tdengine={form.tdengine}
-            onRedisChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, redis: f })); }}
-            onMysqlChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, mysql: f })); }}
-            onTdengineChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, tdengine: f })); }}
+            onRedisChange={(f) => { markFormDirty(); setForm((s) => ({ ...s, redis: f })); }}
+            onMysqlChange={(f) => { markFormDirty(); setForm((s) => ({ ...s, mysql: f })); }}
+            onTdengineChange={(f) => { markFormDirty(); setForm((s) => ({ ...s, tdengine: f })); }}
             passwordDirty={passwordDirty}
             onPasswordDirty={markPasswordDirty}
           />
@@ -898,7 +918,7 @@ export function SettingsPage() {
         <TabsContent value="collector" className="space-y-4">
           <CollectorTab
             form={form.collector}
-            onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, collector: f })); }}
+            onChange={(f) => { markFormDirty(); setForm((s) => ({ ...s, collector: f })); }}
           />
           <Card className="gap-0 py-0">
             <div className="px-5 pt-5">
@@ -933,7 +953,7 @@ export function SettingsPage() {
         <TabsContent value="writer" className="space-y-4">
           <WriterTab
             form={form.writer}
-            onChange={(f) => { formDirtyRef.current = true; setForm((s) => ({ ...s, writer: f })); }}
+            onChange={(f) => { markFormDirty(); setForm((s) => ({ ...s, writer: f })); }}
           />
         </TabsContent>
       </Tabs>

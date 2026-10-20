@@ -109,14 +109,8 @@ fn normalize_backend_origin(value: &str) -> Result<String, String> {
         return Err("backend_base_url must not contain a path, query, or fragment".to_string());
     }
 
-    let host = parsed.host_str().unwrap_or_default();
-    let host = if host.contains(':') {
-        format!("[{}]", host)
-    } else {
-        host.to_string()
-    };
-    let port = parsed.port().map(|value| format!(":{}", value)).unwrap_or_default();
-    Ok(format!("{}://{}{}", parsed.scheme(), host, port))
+    // host_str 对 IPv6 已带方括号，直接用 url 的 origin 序列化，避免重复加 []
+    Ok(parsed.origin().ascii_serialization())
 }
 
 fn validate_backend_path(path: &str) -> Result<(), String> {
@@ -461,6 +455,16 @@ mod tests {
         assert!(normalize_backend_origin("file:///tmp/backend").is_err());
         assert!(normalize_backend_origin("https://backend.example/api").is_err());
         assert!(normalize_backend_origin("https://user:secret@backend.example").is_err());
+    }
+
+    #[test]
+    fn origin_policy_normalizes_ipv4_dns_and_ipv6_hosts() {
+        assert_eq!(normalize_backend_origin("http://127.0.0.1:8000").unwrap(), "http://127.0.0.1:8000");
+        assert_eq!(normalize_backend_origin("http://Backend.Example/").unwrap(), "http://backend.example");
+        assert_eq!(normalize_backend_origin("https://backend.example:443").unwrap(), "https://backend.example");
+        assert_eq!(normalize_backend_origin("http://[::1]:8000").unwrap(), "http://[::1]:8000");
+        assert_eq!(normalize_backend_origin("http://[::1]").unwrap(), "http://[::1]");
+        assert_eq!(normalize_backend_origin("https://[2001:db8::1]:8443/").unwrap(), "https://[2001:db8::1]:8443");
     }
 
     #[test]
