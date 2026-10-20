@@ -131,13 +131,35 @@ class RoleStatusPayload:
 class RoleGrantPayload:
     menu_ids: list[int] = field(default_factory=list)
     permission_ids: list[int] = field(default_factory=list)
-    data_scopes: list[dict[str, Any]] = field(default_factory=list)
+    # None 表示请求未携带 dataScopes：保留现有数据范围（B021）。
+    data_scopes: list[dict[str, Any]] | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "RoleGrantPayload":
+        # B021：授权保存是"先全删再插入"的全量覆盖，缺字段不能被当作空列表静默清空。
+        # 菜单与权限必须显式给出（显式 [] 仍表示合法的"全部清空"）。
+        if not isinstance(payload, dict):
+            raise ApiError(400, "grant payload must be an object")
+        missing = [
+            name
+            for name, alias in (("menuIds", "menu_ids"), ("permissionIds", "permission_ids"))
+            if name not in payload and alias not in payload
+        ]
+        if missing:
+            raise ApiError(400, f"缺少授权字段: {', '.join(missing)}（全量覆盖需显式提供，清空请传空数组）")
+        for name, alias in (("menuIds", "menu_ids"), ("permissionIds", "permission_ids")):
+            value = payload.get(name, payload.get(alias))
+            if value is not None and not isinstance(value, list):
+                raise ApiError(400, f"{name} must be an array")
         menu_ids = _coerce_int_list(payload.get("menuIds") or payload.get("menu_ids") or [])
         permission_ids = _coerce_int_list(payload.get("permissionIds") or payload.get("permission_ids") or [])
-        data_scopes = payload.get("dataScopes") or payload.get("data_scopes") or []
+        if "dataScopes" not in payload and "data_scopes" not in payload:
+            return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=None)
+        data_scopes = payload.get("dataScopes")
+        if data_scopes is None:
+            data_scopes = payload.get("data_scopes")
+        if data_scopes is None:
+            data_scopes = []
         if not isinstance(data_scopes, list):
             raise ApiError(400, "dataScopes must be an array")
         return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=data_scopes)

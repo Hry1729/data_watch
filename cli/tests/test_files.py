@@ -64,3 +64,24 @@ def test_json_pipe_decodes_utf8_independently_of_console_encoding(monkeypatch):
     stream = io.TextIOWrapper(io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")), encoding="gbk")
     monkeypatch.setattr("cli.files.sys.stdin", stream)
     assert load_json_object("-") == payload
+
+
+def test_point_workbook_preserves_false_and_zero(tmp_path) -> None:
+    """B050：布尔 FALSE / 数值 0 不能被 truthiness 抹成空字符串（否则后端按缺省 true 处理）。"""
+    path = tmp_path / "points.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "说明"
+    sheet = workbook.create_sheet("点位数据")
+    sheet.append(["设备编号", "点位名称", "是否只读", "是否存储"])
+    sheet.append(["PLC001", "p1", False, 0])
+    sheet.append(["PLC001", "p2", True, 1])
+    sheet.append(["PLC001", "p3", None, None])
+    workbook.save(path)
+
+    rows = load_workbook_rows(str(path), "point")
+
+    assert [(row["isReadonly"], row["isStorage"]) for row in rows] == [
+        (False, 0),
+        (True, 1),
+        ("", ""),
+    ]

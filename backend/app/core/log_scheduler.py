@@ -112,9 +112,16 @@ class LogScheduler:
                 if sleep_seconds > 0:
                     await asyncio.sleep(sleep_seconds)
 
+                # B008：睡眠可能长达 24 小时，期间管理员可能已禁用清理、改清理时间或延长留存，
+                # 醒来后必须重新读取策略，不能按睡前快照删除。
+                if not self._running:
+                    continue
+                policy = await self._get_policy()
+                if not policy.enabled or (policy.cleanup_time or "03:00") != cleanup_time:
+                    continue
+
                 # 执行清理
-                if self._running:
-                    await self._execute_cleanup(policy)
+                await self._execute_cleanup(policy)
 
             except asyncio.CancelledError:
                 break
@@ -145,6 +152,9 @@ class LogScheduler:
 
                 if not self._running:
                     break
+
+                # B008：睡醒后重新读取策略（容量上限/批量大小可能已修改），不用睡前快照。
+                policy = await self._get_policy()
 
                 # 检查容量
                 await self._check_capacity(policy)

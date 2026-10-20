@@ -73,9 +73,11 @@ class SystemManageService:
         actor: str,
         current_user_roles: list[str],
     ) -> dict[str, Any]:
+        # B038：user_name 在库里全局唯一（含软删除行），软删用户的用户名同样不可复用，
+        # 否则业务校验放行后 INSERT 撞唯一约束返回 500。
         existing = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
-        if existing is not None and not existing.deleted:
-            raise ApiError(400, "用户名已存在")
+        if existing is not None:
+            raise ApiError(400, "用户名已存在（含已删除用户）" if existing.deleted else "用户名已存在")
 
         current_is_super = self._is_current_super(current_user_roles)
         role_ids = await self._resolve_role_ids(payload.user_roles)
@@ -132,8 +134,9 @@ class SystemManageService:
         user = await self._get_user_or_raise(user_id)
         if payload.user_name and payload.user_name != user.user_name:
             duplicate = await self.session.scalar(select(SysUser).where(SysUser.user_name == payload.user_name))
-            if duplicate is not None and duplicate.id != user.id and not duplicate.deleted:
-                raise ApiError(400, "用户名已存在")
+            # B038：软删除行仍占用唯一约束，同样视为重名。
+            if duplicate is not None and duplicate.id != user.id:
+                raise ApiError(400, "用户名已存在（含已删除用户）" if duplicate.deleted else "用户名已存在")
             user.user_name = payload.user_name
 
         role_ids = await self._resolve_role_ids(payload.user_roles)
@@ -305,6 +308,8 @@ class SystemManageService:
             duplicate = await self.session.scalar(select(SysRole).where(SysRole.role_code == payload.role_code))
             if duplicate is not None and duplicate.id != role.id:
                 raise ApiError(400, "角色编码已存在")
+        # B007：通用编辑与状态接口共用同一约束，R_SUPER 不能被禁用。
+        _assert_role_can_be_disabled(role, payload.enabled)
         role.role_name = payload.role_name
         role.role_code = payload.role_code
         role.description = payload.description
@@ -317,8 +322,7 @@ class SystemManageService:
     ) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
         await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
-        if role.role_code == "R_SUPER" and not enabled:
-            raise ApiError(400, "超级管理员角色不能禁用")
+        _assert_role_can_be_disabled(role, enabled)
         role.enabled = enabled
         await self.session.commit()
         return {"id": role.id}
@@ -397,12 +401,14 @@ class SystemManageService:
         )
         await self.session.execute(delete(SysRoleMenu).where(SysRoleMenu.role_id == role_id))
         await self.session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
-        await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role_id))
+        # B021：请求未携带 dataScopes 时保留现有数据范围，不再静默清空。
+        if payload.data_scopes is not None:
+            await self.session.execute(delete(SysDataPermission).where(SysDataPermission.role_id == role_id))
         for menu_id in sorted(set(menu_ids)):
             self.session.add(SysRoleMenu(role_id=role_id, menu_id=menu_id))
         for permission_id in sorted(set(permission_ids)):
             self.session.add(SysRolePermission(role_id=role_id, permission_id=permission_id))
-        for scope in payload.data_scopes:
+        for scope in payload.data_scopes or []:
             # B22：数据范围目前**只有声明、没有服务端执行**（无 UI、无文档承诺，
             # 内置角色一律种为 all/*）。若静默接受收窄范围，管理员会以为该角色已被
             # 限制、实际却没有——这是把未实现写成已生效。因此只接受"不受限"形式，
@@ -495,6 +501,7 @@ class SystemManageService:
             raise ApiError(400, "parentId cannot equal menu id")
         if payload.parent_id is not None:
             await self._get_menu_or_raise(payload.parent_id)
+            await self._assert_no_menu_cycle(menu.id, payload.parent_id)
         menu.name = payload.name
         menu.parent_id = payload.parent_id
         menu.path = payload.path
@@ -808,10 +815,29 @@ class SystemManageService:
             if menu_id not in by_id:
                 raise ApiError(400, f"菜单不存在: {menu_id}")
             parent_id = by_id[menu_id].parent_id
+            # B006：防御已有脏数据中的祖先环，避免同步死循环占住事件循环。
+            visited = {menu_id}
             while parent_id is not None:
+                if parent_id in visited:
+                    raise ApiError(400, f"菜单层级存在循环: {menu_id}")
+                visited.add(parent_id)
                 expanded.add(parent_id)
                 parent_id = by_id[parent_id].parent_id if parent_id in by_id else None
         return list(expanded)
+
+    async def _assert_no_menu_cycle(self, menu_id: int, parent_id: int) -> None:
+        """B006：parentId 不能是自身或自身后代，祖先链本身也不能已成环。"""
+        menu_rows = (await self.session.execute(select(SysMenu))).scalars().all()
+        parent_of = {row.id: row.parent_id for row in menu_rows}
+        visited: set[int] = set()
+        current: int | None = parent_id
+        while current is not None:
+            if current == menu_id:
+                raise ApiError(400, "parentId 不能是当前菜单或其子菜单")
+            if current in visited:
+                raise ApiError(400, "菜单层级存在循环")
+            visited.add(current)
+            current = parent_of.get(current)
 
     async def _get_user_or_raise(self, user_id: int) -> SysUser:
         user = await self.session.scalar(select(SysUser).where(SysUser.id == user_id, SysUser.deleted.is_(False)))
@@ -942,6 +968,11 @@ class SystemManageService:
             "enabled": permission.enabled,
             "menuId": permission.menu_id,
         }
+
+
+def _assert_role_can_be_disabled(role: SysRole, enabled: bool) -> None:
+    if role.role_code == "R_SUPER" and not enabled:
+        raise ApiError(400, "超级管理员角色不能禁用")
 
 
 def _normalize_pagination(params: dict[str, Any]) -> tuple[int, int]:

@@ -484,6 +484,8 @@ async def export_points(
     keyword: str | None = None,
     deviceId: str | None = None,
     deviceCode: str | None = None,
+    deviceType: str | None = None,
+    connectStatus: str | None = None,
     varSeq: str | None = None,
     pointName: str | None = None,
     ioAddress: str | None = None,
@@ -506,6 +508,9 @@ async def export_points(
                     "keyword": keyword,
                     "deviceId": deviceId,
                     "deviceCode": deviceCode,
+                    # B058：导出也接收设备类型/连接状态筛选，与列表一致。
+                    "deviceType": deviceType,
+                    "connectStatus": connectStatus,
                     "varSeq": varSeq,
                     "pointName": pointName,
                     "ioAddress": ioAddress,
