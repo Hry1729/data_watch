@@ -545,3 +545,47 @@ def test_unsupported_protocol_does_not_connect(tmp_path: Path) -> None:
 
     assert captured.value.error_type == "unsupported_protocol"
     assert captured.value.details["source"] == DIRECT_SOURCE
+
+
+def test_blocking_thread_connect_does_not_extend_wall_clock_past_deadline(tmp_path: Path) -> None:
+    """B043：真实线程阻塞的 connect（类 snap7 run_in_executor）超时后，同步 API 须按 deadline 返回。"""
+    import threading
+
+    source = MemorySource("mysql", [_qc100()])
+    created: list[FakeDriver] = []
+    release = threading.Event()
+
+    class ThreadBlocking(FakeDriver):
+        async def connect(self, config):
+            self.events.append("connect")
+            loop = asyncio.get_running_loop()
+            # 默认 executor（生产 S7 factory 未传专用池时的行为）中阻塞 1.5s
+            await loop.run_in_executor(None, release.wait, 1.5)
+
+        async def disconnect(self):
+            self.events.append("disconnect")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: None)
+
+    def factory():
+        driver = ThreadBlocking()
+        created.append(driver)
+        return driver
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(DirectReadError) as captured:
+            _read(
+                tmp_path,
+                sources=[source],
+                timeout_ms=100,
+                driver_factory=factory,
+                drivers=created,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert captured.value.error_type == "timeout"
+    assert elapsed < 0.8
+    assert "disconnect" in created[0].events

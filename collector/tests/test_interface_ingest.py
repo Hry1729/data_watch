@@ -358,10 +358,13 @@ def _make_ingest_server(redis_writer):
 class _FakeOpcDaMapper:
     mapping_count = 1
 
-    def get_variable_id(self, item_id):
+    def get_variable_id(self, item_id, device_id=None):
         if item_id == "OPD_Server.AGV801.ViewMain.TagRunning":
             return "running"
         return None
+
+    def is_ambiguous(self, item_id):
+        return False
 
 
 def _post_opcda_payload(server, payload):

@@ -113,6 +113,10 @@ def _apply_env_overrides(config: CollectorConfig) -> None:
     _override_str(config.redis, "host", "DATAWATCH_REDIS_HOST")
     _override_int(config.redis, "port", "DATAWATCH_REDIS_PORT")
     _override_str(config.redis, "password", "DATAWATCH_REDIS_PASSWORD")
+    # B013：集中式部署时 Agent 与 Writer 同源下发逻辑库与分片数，Collector 必须一致，
+    # 否则生产/消费连到不同 Redis DB。
+    _override_int(config.redis, "db", "DATAWATCH_REDIS_DB")
+    _override_int(config.redis, "stream_shard_count", "DATAWATCH_REDIS_STREAM_SHARD_COUNT")
 
 
 def load_collector_config_from_env(default_path: str = "config/settings.toml") -> CollectorConfig:

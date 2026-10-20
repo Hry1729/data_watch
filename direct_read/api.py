@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import time
@@ -19,7 +18,7 @@ from direct_read.quality import (
     quality_name,
 )
 from direct_read.runtime import ensure_mvp_runtime
-from direct_read.session import read_once
+from direct_read.session import read_once, run_with_deadline
 from direct_read.topology import build_sources, is_s7_protocol, resolve_chain
 
 
@@ -140,7 +139,7 @@ def read_point(
                         quality=QUALITY_NOT_CONNECTED,
                     )
                 read_timeout_ms = max(1, min(int(timeout_ms), int(remaining * 1000)))
-                value, quality, elapsed_ms = asyncio.run(
+                value, quality, elapsed_ms = run_with_deadline(
                     read_once(
                         factory,
                         resolved.connection_config(read_timeout_ms),

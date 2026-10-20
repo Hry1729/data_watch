@@ -46,7 +46,10 @@ class Planner:
         blocks = []
         task.result_map = {}
         merge_groups: Dict[str, List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
-        timer_counter_groups: Dict[tuple[str, str], List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
+        # Timer/Counter 只按区域分组、统一读原始 WORD，再由 decoder 按每变量 data_type 解释：
+        # 若按 (area, data_type) 分组，%T1 TIMER_MS 与 T1 WORD 会生成同一 block_address，
+        # 驱动结果按地址存字典，后读的块覆盖前者（B011）。
+        timer_counter_groups: Dict[str, List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
         db_groups: Dict[int, List[tuple[int, int, Variable, Dict[str, Any]]]] = {}
 
         for var in task.variables:
@@ -57,9 +60,8 @@ class Planner:
                 merge_groups.setdefault(parsed["area"], []).append((start, start + size, var, parsed))
             elif parsed.get("area") in {"T", "C"}:
                 area = str(parsed["area"]).upper()
-                data_type = (var.data_type or "").upper()
                 start = int(parsed["num"])
-                timer_counter_groups.setdefault((area, data_type), []).append((start, start + 1, var, parsed))
+                timer_counter_groups.setdefault(area, []).append((start, start + 1, var, parsed))
             elif parsed.get("area") == "DB":
                 size = self._s7_db_variable_byte_size(parsed, var.data_type)
                 if size is None:
@@ -98,7 +100,7 @@ class Planner:
                 block = self._create_s7_area_byte_block(area, current_start, current_end, current, task.result_map)
                 blocks.append(block)
 
-        for (area, data_type), ranges in sorted(timer_counter_groups.items()):
+        for area, ranges in sorted(timer_counter_groups.items()):
             ranges.sort(key=lambda item: item[0])
             current: List[tuple[int, int, Variable, Dict[str, Any]]] = []
             current_start: Optional[int] = None
@@ -108,7 +110,7 @@ class Planner:
                 start, end, _, _ = item
                 if current and current_end is not None and start > current_end:
                     block = self._create_s7_timer_counter_block(
-                        area, data_type, current_start, current_end, current, task.result_map
+                        area, current_start, current_end, current, task.result_map
                     )
                     blocks.append(block)
                     current = []
@@ -124,7 +126,7 @@ class Planner:
 
             if current:
                 block = self._create_s7_timer_counter_block(
-                    area, data_type, current_start, current_end, current, task.result_map
+                    area, current_start, current_end, current, task.result_map
                 )
                 blocks.append(block)
 
@@ -196,7 +198,6 @@ class Planner:
     def _create_s7_timer_counter_block(
         self,
         area: str,
-        data_type: str,
         start: Optional[int],
         end: Optional[int],
         items: List[tuple[int, int, Variable, Dict[str, Any]]],
@@ -209,13 +210,15 @@ class Planner:
             raise DeviceConnectionError("Invalid S7 Timer/Counter merge range")
 
         block_address = f"%{area}{start}"
-        block = ReadBlock(block_address, count=end - start, data_type=data_type)
+        # 统一读原始 WORD；同编号不同类型的变量共享同一块，按各自 data_type 解码。
+        block = ReadBlock(block_address, count=end - start, data_type="WORD")
         for item_start, _, var, _ in items:
             result_map[var.variable_id] = {
                 "block_address": block_address,
                 "area": area,
                 "value_offset": item_start - start,
                 "data_type": var.data_type,
+                "raw_word": True,
             }
         return block
 
@@ -370,6 +373,22 @@ class Decoder:
 
 
     @staticmethod
+    def _decode_s7_timer_counter_word(area: str, word: Any, data_type: str) -> Any:
+        """按变量 data_type 解释 Timer/Counter 原始字（与驱动 _parse_s5time/_parse_counter_bcd 语义一致）。
+
+        WORD → 原始字；Timer 其它类型 → S5TIME 毫秒（时基在字 bit13-12）；Counter 其它类型 → BCD 计数。
+        """
+        if word is None or data_type == "WORD":
+            return word
+        word = int(word) & 0xFFFF
+        bcd_value = ((word >> 8) & 0x0F) * 100 + ((word >> 4) & 0x0F) * 10 + (word & 0x0F)
+        if area == "T":
+            time_base_ms = {0: 10, 1: 100, 2: 1000, 3: 10000}[(word >> 12) & 0x03]
+            return bcd_value * time_base_ms
+        return bcd_value
+
+
+    @staticmethod
     def _extract_mapped_s7_value(raw_values: Any, mapping: Dict[str, Any], prepared: Any = None) -> Any:
         """从合并后的 S7 I/Q/M BYTE 块或 Timer/Counter 块中还原单个变量值。
 
@@ -377,7 +396,12 @@ class Decoder:
         """
         if "value_offset" in mapping:
             values = raw_values if isinstance(raw_values, list) else [raw_values]
-            return values[int(mapping.get("value_offset", 0))]
+            value = values[int(mapping.get("value_offset", 0))]
+            if mapping.get("raw_word"):
+                return Decoder._decode_s7_timer_counter_word(
+                    str(mapping.get("area", "")).upper(), value, str(mapping.get("data_type", "")).upper()
+                )
+            return value
 
         raw = prepared if prepared is not None else Decoder._to_s7_bytearray(raw_values)
         offset = int(mapping.get("byte_offset", 0))

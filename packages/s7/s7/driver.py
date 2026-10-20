@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 import snap7
 
+from collector.bounded_executor import ExecutorSaturatedError
 from core.exceptions import DeviceConnectionError, ReadError
 from core.logger import get_logger
 from drivers.base import BaseDriver, ReadBlock
@@ -293,10 +294,10 @@ class S7Driver(BaseDriver):
         解析 S7 S5TIME BCD 格式为毫秒数。
 
         S5TIME 格式 (2 字节):
-        - 字节 0:
-          - bit 7-6: 时基 (00=10ms, 01=100ms, 10=1s, 11=10s)
-          - bit 5-4: 未使用 (总是 0)
-          - bit 3-0: BCD 百位 (0-9)
+        - 字节 0（即 16 位字的 bit 15-8）:
+          - bit 7-6（字 bit 15-14）: 未使用 (总是 0)
+          - bit 5-4（字 bit 13-12）: 时基 (00=10ms, 01=100ms, 10=1s, 11=10s)
+          - bit 3-0（字 bit 11-8）: BCD 百位 (0-9)
         - 字节 1:
           - bit 7-4: BCD 十位 (0-9)
           - bit 3-0: BCD 个位 (0-9)
@@ -314,8 +315,8 @@ class S7Driver(BaseDriver):
         bcd_ones = data[1] & 0x0F
         bcd_value = bcd_hundreds * 100 + bcd_tens * 10 + bcd_ones
 
-        # 解析时基 (bits 7-6)
-        time_base_bits = (data[0] >> 6) & 0x03
+        # 解析时基 (字 bit 13-12 = 字节0 bit 5-4)
+        time_base_bits = (data[0] >> 4) & 0x03
         time_base_ms = {0: 10, 1: 100, 2: 1000, 3: 10000}.get(time_base_bits, 10)
 
         return bcd_value * time_base_ms
@@ -420,6 +421,10 @@ class S7Driver(BaseDriver):
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(self._read_executor, self._ping_client)
+        except ExecutorSaturatedError:
+            # 读池饱和只说明执行资源拥塞，不代表 PLC 断线：不改 _connected，
+            # 透传给 manager 的拥塞分支（B012）。
+            raise
         except Exception as exc:
             logger.warning("S7 safe ping failed: %s", exc)
             self._connected = False

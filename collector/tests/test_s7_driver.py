@@ -80,13 +80,13 @@ class FakeS7Client:
             # 字节0 = (0 << 6) | 0 = 0x00, 字节1 = (5 << 4) | 0 = 0x50
             (0x1D, 0, 1, 1): bytearray([0x00, 0x50]),
             # T2：123 * 100ms = 12300ms（time_base=01, BCD=123）
-            # 字节0 = (1 << 6) | 1 = 0x41, 字节1 = (2 << 4) | 3 = 0x23
-            (0x1D, 0, 2, 1): bytearray([0x41, 0x23]),
+            # 字节0 = (1 << 4) | 1 = 0x11, 字节1 = (2 << 4) | 3 = 0x23
+            (0x1D, 0, 2, 1): bytearray([0x11, 0x23]),
             # T1-T2 批量读取
-            (0x1D, 0, 1, 2): bytearray([0x00, 0x50, 0x41, 0x23]),
+            (0x1D, 0, 1, 2): bytearray([0x00, 0x50, 0x11, 0x23]),
             # T10：500 * 1s = 500000ms（time_base=10, BCD=500）
-            # 字节0 = (2 << 6) | 5 = 0x85, 字节1 = (0 << 4) | 0 = 0x00
-            (0x1D, 0, 10, 1): bytearray([0x85, 0x00]),
+            # 字节0 = (2 << 4) | 5 = 0x25, 字节1 = (0 << 4) | 0 = 0x00
+            (0x1D, 0, 10, 1): bytearray([0x25, 0x00]),
             # 计数器区域（0x1C）：BCD 格式（0-999）
             # C1：BCD 123 = 十进制 123
             (0x1C, 0, 1, 1): bytearray([0x01, 0x23]),
@@ -322,25 +322,35 @@ def test_read_counter_as_word():
 
 
 def test_parse_s5time_bcd():
-    """S5TIME BCD 解析测试"""
+    """S5TIME BCD 解析测试：时基位于字 bit13-12（字节0 bit5-4），bit15-14 未使用。"""
     # 10ms 时基, BCD=50 -> 500ms
     data = bytearray([0x00, 0x50])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 500
 
     # 100ms 时基, BCD=123 -> 12300ms
-    # 字节0 = (1 << 6) | 1 = 0x41, 字节1 = (2 << 4) | 3 = 0x23
-    data = bytearray([0x41, 0x23])
+    # 字节0 = (1 << 4) | 1 = 0x11, 字节1 = (2 << 4) | 3 = 0x23
+    data = bytearray([0x11, 0x23])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 12300
 
     # 1s 时基, BCD=500 -> 500000ms
-    # 字节0 = (2 << 6) | 5 = 0x85, 字节1 = 0x00
-    data = bytearray([0x85, 0x00])
+    # 字节0 = (2 << 4) | 5 = 0x25, 字节1 = 0x00
+    data = bytearray([0x25, 0x00])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 500000
 
     # 10s 时基, BCD=999 -> 9990000ms
-    # 字节0 = (3 << 6) | 9 = 0xC9, 字节1 = (9 << 4) | 9 = 0x99
-    data = bytearray([0xC9, 0x99])
+    # 字节0 = (3 << 4) | 9 = 0x39, 字节1 = (9 << 4) | 9 = 0x99
+    data = bytearray([0x39, 0x99])
     assert S7Driver._parse_s5time(data, "TIMER_MS") == 9990000
+
+
+def test_parse_s5time_time_base_bits_13_12():
+    """回归 B010：0x1001/0x2001/0x3001 分别为 100ms/1s/10s 时基 × 1。"""
+    assert S7Driver._parse_s5time(bytearray([0x00, 0x01]), "TIMER_MS") == 10
+    assert S7Driver._parse_s5time(bytearray([0x10, 0x01]), "TIMER_MS") == 100
+    assert S7Driver._parse_s5time(bytearray([0x20, 0x01]), "TIMER_MS") == 1000
+    assert S7Driver._parse_s5time(bytearray([0x30, 0x01]), "TIMER_MS") == 10000
+    # WORD 仍返回原始字
+    assert S7Driver._parse_s5time(bytearray([0x30, 0x01]), "WORD") == 0x3001
 
 
 def test_parse_counter_bcd():

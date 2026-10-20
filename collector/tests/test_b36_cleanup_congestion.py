@@ -133,3 +133,85 @@ async def test_timeout_is_not_retried(monkeypatch) -> None:
 async def test_none_driver_is_a_noop() -> None:
     manager = _manager()
     await manager._safe_disconnect_driver(None, device_id="D1", reason="test")
+
+
+class _RejectNthSubmitExecutor:
+    """真实线程池外壳：指定序号的 submit 被拒绝（模拟有界读池饱和）。"""
+
+    def __init__(self, reject_on) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._pool = ThreadPoolExecutor(max_workers=1)
+        self._reject_on = set(reject_on)
+        self.submits = 0
+
+    def submit(self, fn, /, *args, **kwargs):
+        self.submits += 1
+        if self.submits in self._reject_on:
+            raise ExecutorSaturatedError("plc_read executor capacity reached: 1")
+        return self._pool.submit(fn, *args, **kwargs)
+
+    def shutdown(self, wait=True, **kwargs):
+        self._pool.shutdown(wait=wait)
+
+
+class _GEChannel:
+    def __init__(self) -> None:
+        self.disconnect_calls = 0
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_real_ge_disconnect_keeps_rejected_channel_and_retries() -> None:
+    """B040：GE 双通道中一次提交被拒 ⇒ 透传拥塞、保留未清理通道；重试后两通道各断开一次。"""
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
+
+    executor = _RejectNthSubmitExecutor(reject_on={2})
+    try:
+        driver = GESRTPDriver(read_executor=executor)
+        primary, secondary = _GEChannel(), _GEChannel()
+        driver._drivers = [primary, secondary]
+        driver._driver = primary
+        driver._connected = True
+
+        # 直接调用：拥塞必须透传，且被拒通道仍保留
+        with pytest.raises(ExecutorSaturatedError):
+            await driver.disconnect()
+        assert primary.disconnect_calls == 1
+        assert secondary.disconnect_calls == 0
+        assert driver._drivers == [secondary]
+        assert driver.is_connected is False
+
+        # 经 manager 拥塞重试路径完成清理
+        manager = _manager()
+        await manager._safe_disconnect_driver(driver, device_id="GE1", reason="test")
+        assert primary.disconnect_calls == 1
+        assert secondary.disconnect_calls == 1
+        assert driver._drivers == []
+        assert driver._driver is None
+    finally:
+        executor.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_real_ge_disconnect_through_manager_retries_saturation() -> None:
+    """B040：manager 视角下第二通道提交被拒 ⇒ 重试计数 +1，最终两底层 disconnect 各一次。"""
+    from packages.ge_srtp.ge_srtp.driver import GESRTPDriver
+
+    executor = _RejectNthSubmitExecutor(reject_on={2})
+    try:
+        driver = GESRTPDriver(read_executor=executor)
+        primary, secondary = _GEChannel(), _GEChannel()
+        driver._drivers = [primary, secondary]
+        driver._driver = primary
+        driver._connected = True
+
+        manager = _manager()
+        await manager._safe_disconnect_driver(driver, device_id="GE1", reason="test")
+        assert manager._metrics.increments.get("driver_disconnect_congestion_retry_count") == 1
+        assert (primary.disconnect_calls, secondary.disconnect_calls) == (1, 1)
+        assert driver._drivers == [] and driver._driver is None
+    finally:
+        executor.shutdown()

@@ -56,14 +56,38 @@ class SystemLogWriter:
         if not self._running:
             return
         self._running = False
-        await self._queue.put(None)
+        # B046：同一个总 deadline 同时覆盖 sentinel 入队与 worker 收尾。队列满且 worker
+        # 卡在 DB 写入时，无限期 await put(None) 会让停机永远到不了超时保护。
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        timed_out = False
+        sentinel_queued = False
+        try:
+            self._queue.put_nowait(None)
+            sentinel_queued = True
+        except asyncio.QueueFull:
+            try:
+                await asyncio.wait_for(self._queue.put(None), timeout=max(0.0, deadline - loop.time()))
+                sentinel_queued = True
+            except asyncio.TimeoutError:
+                timed_out = True
         if self._worker_task is not None:
             try:
-                await asyncio.wait_for(self._worker_task, timeout=timeout)
+                if not timed_out:
+                    await asyncio.wait_for(
+                        self._worker_task, timeout=max(0.0, deadline - loop.time())
+                    )
             except asyncio.TimeoutError:
-                self._worker_task.cancel()
-                logger.warning("Collector system log writer stop timed out")
+                timed_out = True
             finally:
+                if timed_out:
+                    self._worker_task.cancel()
+                    logger.warning(
+                        "Collector system log writer stop timed out after %.3fs; "
+                        "dropped %d queued event(s)",
+                        timeout,
+                        max(0, self._queue.qsize() - (1 if sentinel_queued else 0)),
+                    )
                 self._worker_task = None
         logger.info("Collector system log writer stopped")
 

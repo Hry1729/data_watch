@@ -483,3 +483,53 @@ async def test_replace_rollback_reconnect_false_schedules_retry(monkeypatch):
     assert ("connect", True) in call_order
     assert ("reload", 2) in call_order
     assert call_order.index(("connect", True)) < call_order.index(("reload", 2))
+
+
+@pytest.mark.asyncio
+async def test_config_change_during_startup_connect_is_applied_on_first_poll(monkeypatch):
+    """B044：启动装载 v1，连接期间源变为 v2；首轮轮询须按"已装载 v1"基线检出变更。"""
+    old_device = _device(config_version=1)
+    new_device = _device(config_version=2)
+    variables = [_variable()]
+    fake_db = _FakeConfigDB([{"PLC001": _signature(config_version=2)}], [new_device], variables)
+    fake_db.loaded_signatures = {"PLC001": _signature(config_version=1)}
+    app = _make_app(fake_db, [old_device], variables)
+
+    await _run_reload_loop(monkeypatch, app)
+
+    app._apply_device_variables.assert_awaited_once_with("PLC001", new_device, variables)
+    app._replace_device_atomic.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_device_address_change_during_startup_rebuilds_on_first_poll(monkeypatch):
+    """B044：启动期间已有设备地址变化，首轮轮询即原子重建。"""
+    new_device = _device(endpoint="10.0.0.2", ip="10.0.0.2")
+    variables = [_variable()]
+    fake_db = _FakeConfigDB(
+        [{"PLC001": _signature(endpoint="10.0.0.2")}], [new_device], variables
+    )
+    fake_db.loaded_signatures = {"PLC001": _signature(endpoint="10.0.0.1")}
+    app = _make_app(fake_db, [_device()], variables)
+
+    await _run_reload_loop(monkeypatch, app)
+
+    app._replace_device_atomic.assert_awaited_once_with("PLC001", new_device, variables)
+
+
+def test_loaded_signature_matches_version_query_signature():
+    """B044：装载与版本查询使用同一签名构造，基线与 current 可直接比较。"""
+    from core.config_db import ConfigDBManager
+
+    row = {
+        "device_code": "PLC001",
+        "variable_config_version": 3,
+        "endpoint": "10.0.0.1",
+        "protocol_id": 2,
+        "rack": 0,
+        "slot": None,
+        "scan_cycle": 500,
+    }
+    assert ConfigDBManager._signature_from_row(row) == _signature(
+        config_version=3, protocol_id=2, slot=1, scan_cycle=500
+    )

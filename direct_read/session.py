@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from typing import Any, Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Coroutine
 
 from direct_read.driver_loader import import_read_block
 from direct_read.errors import DirectReadError
@@ -19,6 +20,40 @@ from direct_read.quality import (
 
 
 _CONFIG_HINTS = ("data type", "address", "bool", "dbx", "decode", "config")
+
+# 直连读专用线程池规模：connect/read 与 disconnect 可并行，避免断开排在卡住的 connect 之后。
+_DIRECT_READ_WORKERS = 4
+
+
+def run_with_deadline(coro: Coroutine[Any, Any, Any]) -> Any:
+    """同步运行 ``coro``，收尾不等待仍在线程里阻塞的驱动调用（B043）。
+
+    ``asyncio.run`` 退出时会 ``shutdown_default_executor()``，等待默认线程池里所有
+    已开始的阻塞调用（如 snap7 connect/read）结束，``wait_for`` 的 deadline 因此约束不了
+    同步 API 的真实墙钟。这里给事件循环一个专用线程池，结束时 ``shutdown(wait=False)``：
+    超时结果按 deadline 返回，残留阻塞调用在后台线程里自行结束（受驱动自身
+    Send/Recv 超时约束），不再拖住调用方。
+    """
+    executor = ThreadPoolExecutor(
+        max_workers=_DIRECT_READ_WORKERS, thread_name_prefix="direct-read"
+    )
+    loop = asyncio.new_event_loop()
+    loop.set_default_executor(executor)
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        try:
+            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            asyncio.set_event_loop(None)
+            executor.shutdown(wait=False, cancel_futures=True)
+            loop.close()
 
 
 async def read_once(
