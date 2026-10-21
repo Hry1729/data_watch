@@ -417,8 +417,16 @@ function useTableImpl<TApiFn extends (params: any) => Promise<any>>(
 
       return standardResponse
     } catch (err) {
-      if (err instanceof Error && err.message === '请求已取消') {
-        // 请求被取消，回到 idle 状态
+      // 已被更新的请求取代：旧请求无论成功（被视为取消）还是失败，都不得改写最新请求的
+      // loading/data/error 状态（AbortController 未传给 apiFn，旧请求仍可能晚到）
+      if (abortController !== currentController) {
+        return { records: [], total: 0, current: 1, size: 10 }
+      }
+      if (
+        currentController.signal.aborted ||
+        (err instanceof Error && err.message === '请求已取消')
+      ) {
+        // 当前请求被主动取消（cancelRequest），回到 idle 状态
         loadingState.value = 'idle'
         return { records: [], total: 0, current: 1, size: 10 }
       }

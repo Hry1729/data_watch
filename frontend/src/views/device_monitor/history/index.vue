@@ -236,7 +236,7 @@
       </div>
       <template #footer>
         <ElButton @click="pointDrawerVisible = false">取消</ElButton>
-        <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
+        <ElButton type="primary" :disabled="!canConfirmPointSelection" @click="confirmPointSelection">确认</ElButton>
       </template>
     </ElDialog>
 
@@ -342,6 +342,14 @@ interface HistorySearchForm {
   endTime: string
 }
 
+// 一次查询提交时冻结的条件；图表、矩阵与「加载更多」只使用该快照，不再读取可变表单
+interface HistoryQuerySnapshot {
+  deviceId: number
+  varSeqs: number[]
+  startTime: string
+  endTime: string
+}
+
 const searchForm = ref<HistorySearchForm>({
   deviceId: undefined,
   varSeqs: [],
@@ -362,6 +370,9 @@ const pointDrawerVisible = ref(false)
 const pointSearchKeyword = ref('')
 const tempDeviceId = ref<number | undefined>()
 const tempSelectedVarSeqs = ref<number[]>([])
+// 当前 pointList 所属设备；与选中设备不一致（加载中/失败/旧响应）时不能确认选点
+const pointListDeviceId = ref<number | undefined>()
+const pointListLoading = ref(false)
 
 const selectedPoints = computed(() =>
   pointList.value.filter((p) => searchForm.value.varSeqs.includes(p.varSeq))
@@ -466,7 +477,17 @@ const handlePointChange = (varSeq: number, checked: boolean) => {
   }
 }
 
+// 点位列表加载完成且确属当前抽屉所选设备时才允许确认，避免把旧设备的 varSeq 提交给新设备
+const canConfirmPointSelection = computed(
+  () =>
+    tempSelectedVarSeqs.value.length > 0 &&
+    !pointListLoading.value &&
+    !!tempDeviceId.value &&
+    pointListDeviceId.value === tempDeviceId.value
+)
+
 const confirmPointSelection = () => {
+  if (!canConfirmPointSelection.value) return
   if (tempDeviceId.value && tempDeviceId.value !== searchForm.value.deviceId) {
     searchForm.value.deviceId = tempDeviceId.value
   }
@@ -527,12 +548,21 @@ const matrixNextCursor = ref<string | null>(null)
 const loadingMatrix = ref(false)
 const matrixAlignGranularity = ref<'1s' | '500ms' | '100ms'>('1s')
 const matrixQueryVersion = ref(0)
+// 当前矩阵结果（含 nextCursor）所属的已提交查询快照
+const matrixQuery = ref<HistoryQuerySnapshot | null>(null)
 
-const clearMatrixData = () => {
-  matrixQueryVersion.value += 1
+// 仅清空结果，不改变请求代次（失败请求自身的清理路径用它，保证 finally 能结束 loading）
+const resetMatrixResults = () => {
   matrixRows.value = []
   matrixColumns.value = []
   matrixNextCursor.value = null
+}
+
+// 作废在途矩阵请求并清空结果；被作废的请求不会再收尾，因此这里一并结束 loading
+const clearMatrixData = () => {
+  matrixQueryVersion.value += 1
+  loadingMatrix.value = false
+  resetMatrixResults()
 }
 
 const valueColumns = computed(() =>
@@ -555,11 +585,15 @@ const formatValue = (val: any) => {
   return typeof val === 'number' ? val.toFixed(2) : val
 }
 
-const loadMatrixData = async (reset = false) => {
-  if (!searchForm.value.deviceId || searchForm.value.varSeqs.length === 0) return
+const loadMatrixData = async (reset = false, query?: HistoryQuerySnapshot) => {
+  // 重置时使用传入的新快照（或沿用当前快照）；翻页只能沿用产生 nextCursor 的那次查询快照
+  const params = reset ? (query ?? matrixQuery.value) : matrixQuery.value
+  if (!params || !params.deviceId || params.varSeqs.length === 0) return
+  if (!reset && !matrixNextCursor.value) return
 
   if (reset) {
     clearMatrixData()
+    matrixQuery.value = params
   }
 
   const currentVersion = ++matrixQueryVersion.value
@@ -567,13 +601,13 @@ const loadMatrixData = async (reset = false) => {
 
   try {
     const result = await fetchHistoryRawMatrix({
-      deviceId: searchForm.value.deviceId,
-      varSeqs: searchForm.value.varSeqs,
-      startTime: searchForm.value.startTime,
-      endTime: searchForm.value.endTime,
+      deviceId: params.deviceId,
+      varSeqs: params.varSeqs,
+      startTime: params.startTime,
+      endTime: params.endTime,
       alignGranularity: matrixAlignGranularity.value,
       pageSize: 200,
-      cursorTs: matrixNextCursor.value || undefined,
+      cursorTs: reset ? undefined : matrixNextCursor.value || undefined,
     })
 
     if (currentVersion !== matrixQueryVersion.value) return
@@ -589,7 +623,8 @@ const loadMatrixData = async (reset = false) => {
     console.error('加载矩阵数据失败:', error)
     ElMessage.error('加载矩阵数据失败')
     if (reset) {
-      clearMatrixData()
+      // 不能用 clearMatrixData：它会抬高代次，导致下面 finally 不再结束 loading
+      resetMatrixResults()
     }
   } finally {
     if (currentVersion === matrixQueryVersion.value) {
@@ -844,16 +879,31 @@ const loadDeviceTypes = async () => {
   }
 }
 
+// 点位请求代次：快速切换设备时，只接受最后一次请求的结果
+let pointListRequestVersion = 0
+
 const loadPointList = async (deviceId?: number) => {
+  const requestVersion = ++pointListRequestVersion
   pointList.value = []
+  pointListDeviceId.value = undefined
 
-  if (!deviceId) return
+  if (!deviceId) {
+    pointListLoading.value = false
+    return
+  }
 
+  pointListLoading.value = true
   try {
-    pointList.value = await fetchHistoryPoints({ deviceId })
+    const points = await fetchHistoryPoints({ deviceId })
+    if (requestVersion !== pointListRequestVersion) return
+    pointList.value = points
+    pointListDeviceId.value = deviceId
   } catch (error) {
+    if (requestVersion !== pointListRequestVersion) return
     console.error('加载点位列表失败:', error)
     ElMessage.error('加载点位列表失败')
+  } finally {
+    if (requestVersion === pointListRequestVersion) pointListLoading.value = false
   }
 }
 
@@ -863,6 +913,9 @@ const handleChartTypeChange = (type: ChartType) => {
     initOrUpdateChart()
   }
 }
+
+// 图表查询代次：旧查询的响应不得覆盖新查询
+let chartQueryVersion = 0
 
 const handleQuery = async () => {
   if (!searchForm.value.deviceId) {
@@ -898,23 +951,33 @@ const handleQuery = async () => {
     return
   }
 
+  // 冻结本次提交的查询条件：图表请求等待期间修改表单，不会让矩阵查询与图表条件不一致
+  const query: HistoryQuerySnapshot = {
+    deviceId: searchForm.value.deviceId,
+    varSeqs: [...searchForm.value.varSeqs],
+    startTime: searchForm.value.startTime,
+    endTime: searchForm.value.endTime
+  }
+  const chartVersion = ++chartQueryVersion
+
   loading.value = true
   try {
     const result = await fetchHistoryChart({
-      deviceId: searchForm.value.deviceId,
-      varSeqs: searchForm.value.varSeqs,
-      startTime: searchForm.value.startTime,
-      endTime: searchForm.value.endTime,
+      deviceId: query.deviceId,
+      varSeqs: query.varSeqs,
+      startTime: query.startTime,
+      endTime: query.endTime,
       interval: chartInterval.value,
       aggregate: chartAggregate.value
     })
+    if (chartVersion !== chartQueryVersion) return
 
     chartData.value = result
     renderedRecordCount.value = result.series.reduce((acc, s) => acc + s.data.length, 0)
 
-    // 加载矩阵表数据
-    if (searchForm.value.varSeqs.length > 0) {
-      void loadMatrixData(true)
+    // 加载矩阵表数据（与图表使用同一查询快照）
+    if (query.varSeqs.length > 0) {
+      void loadMatrixData(true, query)
     }
 
     // 先关闭loading让图表容器显示，再初始化图表
@@ -923,6 +986,7 @@ const handleQuery = async () => {
 
     pointDrawerVisible.value = false
   } catch (error) {
+    if (chartVersion !== chartQueryVersion) return
     console.error('查询失败:', error)
     ElMessage.error(buildHistoryErrorMessage(error))
     loading.value = false
@@ -1072,6 +1136,7 @@ const saveHistoryCache = () => {
       cacheData.matrixRows = [...matrixRows.value]
       cacheData.matrixColumns = matrixColumns.value
       cacheData.matrixNextCursor = matrixNextCursor.value
+      cacheData.matrixQuery = matrixQuery.value
     }
 
     localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(cacheData))
@@ -1133,7 +1198,9 @@ const restoreHistoryCache = (): { restoredData: boolean; restoredConditions: boo
       matrixColumns.value = cacheData.matrixColumns
     }
 
-    if (canRestoreData && cacheData.matrixNextCursor) {
+    // nextCursor 只在其所属查询快照一并缓存时恢复，避免与恢复后的表单条件混用
+    if (canRestoreData && cacheData.matrixNextCursor && cacheData.matrixQuery?.deviceId) {
+      matrixQuery.value = cacheData.matrixQuery
       matrixNextCursor.value = cacheData.matrixNextCursor
     }
 

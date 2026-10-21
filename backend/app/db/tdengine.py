@@ -134,7 +134,11 @@ class TDengineClient:
             _log_pool_unavailable_once(exc)
             return self._fetch_all_legacy_sync(sql, database)
 
+        # 池连接没有默认库且会被复用：每次借出都显式 USE 目标库（与 legacy 路径
+        # `database or self.database` 语义一致），避免裸 SHOW/SELECT 无当前库或串库。
+        database_name = self.quote_identifier(database or self.database)
         with engine.connect() as conn:
+            conn.exec_driver_sql(f"USE {database_name}")
             result = conn.exec_driver_sql(sql)
             return [tuple(row) for row in result.fetchall()]
 
