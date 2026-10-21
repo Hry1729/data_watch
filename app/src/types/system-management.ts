@@ -92,6 +92,11 @@ export interface RoleGrant {
   dataScopes: DataScopeItem[];
 }
 
+/** PUT /api/role/{id}/grant 请求体：菜单与权限均为空时必须带 clearAll: true 显式确认清空。 */
+export interface RoleGrantUpdate extends RoleGrant {
+  clearAll?: boolean;
+}
+
 export type RolePageResult = SystemPaginatedResult<RoleListItem>;
 
 export interface PermissionItem {

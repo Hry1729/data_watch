@@ -102,6 +102,8 @@ export default function DeviceManagementPage() {
   }, [activeType, connectStatus, keyword, page, pageSize]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
 
+  // 设备变更成功后统一刷新列表、类型目录与汇总 KPI，避免同屏数字矛盾
+  function refreshAfterMutation() { devices.refresh(); deviceCatalog.refresh(); summary.refresh(); }
   function openCreate() { setEditing(null); setForm({ ...EMPTY_FORM, driverName: drivers.data?.[0]?.driverName ?? "" }); setDialogOpen(true); }
   function openEdit(row: DeviceListItem) { setEditing(row); setForm({ deviceType: row.deviceType, deviceCode: row.deviceCode, deviceName: row.deviceName, driverName: row.driverName, deviceStatus: row.deviceStatus, endpoint: row.endpoint, endpointBackup: row.endpointBackup, description: row.description ?? "" }); setDialogOpen(true); }
   async function save() {
@@ -109,7 +111,7 @@ export default function DeviceManagementPage() {
     setSaving(true);
     try {
       if (editing) await backendClient.updateDevice(auth.backendToken, editing.id, form); else await backendClient.createDevice(auth.backendToken, form);
-      toast.success(editing ? "设备已更新" : "设备已新增"); setDialogOpen(false); devices.refresh(); deviceCatalog.refresh();
+      toast.success(editing ? "设备已更新" : "设备已新增"); setDialogOpen(false); refreshAfterMutation();
     } catch (reason) {
       const message = (reason as { message?: string })?.message;
       toast.error(message || "保存设备失败");
@@ -119,7 +121,7 @@ export default function DeviceManagementPage() {
   }
   async function confirmDelete() {
     if (!auth?.backendToken || !deleting) return;
-    try { await backendClient.deleteDevice(auth.backendToken, deleting.id); toast.success("设备已删除"); devices.refresh(); deviceCatalog.refresh(); } catch { toast.error("删除设备失败"); } finally { setDeleting(null); }
+    try { await backendClient.deleteDevice(auth.backendToken, deleting.id); toast.success("设备已删除"); refreshAfterMutation(); } catch { toast.error("删除设备失败"); } finally { setDeleting(null); }
   }
   async function toggleDeviceStatus(row: DeviceListItem) {
     if (!auth?.backendToken) return;
@@ -128,8 +130,7 @@ export default function DeviceManagementPage() {
     try {
       await backendClient.updateDeviceStatus(auth.backendToken, row.id, enabled);
       toast.success(enabled ? "设备已启用" : "设备已停用");
-      devices.refresh();
-      deviceCatalog.refresh();
+      refreshAfterMutation();
     } catch (reason) {
       const message = (reason as { message?: string })?.message;
       toast.error(message || (enabled ? "启用设备失败" : "停用设备失败"));
@@ -144,7 +145,7 @@ export default function DeviceManagementPage() {
     try {
       await backendClient.batchDeleteDevices(auth.backendToken, selectedIds);
       toast.success(`已删除 ${selectedIds.length} 台设备`);
-      setSelectedIds([]); devices.refresh(); deviceCatalog.refresh();
+      setSelectedIds([]); refreshAfterMutation();
     } catch { toast.error("批量删除设备失败"); } finally { setBatchDeleteOpen(false); }
   }
   async function exportWorkbook(template = false) {
@@ -167,7 +168,7 @@ export default function DeviceManagementPage() {
       const result = await backendClient.importDevices(auth.backendToken, rows);
       setImportResult(result);
       toast.success(`导入成功 ${result.success} 条` + (result.fail ? `，失败 ${result.fail} 条` : ""));
-      devices.refresh(); deviceCatalog.refresh();
+      refreshAfterMutation();
     } catch (reason) { toast.error(reason instanceof Error ? reason.message : "设备导入失败"); } finally { setTransferring(false); }
   }
 

@@ -1021,7 +1021,14 @@ export const mockBackend: BackendClient = {
   async updateRoleStatus(_token, id, enabled) { MOCK_ROLES = MOCK_ROLES.map((role) => role.roleId === id ? { ...role, enabled } : role); return { id }; },
   async deleteRole(_token, id) { MOCK_ROLES = MOCK_ROLES.filter((role) => role.roleId !== id); return { id }; },
   async roleGrant(_token, id) { return MOCK_ROLE_GRANTS.get(id) ?? { menuIds: [], permissionIds: [], dataScopes: [] }; },
-  async updateRoleGrant(_token, id, payload) { MOCK_ROLE_GRANTS.set(id, payload); return { id }; },
+  async updateRoleGrant(_token, id, payload) {
+    // 与后端契约一致（PR #23）：菜单与权限必须是数组；两者都为空时必须带 clearAll: true，否则 400
+    if (!Array.isArray(payload.menuIds) || !Array.isArray(payload.permissionIds)) throw { type: "api_error" as const, status: 400, message: "menuIds/permissionIds 必须为数组" };
+    if (payload.menuIds.length === 0 && payload.permissionIds.length === 0 && payload.clearAll !== true) throw { type: "api_error" as const, status: 400, message: "清空角色全部菜单和权限需要显式携带 clearAll: true" };
+    const { clearAll: _clearAll, ...grant } = payload;
+    MOCK_ROLE_GRANTS.set(id, grant);
+    return { id };
+  },
   async adminMenus(_token) { await delay(100); return MOCK_MENUS; },
   async currentUserMenus(_token) { await delay(100); return MOCK_MENUS; },
   async createMenu(_token, payload) { const id = Date.now(); const item = { id, parentId: payload.parentId, path: payload.path, name: payload.name, component: payload.component, menuType: payload.menuType, sort: payload.sort, enabled: payload.enabled, meta: { title: payload.titleKey, icon: payload.icon, keepAlive: payload.keepAlive, isHide: payload.isHide, isHideTab: payload.isHideTab, authList: [] } }; if (payload.parentId) { MOCK_MENUS = MOCK_MENUS.map((menu) => menu.id === payload.parentId ? { ...menu, children: [...(menu.children ?? []), item] } : menu); } else MOCK_MENUS = [...MOCK_MENUS, item]; return { id }; },
