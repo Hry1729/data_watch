@@ -137,3 +137,28 @@ def test_over_capacity_migration_is_refused_without_commit():
         mpg.migrate(db, dry_run=False)
     assert db.rolled_back and not db.committed
     assert all(v["td_column_name"] is None for v in db.vars)
+
+
+# ── 审查 R2：dry-run 对尚无 g001 的设备也要做容量校验 ────────────────────────
+
+
+def test_dry_run_over_capacity_without_group_fails_like_real_run(capsys):
+    db = FakeDb(3073)
+    with pytest.raises(SystemExit) as exc:
+        mpg.migrate(db, dry_run=True)
+    assert exc.value.code == 1
+    assert "exceeds g001 capacity 3072" in capsys.readouterr().err
+    # dry-run 不写任何东西
+    assert db.group is None and not db.committed and not db.rolled_back
+    assert all(v["td_column_name"] is None for v in db.vars)
+
+
+@pytest.mark.parametrize("count", [3, 3072])
+def test_dry_run_within_capacity_without_group_previews_without_writes(capsys, count):
+    db = FakeDb(count)
+    mpg.migrate(db, dry_run=True)
+    out = capsys.readouterr().out
+    assert "would create g001" in out
+    assert f"would map {count} vars" in out
+    assert db.group is None and not db.committed
+    assert all(v["td_column_name"] is None for v in db.vars)

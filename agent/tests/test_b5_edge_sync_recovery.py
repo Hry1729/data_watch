@@ -353,3 +353,198 @@ def test_background_sync_without_pending_still_raises(tmp_path):
     with pytest.raises(CenterRequestError):
         asyncio.run(service.run_once())
     assert cfg["edge"]["private_key_enc"] == old.private_key_pem
+
+
+# ── 审查 R2：Collector 重启失败后重试必须真的重启 ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_factory_reconcile_retries_collector_restart_until_success(monkeypatch, tmp_path):
+    """首次 restart 失败（代理已起好，_proxies 非空）后，后续每次重试都要真正 restart，
+    直到成功；成功后不再重启。"""
+    from app import factory
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text("")
+
+    class SM:
+        def __init__(self):
+            self._proxies = {}
+            self.collector_settings_path = settings
+
+        def prepare_for_collector_start(self):
+            self._proxies["A"] = object()  # 真实实现：起好代理后登记
+            return SimpleNamespace(port_mapping_path=tmp_path / "port_mapping.json")
+
+    class PM:
+        runtime_dir = tmp_path
+
+        def __init__(self):
+            self.restarts = []
+            self.fail = 2
+
+        def status(self, _name):
+            return SimpleNamespace(status="running")
+
+        def wants_running(self, _name):
+            return True
+
+        async def restart(self, name, extra_args=None, env=None):
+            self.restarts.append((name, extra_args))
+            if self.fail:
+                self.fail -= 1
+                raise RuntimeError("stop timed out")
+            return SimpleNamespace(status="running")
+
+    monkeypatch.setattr(factory, "_collector_env", lambda: {})
+    pm = PM()
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, sidecar_manager=SM()))
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            await factory._reconcile_sidecars_after_config_apply(app)
+    await factory._reconcile_sidecars_after_config_apply(app)
+    assert len(pm.restarts) == 3
+    assert all("--port-mapping" in args for _n, args in pm.restarts)
+    # 成功后：代理已在、无待办 → 不再重启
+    await factory._reconcile_sidecars_after_config_apply(app)
+    assert len(pm.restarts) == 3
+
+
+@pytest.mark.asyncio
+async def test_factory_reconcile_starts_collector_left_stopped_by_failed_restart(monkeypatch, tmp_path):
+    """restart 停掉了旧进程但启动失败（状态 stopped）：重试须带 --port-mapping 启动，而不是
+    以“未运行”为由清掉待办。"""
+    from app import factory
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text("")
+
+    class SM:
+        def __init__(self):
+            self._proxies = {}
+            self.collector_settings_path = settings
+
+        def prepare_for_collector_start(self):
+            self._proxies["A"] = object()
+            return SimpleNamespace(port_mapping_path=tmp_path / "port_mapping.json")
+
+    class PM:
+        runtime_dir = tmp_path
+
+        def __init__(self):
+            self.state = "running"
+            self.calls = []
+
+        def status(self, _name):
+            return SimpleNamespace(status=self.state)
+
+        def wants_running(self, _name):
+            return True
+
+        async def restart(self, name, extra_args=None, env=None):
+            self.calls.append(("restart", extra_args))
+            self.state = "stopped"
+            raise RuntimeError("spawn failed")
+
+        async def start(self, name, extra_args=None, env=None):
+            self.calls.append(("start", extra_args))
+            self.state = "running"
+            return SimpleNamespace(status="running")
+
+    monkeypatch.setattr(factory, "_collector_env", lambda: {})
+    pm = PM()
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, sidecar_manager=SM()))
+    with pytest.raises(RuntimeError):
+        await factory._reconcile_sidecars_after_config_apply(app)
+    await factory._reconcile_sidecars_after_config_apply(app)
+    assert [c[0] for c in pm.calls] == ["restart", "start"]
+    assert "--port-mapping" in pm.calls[1][1]
+    assert app.state._collector_port_mapping_restart_pending is False
+
+
+def test_edge_sync_keeps_reconcile_pending_until_collector_restart_succeeds(tmp_path):
+    """EdgeSyncService 层：回调失败保留待办，后续心跳继续调用，直到成功。"""
+    identity = generate_identity()
+    cfg = _registered_cfg(identity)
+    outcomes = [RuntimeError("restart failed"), RuntimeError("restart failed"), None]
+    calls = []
+
+    async def reconcile():
+        calls.append(1)
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    service = EdgeSyncService(
+        tmp_path / "edge.db",
+        load_config=lambda: cfg,
+        mutate_config=lambda m: m(cfg) or cfg,
+        decrypt=lambda v: v,
+        process_status=lambda _n: "running",
+        transport=_snapshot_transport(1),
+        config_store=_Store(),
+        on_config_applied=reconcile,
+    )
+    for _ in range(4):
+        asyncio.run(service.run_once())
+    assert len(calls) == 3
+    assert cfg["edge"]["last_sync_error"] == ""
+
+
+# ── 审查 R2：pending key 提升成功但 Uploader 更新失败须持续重试 ─────────────
+
+
+def test_uploader_update_retried_on_later_heartbeats_after_callback_failure(tmp_path):
+    old = generate_identity()
+    pending = generate_identity()
+    pending_id = SimpleNamespace(
+        node_uuid=old.node_uuid,
+        private_key_pem=pending.private_key_pem,
+        public_key_pem=pending.public_key_pem,
+    )
+    cfg = {
+        "edge": {
+            "center_url": "http://center",
+            "node_uuid": old.node_uuid,
+            "private_key_enc": old.private_key_pem,
+            "pending_private_key_enc": pending.private_key_pem,
+            "registered": True,
+        }
+    }
+
+    def transport(method, url, body, headers):
+        if not _signed_by(pending_id, method, url, body, headers):
+            return 401, {"code": 401, "msg": "节点签名无效"}
+        if url.endswith("/rotate-key"):
+            return 200, {"code": 200, "data": {"keyVersion": 3, "status": "already_rotated"}}
+        return 200, {"code": 200, "data": {"desiredRevision": 0}}
+
+    attempts = []
+
+    async def on_rotated():
+        attempts.append(1)
+        if len(attempts) <= 2:
+            raise RuntimeError("cannot decrypt uploader env")
+
+    service = EdgeSyncService(
+        tmp_path / "edge.db",
+        load_config=lambda: cfg,
+        mutate_config=lambda m: m(cfg) or cfg,
+        decrypt=lambda v: v,
+        process_status=lambda _n: "running",
+        transport=transport,
+        config_store=_Store(),
+        on_identity_rotated=on_rotated,
+    )
+    asyncio.run(service.run_once())
+    assert cfg["edge"]["private_key_enc"] == pending.private_key_pem
+    assert cfg["edge"].get("identity_propagation_pending") is True
+    assert "uploader identity update failed" in cfg["edge"]["last_sync_error"]
+    asyncio.run(service.run_once())  # 第二次仍失败，标记保留
+    assert cfg["edge"].get("identity_propagation_pending") is True
+    asyncio.run(service.run_once())  # 第三次成功
+    assert len(attempts) == 3
+    assert "identity_propagation_pending" not in cfg["edge"]
+    assert cfg["edge"]["last_sync_error"] == ""
+    asyncio.run(service.run_once())
+    assert len(attempts) == 3

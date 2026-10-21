@@ -319,16 +319,19 @@ def config_set_url(ctx: typer.Context, url: str = typer.Argument(...)) -> None:
         if profile not in document["profiles"]:
             raise CliError("config_error", f"Profile 不存在: {profile}", EXIT_USAGE)
         old_url = str(document["profiles"][profile]["baseUrl"])
+        # 审查 R2：dry-run 走与真实命令相同的 ConfigStore 校验（URL 规范化等），只是不落盘。
+        result = state.config_store.set_url(url, profile=profile, dry_run=state.dry_run)
+        new_url = str(result["profiles"][profile]["baseUrl"])
         if state.dry_run:
             return _dry_run_preview(
                 "config set-url",
-                local=[f"更新 profile {profile} 的 baseUrl", f"URL 变化时清除 profile {profile} 的本地凭据"],
+                local=[f"更新 profile {profile} 的 baseUrl"]
+                + ([f"清除 profile {profile} 的本地凭据"] if old_url != new_url else []),
                 profile=profile,
                 oldUrl=old_url,
-                newUrl=url,
+                newUrl=new_url,
+                result=result,
             )
-        result = state.config_store.set_url(url, profile=profile)
-        new_url = str(result["profiles"][profile]["baseUrl"])
         credentials_removed = (
             state.credential_store.clear(profile) if old_url != new_url else False
         )
@@ -360,15 +363,19 @@ def profile_create(
 ) -> None:
     def operation() -> dict[str, Any]:
         state = _context(ctx)
+        result = state.config_store.create_profile(
+            name, url, timeout_seconds=timeout, dry_run=state.dry_run
+        )
         if state.dry_run:
             return _dry_run_preview(
                 "config profile create",
                 local=[f"创建 profile {name}"],
                 profile=name,
-                url=url,
-                timeoutSeconds=timeout,
+                url=result["profiles"][name]["baseUrl"],
+                timeoutSeconds=result["profiles"][name]["timeoutSeconds"],
+                result=result,
             )
-        return state.config_store.create_profile(name, url, timeout_seconds=timeout)
+        return result
 
     _execute(ctx, "config profile create", operation)
 
@@ -384,20 +391,23 @@ def profile_update(
         state = _context(ctx)
         before = state.config_store.public_document()
         old_url = str(before["profiles"].get(name, {}).get("baseUrl") or "")
-        if state.dry_run:
-            return _dry_run_preview(
-                "config profile update",
-                local=[f"更新 profile {name}", f"URL 变化时清除 profile {name} 的本地凭据"],
-                profile=name,
-                url=url,
-                timeoutSeconds=timeout,
-            )
         result = state.config_store.update_profile(
             name,
             url=url,
             timeout_seconds=timeout,
+            dry_run=state.dry_run,
         )
         new_url = str(result["profiles"][name]["baseUrl"])
+        if state.dry_run:
+            return _dry_run_preview(
+                "config profile update",
+                local=[f"更新 profile {name}"]
+                + ([f"清除 profile {name} 的本地凭据"] if old_url and old_url != new_url else []),
+                profile=name,
+                url=new_url,
+                timeoutSeconds=result["profiles"][name]["timeoutSeconds"],
+                result=result,
+            )
         credentials_removed = (
             state.credential_store.clear(name) if old_url and old_url != new_url else False
         )
@@ -410,13 +420,14 @@ def profile_update(
 def profile_delete(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     def operation() -> dict[str, Any]:
         state = _context(ctx)
+        result = state.config_store.delete_profile(name, dry_run=state.dry_run)
         if state.dry_run:
             return _dry_run_preview(
                 "config profile delete",
                 local=[f"删除 profile {name}", f"清除 profile {name} 的本地凭据"],
                 profile=name,
+                result=result,
             )
-        result = state.config_store.delete_profile(name)
         return {
             **result,
             "credentialsRemoved": state.credential_store.clear(name),
@@ -429,13 +440,15 @@ def profile_delete(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
 def profile_use(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     def operation() -> dict[str, Any]:
         state = _context(ctx)
+        result = state.config_store.use_profile(name, dry_run=state.dry_run)
         if state.dry_run:
             return _dry_run_preview(
                 "config profile use",
                 local=[f"切换当前 profile 为 {name}"],
                 profile=name,
+                result=result,
             )
-        return state.config_store.use_profile(name)
+        return result
 
     _execute(ctx, "config profile use", operation)
 

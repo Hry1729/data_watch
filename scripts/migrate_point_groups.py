@@ -139,8 +139,10 @@ def migrate(conn, dry_run: bool) -> None:
                     created += 1
                     print(f"  [created] device={device_code} group_id={group_id} points={point_count}")
                 else:
+                    # 审查 R2：dry-run 不建组，但仍须按“新组 used=0、容量 GROUP_CAPACITY”
+                    # 走下面同一套映射与容量校验，否则超容量设备会得到成功的预览。
+                    group_id = None
                     print(f"  [dry-run] would create g001 for device={device_code} points={point_count}")
-                    continue
 
             # ── 3. 填充 device_variable 的分组映射字段（幂等：只处理 td_column_name IS NULL）
             cur.execute("""
@@ -155,11 +157,14 @@ def migrate(conn, dry_run: bool) -> None:
                 continue
 
             # 计算本轮起始 group_index（接续已分配的列位）
-            cur.execute(
-                "SELECT used_column_count, max_point_count FROM device_point_group WHERE id = %s",
-                (group_id,)
-            )
-            row = cur.fetchone()
+            if group_id is None:
+                row = {"used_column_count": 0, "max_point_count": GROUP_CAPACITY}  # dry-run 预计新组
+            else:
+                cur.execute(
+                    "SELECT used_column_count, max_point_count FROM device_point_group WHERE id = %s",
+                    (group_id,)
+                )
+                row = cur.fetchone()
             start_index = (int(row["used_column_count"] or 0) + 1) if row else 1
             capacity = int((row or {}).get("max_point_count") or GROUP_CAPACITY)
             last_index = start_index - 1 + len(unmapped_vars)
@@ -169,7 +174,9 @@ def migrate(conn, dry_run: bool) -> None:
                     conn.rollback()
                 print(
                     f"ERROR: device={device_code} needs columns up to v{last_index:04d}, "
-                    f"exceeds g001 capacity {capacity}; migration aborted (no changes committed).",
+                    f"exceeds g001 capacity {capacity}; "
+                    + ("dry-run: the real migration would abort here."
+                       if dry_run else "migration aborted (no changes committed)."),
                     file=sys.stderr,
                 )
                 sys.exit(1)

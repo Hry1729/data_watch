@@ -6,6 +6,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -130,11 +131,7 @@ namespace OpcDaProxyService
                 throw new InvalidOperationException("Invalid listenAddress: " + _config.ListenAddress);
             }
             _loopbackOnly = IPAddress.IsLoopback(listenAddress);
-            if (!_loopbackOnly && string.IsNullOrEmpty(_config.AuthToken))
-            {
-                throw new InvalidOperationException(
-                    "listenAddress " + listenAddress + " is not loopback; authToken must be configured");
-            }
+            ValidateListenSecurity(listenAddress, _config.AuthToken);
 
             _listener = new TcpListener(listenAddress, _config.ListenPort);
             _listener.Start();
@@ -353,23 +350,59 @@ namespace OpcDaProxyService
             }
         }
 
+        /// <summary>
+        /// 审查 R2：ProxyConfig.Load 已把 authToken Trim，纯空白视同未配置；这里再用
+        /// IsNullOrWhiteSpace 兜底，非回环监听 + 空/空白令牌一律拒绝启动。
+        /// </summary>
+        internal static void ValidateListenSecurity(IPAddress listenAddress, string authToken)
+        {
+            if (!IPAddress.IsLoopback(listenAddress) && string.IsNullOrWhiteSpace(authToken))
+            {
+                throw new InvalidOperationException(
+                    "listenAddress " + listenAddress + " is not loopback; a non-blank authToken must be configured");
+            }
+        }
+
         private static bool IsAuthorized(IpcRequest request)
         {
-            string expected = _config.AuthToken;
-            if (string.IsNullOrEmpty(expected))
+            return IsTokenAuthorized(_config.AuthToken, request.AuthToken);
+        }
+
+        /// <summary>
+        /// 审查 R2：令牌校验。expected 为空/纯空白 = 未启用鉴权（仅允许回环监听，见 StartListener）；
+        /// 启用时请求令牌 Trim 后为空直接拒绝，否则对两侧 SHA-256 摘要做定长常量时间比较
+        /// （摘要等长，不泄露长度，也不按字节早退）。
+        /// </summary>
+        internal static bool IsTokenAuthorized(string expectedToken, string actualToken)
+        {
+            string expected = NormalizeToken(expectedToken);
+            if (expected.Length == 0)
             {
                 return true;
             }
-            string actual = request.AuthToken ?? "";
-            // 定长比较，避免按字节早退泄露时序。
-            byte[] a = Encoding.UTF8.GetBytes(expected);
-            byte[] b = Encoding.UTF8.GetBytes(actual);
-            int diff = a.Length ^ b.Length;
+            string actual = NormalizeToken(actualToken);
+            if (actual.Length == 0)
+            {
+                return false;
+            }
+            byte[] a;
+            byte[] b;
+            using (SHA256 sha = SHA256.Create())
+            {
+                a = sha.ComputeHash(Encoding.UTF8.GetBytes(expected));
+                b = sha.ComputeHash(Encoding.UTF8.GetBytes(actual));
+            }
+            int diff = 0;
             for (int i = 0; i < a.Length; i++)
             {
-                diff |= a[i] ^ (i < b.Length ? b[i] : 0);
+                diff |= a[i] ^ b[i];
             }
             return diff == 0;
+        }
+
+        internal static string NormalizeToken(string token)
+        {
+            return (token ?? "").Trim();
         }
 
         private static string NormalizeVmHost(string vmHost)
@@ -806,7 +839,9 @@ namespace OpcDaProxyService
             {
                 config.ListenAddress = "127.0.0.1";
             }
-            config.AuthToken = dict.ContainsKey("authToken") ? Convert.ToString(dict["authToken"]) : "";
+            // 审查 R2：Trim；纯空白令牌视同未配置（非回环监听时 StartListener 会拒绝启动）。
+            config.AuthToken = Program.NormalizeToken(
+                dict.ContainsKey("authToken") ? Convert.ToString(dict["authToken"]) : "");
             config.FrameReadTimeoutMs = dict.ContainsKey("frameReadTimeoutMs") ? Convert.ToInt32(dict["frameReadTimeoutMs"]) : 30000;
 
             config.OpcServers = new List<OpcServerConfig>();

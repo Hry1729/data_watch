@@ -227,6 +227,10 @@ async def recover_pending_rotation(
         raise
 
 
+# 审查 R2：pending key 已提升为 current、但 Uploader 尚未以新 key 重启时的持久化标记。
+IDENTITY_PROPAGATION_PENDING_KEY = "identity_propagation_pending"
+
+
 class EdgeSyncService:
     def __init__(
         self,
@@ -350,9 +354,11 @@ class EdgeSyncService:
             )
             heartbeat = await client.heartbeat(heartbeat_payload)
         desired = int(heartbeat.get("desiredRevision") or 0)
+        identity_error = await self._propagate_rotated_identity()
         if storage_error:
             # Storage 不可用时不做排程刷新/配置下发，下一轮 Storage 恢复后再收敛。
-            self._record_sync(status="approved", error=storage_error, applied_revision=applied)
+            error = f"{storage_error}; {identity_error}" if identity_error else storage_error
+            self._record_sync(status="approved", error=error, applied_revision=applied)
             return {"status": "approved", "appliedRevision": applied, "desiredRevision": desired}
         center_time_ms = int(heartbeat.get("centerTimeMs") or int(time.time() * 1000))
         await asyncio.to_thread(self._config_store.refresh_schedule, center_time_ms)
@@ -361,7 +367,7 @@ class EdgeSyncService:
             if snapshot.get("changed"):
                 applied = await asyncio.to_thread(self._config_store.apply, snapshot)
                 self._config_reconcile_pending = True
-        sync_error = ""
+        sync_error = identity_error
         if self._config_reconcile_pending and self._on_config_applied is not None:
             try:
                 await self._on_config_applied()
@@ -369,7 +375,8 @@ class EdgeSyncService:
             except Exception as exc:
                 # 配置已落库但运行依赖（OPC DA 代理/映射）未就绪：不得报告完全收敛。
                 logger.warning("Edge config applied but sidecar reconcile failed: %s", exc)
-                sync_error = f"sidecar reconcile failed: {exc}"
+                reconcile_error = f"sidecar reconcile failed: {exc}"
+                sync_error = f"{sync_error}; {reconcile_error}" if sync_error else reconcile_error
         self._record_sync(status="approved", error=sync_error, applied_revision=applied)
         return {"status": "approved", "appliedRevision": applied, "desiredRevision": desired}
 
@@ -399,15 +406,37 @@ class EdgeSyncService:
                     return
                 target["private_key_enc"] = target.pop("pending_private_key_enc")
                 target["key_version"] = int(result.get("keyVersion") or 1)
+                # 审查 R2：提升与“Uploader 待更新”标记在同一次原子写入，回调失败后
+                # 后续心跳（已用新 key 成功，不会再走恢复分支）仍能凭此标记重试。
+                if self._on_identity_rotated is not None:
+                    target[IDENTITY_PROPAGATION_PENDING_KEY] = True
 
             self._mutate_config(promote)
         logger.warning("Recovered edge identity with pending key after lost rotation response")
-        if self._on_identity_rotated is not None:
-            try:
-                await self._on_identity_rotated()
-            except Exception:
-                logger.exception("Failed to apply rotated edge identity to dependent modules")
+        # Uploader 更新由 run_once 在心跳成功后统一执行（含后续轮次的重试）。
         return True
+
+    async def _propagate_rotated_identity(self) -> str:
+        """把已提升的新身份下发给依赖模块（重启 Uploader）；失败保留标记，下一轮重试。
+
+        返回错误描述（成功或无待办时为空串）。
+        """
+        if self._on_identity_rotated is None:
+            return ""
+        edge = self._load_config().get("edge") or {}
+        if not edge.get(IDENTITY_PROPAGATION_PENDING_KEY):
+            return ""
+        try:
+            await self._on_identity_rotated()
+        except Exception as exc:
+            logger.exception("Failed to apply rotated edge identity to dependent modules")
+            return f"uploader identity update failed: {exc}"
+
+        def clear(cfg: dict) -> None:
+            cfg.setdefault("edge", {}).pop(IDENTITY_PROPAGATION_PENDING_KEY, None)
+
+        self._mutate_config(clear)
+        return ""
 
     def _record_sync(
         self,

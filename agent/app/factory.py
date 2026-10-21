@@ -128,13 +128,24 @@ async def _reconcile_sidecars_after_config_apply(app: FastAPI) -> None:
     if sm is None:
         return
     async with collector_lifecycle(pm):
-        if pm.status("collector").status != "running":
-            # 未运行：下一次启动会走 prepare_for_collector_start。
-            return
+        status = pm.status("collector").status
+        # 审查 R2：“需要带 --port-mapping 重启 Collector”是一项独立的待办，不能由
+        # sm._proxies 推导——首次尝试已起好代理（_proxies 非空）但 pm.restart 失败后，
+        # 重试会误判为“Collector 已带映射”而永远不再重启。待办只在重启/启动真正成功后清除。
+        restart_pending = bool(getattr(app.state, "_collector_port_mapping_restart_pending", False))
+        if status != "running":
+            if not restart_pending or not pm.wants_running("collector"):
+                # 未运行且无待办 / 用户已停用：下一次启动会走 prepare_for_collector_start。
+                app.state._collector_port_mapping_restart_pending = False
+                return
         had_proxies = bool(sm._proxies)
         plan = await wait_for_sidecar_operation(sm.prepare_for_collector_start)
-        if plan.port_mapping_path is None or had_proxies:
+        if plan.port_mapping_path is None:
+            app.state._collector_port_mapping_restart_pending = False
             return
+        if had_proxies and not restart_pending:
+            return
+        app.state._collector_port_mapping_restart_pending = True
         settings_path = sm.collector_settings_path
         if settings_path is None or not Path(settings_path).exists():
             raise RuntimeError("collector settings.toml not found; run bootstrap first")
@@ -146,7 +157,17 @@ async def _reconcile_sidecars_after_config_apply(app: FastAPI) -> None:
             "--port-mapping",
             str(plan.port_mapping_path),
         ]
-        await pm.restart("collector", extra_args=extra_args, env=_collector_env())
+        if status == "running":
+            info = await pm.restart("collector", extra_args=extra_args, env=_collector_env())
+        else:
+            # 上一次 restart 停掉了旧进程但启动失败（stopped/crashed）：直接带映射启动。
+            info = await pm.start("collector", extra_args=extra_args, env=_collector_env())
+        if getattr(info, "status", "running") != "running":
+            raise RuntimeError(f"collector restart did not reach running (status={info.status})")
+        app.state._collector_port_mapping_restart_pending = False
+        log_manager = getattr(app.state, "log_manager", None)
+        if log_manager is not None:
+            log_manager.attach("collector", pm.log_file("collector"), asyncio.get_running_loop())
 
 
 async def _restart_uploader_after_identity_rotation(app: FastAPI) -> None:
