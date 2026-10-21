@@ -82,3 +82,43 @@ def test_ge_max_payload_can_be_overridden_by_env(tmp_path, monkeypatch):
     assert config.ge_max_payload_bytes == 1000
     assert config.ge_parallel_channels == 2
     assert config.ge_batch_deadline_ms == 300
+
+
+def test_redis_db_and_shard_count_overridden_by_env(tmp_path, monkeypatch):
+    """B013：集中式 Collector 与 Writer 同源读取 Redis DB / 分片数。"""
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\ndb = 2\nstream_shard_count = 4\n")
+    monkeypatch.setenv("DATAWATCH_REDIS_DB", "3")
+    monkeypatch.setenv("DATAWATCH_REDIS_STREAM_SHARD_COUNT", "8")
+
+    config = load_collector_config(str(path))
+
+    assert (config.redis.db, config.redis.stream_shard_count) == (3, 8)
+
+
+def test_redis_db_env_zero_overrides_toml(tmp_path, monkeypatch):
+    """Agent 显式下发 DB=0 时 Collector 必须与 Writer 一致，而不是沿用 TOML 的 2。"""
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\ndb = 2\n")
+    monkeypatch.setenv("DATAWATCH_REDIS_DB", "0")
+    monkeypatch.delenv("DATAWATCH_REDIS_STREAM_SHARD_COUNT", raising=False)
+
+    config = load_collector_config(str(path))
+
+    assert config.redis.db == 0
+    assert config.redis.stream_shard_count == 4
+
+
+def test_redis_db_env_missing_keeps_toml(tmp_path, monkeypatch):
+    path = tmp_path / "settings.toml"
+    _write_config(path)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\ndb = 2\n")
+    monkeypatch.delenv("DATAWATCH_REDIS_DB", raising=False)
+    monkeypatch.delenv("DATAWATCH_REDIS_STREAM_SHARD_COUNT", raising=False)
+
+    assert load_collector_config(str(path)).redis.db == 2

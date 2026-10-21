@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import time
@@ -19,7 +18,7 @@ from direct_read.quality import (
     quality_name,
 )
 from direct_read.runtime import ensure_mvp_runtime
-from direct_read.session import read_once
+from direct_read.session import read_once, run_with_deadline
 from direct_read.topology import build_sources, is_s7_protocol, resolve_chain
 
 
@@ -130,6 +129,9 @@ def read_point(
         except DirectReadError as exc:
             exc.details.setdefault("topologySource", resolved.topology_source)
             raise
+        # 并发名额交给 run_with_deadline 后，由它在所有驱动线程调用真正结束时释放
+        # （超时返回后仍阻塞的 PLC 调用继续计入 MAX_CONCURRENCY）；交接前出错则这里释放。
+        permit_handed_off = False
         try:
             try:
                 remaining = deadline - time.monotonic()
@@ -140,20 +142,23 @@ def read_point(
                         quality=QUALITY_NOT_CONNECTED,
                     )
                 read_timeout_ms = max(1, min(int(timeout_ms), int(remaining * 1000)))
-                value, quality, elapsed_ms = asyncio.run(
-                    read_once(
-                        factory,
-                        resolved.connection_config(read_timeout_ms),
-                        address=resolved.io_address,
-                        data_type=resolved.data_type,
-                        deadline=deadline,
-                    )
+                coro = read_once(
+                    factory,
+                    resolved.connection_config(read_timeout_ms),
+                    address=resolved.io_address,
+                    data_type=resolved.data_type,
+                    deadline=deadline,
+                )
+                permit_handed_off = True
+                value, quality, elapsed_ms = run_with_deadline(
+                    coro, on_settled=permit.release
                 )
             except DirectReadError as exc:
                 exc.details.setdefault("topologySource", resolved.topology_source)
                 raise
         finally:
-            permit.release()
+            if not permit_handed_off:
+                permit.release()
         point_payload: dict[str, Any] = {
             "pointName": resolved.point_name,
             "ioAddress": resolved.io_address,

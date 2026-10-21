@@ -347,8 +347,9 @@ def test_device_build_scan_tasks_handles_timer_counter():
 
     scan_task = device.scan_tasks[0]
     blocks = {(block.address, block.count, block.data_type) for block in scan_task.read_blocks}
-    assert ("%T1", 2, "TIMER_MS") in blocks
-    assert ("%C1", 2, "COUNTER") in blocks
+    # B011：Timer/Counter 统一读原始 WORD，decoder 按变量类型解释
+    assert ("%T1", 2, "WORD") in blocks
+    assert ("%C1", 2, "WORD") in blocks
     assert ("%IB101", 1, "BYTE") in blocks
     assert scan_task.result_map["t1"]["value_offset"] == 0
     assert scan_task.result_map["t2"]["value_offset"] == 1
@@ -361,3 +362,58 @@ def test_executor_extracts_values_from_merged_timer_counter_block():
         [500, 12300],
         {"value_offset": 1, "data_type": "TIMER_MS"},
     ) == 12300
+
+
+def _fake_tc_driver(raw_by_area):
+    """真实 S7Driver + 固定字节替身：按 (area_code, start, count) 返回原始字。"""
+    class _Client:
+        def read_area(self, area, db, start, size):
+            words = raw_by_area[area]
+            out = bytearray()
+            for n in range(start, start + size):
+                w = words.get(n, 0)
+                out += bytes([(w >> 8) & 0xFF, w & 0xFF])
+            return out
+
+    driver = S7Driver()
+    driver._client = _Client()
+    driver._connected = True
+    return driver
+
+
+@pytest.mark.parametrize("timer_alias", ["T1", "t1", "%t1"])
+def test_same_task_timer_and_word_at_same_number_do_not_overwrite(timer_alias):
+    """回归 B011：同一扫描任务内 %T1 TIMER_MS 与 T1 WORD 不得互相覆盖。"""
+    from packages.s7.s7.planner import build_read_plan, decode_read_results
+
+    variables = [
+        Variable(variable_id="tms", address="%T1", data_type="TIMER_MS"),
+        Variable(variable_id="traw", address=timer_alias, data_type="WORD"),
+        Variable(variable_id="cnt", address="%C1", data_type="COUNTER"),
+        Variable(variable_id="craw", address="C1", data_type="WORD"),
+    ]
+    blocks, result_map = build_read_plan(variables)
+    addresses = [block.address for block in blocks]
+    assert len(addresses) == len(set(addresses)), addresses
+
+    # T1 = 0x1050（100ms 时基 × BCD 50）；C1 = 0x0123（BCD 123）
+    driver = _fake_tc_driver({0x1D: {1: 0x1050}, 0x1C: {1: 0x0123}})
+    decoded = decode_read_results(driver._read_blocks(blocks), result_map)
+    assert decoded["tms"] == 5000
+    assert decoded["traw"] == 0x1050
+    assert decoded["cnt"] == 123
+    assert decoded["craw"] == 0x0123
+
+
+def test_timer_word_0050_decodes_independently_per_type():
+    """原始 0x0050：TIMER_MS=500ms，WORD=80（同块不同类型）。"""
+    from packages.s7.s7.planner import build_read_plan, decode_read_results
+
+    variables = [
+        Variable(variable_id="word", address="T1", data_type="WORD"),
+        Variable(variable_id="ms", address="%T1", data_type="TIMER_MS"),
+    ]
+    blocks, result_map = build_read_plan(variables)
+    driver = _fake_tc_driver({0x1D: {1: 0x0050}})
+    decoded = decode_read_results(driver._read_blocks(blocks), result_map)
+    assert decoded == {"word": 80, "ms": 500}

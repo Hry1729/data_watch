@@ -8,7 +8,7 @@
       "protocol": "s7",
       "name": "s7",
       "description": "DataWatch s7 只读采集驱动",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "publisher": "datawatch",
       "aliases": [
         "s7",
@@ -24,16 +24,16 @@
         "health_check"
       ],
       "readWriteType": "只读",
-      "archive": "s7-1.0.1.zip",
-      "sha256": "be6596955aaa374edd2ace930c109043a8ddc6064133d06a486348f2f3fce2f5",
-      "tree_sha256": "c9186debac87af4e9faa25cf2186e5a8c3875a927920fb4d1739a9380f03c994"
+      "archive": "s7-1.0.2.zip",
+      "sha256": "54713074ed64408006c6b759b416e356cc2596a616337c9ac1f42c78bd43479c",
+      "tree_sha256": "027295d45a421c8f703ae407058d78f84df3628e10305c11b62cabff7845cad5"
     },
     {
       "id": "ge_srtp",
       "protocol": "ge_srtp",
       "name": "ge_srtp",
       "description": "DataWatch ge_srtp 只读采集驱动",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "publisher": "datawatch",
       "aliases": [
         "ge_srtp"
@@ -45,9 +45,9 @@
         "health_check"
       ],
       "readWriteType": "只读",
-      "archive": "ge_srtp-1.0.0.zip",
-      "sha256": "09dbf503f6c4c632bf5f017690ae10f0de5ee11c2a0733426f1ca6f94abd19d4",
-      "tree_sha256": "cb3b6be24a6578f1f3f053c2239a3ff5ab6c8a81e5d580c08bf7e49809ce6f9e"
+      "archive": "ge_srtp-1.0.1.zip",
+      "sha256": "db36c5375227bd1e7626535724e1549f159040f0bd4c1593f8263dfbc155d949",
+      "tree_sha256": "635f403fce784a8eca07fb9d03c8b9403f0956d7926255e1fbbbb5d46cd768ba"
     },
     {
       "id": "opcua",
@@ -76,7 +76,7 @@
       "protocol": "opcda_center",
       "name": "opcda_center",
       "description": "DataWatch opcda_center 只读采集驱动",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "publisher": "datawatch",
       "aliases": [
         "opcda_center"
@@ -89,9 +89,9 @@
         "source_timestamp"
       ],
       "readWriteType": "只读",
-      "archive": "opcda_center-1.0.1.zip",
-      "sha256": "e954aa8eb33e99ea3459f76f3132c1c054d2bd84d5c548e51859c76aa49b6c5c",
-      "tree_sha256": "1e747b3d40b2ef1cc1b81154b359c0859ecc83a79b991403ab60cd9ae3227322"
+      "archive": "opcda_center-1.0.2.zip",
+      "sha256": "ed316e64612b72a3b504aa4fe4338e16cde46512548900900e723356947f7d69",
+      "tree_sha256": "58cb15ac3df0d0e6b44ce4f53a1c25ad6df780426e41eb9f0588ee38041342e2"
     },
     {
       "id": "modbus_tcp",
@@ -121,5 +121,5 @@
       "public_key": "6E8AnH97GOPkFaq5i5ND4nIsc8ofu4JM7NElZmCHR6w="
     }
   ],
-  "build_id": "5279d9302bd66cea7f8aa1865f23676ed79679be99069d955c8436e7c1bc6bfe"
+  "build_id": "1486f1f4ee1e7c6d92f8a7e6690f4900c385c3a45f4c874906db6891d981e639"
 }

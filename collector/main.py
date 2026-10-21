@@ -485,6 +485,11 @@ class CollectorApp:
         下线处理（删除与禁用同一路径）。每轮只在检测到变更时拉取一次完整快照。
         """
         tracked = None
+        # B044：基线优先取启动时实际装载配置的签名（与装载同一事务）；启动连接设备期间
+        # 源若已更新，首轮即可检出 changed。无该信息（注入的配置源/替身）时回退旧行为。
+        loaded = getattr(self.config_db_manager, "loaded_signatures", None)
+        if isinstance(loaded, dict):
+            tracked = dict(loaded)
         while not self._shutdown.is_set():
             try:
                 if tracked is None:

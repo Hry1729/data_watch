@@ -5,6 +5,7 @@ Python 客户端，通过 TCP 与 x86 代理进程通信。
 
 import asyncio
 import json
+import os
 import threading
 import uuid
 from datetime import datetime
@@ -18,6 +19,8 @@ from .opcda_ipc_protocol import (
     IpcRequest,
     IpcResponse,
     OpcDaReadResult,
+    PROXY_TOKEN_ENV,
+    normalize_proxy_token,
     RequestType,
     create_ping_request,
     create_read_request,
@@ -52,10 +55,15 @@ class OpcDaIpcClient:
         host: str = "127.0.0.1",
         port: int = DEFAULT_PROXY_PORT,
         timeout: float = DEFAULT_REQUEST_TIMEOUT,
+        auth_token: Optional[str] = None,
     ):
         self.host = host
         self.port = port
         self.timeout = timeout
+        # 显式传入优先，否则读环境变量；代理开启 authToken 时每个请求都必须携带。
+        self.auth_token = normalize_proxy_token(
+            auth_token if auth_token is not None else os.environ.get(PROXY_TOKEN_ENV)
+        )
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
@@ -132,6 +140,8 @@ class OpcDaIpcClient:
             if not self.is_connected:
                 raise ConnectionError("未连接到代理进程")
 
+            if self.auth_token and not request.auth_token:
+                request.auth_token = self.auth_token
             # 序列化请求
             request_json = json.dumps(request.to_dict(), ensure_ascii=False)
             request_bytes = request_json.encode("utf-8")
@@ -365,6 +375,7 @@ class OpcDaIpcClientPool:
         self,
         proxy_host: str,
         proxy_port: int = DEFAULT_PROXY_PORT,
+        auth_token: Optional[str] = None,
     ) -> OpcDaIpcClient:
         """
         获取或创建客户端连接
@@ -401,6 +412,7 @@ class OpcDaIpcClientPool:
                 host=proxy_host,
                 port=proxy_port,
                 timeout=self._timeout,
+                auth_token=auth_token,
             )
             await client.connect()
             self._clients[key] = client

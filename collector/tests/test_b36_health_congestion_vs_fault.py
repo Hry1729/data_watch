@@ -127,3 +127,58 @@ async def test_center_collection_proxy_ping_saturation_is_not_a_fault() -> None:
     assert healthy is True
     assert device.status == DeviceStatus.ONLINE
     assert manager._metrics.increments.get("health_check_saturated_count") == 1
+
+
+def _saturated_pool():
+    """容量 1 的真实有界池，并用一个阻塞任务占满；返回 (pool, release)。"""
+    import threading
+
+    from collector.bounded_executor import BoundedThreadPoolExecutor
+
+    pool = BoundedThreadPoolExecutor(name="plc_read_test", max_workers=1, max_pending=1)
+    gate = threading.Event()
+    pool.submit(gate.wait)
+
+    def release():
+        gate.set()
+        pool.shutdown(wait=True)
+
+    return pool, release
+
+
+@pytest.mark.asyncio
+async def test_real_s7_ping_saturated_pool_propagates_and_keeps_connected():
+    """B012：真实 S7Driver.ping 在池饱和时透传 ExecutorSaturatedError，不置 _connected=False。"""
+    from packages.s7.s7.driver import S7Driver
+
+    pool, release = _saturated_pool()
+    try:
+        driver = S7Driver(read_executor=pool)
+        driver._client = object()
+        driver._connected = True
+        with pytest.raises(ExecutorSaturatedError):
+            await driver.ping()
+        assert driver.is_connected is True
+    finally:
+        release()
+
+
+@pytest.mark.asyncio
+async def test_real_s7_driver_saturated_health_check_stays_online():
+    """B012：经 manager.check_device_health 走拥塞分支：ONLINE、connected 不变、计拥塞。"""
+    from packages.s7.s7.driver import S7Driver
+
+    manager, device = _manager_with_online_device()
+    pool, release = _saturated_pool()
+    try:
+        driver = S7Driver(read_executor=pool)
+        driver._client = object()
+        driver._connected = True
+        device.driver = driver
+        assert await manager.check_device_health(device) is True
+        assert device.status == DeviceStatus.ONLINE
+        assert driver.is_connected is True
+        assert manager._metrics.increments.get("health_check_saturated_count") == 1
+        manager._report_device_status.assert_not_awaited()
+    finally:
+        release()

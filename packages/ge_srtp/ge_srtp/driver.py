@@ -133,15 +133,28 @@ class GESRTPDriver(BaseDriver):
         """断开GE PLC的全部独立连接。"""
         drivers = list(self._drivers or ([self._driver] if self._driver else []))
         loop = asyncio.get_running_loop()
+        # 读池饱和时提交被拒绝 ⇒ 底层 disconnect 根本未执行：保留这些通道句柄并透传拥塞，
+        # 让 manager 的拥塞重试再次清理（B040）；只移除真正完成清理（或非拥塞失败）的通道。
+        pending = []
+        saturated = None
         for driver in drivers:
             try:
                 await loop.run_in_executor(self._read_executor, driver.disconnect)
+            except ExecutorSaturatedError as exc:
+                pending.append(driver)
+                saturated = exc
             except Exception as exc:
                 logger.warning("GE SRTP disconnect error: %s", exc)
         self._connected = False
-        self._drivers = []
-        self._driver = None
-        self._set_gauge("ge_srtp_active_channel_count", 0)
+        self._drivers = pending
+        self._driver = pending[0] if pending else None
+        self._set_gauge("ge_srtp_active_channel_count", len(pending))
+        if saturated is not None:
+            logger.warning(
+                "GE SRTP disconnect deferred: %d channel(s) rejected by saturated executor",
+                len(pending),
+            )
+            raise saturated
         logger.info("GE SRTP disconnected")
 
     async def read(self, blocks: List[ReadBlock]) -> Dict[str, Any]:
