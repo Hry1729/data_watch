@@ -197,3 +197,54 @@ def test_detect_uses_consistent_timeouts(monkeypatch):
     monkeypatch.setattr(opcda_detect.pymysql, "connect", fake_connect)
     opcda_detect.detect_center_endpoints(_MYSQL)
     assert captured["connect_timeout"] == captured["read_timeout"] == captured["write_timeout"]
+
+
+def test_save_port_mapping_failure_keeps_previous_mapping_intact(tmp_path, monkeypatch):
+    """B052：写到一半抛 OSError，旧映射仍完整可读，且不残留临时文件。"""
+    path = tmp_path / "opcda_proxy" / "port_mapping.json"
+    old = {"E1": 9090, "E2": 9091}
+    opcda_detect.save_port_mapping(path, old)
+
+    real_open = open
+
+    class _Broken:
+        def __init__(self, f):
+            self._f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self._f.close()
+
+        def write(self, text):
+            self._f.write(text[: len(text) // 2])
+            raise OSError("disk full")
+
+    def broken_open(file, mode="r", *args, **kwargs):
+        f = real_open(file, mode, *args, **kwargs)
+        return _Broken(f) if "w" in mode else f
+
+    monkeypatch.setattr("builtins.open", broken_open)
+    with pytest.raises(OSError):
+        opcda_detect.save_port_mapping(path, {"E1": 9090, "E2": 9091, "E3": 9092})
+    monkeypatch.setattr("builtins.open", real_open)
+
+    assert opcda_detect.load_port_mapping(path) == old
+    assert sorted(p.name for p in path.parent.iterdir()) == [
+        "port_mapping.json",
+        "port_mapping.json.bak",
+    ]
+
+
+def test_load_port_mapping_falls_back_to_last_good_copy(tmp_path):
+    """B052：主文件损坏（如旧版本非原子写中断）时回退 .bak；两者都坏仍 fail-fast。"""
+    path = tmp_path / "port_mapping.json"
+    good = {"E1": 9090}
+    opcda_detect.save_port_mapping(path, good)
+    path.write_text('{"E1": 90', encoding="utf-8")  # 截断的 JSON
+    assert opcda_detect.load_port_mapping(path) == good
+
+    (tmp_path / "port_mapping.json.bak").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError):
+        opcda_detect.load_port_mapping(path)

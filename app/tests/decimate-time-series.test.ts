@@ -30,3 +30,17 @@ test("excessive gap boundaries use a contiguous recent range", () => {
   const rows = Array.from({ length: 3000 }, (_, sampleAt) => ({ sampleAt, v1: sampleAt % 2 ? null : sampleAt }));
   assert.deepEqual(decimateTimeSeries(rows, 600, ["v1"]), rows.slice(-600));
 });
+
+// B063：候选桶从第一个内部桶开始，终点只保留一次
+test("LTTB keeps a spike in the first, middle and last interior bucket without duplicating the end", () => {
+  for (const spikeAt of [1, 1500, 2998]) {
+    const rows = Array.from({ length: 3000 }, (_, sampleAt) => ({ sampleAt, v1: sampleAt === spikeAt ? 100 : 0 }));
+    const result = decimateTimeSeries(rows, 600, ["v1"]);
+    assert.equal(result.length, 600);
+    assert.ok(result.includes(rows[spikeAt]), `spike at ${spikeAt} must survive`);
+    assert.equal(result[0], rows[0]);
+    assert.equal(result.at(-1), rows.at(-1));
+    assert.notEqual(result.at(-2), result.at(-1), "终点不得重复");
+    assert.equal(new Set(result).size, result.length);
+  }
+});

@@ -400,6 +400,9 @@ class EdgeLocalStore:
                     str(device["device_code"]),
                     group_code,
                 )
+                connect_status = self._device_connect_status(
+                    connection, str(device["device_code"])
+                )
         except sqlite3.OperationalError:
             return self._empty_realtime(device_id)
         data = []
@@ -427,7 +430,8 @@ class EdgeLocalStore:
             "deviceCode": str(device["device_code"]),
             "deviceName": str(device["device_code"]),
             "driverName": str(device["protocol"]),
-            "connectStatus": "online" if int(device["status"] or 0) == 1 else "offline",
+            # B049：与设备列表同一 enabled/status/数据时效口径，陈旧缓存不得显示在线。
+            "connectStatus": {1: "online", 2: "unstable"}.get(connect_status, "offline"),
             "lastCollectTime": self._format_ms(last_timestamp),
             "redisConnected": False,
             "degraded": True,
@@ -437,12 +441,34 @@ class EdgeLocalStore:
     def latest_values(self, device_code: str, group_code: str) -> dict[str, Any]:
         if not self.path.exists():
             return {"values": {}, "deviceOffline": True}
+        connect_status = 0
         try:
             with closing(self._connect()) as connection:
                 values = self._read_latest_values(connection, device_code, group_code)
+                try:
+                    connect_status = self._device_connect_status(connection, device_code)
+                except sqlite3.OperationalError:
+                    connect_status = 0
         except sqlite3.OperationalError:
             values = {}
-        return {"values": values, "deviceOffline": not bool(values)}
+        # B049：旧值可展示，但离线/陈旧/禁用必须标记 deviceOffline（与设备列表同口径）。
+        return {"values": values, "deviceOffline": not bool(values) or connect_status == 0}
+
+    def _device_connect_status(self, connection: sqlite3.Connection, device_code: str) -> int:
+        """单设备运行连接状态，复用 _runtime_connect_status（enabled + 数据/状态时效）。"""
+        latest_times = self._latest_times_query(connection)
+        row = connection.execute(
+            f"""
+            SELECT d.enabled, s.status, s.updated_at AS status_updated_at,
+                   (SELECT MAX(ll.updated_at) FROM ({latest_times}) AS ll
+                    WHERE ll.device_code=d.device_code) AS data_updated_at
+            FROM edge_device AS d
+            LEFT JOIN edge_device_status AS s ON s.device_code=d.device_code
+            WHERE d.device_code=?
+            """,
+            (device_code,),
+        ).fetchone()
+        return 0 if row is None else self._runtime_connect_status(row)
 
     def _read_latest_values(
         self,
@@ -527,12 +553,24 @@ class EdgeLocalStore:
                 ).fetchone()[0]
             )
             stride = max(1, math.ceil(count / 5000))
+            # B048：在过滤后的结果集内按行号抽样（不是全局 local_seq 取模），按组分区
+            # 防止多组交错时混叠抽空某组，并保留每组首尾。
+            partition = (
+                "PARTITION BY group_code"
+                if self._has_column(connection, "outbox", "group_code")
+                else ""
+            )
             rows = connection.execute(
-                """
-                SELECT ts, payload FROM outbox
-                WHERE device_code=? AND ts BETWEEN ? AND ?
-                  AND (?=1 OR local_seq % ?=0)
-                ORDER BY ts
+                f"""
+                SELECT ts, payload FROM (
+                    SELECT ts, payload, local_seq,
+                           ROW_NUMBER() OVER ({partition} ORDER BY ts, local_seq) - 1 AS rn,
+                           COUNT(*) OVER ({partition}) AS cnt
+                    FROM outbox
+                    WHERE device_code=? AND ts BETWEEN ? AND ?
+                )
+                WHERE ?=1 OR rn % ?=0 OR rn=cnt-1
+                ORDER BY ts, local_seq
                 """,
                 (device_code, start_ms, end_ms, stride, stride),
             ).fetchall()
@@ -587,12 +625,41 @@ class EdgeLocalStore:
                 """
                 SELECT ts, payload FROM outbox
                 WHERE device_code=? AND ts BETWEEN ? AND ? AND ts>?
-                ORDER BY ts LIMIT ?
+                ORDER BY ts, local_seq LIMIT ?
                 """,
                 (device_code, start_ms, end_ms, cursor, page_size + 1),
             ).fetchall()
-        has_more = len(rows) > page_size
-        consumed = rows[:page_size]
+            has_more = len(rows) > page_size
+            consumed = rows[:page_size]
+            if has_more:
+                # B047：按完整对齐 bucket 分页——同 ts/同 bucket 的记录（不同 group）不得被
+                # 页边界拆开，否则游标 ts>cursor 会永久跳过剩余组或拆出重复行。
+                boundary = self._bucket(int(rows[page_size]["ts"]), granularity_ms)
+                complete = [
+                    row for row in consumed
+                    if self._bucket(int(row["ts"]), granularity_ms) < boundary
+                ]
+                if complete:
+                    consumed = complete
+                else:
+                    # 整页都在同一 bucket：一次取完该 bucket（超出 pageSize 也不拆）。
+                    bucket_end = boundary + granularity_ms - 1
+                    consumed = connection.execute(
+                        """
+                        SELECT ts, payload FROM outbox
+                        WHERE device_code=? AND ts BETWEEN ? AND ? AND ts>? AND ts<=?
+                        ORDER BY ts, local_seq
+                        """,
+                        (device_code, start_ms, end_ms, cursor, bucket_end),
+                    ).fetchall()
+                    has_more = connection.execute(
+                        """
+                        SELECT 1 FROM outbox
+                        WHERE device_code=? AND ts BETWEEN ? AND ? AND ts>?
+                        LIMIT 1
+                        """,
+                        (device_code, start_ms, end_ms, bucket_end),
+                    ).fetchone() is not None
         variable_to_seq = {
             str(row["variable_id"]): int(row["var_seq"]) for row in point_rows
         }
@@ -624,13 +691,29 @@ class EdgeLocalStore:
         return {
             "columns": columns,
             "rows": [matrix[key] for key in sorted(matrix)],
-            "nextCursor": str(consumed[-1]["ts"]) if has_more and consumed else None,
+            # 游标指向最后一个完整 bucket 的末尾毫秒，下一页从下一个 bucket 开始。
+            "nextCursor": (
+                str(self._bucket(int(consumed[-1]["ts"]), granularity_ms) + granularity_ms - 1)
+                if has_more and consumed
+                else None
+            ),
             "meta": {
                 "alignGranularity": granularity,
                 "fillMode": "none",
                 "pageSize": page_size,
             },
         }
+
+    @staticmethod
+    def _bucket(timestamp: int, granularity_ms: int) -> int:
+        return timestamp - timestamp % granularity_ms
+
+    @staticmethod
+    def _has_column(connection: sqlite3.Connection, table: str, column: str) -> bool:
+        return any(
+            row[1] == column
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        )
 
     @staticmethod
     def _empty_realtime(device_id: int) -> dict[str, Any]:

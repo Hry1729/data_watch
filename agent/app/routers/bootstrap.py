@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.config import load_config, save_config
+from app.core.config import load_config, save_config, set_redis_db
 from app.core.role import build_role
 from app.core.security import dpapi_decrypt, dpapi_encrypt
 from app.schemas.models import (
@@ -145,7 +145,14 @@ def _apply_db_section(cfg: dict, section: str, data) -> None:
     if data.user is not None:
         target["user"] = data.user
     if data.database is not None:
-        target["database"] = data.database
+        if section == "redis":
+            # Redis DB 由服务从 [redis].db 读取，database 只是展示镜像
+            try:
+                set_redis_db(target, data.database)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        else:
+            target["database"] = data.database
     if data.password is not None:
         target["password_enc"] = dpapi_encrypt(data.password)
         target.pop("password", None)

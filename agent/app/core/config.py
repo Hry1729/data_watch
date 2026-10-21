@@ -123,6 +123,7 @@ def _load_config_unlocked() -> dict:
         return cfg
     cfg = toml.load(CONFIG_PATH)
     _ensure_jwt_secret_unlocked(cfg)
+    _sync_redis_db_mirror(cfg)
     return cfg
 
 
@@ -268,6 +269,45 @@ def _open_config_temp(path, flags):
             handle.Close()
 
 
+REDIS_DB_INVALID_DETAIL = "Redis DB 必须为非负整数"
+
+
+def set_redis_db(redis_section: dict, value) -> None:
+    """把 Redis DB 写入服务实际读取的 [redis].db（int），并同步 database 展示镜像。
+
+    [redis].db 是唯一权威值（Agent 启动 collector/writer/ingest 时据此下发）；
+    database 仅为 GET /admin/config 回显用的字符串镜像。非法值抛 ValueError（端点转 400）。
+    """
+    if isinstance(value, bool):
+        raise ValueError(REDIS_DB_INVALID_DETAIL)
+    text = str(value).strip()
+    if not text.isdigit():
+        raise ValueError(REDIS_DB_INVALID_DETAIL)
+    db = int(text)
+    redis_section["db"] = db
+    redis_section["database"] = str(db)
+
+
+def _sync_redis_db_mirror(cfg: dict) -> None:
+    """加载时让 [redis].database 镜像反映实际生效的 [redis].db（缺省 0）。
+
+    旧版本把设置页的 DB 只写进 database、从未被服务读取；这里按实际生效值回显，
+    不把旧镜像当成 db（否则重启后会静默切库）。db 非法时不动，由 _stream_contract 报错。
+    """
+    redis = cfg.get("redis")
+    if not isinstance(redis, dict):
+        return
+    raw = redis.get("db", 0)
+    if isinstance(raw, bool):
+        return
+    try:
+        db = int(raw or 0)
+    except (TypeError, ValueError):
+        return
+    if db >= 0:
+        redis["database"] = str(db)
+
+
 def apply_db_patch(cfg: dict, section: str, patch: dict) -> None:
     """对 db section（redis/mysql/tdengine）做 partial update。
 
@@ -278,6 +318,12 @@ def apply_db_patch(cfg: dict, section: str, patch: dict) -> None:
 
     for key in ("host", "port", "user", "database"):
         if key in patch and patch[key] is not None:
+            if section == "redis" and key == "database":
+                # 设置页的 Redis "DB" 走通用 database 字段，但 collector/writer/ingest
+                # 读的是 [redis].db（经 _stream_contract → DATAWATCH_REDIS_DB /
+                # INGEST_REDIS_URL 下发）。必须写到 db，否则保存后不生效。
+                set_redis_db(current, patch[key])
+                continue
             current[key] = patch[key]
 
     if "password" not in patch:
@@ -304,7 +350,7 @@ def _default_config() -> dict:
             "log_level": "INFO",
             "runtime_dir": str(data_root() / "runtime"),
         },
-        "redis": {"host": "127.0.0.1", "port": 6379, "password_enc": ""},
+        "redis": {"host": "127.0.0.1", "port": 6379, "db": 0, "database": "0", "password_enc": ""},
         "mysql": {
             "host": "127.0.0.1",
             "port": 3306,

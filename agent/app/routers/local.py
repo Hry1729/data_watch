@@ -12,7 +12,15 @@ from app.core.config import data_root, load_config, mutate_config
 from app.core.security import dpapi_decrypt, dpapi_encrypt
 from app.core.role import build_role
 from app.services.edge_local_store import EdgeLocalStore
-from app.services.edge_sync import CenterClient, EdgeIdentity, generate_identity, identity_public_key
+from app.services.edge_sync import (
+    CenterClient,
+    CenterRequestError,
+    EdgeIdentity,
+    generate_identity,
+    identity_public_key,
+    identity_rotation_lock,
+    recover_pending_rotation,
+)
 from app.services.process_manager import ProcessManagerError
 from app.services.sidecar_manager import collector_lifecycle
 from app.routers.admin import _uploader_env
@@ -273,6 +281,12 @@ async def rotate_identity(
     _user: str = Depends(get_current_admin),
 ):
     _require_edge()
+    # B016：与后台 pending 恢复串行化，避免并发轮换生成/提交多把 key。
+    async with identity_rotation_lock:
+        return await _rotate_identity(request)
+
+
+async def _rotate_identity(request: Request):
     cfg = load_config()
     edge = cfg.get("edge") or {}
     node_uuid = str(edge.get("node_uuid") or "").strip()
@@ -310,9 +324,21 @@ async def rotate_identity(
 
         mutate_config(save_pending)
     try:
-        result = await CenterClient(center_url, current).rotate_key(
-            replacement.public_key_pem
-        )
+        try:
+            result = await CenterClient(center_url, current).rotate_key(
+                replacement.public_key_pem
+            )
+        except CenterRequestError as exc:
+            # B016：上次轮换中心已提交但响应丢失且旧 key grace 已过 → 旧 key 401；
+            # 用 pending key 签名重放，中心返回 already_rotated 即可完成本地提升。
+            if not pending_private_key or exc.status_code != 401:
+                raise
+            recovered = await recover_pending_rotation(
+                center_url, node_uuid, pending_private_key
+            )
+            if recovered is None:
+                raise exc
+            result = recovered
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"中心密钥轮换失败: {exc}") from exc
 

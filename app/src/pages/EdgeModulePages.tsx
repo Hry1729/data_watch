@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -32,20 +32,35 @@ type EdgeStorageSnapshot = EdgeProcessStatus & { storage: EdgeStorageStatus };
 function useLocalSnapshot<T>(request: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 请求代号：上一次未返回时不重复发起；卸载或 request 变化后迟到的旧响应一律丢弃
+  const generationRef = useRef(0);
+  const inFlightRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (generation: number) => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
-      setData(await request());
+      const next = await request();
+      if (generation !== generationRef.current) return;
+      setData(next);
       setError(null);
     } catch {
+      if (generation !== generationRef.current) return;
       setError("本机运行数据读取失败");
+    } finally {
+      if (generation === generationRef.current) inFlightRef.current = false;
     }
   }, [request]);
 
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 3_000);
-    return () => window.clearInterval(timer);
+    const generation = ++generationRef.current;
+    inFlightRef.current = false;
+    void refresh(generation);
+    const timer = window.setInterval(() => void refresh(generation), 3_000);
+    return () => {
+      window.clearInterval(timer);
+      generationRef.current += 1;
+    };
   }, [refresh]);
 
   return { data, error };

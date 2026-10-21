@@ -6,6 +6,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
@@ -21,6 +22,7 @@ namespace OpcDaProxyService
     internal static class Program
     {
         private static volatile bool _stopping;
+        private static bool _loopbackOnly = true;
         private static ProxyConfig _config;
         private static TcpListener _listener;
         private static readonly List<TcpClient> _activeClients = new List<TcpClient>();
@@ -121,9 +123,20 @@ namespace OpcDaProxyService
             _connectionLimiter = new SemaphoreSlim(maxConnections, maxConnections);
             Log("Max concurrent connections: " + maxConnections);
 
-            _listener = new TcpListener(IPAddress.Any, _config.ListenPort);
+            // B023：默认只监听回环（Collector 只连 127.0.0.1）；显式配置非回环地址时
+            // 必须同时配置 authToken，否则拒绝启动，避免无鉴权暴露到网络。
+            IPAddress listenAddress;
+            if (!IPAddress.TryParse(_config.ListenAddress ?? "", out listenAddress))
+            {
+                throw new InvalidOperationException("Invalid listenAddress: " + _config.ListenAddress);
+            }
+            _loopbackOnly = IPAddress.IsLoopback(listenAddress);
+            ValidateListenSecurity(listenAddress, _config.AuthToken);
+
+            _listener = new TcpListener(listenAddress, _config.ListenPort);
             _listener.Start();
-            Log("Listening on 0.0.0.0:" + _config.ListenPort);
+            Log("Listening on " + listenAddress + ":" + _config.ListenPort +
+                (string.IsNullOrEmpty(_config.AuthToken) ? "" : " (auth token required)"));
 
             StartSummaryLogger();
 
@@ -132,6 +145,14 @@ namespace OpcDaProxyService
                 try
                 {
                     TcpClient client = _listener.AcceptTcpClient();
+
+                    // B023：回环监听时只接受回环来源（纵深防御）。
+                    if (_loopbackOnly && !IsLoopbackClient(client))
+                    {
+                        LogWarn("Connection rejected (non-loopback client): " + client.Client.RemoteEndPoint);
+                        client.Close();
+                        continue;
+                    }
 
                     // 检查并发连接限制
                     if (!_connectionLimiter.Wait(0))
@@ -193,16 +214,27 @@ namespace OpcDaProxyService
 
             NetworkStream stream = null;
             OpcConnectionManager connectionManager = new OpcConnectionManager(_config);
+            bool loopbackClient = IsLoopbackClient(client);
+            int frameTimeoutMs = _config.FrameReadTimeoutMs > 0 ? _config.FrameReadTimeoutMs : 30000;
 
             try
             {
                 stream = client.GetStream();
+                stream.WriteTimeout = frameTimeoutMs;
                 byte[] lengthBuffer = new byte[4];
 
                 while (!_stopping && IsClientConnected(client))
                 {
-                    // 读取消息长度
-                    int bytesRead = ReadExact(stream, lengthBuffer, 0, 4);
+                    // 读取消息长度：首字节可无限等待（长连接空闲），帧内其余字节设读期限，
+                    // 避免只发半帧的连接永久占用并发配额（B023 关联）。
+                    stream.ReadTimeout = Timeout.Infinite;
+                    int bytesRead = ReadExact(stream, lengthBuffer, 0, 1);
+                    if (bytesRead == 0)
+                    {
+                        break; // Connection closed
+                    }
+                    stream.ReadTimeout = frameTimeoutMs;
+                    bytesRead = ReadExact(stream, lengthBuffer, 1, 3);
                     if (bytesRead == 0)
                     {
                         break; // Connection closed
@@ -227,8 +259,16 @@ namespace OpcDaProxyService
                     string messageJson = Encoding.UTF8.GetString(messageBuffer);
                     IpcRequest request = IpcRequest.FromJson(messageJson);
 
+                    // B023：配置了 authToken 时每个请求都必须携带匹配的 auth_token。
+                    if (!IsAuthorized(request))
+                    {
+                        LogWarn("Unauthorized request from " + clientEndpoint + ": " + request.RequestType);
+                        SendResponse(stream, IpcResponse.Fail(request.RequestId, "unauthorized"));
+                        break;
+                    }
+
                     // 处理请求
-                    IpcResponse response = ProcessRequest(request, connectionManager);
+                    IpcResponse response = ProcessRequest(request, connectionManager, loopbackClient);
 
                     // 发送响应
                     SendResponse(stream, response);
@@ -297,6 +337,124 @@ namespace OpcDaProxyService
             }
         }
 
+        private static bool IsLoopbackClient(TcpClient client)
+        {
+            try
+            {
+                IPEndPoint remote = client.Client.RemoteEndPoint as IPEndPoint;
+                return remote != null && IPAddress.IsLoopback(remote.Address);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 审查 R2：ProxyConfig.Load 已把 authToken Trim，纯空白视同未配置；这里再用
+        /// IsNullOrWhiteSpace 兜底，非回环监听 + 空/空白令牌一律拒绝启动。
+        /// </summary>
+        internal static void ValidateListenSecurity(IPAddress listenAddress, string authToken)
+        {
+            if (!IPAddress.IsLoopback(listenAddress) && string.IsNullOrWhiteSpace(authToken))
+            {
+                throw new InvalidOperationException(
+                    "listenAddress " + listenAddress + " is not loopback; a non-blank authToken must be configured");
+            }
+        }
+
+        private static bool IsAuthorized(IpcRequest request)
+        {
+            return IsTokenAuthorized(_config.AuthToken, request.AuthToken);
+        }
+
+        /// <summary>
+        /// 审查 R2：令牌校验。expected 为空/纯空白 = 未启用鉴权（仅允许回环监听，见 StartListener）；
+        /// 启用时请求令牌 Trim 后为空直接拒绝，否则对两侧 SHA-256 摘要做定长常量时间比较
+        /// （摘要等长，不泄露长度，也不按字节早退）。
+        /// </summary>
+        internal static bool IsTokenAuthorized(string expectedToken, string actualToken)
+        {
+            string expected = NormalizeToken(expectedToken);
+            if (expected.Length == 0)
+            {
+                return true;
+            }
+            string actual = NormalizeToken(actualToken);
+            if (actual.Length == 0)
+            {
+                return false;
+            }
+            byte[] a;
+            byte[] b;
+            using (SHA256 sha = SHA256.Create())
+            {
+                a = sha.ComputeHash(Encoding.UTF8.GetBytes(expected));
+                b = sha.ComputeHash(Encoding.UTF8.GetBytes(actual));
+            }
+            int diff = 0;
+            for (int i = 0; i < a.Length; i++)
+            {
+                diff |= a[i] ^ b[i];
+            }
+            return diff == 0;
+        }
+
+        internal static string NormalizeToken(string token)
+        {
+            return (token ?? "").Trim();
+        }
+
+        private static string NormalizeVmHost(string vmHost)
+        {
+            string host = (vmHost ?? "").Trim();
+            if (host.Length == 0
+                || host == "."
+                || host == "127.0.0.1"
+                || string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                return "";
+            }
+            return host.ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// B023：connect/read 的目标 vm_host 必须属于配置的 opcServers（配置为空时不限制，兼容旧配置）。
+        /// opc_server 来自中心 comm_protocol.server，可能与 Agent 配置的 serverProgId 不同，仅告警不拒绝。
+        /// </summary>
+        private static string CheckTargetAllowed(string opcServer, string vmHost)
+        {
+            if (_config.OpcServers == null || _config.OpcServers.Count == 0)
+            {
+                return null;
+            }
+            string host = NormalizeVmHost(vmHost);
+            bool hostAllowed = false;
+            bool progIdKnown = false;
+            foreach (OpcServerConfig server in _config.OpcServers)
+            {
+                if (NormalizeVmHost(server.VmHost) != host)
+                {
+                    continue;
+                }
+                hostAllowed = true;
+                if (string.IsNullOrEmpty(server.ServerProgId)
+                    || string.Equals(server.ServerProgId, opcServer, StringComparison.OrdinalIgnoreCase))
+                {
+                    progIdKnown = true;
+                }
+            }
+            if (!hostAllowed)
+            {
+                return "vm_host not allowed by proxy config: " + (vmHost ?? "");
+            }
+            if (!progIdKnown)
+            {
+                LogWarnThrottled("progid:" + opcServer, "opc_server " + opcServer + " differs from configured serverProgId for vm_host " + (vmHost ?? ""));
+            }
+            return null;
+        }
+
         private static int ReadExact(NetworkStream stream, byte[] buffer, int offset, int count)
         {
             int totalRead = 0;
@@ -324,7 +482,7 @@ namespace OpcDaProxyService
             stream.Flush();
         }
 
-        private static IpcResponse ProcessRequest(IpcRequest request, OpcConnectionManager connectionManager)
+        private static IpcResponse ProcessRequest(IpcRequest request, OpcConnectionManager connectionManager, bool loopbackClient)
         {
             try
             {
@@ -343,6 +501,11 @@ namespace OpcDaProxyService
                         return ProcessRead(request, connectionManager);
 
                     case "shutdown":
+                        // B023：停服只允许本机管理通道发起。
+                        if (!loopbackClient)
+                        {
+                            return IpcResponse.Fail(request.RequestId, "shutdown is only allowed from loopback");
+                        }
                         _stopping = true;
                         return IpcResponse.Ok(request.RequestId, new { message = "Shutting down" });
 
@@ -373,6 +536,11 @@ namespace OpcDaProxyService
             if (string.IsNullOrEmpty(opcServer))
             {
                 return IpcResponse.Fail(request.RequestId, "opc_server is required");
+            }
+            string denied = CheckTargetAllowed(opcServer, vmHost);
+            if (denied != null)
+            {
+                return IpcResponse.Fail(request.RequestId, denied);
             }
 
             bool connected = connectionManager.Connect(opcServer, vmHost, updateRateMs);
@@ -427,6 +595,15 @@ namespace OpcDaProxyService
             string vmHost = payload.ContainsKey("vm_host")
                 ? Convert.ToString(payload["vm_host"])
                 : null;
+
+            if (!string.IsNullOrEmpty(opcServer))
+            {
+                string denied = CheckTargetAllowed(opcServer, vmHost);
+                if (denied != null)
+                {
+                    return IpcResponse.Fail(request.RequestId, denied);
+                }
+            }
 
             LogDebug("HandleReadItems begin: count=" + itemIds.Count + ", opc_server=" + opcServer + ", vm_host=" + vmHost + ", first_item=" + itemIds[0]);
             List<Dictionary<string, object>> results = connectionManager.ReadItems(itemIds, opcServer, vmHost);
@@ -552,6 +729,7 @@ namespace OpcDaProxyService
     {
         public string RequestId { get; set; }
         public string RequestType { get; set; }
+        public string AuthToken { get; set; }
         public Dictionary<string, object> Payload { get; set; }
 
         public static IpcRequest FromJson(string json)
@@ -567,6 +745,7 @@ namespace OpcDaProxyService
             {
                 RequestId = Convert.ToString(dict["request_id"]),
                 RequestType = Convert.ToString(dict["request_type"]),
+                AuthToken = dict.ContainsKey("auth_token") ? Convert.ToString(dict["auth_token"]) : null,
                 Payload = payload ?? new Dictionary<string, object>()
             };
         }
@@ -634,6 +813,9 @@ namespace OpcDaProxyService
         public int MaxConnections { get; set; }  // 最大并发连接数
         public string LogLevel { get; set; }  // INFO（默认，简略）/ DEBUG（逐点全量）
         public int LogSummaryIntervalSec { get; set; }  // 非 DEBUG 下聚合统计打印间隔（秒）
+        public string ListenAddress { get; set; }  // B023：监听地址，默认 127.0.0.1
+        public string AuthToken { get; set; }  // B023：预共享令牌；非回环监听时必填
+        public int FrameReadTimeoutMs { get; set; }  // 帧内读/写期限（毫秒）
 
         public static ProxyConfig Load(string path)
         {
@@ -652,6 +834,15 @@ namespace OpcDaProxyService
             config.MaxConnections = dict.ContainsKey("maxConnections") ? Convert.ToInt32(dict["maxConnections"]) : 20;
             config.LogLevel = dict.ContainsKey("logLevel") ? Convert.ToString(dict["logLevel"]) : "INFO";
             config.LogSummaryIntervalSec = dict.ContainsKey("logSummaryIntervalSec") ? Convert.ToInt32(dict["logSummaryIntervalSec"]) : 10;
+            config.ListenAddress = dict.ContainsKey("listenAddress") ? Convert.ToString(dict["listenAddress"]) : "127.0.0.1";
+            if (string.IsNullOrWhiteSpace(config.ListenAddress))
+            {
+                config.ListenAddress = "127.0.0.1";
+            }
+            // 审查 R2：Trim；纯空白令牌视同未配置（非回环监听时 StartListener 会拒绝启动）。
+            config.AuthToken = Program.NormalizeToken(
+                dict.ContainsKey("authToken") ? Convert.ToString(dict["authToken"]) : "");
+            config.FrameReadTimeoutMs = dict.ContainsKey("frameReadTimeoutMs") ? Convert.ToInt32(dict["frameReadTimeoutMs"]) : 30000;
 
             config.OpcServers = new List<OpcServerConfig>();
             ArrayList servers = dict.ContainsKey("opcServers") ? dict["opcServers"] as ArrayList : null;

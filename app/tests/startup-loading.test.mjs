@@ -29,5 +29,7 @@ for (const scenario of ["configured", "bootstrap", "config-failed", "agent-faile
     assert.equal(deciding, false);
     assert.equal(destination, scenario === "bootstrap" ? "/bootstrap" : scenario === "agent-failed" ? "/error" : null);
     if (scenario === "configured") assert.equal(base, "http://test");
+    // B056：引导期间不得固定 Agent 默认占位地址，否则引导完成后无法改用远程 Backend
+    if (scenario === "bootstrap") assert.equal(base, null);
   });
 }

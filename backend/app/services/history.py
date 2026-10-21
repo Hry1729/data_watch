@@ -28,6 +28,91 @@ DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 
+# TDengine 3.x 错误码（taosdata/TDengine include/util/taoserror.h + source/util/src/terror.c）。
+# 只有这些码表示「对象确实不存在」，历史查询可静默回退到下一种 schema；其余一律视为故障（B032）。
+_TD_TABLE_MISSING_CODES = frozenset({
+    0x2603,  # TSDB_CODE_PAR_TABLE_NOT_EXIST  "Table does not exist"
+    0x0618,  # TSDB_CODE_TDB_TABLE_NOT_EXIST  "Table does not exist"
+    0x0362,  # TSDB_CODE_MND_STB_NOT_EXIST    "STable does not exist"
+    0x061A,  # TSDB_CODE_TDB_STB_NOT_EXIST    "Stable does not exist"
+})
+_TD_SCHEMA_MISSING_CODES = _TD_TABLE_MISSING_CODES | frozenset({
+    0x2602,  # TSDB_CODE_PAR_INVALID_COLUMN   "Invalid column name"
+    0x036C,  # TSDB_CODE_MND_COLUMN_NOT_EXIST "Column does not exist"
+    0x0526,  # TSDB_CODE_VND_COL_NOT_EXISTS   "Table column does not exist"
+    0x0388,  # TSDB_CODE_MND_DB_NOT_EXIST     "Database does not exist"（3.0 为 "Database not exist"）
+})
+# 0x2662 TSDB_CODE_PAR_GET_META_ERROR "Failed to get table info, error: <原因>" 只是包装，
+# 原因可能是网络/权限，必须看原因文本；0x2616 PAR_DB_NOT_SPECIFIED 是配置错误，不算缺表。
+_TD_GET_META_ERROR_CODE = 0x2662
+_TD_CODE_RE = re.compile(r"\[\s*0x([0-9a-fA-F]{4,8})\s*\]")
+_TD_TABLE_MISSING_MESSAGES = (
+    "table does not exist",
+    "stable does not exist",
+    "table not exist",
+    "stable not exist",
+)
+_TD_SCHEMA_MISSING_MESSAGES = _TD_TABLE_MISSING_MESSAGES + (
+    "invalid column name",
+    "column does not exist",
+    "table column does not exist",
+    "database does not exist",
+    "database not exist",
+)
+
+
+def _td_error_root(exc: BaseException) -> BaseException:
+    """SQLAlchemy 池路径把驱动异常包在 DBAPIError.orig 里，且 str() 会附带 SQL 文本；取驱动原始异常。"""
+    orig = getattr(exc, "orig", None)
+    return orig if isinstance(orig, BaseException) else exc
+
+
+def _td_error_code(exc: BaseException) -> int | None:
+    if not isinstance(exc, OSError):  # OSError.errno 是系统 errno，不是 TDengine 码
+        errno = getattr(exc, "errno", None)
+        if isinstance(errno, int) and not isinstance(errno, bool) and errno not in (0, -1):
+            return errno & 0xFFFF
+    match = _TD_CODE_RE.search(str(exc))
+    if match:
+        return int(match.group(1), 16) & 0xFFFF
+    return None
+
+
+def _td_core_message(text: str) -> str:
+    """去掉 "[0x2603]"、"Internal error:"、反引号等包装，得到 TDengine 原始错误文本（小写）。"""
+    core = _TD_CODE_RE.sub(" ", text).strip().lower()
+    core = core.lstrip(":").strip()
+    if core.startswith("internal error:"):
+        core = core[len("internal error:"):]
+    return core.strip().strip("`'\" ").strip()
+
+
+def _td_message_matches(core: str, messages: tuple[str, ...]) -> bool:
+    # 必须整句等于 TDengine 的错误文本（允许 ": <对象名>" 后缀），避免 "timeout ... table" 之类误判。
+    return any(core == message or core.startswith(f"{message}:") for message in messages)
+
+
+def _is_tdengine_missing_error(exc: BaseException, *, codes: frozenset[int], messages: tuple[str, ...]) -> bool:
+    root = _td_error_root(exc)
+    code = _td_error_code(root)
+    if code == _TD_GET_META_ERROR_CODE:
+        detail = _td_core_message(str(root)).split("error:", 1)
+        return len(detail) == 2 and _td_message_matches(_td_core_message(detail[1]), messages)
+    if code is not None:
+        return code in codes
+    return _td_message_matches(_td_core_message(str(root)), messages)
+
+
+def is_tdengine_table_missing_error(exc: BaseException) -> bool:
+    """仅「表/超级表不存在」。"""
+    return _is_tdengine_missing_error(exc, codes=_TD_TABLE_MISSING_CODES, messages=_TD_TABLE_MISSING_MESSAGES)
+
+
+def is_tdengine_schema_missing_error(exc: BaseException) -> bool:
+    """表/超级表/列/库不存在。"""
+    return _is_tdengine_missing_error(exc, codes=_TD_SCHEMA_MISSING_CODES, messages=_TD_SCHEMA_MISSING_MESSAGES)
+
+
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -303,9 +388,13 @@ class HistoryService:
             calc_interval = interval
 
         record_budget = self._record_budget()
-        async def fetch_point(point, limit):
+
+        def point_agg_func(point) -> str:
             is_bool = str(point.var_type).lower() == "bool"
-            agg_func = self._map_aggregate_function("last" if is_bool else aggregate)
+            return self._map_aggregate_function("last" if is_bool else aggregate)
+
+        async def fetch_point(point, limit):
+            agg_func = point_agg_func(point)
             return await self._fetch_downsampled_series(
                 device, point, start_dt, end_dt, calc_interval, agg_func, limit=limit,
             )
@@ -327,10 +416,13 @@ class HistoryService:
         series_payload = []
         for point, rows in zip(points, series_results):
             data_points = []
+            agg_func = point_agg_func(point)
             for ts, value in rows:
                 ts_dt = self._coerce_datetime(ts)
                 if ts_dt:
-                    normalized_value = self._normalize_point_value(point.var_type, value)
+                    normalized_value = self._normalize_aggregate_value(
+                        point.var_type, agg_func, value,
+                    )
                     # 对于图表数据，我们更倾向于使用实际的 null 而非 "-"
                     # 但 _normalize_point_value 对 None 返回 "-"
                     # 如果值为 "-" 则转回 None，让前端处理缺口
@@ -557,27 +649,13 @@ class HistoryService:
 
     @staticmethod
     def _is_quality_table_missing_error(exc: BaseException) -> bool:
-        """识别 TDengine/驱动「表不存在」类错误，供质量窄表缺表降级。"""
-        text = str(exc).lower()
-        needles = (
-            "table does not exist",
-            "table not exist",
-            "does not exist",
-            "not found",
-            "no such table",
-            "unknown table",
-        )
-        # 仅当消息同时暗示 table/表 时，才把 not found 视为缺表，避免误吞连接错误
-        if "table" in text or "表" in str(exc):
-            return any(n in text for n in needles)
-        return False
+        """质量窄表缺表降级：只认 TDengine「表不存在」错误码/原文，其余故障上抛（B032）。"""
+        return is_tdengine_table_missing_error(exc)
 
-    @classmethod
-    def _is_point_schema_missing_error(cls, exc: BaseException) -> bool:
-        return cls._is_quality_table_missing_error(exc) or any(message in str(exc).lower() for message in (
-            "invalid column name", "unknown column", "column does not exist", "column not exist",
-            "column not found", "database does not exist", "database not exist", "unknown database",
-        ))
+    @staticmethod
+    def _is_point_schema_missing_error(exc: BaseException) -> bool:
+        """表/超级表/列/库不存在才算兼容回退；超时、权限、连接、元数据获取失败等一律算故障。"""
+        return is_tdengine_schema_missing_error(exc)
 
     def _resolve_quality_child_table_name(self, device_code: str) -> str:
         """质量窄表子表名，与 writer.quality_schema.quality_child_table_name 一致。"""
@@ -643,6 +721,8 @@ class HistoryService:
 
         database_name = self._resolve_current_tdengine_database()
         legacy_database_name = self._resolve_tdengine_database(device)
+        query_succeeded = False
+        query_errors: list[Exception] = []
 
         # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
@@ -660,6 +740,7 @@ class HistoryService:
                     f"ORDER BY ts ASC LIMIT {limit}"
                 )
                 rows = await self.tdengine.fetch_all(query, database=database_name)
+                query_succeeded = True
                 if rows:
                     return self._filter_bucket_rows(rows)
             except ValueError as exc:
@@ -668,6 +749,7 @@ class HistoryService:
                     point.td_column_name, device.device_code, exc,
                 )
             except Exception as exc:
+                query_errors.append(exc)
                 logger.warning(
                     "[history] bucket child query failed device=%s point=%s: %s",
                     device.device_code, point.point_id, exc,
@@ -697,7 +779,9 @@ class HistoryService:
             )
             try:
                 rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
+                query_succeeded = True
             except Exception as exc:
+                query_errors.append(exc)
                 logger.warning("[history] bucket query failed table=%s: %s", candidate_table_name, exc)
                 continue
             if rows:
@@ -730,12 +814,17 @@ class HistoryService:
         for statement in stable_statements:
             try:
                 rows = await self.tdengine.fetch_all(statement, database=legacy_database_name)
+                query_succeeded = True
             except Exception as exc:
+                query_errors.append(exc)
                 logger.warning("[history] stable bucket query failed device=%s point=%s: %s", device.device_code, point.point_id, exc)
                 continue
             if rows:
                 return self._filter_bucket_rows(rows)
 
+        await self._raise_for_series_query_errors(
+            device, query_succeeded, query_errors, "raw_matrix_bucket",
+        )
         return {}
 
     async def get_raw_matrix_data(
@@ -763,7 +852,8 @@ class HistoryService:
             cursor_dt = self._parse_datetime(cursor_ts, "cursorTs")
             aligned_cursor = self._align_to_bucket(cursor_dt, align_granularity)
             start_dt = aligned_cursor + timedelta(milliseconds=bucket_ms)
-            if start_dt >= end_dt:
+            # 桶查询是闭区间 ts <= end，恰好落在 endTime 的终点桶仍需查询（B034）。
+            if start_dt > end_dt:
                 return {
                     "columns": columns,
                     "rows": [],
@@ -794,11 +884,18 @@ class HistoryService:
         )
 
         for point, point_map in zip(points, point_maps, strict=False):
-            if isinstance(point_map, Exception):
+            if isinstance(point_map, BaseException):
                 logger.warning(
                     "[history] raw matrix bucket query failed device=%s var_seq=%s: %s",
                     device.device_code, point.var_seq, point_map,
                 )
+        # 任一点位查询失败都不能把残缺矩阵当成功返回（B032）。
+        for point_map in point_maps:
+            if isinstance(point_map, ApiError):
+                raise point_map
+        for point_map in point_maps:
+            if isinstance(point_map, BaseException):
+                raise ApiError(503, "History data source unavailable", status_code=503) from point_map
 
         if not any(isinstance(point_map, dict) and point_map for point_map in point_maps):
             await self._raise_if_tdengine_unavailable("raw_matrix", device.device_code)
@@ -928,6 +1025,8 @@ class HistoryService:
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
         td_interval = self._to_tdengine_interval(interval)
+        query_succeeded = False
+        query_errors: list[Exception] = []
 
         # 当前 writer schema：device_data.<device_code> 列 <td_column_name>。
         if point.td_column_name:
@@ -945,6 +1044,7 @@ class HistoryService:
                     f"ORDER BY ts ASC{self._sql_limit(limit)}"
                 )
                 rows = await self.tdengine.fetch_all(query, database=database_name)
+                query_succeeded = True
                 if rows:
                     return rows
             except ValueError as exc:
@@ -953,6 +1053,7 @@ class HistoryService:
                     point.td_column_name, device.device_code, exc,
                 )
             except Exception as exc:
+                query_errors.append(exc)
                 logger.warning(
                     "[history] downsample child query failed device=%s point=%s: %s",
                     device.device_code, point.point_id, exc,
@@ -976,9 +1077,11 @@ class HistoryService:
 
         try:
             rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
+            query_succeeded = True
             if rows:
                 return rows
         except Exception as exc:
+            query_errors.append(exc)
             logger.warning("[history] downsample subtable query failed table=%s: %s", subtable_name, exc)
 
         stable_name = self.tdengine.qualify_table(
@@ -996,13 +1099,39 @@ class HistoryService:
 
         try:
             rows = await self.tdengine.fetch_all(query, database=legacy_database_name)
-            return rows
+            query_succeeded = True
+            if rows:
+                return rows
         except Exception as exc:
+            query_errors.append(exc)
             logger.warning(
                 "[history] downsample stable query failed device=%s point=%s: %s",
                 device.device_code, point.point_id, exc,
             )
-            return []
+        await self._raise_for_series_query_errors(
+            device, query_succeeded, query_errors, "downsampled_series",
+        )
+        return []
+
+    async def _raise_for_series_query_errors(
+        self,
+        device: HistoryDevice,
+        query_succeeded: bool,
+        query_errors: list[Exception],
+        context: str,
+    ) -> None:
+        """无数据时区分「确实为空」与「查询故障」（B032）。
+
+        仅表/列/库不存在属于兼容回退；超时、权限、连接等错误必须传播为 503，
+        不能把单点故障当作该点无数据而让整个请求成功返回。
+        """
+        infra_errors = [
+            exc for exc in query_errors if not self._is_point_schema_missing_error(exc)
+        ]
+        if infra_errors:
+            raise ApiError(503, "History data source unavailable", status_code=503) from infra_errors[-1]
+        if not query_succeeded and query_errors:
+            await self._raise_if_tdengine_unavailable(context, device.device_code)
 
     async def export_history_csv(
         self,
@@ -1109,6 +1238,7 @@ class HistoryService:
                 
                 while current_start < end_dt:
                     current_end = min(current_start + chunk_delta, end_dt)
+                    is_last_chunk = current_end >= end_dt
                     remaining = max(0, record_budget - records_fetched)
 
                     # Fetch points sequentially with the remaining budget;
@@ -1123,6 +1253,7 @@ class HistoryService:
                                 current_start,
                                 current_end,
                                 limit=fetch_limit,
+                                end_inclusive=is_last_chunk,
                             )
                         except Exception as exc:
                             raise ApiError(503, "History export data source unavailable") from exc
@@ -1369,11 +1500,14 @@ class HistoryService:
         start_dt: datetime,
         end_dt: datetime,
         limit: int | None = None,
+        end_inclusive: bool = True,
     ) -> list[tuple[Any, Any]]:
         database_name = self._resolve_current_tdengine_database()
         legacy_database_name = self._resolve_tdengine_database(device)
         start_sql = self._format_sql_timestamp(start_dt)
         end_sql = self._format_sql_timestamp(end_dt)
+        # 分块导出时除最后一块外用半开区间 [start, end)，避免边界样本重复（B030）。
+        end_op = "<=" if end_inclusive else "<"
         query_succeeded = False
         query_errors: list[Exception] = []
 
@@ -1388,7 +1522,7 @@ class HistoryService:
                 rows = await self.tdengine.fetch_all(
                     (
                         f"SELECT ts, {col} FROM {child_table} "
-                        f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                        f"WHERE ts >= {start_sql} AND ts {end_op} {end_sql} "
                         f"ORDER BY ts ASC{self._sql_limit(limit)}"
                     ),
                     database=database_name,
@@ -1429,7 +1563,7 @@ class HistoryService:
                 rows = await self.tdengine.fetch_all(
                     (
                         f"SELECT ts, `value` FROM {table_name} "
-                        f"WHERE ts >= {start_sql} AND ts <= {end_sql} "
+                        f"WHERE ts >= {start_sql} AND ts {end_op} {end_sql} "
                         f"ORDER BY ts ASC{self._sql_limit(limit)}"
                     ),
                     database=legacy_database_name,
@@ -1453,7 +1587,7 @@ class HistoryService:
                 (
                     f"SELECT ts, `value` FROM {stable_name} "
                     f"WHERE var_seq = {int(point.var_seq)} "
-                    f"AND ts >= {start_sql} AND ts <= {end_sql} "
+                    f"AND ts >= {start_sql} AND ts {end_op} {end_sql} "
                     f"ORDER BY ts ASC{self._sql_limit(limit)}"
                 )
             )
@@ -1461,7 +1595,7 @@ class HistoryService:
             (
                 f"SELECT ts, `value` FROM {stable_name} "
                 f"WHERE variable_id = {point.point_id} "
-                f"AND ts >= {start_sql} AND ts <= {end_sql} "
+                f"AND ts >= {start_sql} AND ts {end_op} {end_sql} "
                 f"ORDER BY ts ASC{self._sql_limit(limit)}"
             )
         )
@@ -1560,6 +1694,18 @@ class HistoryService:
         """将 TDengine SQL 时间戳格式化为 Unix 毫秒。"""
         local_value = value if value.tzinfo is not None else value.replace(tzinfo=LOCAL_TZ)
         return str(int(local_value.timestamp() * 1000))
+
+    def _normalize_aggregate_value(
+        self, var_type: str | None, agg_func: str, value: Any,
+    ) -> str | int | float:
+        """按聚合结果类型归一：AVG 结果是浮点，不能沿用原始整数点位的截断规则。"""
+        if agg_func == "AVG" and value is not None and (var_type or "").upper() != "BOOL":
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return self._normalize_point_value(var_type, value)
+            return int(numeric_value) if numeric_value.is_integer() else numeric_value
+        return self._normalize_point_value(var_type, value)
 
     def _normalize_point_value(self, var_type: str | None, value: Any) -> str | int | float:
         if value is None:

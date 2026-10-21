@@ -135,6 +135,35 @@ async def test_storage_retries_failed_recovery_from_stopped_state(tmp_path, monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wanted", [True, False])
+async def test_storage_recovers_from_initial_stopped_state_without_pid(tmp_path, monkeypatch, wanted):
+    """B014：首启失败后无 PID → stopped；wanted=true 时下一轮恢复须自动拉起，wanted=false 不得重启。"""
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app import factory
+    status = SimpleNamespace(status="stopped")
+    attempts = []
+    async def restart(*args, **kwargs):
+        attempts.append(1)
+        status.status = "running"
+    delays = []
+    async def sleep(delay):
+        delays.append(delay)
+        if len(delays) == 4:
+            raise asyncio.CancelledError()
+    monkeypatch.setattr(factory.asyncio, "sleep", sleep)
+    monkeypatch.setattr(factory, "_storage_env", lambda: {})
+    pm = SimpleNamespace(wants_running=lambda *a, **k: wanted, status=lambda name: status, restart=restart, log_file=lambda name: tmp_path / "current.log")
+    app = SimpleNamespace(state=SimpleNamespace(pm=pm, edge_storage=SimpleNamespace(wait_ready=lambda: None), log_manager=MagicMock()))
+    with pytest.raises(asyncio.CancelledError):
+        await factory._recover_edge_storage(app)
+    assert len(attempts) == (1 if wanted else 0)
+    assert status.status == ("running" if wanted else "stopped")
+    assert app.state._storage_recovery_pending is False
+
+
+@pytest.mark.asyncio
 async def test_recovery_restores_real_crashed_writer_and_stops_on_user_request(make_pm, monkeypatch):
     import asyncio
     from dataclasses import replace

@@ -83,16 +83,20 @@ export default function PointManagementPage() {
   const pickerDevices = devicePicker.data?.list ?? [];
   const formDevicePicker = useDevicePicker(backendClient, formDeviceSearch, "all", dialogOpen);
   const devices = formDevicePicker.data?.list ?? [];
-  const loadPoints = useCallback((token: string, signal: AbortSignal) => backendClient.pointList(token, {
-    pageNo: page,
-    pageSize,
+  // 列表与导出共用同一组筛选条件，避免导出范围大于当前列表
+  const pointFilter = useMemo(() => ({
     keyword: keyword.trim() || undefined,
     deviceType: activeType === "all" ? undefined : activeType,
     connectStatus: connectStatus === "all" ? undefined : connectStatus,
     deviceId: deviceId === "all" ? undefined : Number(deviceId),
     deviceCode: deviceCodeFilter.trim() || undefined,
     dataType: dataTypeFilter === "all" ? undefined : dataTypeFilter,
-  }, signal), [activeType, connectStatus, dataTypeFilter, deviceCodeFilter, deviceId, keyword, page, pageSize]);
+  }), [activeType, connectStatus, dataTypeFilter, deviceCodeFilter, deviceId, keyword]);
+  const loadPoints = useCallback((token: string, signal: AbortSignal) => backendClient.pointList(token, {
+    pageNo: page,
+    pageSize,
+    ...pointFilter,
+  }, signal), [page, pageSize, pointFilter]);
   const points = useBackendQuery(loadPoints);
   const routeDeviceCode = searchParams.get("deviceCode");
   const loadRouteDevice = useCallback((token: string, signal: AbortSignal) => backendClient.deviceList(token, {
@@ -173,12 +177,7 @@ export default function PointManagementPage() {
     if (!auth?.backendToken) return;
     setTransferring(true);
     try {
-      const file = await backendClient.exportPoints(auth.backendToken, {
-        keyword: keyword.trim() || undefined,
-        deviceId: deviceId === "all" ? undefined : Number(deviceId),
-        deviceCode: deviceCodeFilter.trim() || undefined,
-        dataType: dataTypeFilter === "all" ? undefined : dataTypeFilter,
-      }, template);
+      const file = await backendClient.exportPoints(auth.backendToken, { ...pointFilter }, template);
       saveDownload(file.bytes, file.fileName);
       toast.success(template ? "点位导入模板已下载" : "点位列表已导出");
     } catch { toast.error(template ? "模板下载失败" : "点位导出失败"); } finally { setTransferring(false); }

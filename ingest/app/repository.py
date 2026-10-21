@@ -60,6 +60,11 @@ class ValidationDecision:
             reason=reason,
         )
 
+    @classmethod
+    def retry_later(cls, reason: str) -> "ValidationDecision":
+        """负判断只来自未能权威确认的缓存（重读被限流）：不消费，让边缘稍后重试。"""
+        return cls(action="retry_later", status_override="retry_later", reason=reason)
+
 
 class IngestRepository(Protocol):
     async def get_approved_node_public_keys(self, node_uuid: str) -> list[str]: ...
@@ -292,6 +297,20 @@ class MySQLIngestRepository:
                 mapped,
                 fetched_mappings,
             )
+            # B026：重读被限流时，剩下的「可重读」驳回仍只是旧缓存的结论，不能永久化。
+            # 只有本次请求里权威读过（缓存未命中或强制重读）的命名空间才允许 rejected_consumed。
+            for index, item, _ in valid:
+                decision = decisions[index]
+                if decision is None or decision.reason not in _REREADABLE_REASONS:
+                    continue
+                if decision.reason in _MAPPING_REREADABLE_REASONS:
+                    verified = (item.device_code, item.group_code) in fetched_mappings
+                else:
+                    verified = (
+                        item.device_code, item.group_code, item.assignment_epoch
+                    ) in fetched_assignments
+                if not verified:
+                    decisions[index] = ValidationDecision.retry_later(decision.reason)
 
         return [
             decision or ValidationDecision.reject("malformed_envelope")
@@ -353,6 +372,7 @@ class MySQLIngestRepository:
             mapping_keys, force_keys=mapping_keys
         )
         mapped.update(refreshed_mappings)
+        fetched_mappings.update(mapping_keys)
         self._revalidate_reasons(
             node_uuid, valid, decisions, assignments, mapped, _MAPPING_REREADABLE_REASONS
         )
@@ -385,6 +405,7 @@ class MySQLIngestRepository:
             assignment_keys, force_keys=assignment_keys
         )
         assignments.update(refreshed_assignments)
+        fetched_assignments.update(assignment_keys)
         self._revalidate_reasons(
             node_uuid, valid, decisions, assignments, mapped, _ASSIGNMENT_REREADABLE_REASONS
         )
@@ -624,11 +645,22 @@ class MySQLIngestRepository:
                 if item.qualities is not None
                 else value_ids
             )
+            # B029：latest_* 旁路键与历史键走同一成员校验（授权映射内的点位）。
+            latest_ids = {
+                int(value)
+                for mapping in (
+                    item.latest_values,
+                    item.latest_qualities,
+                    item.latest_timestamps,
+                )
+                if mapping is not None
+                for value in mapping
+            }
         except (TypeError, ValueError):
             return None
         if value_ids != quality_ids:
             return None
-        return value_ids
+        return value_ids | latest_ids
 
     async def _mapped_point_ids(
         self,

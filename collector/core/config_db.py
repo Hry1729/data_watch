@@ -79,6 +79,9 @@ class ConfigDBManager:
         self._cache_lock = threading.RLock()
         self._watch_task: Optional[asyncio.Task] = None
         self._config_changed_callbacks: List[Callable[[CollectorConfig], None]] = []
+        # B044：最近一次 load_devices_and_variables 实际装载的设备签名（与装载数据同一事务读取），
+        # 供热更新循环作为"已应用"基线，而不是把"启动结束时的源版本"当已应用。
+        self.loaded_signatures: Optional[Dict[str, DeviceSignature]] = None
 
     async def _ensure_pool(self) -> aiomysql.Pool:
         pool = self._pool
@@ -265,6 +268,9 @@ class ConfigDBManager:
                     """,
                 )
 
+                self.loaded_signatures = {
+                    row["device_code"]: self._signature_from_row(row) for row in device_rows
+                }
                 if not device_rows:
                     await conn.commit()
                     logger.warning(
@@ -619,16 +625,20 @@ class ConfigDBManager:
             """
         )
         return {
-            row["device_code"]: DeviceSignature(
-                config_version=int(row["variable_config_version"] or 1),
-                endpoint=str(row["endpoint"] or ""),
-                protocol_id=int(row["protocol_id"] or 0),
-                rack=int(row["rack"] or 0),
-                slot=ConfigDBManager._normalize_slot(row["slot"]),
-                scan_cycle=int(row["scan_cycle"] or 1000),
-            )
+            row["device_code"]: ConfigDBManager._signature_from_row(row)
             for row in rows
         }
+
+    @staticmethod
+    def _signature_from_row(row: Dict[str, Any]) -> DeviceSignature:
+        return DeviceSignature(
+            config_version=int(row["variable_config_version"] or 1),
+            endpoint=str(row["endpoint"] or ""),
+            protocol_id=int(row["protocol_id"] or 0),
+            rack=int(row["rack"] or 0),
+            slot=ConfigDBManager._normalize_slot(row["slot"]),
+            scan_cycle=int(row["scan_cycle"] or 1000),
+        )
 
     async def load_variables_for_device(
         self, device_pk: int, device_cfg: "DeviceConfig"

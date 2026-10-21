@@ -214,6 +214,14 @@ namespace OpcDaPushService
         private long _totalPushedPoints;
         private long _totalPushBatches;
         private DateTime _lastFullSnapshotAt = DateTime.MinValue;
+        // B072：HTTP 发送与有界重试在独立工作者线程执行；STA 线程只截取不可变批次，
+        // 不再在消息泵内同步等待 HTTP 超时/退避。队列容量为 1：上一批在途时不截取新批次，
+        // 期间的变化保留在缓存脏标记中，下一轮合并发送（内存有界，按点位数封顶）。
+        private readonly object _pushLock = new object();
+        private readonly AutoResetEvent _pushSignal = new AutoResetEvent(false);
+        private List<Dictionary<string, object>> _pendingPush;
+        private Thread _pushWorker;
+        private volatile bool _pushWorkerStop;
 
         public SubscriptionStaRunner(AppConfig config)
         {
@@ -301,6 +309,10 @@ namespace OpcDaPushService
         {
             DateTime nextPush = DateTime.Now.AddMilliseconds(_config.PushIntervalMs);
             DateTime nextReport = DateTime.Now.AddMilliseconds(_config.ReportIntervalMs);
+            if (_config.PostEnabled)
+            {
+                StartPushWorker();
+            }
 
             while (!_stopRequested)
             {
@@ -326,10 +338,22 @@ namespace OpcDaPushService
 
             Program.Log("Stopping...");
             PumpWindowsMessages();
+            StopPushWorker();
         }
 
+        /// <summary>
+        /// STA 线程调用：仅截取不可变批次交给工作者，不做任何网络 I/O（B072）。
+        /// </summary>
         private void PushCachedPoints()
         {
+            lock (_pushLock)
+            {
+                if (_pendingPush != null)
+                {
+                    return; // 上一批仍在发送/重试；脏标记保留在缓存中，下一轮合并
+                }
+            }
+
             bool fullSnapshot = ShouldUseFullSnapshot(DateTime.Now);
             List<Dictionary<string, object>> points = fullSnapshot
                 ? _client.GetAllCachedPoints(_config.IncludeBadQuality, true)
@@ -339,23 +363,118 @@ namespace OpcDaPushService
                 return;
             }
 
+            lock (_pushLock)
+            {
+                _pendingPush = points;
+            }
+            _pushSignal.Set();
+        }
+
+        private void StartPushWorker()
+        {
+            _pushWorkerStop = false;
+            _pushWorker = new Thread(PushWorkerMain);
+            _pushWorker.Name = "OpcDaPushWorker";
+            _pushWorker.IsBackground = true;
+            _pushWorker.Start();
+        }
+
+        private void StopPushWorker()
+        {
+            Thread worker = _pushWorker;
+            if (worker == null)
+            {
+                return;
+            }
+            _pushWorkerStop = true;
+            try { _pushSignal.Set(); } catch (ObjectDisposedException) { }
+            // 在途 HTTP 最多等待单次超时加少量余量；之后放弃（后台线程随进程退出）。
+            int joinMs = Math.Max(1000, _config.PostTimeoutMs + 1000);
+            if (!worker.Join(joinMs))
+            {
+                Program.LogWarn("Push worker did not finish within " + joinMs + "ms; abandoning in-flight batch.");
+            }
+            _pushWorker = null;
+        }
+
+        private void PushWorkerMain()
+        {
+            while (true)
+            {
+                try
+                {
+                    _pushSignal.WaitOne(200);
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
+                List<Dictionary<string, object>> points;
+                lock (_pushLock)
+                {
+                    points = _pendingPush;
+                }
+                if (points == null)
+                {
+                    if (_pushWorkerStop)
+                    {
+                        return;
+                    }
+                    continue;
+                }
+                if (_pushWorkerStop)
+                {
+                    // 停止时不再发起新批次；放回脏标记（与原先停止时不推送的语义一致）。
+                    MarkCachedPointsDirtySafe();
+                    lock (_pushLock)
+                    {
+                        _pendingPush = null;
+                    }
+                    return;
+                }
+
+                try
+                {
+                    if (PushClient.PostPoints(_config, points))
+                    {
+                        Interlocked.Increment(ref _totalPushBatches);
+                        Interlocked.Add(ref _totalPushedPoints, points.Count);
+                    }
+                    else
+                    {
+                        MarkCachedPointsDirtySafe();
+                        Program.LogWarn("Subscription push was not fully acknowledged; cache points were marked dirty for retry; no local durable failure queue is configured, so process crashes can lose unsent points.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MarkCachedPointsDirtySafe();
+                    Program.LogError("Push cached points failed: " + ex.Message);
+                }
+                finally
+                {
+                    lock (_pushLock)
+                    {
+                        _pendingPush = null;
+                    }
+                }
+            }
+        }
+
+        private void MarkCachedPointsDirtySafe()
+        {
+            // 工作者线程上的异常若未捕获会终止进程；缓存已释放（关停中）时忽略即可。
             try
             {
-                if (PushClient.PostPoints(_config, points))
+                OpcDaClient client = _client;
+                if (client != null)
                 {
-                    _totalPushBatches++;
-                    _totalPushedPoints += points.Count;
-                }
-                else
-                {
-                    _client.MarkAllCachedPointsDirty();
-                    Program.LogWarn("Subscription push was not fully acknowledged; cache points were marked dirty for retry; no local durable failure queue is configured, so process crashes can lose unsent points.");
+                    client.MarkAllCachedPointsDirty();
                 }
             }
             catch (Exception ex)
             {
-                _client.MarkAllCachedPointsDirty();
-                Program.LogError("Push cached points failed: " + ex.Message);
+                Program.LogError("Mark cached points dirty failed: " + ex.Message);
             }
         }
 

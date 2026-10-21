@@ -545,3 +545,123 @@ def test_unsupported_protocol_does_not_connect(tmp_path: Path) -> None:
 
     assert captured.value.error_type == "unsupported_protocol"
     assert captured.value.details["source"] == DIRECT_SOURCE
+
+
+def test_blocking_thread_connect_does_not_extend_wall_clock_past_deadline(tmp_path: Path) -> None:
+    """B043：真实线程阻塞的 connect（类 snap7 run_in_executor）超时后，同步 API 须按 deadline 返回。"""
+    import threading
+
+    source = MemorySource("mysql", [_qc100()])
+    created: list[FakeDriver] = []
+    release = threading.Event()
+
+    class ThreadBlocking(FakeDriver):
+        async def connect(self, config):
+            self.events.append("connect")
+            loop = asyncio.get_running_loop()
+            # 默认 executor（生产 S7 factory 未传专用池时的行为）中阻塞 1.5s
+            await loop.run_in_executor(None, release.wait, 1.5)
+
+        async def disconnect(self):
+            self.events.append("disconnect")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, lambda: None)
+
+    def factory():
+        driver = ThreadBlocking()
+        created.append(driver)
+        return driver
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(DirectReadError) as captured:
+            _read(
+                tmp_path,
+                sources=[source],
+                timeout_ms=100,
+                driver_factory=factory,
+                drivers=created,
+            )
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert captured.value.error_type == "timeout"
+    assert elapsed < 0.8
+    assert "disconnect" in created[0].events
+
+
+def test_timed_out_thread_calls_stay_counted_under_max_concurrency(tmp_path: Path) -> None:
+    """PR #27 Codex P1：超时返回后仍在线程里阻塞的驱动调用必须继续占用并发名额，
+    反复超时不能让在途 PLC 调用超过 MAX_CONCURRENCY；调用真正结束后名额才释放。"""
+    import threading
+
+    source = MemorySource("mysql", [_qc100()])
+    clock = Clock()
+    release = threading.Event()
+    lock = threading.Lock()
+    active = {"now": 0, "peak": 0}
+
+    def blocking_connect() -> None:
+        with lock:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+        try:
+            release.wait(5)
+        finally:
+            with lock:
+                active["now"] -= 1
+
+    class ThreadBlocking(FakeDriver):
+        async def connect(self, config):
+            self.events.append("connect")
+            await asyncio.get_running_loop().run_in_executor(None, blocking_connect)
+
+    errors: list[str] = []
+    try:
+        for _ in range(5):
+            clock.advance(1.0)  # 避开同 PLC 最小间隔，只考察并发上限
+            with pytest.raises(DirectReadError) as captured:
+                _read(
+                    tmp_path,
+                    sources=[source],
+                    timeout_ms=100,
+                    now=clock,
+                    driver_factory=ThreadBlocking,
+                )
+            errors.append(captured.value.error_type)
+            if captured.value.error_type == "rate_limited":
+                assert captured.value.details["limit"] == "concurrency"
+        # 前两次超时（线程仍阻塞），之后全部被并发上限拒绝，不再启动新的驱动调用
+        assert errors == ["timeout", "timeout", "rate_limited", "rate_limited", "rate_limited"]
+        assert active["peak"] <= 2
+        assert len(list((tmp_path / "slots").glob("*.slot"))) == 2
+    finally:
+        release.set()
+
+    # 残留调用真正结束后才释放名额
+    deadline = time.monotonic() + 3
+    while list((tmp_path / "slots").glob("*.slot")) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert list((tmp_path / "slots").glob("*.slot")) == []
+    clock.advance(1.0)
+    result, _ = _read(tmp_path, sources=[source], now=clock)
+    assert result["value"] == 7
+
+
+def test_run_with_deadline_settles_exactly_once() -> None:
+    from direct_read.session import run_with_deadline
+
+    calls: list[str] = []
+
+    async def ok():
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+        return 1
+
+    async def boom():
+        raise RuntimeError("x")
+
+    assert run_with_deadline(ok(), on_settled=lambda: calls.append("ok")) == 1
+    with pytest.raises(RuntimeError):
+        run_with_deadline(boom(), on_settled=lambda: calls.append("boom"))
+    assert calls == ["ok", "boom"]

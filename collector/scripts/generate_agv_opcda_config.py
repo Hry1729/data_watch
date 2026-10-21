@@ -212,7 +212,7 @@ ON DUPLICATE KEY UPDATE
     output_lines.append("-- 验证 item_id 映射")
     output_lines.append("SELECT id, device_id, var_seq, var_name, var_address")
     output_lines.append("FROM device_variable")
-    output_lines.append("WHERE device_id >= {DEVICE_ID_START} AND device_id < {DEVICE_ID_START + len(AGV_DEVICES)}")
+    output_lines.append(f"WHERE device_id >= {DEVICE_ID_START} AND device_id < {DEVICE_ID_START + len(AGV_DEVICES)}")
     output_lines.append("LIMIT 10;")
 
     return "\n".join(output_lines)

@@ -165,7 +165,8 @@ function AppStartup({ children }: { children: ReactNode }) {
       withStartupTimeout(agentClient.getRuntimeConfig()).catch(() => null),
     ])
       .then(([{ in_bootstrap }, config]) => {
-        if (config) setBackendBaseUrl(config.backend_base_url);
+        // 引导未完成时不固定占位地址：Rust 侧 origin 只能设置一次，由完成引导后的最终配置来固定
+        if (config && !in_bootstrap) setBackendBaseUrl(config.backend_base_url);
         if (in_bootstrap) navigate("/bootstrap", { replace: true });
         // else: 由 AuthGuard 跳 /login
       })
@@ -202,10 +203,10 @@ function AgentErrorPage() {
     setRetrying(true);
     withStartupTimeout(agentClient.getBootstrapStatus())
       .then(async ({ in_bootstrap }) => {
+        if (in_bootstrap) { navigate("/bootstrap", { replace: true }); return; }
         const { backend_base_url } = await withStartupTimeout(agentClient.getRuntimeConfig());
         setBackendBaseUrl(backend_base_url);
-        if (in_bootstrap) navigate("/bootstrap", { replace: true });
-        else navigate("/login", { replace: true });
+        navigate("/login", { replace: true });
       })
       .catch(() => {
         // 仍不可达：停留错误页，按钮恢复可点

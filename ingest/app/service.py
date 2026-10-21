@@ -64,6 +64,7 @@ class IngestService:
                 "seq_reject",
                 "commit_unknown",
                 "session_obsolete",
+                "retry_later",
             }:
                 break
 

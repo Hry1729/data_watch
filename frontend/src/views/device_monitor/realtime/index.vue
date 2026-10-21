@@ -310,10 +310,13 @@ import { useUserStore } from '@/store/modules/user'
 import { expandRealtimeSamples, type RealtimeSample } from '@/utils/realtime-samples'
 import { isQualityAbnormal } from '@/utils/realtime-quality'
 import {
+  formatExportSampleValue,
   formatMissingValueWithQuality,
   formatStoredPointValue,
   isRealtimeValueAbsent,
-  normalizeWsPointValue
+  normalizeWsPointValue,
+  toChartSampleValue,
+  toSampleText
 } from '@/utils/realtime-point-value'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
@@ -363,7 +366,11 @@ interface RealtimeDataRecord {
   timestamp: Date
   varSeq: number
   pointName: string
-  value: number | string
+  /** 缺值/非数值为 null（曲线断点），不能伪造成 0 */
+  value: number | null
+  /** 有值但非数值（文本/文本布尔）时的原文，导出时原样写出 */
+  text?: string
+  quality?: number
 }
 
 // 颜色配置
@@ -453,7 +460,9 @@ const saveChartSnapshot = async () => {
       timestamp: r.timestamp.toISOString(),
       varSeq: r.varSeq,
       pointName: r.pointName,
-      value: r.value
+      value: r.value,
+      text: r.text,
+      quality: r.quality
     }))
 
     // 保存图表配置
@@ -534,12 +543,15 @@ const loadChartSnapshot = async (): Promise<boolean> => {
         timestamp: new Date(item.timestamp),
         varSeq: item.varSeq,
         pointName: item.pointName,
-        value: item.value
+        value: toChartSampleValue(item.value),
+        text: typeof item.text === 'string' ? item.text : toSampleText(item.value),
+        quality: typeof item.quality === 'number' ? item.quality : undefined
       }))
 
-      // 恢复实时值
+      // 恢复实时值（缺值样本不覆盖为 0）
       realtimeRecords.value.forEach((record) => {
-        realtimeValues.value.set(record.varSeq, record.value)
+        if (record.value !== null) realtimeValues.value.set(record.varSeq, record.value)
+        else if (record.text !== undefined) realtimeValues.value.set(record.varSeq, record.text)
       })
     }
 
@@ -1483,7 +1495,9 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
           timestamp: typeof sampledAt === 'number' ? new Date(sampledAt) : now,
           varSeq,
           pointName,
-          value: typeof value === 'number' ? value : Number(value) || 0
+          value: toChartSampleValue(value),
+          text: toSampleText(value),
+          quality: typeof quality === 'number' ? quality : undefined
         }
         newRecords.push(record)
       }
@@ -1751,7 +1765,8 @@ const handleExport = async () => {
       if (!timeMap.has(timeKey)) {
         timeMap.set(timeKey, new Map())
       }
-      timeMap.get(timeKey)!.set(record.varSeq, record.value)
+      // 文本值原样导出；缺值样本导出为占位符+质量文案，不与真实 0 混淆
+      timeMap.get(timeKey)!.set(record.varSeq, formatExportSampleValue(record.value, record.quality, record.text))
     }
 
     // 3. 构建表头和行数据
@@ -1900,7 +1915,9 @@ onUnmounted(() => {
     timestamp: r.timestamp.toISOString(),
     varSeq: r.varSeq,
     pointName: r.pointName,
-    value: r.value
+    value: r.value,
+    text: r.text,
+    quality: r.quality
   }))
   const existingChartState = (() => {
     try { return JSON.parse(localStorage.getItem(CHART_STATE_KEY) || '{}') } catch { return {} }

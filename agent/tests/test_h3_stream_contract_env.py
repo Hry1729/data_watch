@@ -39,10 +39,18 @@ def test_defaults_match_both_sides(monkeypatch):
     assert ingest["INGEST_STREAM_SHARD_COUNT"] == writer["DATAWATCH_REDIS_STREAM_SHARD_COUNT"] == "4"
 
 
-def test_collector_env_unchanged_by_stream_contract(monkeypatch):
-    monkeypatch.setattr(admin, "load_config", lambda: _cfg({"db": 2, "stream_shard_count": 8}))
+def test_center_collector_env_shares_stream_contract_with_writer(monkeypatch):
+    """B013：中心式 Collector 与 Writer 的 Redis DB/分片数必须完全一致。"""
+    monkeypatch.setattr(admin, "load_config", lambda: _cfg({"db": 3, "stream_shard_count": 8}))
     monkeypatch.setattr(admin, "dpapi_decrypt", lambda _v: "")
     monkeypatch.setattr(admin, "build_role", lambda: "center")
-    env = admin._collector_env()
-    assert "DATAWATCH_REDIS_DB" not in env
-    assert "DATAWATCH_REDIS_STREAM_SHARD_COUNT" not in env
+    collector = admin._collector_env()
+    writer = admin._writer_env()
+    assert collector["DATAWATCH_REDIS_DB"] == writer["DATAWATCH_REDIS_DB"] == "3"
+    assert (
+        collector["DATAWATCH_REDIS_STREAM_SHARD_COUNT"]
+        == writer["DATAWATCH_REDIS_STREAM_SHARD_COUNT"]
+        == "8"
+    )
+    for key in ("DATAWATCH_REDIS_HOST", "DATAWATCH_REDIS_PORT", "DATAWATCH_REDIS_PASSWORD"):
+        assert collector[key] == writer[key]

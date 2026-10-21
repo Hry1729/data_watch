@@ -278,7 +278,9 @@ def _extract_var_seqs(request: Request) -> list[int]:
     raw_values = [*query_params.getlist("varSeqs"), *query_params.getlist("varSeqs[]")]
     if not raw_values:
         raw_values = [*query_params.getlist("pointIds"), *query_params.getlist("pointIds[]")]
-    var_seqs = _coerce_var_seqs(raw_values)
+    # CompatQueryParams 会把 `varSeqs[]` 同时登记到裸键 `varSeqs`，这里再拼接两份会
+    # 让同一点位计数两次；按点位去重（保序）后再交给路由做数量限额（B033）。
+    var_seqs = list(dict.fromkeys(_coerce_var_seqs(raw_values)))
     if not var_seqs:
         raise ApiError(400, "varSeqs is required")
     return var_seqs

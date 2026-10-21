@@ -10,6 +10,7 @@ import ctypes
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Callable
 from uuid import uuid4
@@ -33,11 +34,14 @@ class RatePermit:
     def __init__(self, slot_path: Path) -> None:
         self._slot_path = slot_path
         self.released = False
+        # 超时残留的驱动调用结束时会在后台线程里 release（见 session.run_with_deadline）。
+        self._release_lock = threading.Lock()
 
     def release(self) -> None:
-        if self.released:
-            return
-        self.released = True
+        with self._release_lock:
+            if self.released:
+                return
+            self.released = True
         try:
             self._slot_path.unlink(missing_ok=True)
         except OSError:

@@ -61,11 +61,13 @@ function decimateContinuousSeries<T extends Record<string, unknown>>(
   let previousIndex = 0;
 
   for (let i = 0; i < maxPoints - 2; i++) {
-    const rangeStart = Math.floor((i + 1) * bucketSize) + 1;
-    const rangeEnd = Math.min(Math.floor((i + 2) * bucketSize) + 1, len - 1);
+    // 当前桶为内部点 [1, len-2] 的第 i 个桶（不含终点，终点在循环后单独保留一次）；
+    // 平均点取下一个桶（最后一个桶的下一桶即终点）
+    const rangeStart = Math.floor(i * bucketSize) + 1;
+    const rangeEnd = Math.min(Math.floor((i + 1) * bucketSize) + 1, len - 1);
 
-    const nextRangeStart = Math.floor((i + 2) * bucketSize) + 1;
-    const nextRangeEnd = Math.min(Math.floor((i + 3) * bucketSize) + 1, len);
+    const nextRangeStart = Math.floor((i + 1) * bucketSize) + 1;
+    const nextRangeEnd = Math.min(Math.floor((i + 2) * bucketSize) + 1, len);
     const nextCount = Math.max(0, nextRangeEnd - nextRangeStart);
 
     let avgX = len - 1;

@@ -116,19 +116,28 @@ def _parse_quality_code(raw_value: Any) -> int:
 
 
 def _map_opcda_quality(item: Dict[str, Any]) -> int:
-    """将 OPC DA quality/quality_good 映射为内部质量码。"""
-    quality_good = item.get("quality_good")
-    if isinstance(quality_good, bool):
-        return QUALITY_GOOD if quality_good else QUALITY_UNCERTAIN
+    """将 OPC DA quality/quality_good 映射为内部质量码。
 
+    B042：有原始 quality 时以它为准（与中心 IPC 同一 map_opcda_quality），BAD 必须保持 BAD；
+    quality_good 只作补充：原始码映射为 GOOD 但 quality_good=false 时降为 UNCERTAIN（冲突取更差）。
+    仅缺原始码的旧 payload 才回落到 quality_good 布尔摘要。
+    """
+    quality_good = item.get("quality_good")
     raw_quality = item.get("quality")
     if raw_quality is None:
+        if isinstance(quality_good, bool):
+            return QUALITY_GOOD if quality_good else QUALITY_UNCERTAIN
         return QUALITY_GOOD
+    if isinstance(raw_quality, (bool, float)):
+        raise ValueError("quality must be an integer code")
     try:
         opc_quality = int(raw_quality)
     except (TypeError, ValueError) as exc:
         raise ValueError("quality must be an integer code") from exc
-    return map_opcda_quality(opc_quality)
+    mapped = map_opcda_quality(opc_quality)
+    if quality_good is False and mapped == QUALITY_GOOD:
+        return QUALITY_UNCERTAIN
+    return mapped
 
 
 def _point_from_dict(item: Dict[str, Any]) -> DataPoint:
@@ -244,8 +253,12 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             device_meta = self._device_meta
             device_generations = self._device_generations
 
-        by_latest: Dict[Tuple[str, str, int, Optional[int]], Dict[str, Dict[str, Any]]] = {}
-        by_frame: Dict[Tuple[str, str, str, int, int, Optional[int]], Dict[str, Any]] = {}
+        # B041：先按帧键收集全部样本，再拆帧——同一批次同一变量的多个不同时间样本
+        # 不得在一帧 values 里互相覆盖却全部计为 accepted。
+        frame_samples: Dict[
+            Tuple[str, str, str, int, int, Optional[int]],
+            List[Tuple[int, int, str, str, int, bool]],
+        ] = {}
         errors: List[str] = []
         successful_indices: set[int] = set()
 
@@ -288,17 +301,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             value_text = str(_normalize_point_value(point.value))
             quality = int(getattr(point, "quality", 0))
 
-            # latest 聚合键必须包含 scan_rate_ms：同一 (device, group) 不同 scan_rate 的
-            # 帧各自独立落库，latest 字段也要与 frame 对齐，否则任一帧失败时其它帧的
-            # 变量会先于失败帧进 latest，客户端据此误判已落库。
-            by_latest.setdefault(
-                (device_code, group_code, scan_rate_ms, generation), {}
-            )[str(point.variable_id)] = {
-                "v": value_text,
-                "t": ts_ms,
-                "q": quality,
-            }
-
             frame_key = (
                 device_code,
                 device_type,
@@ -307,22 +309,47 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 config_version,
                 generation,
             )
-            frame = by_frame.setdefault(
-                frame_key,
-                {
+            is_stream = bool(
+                getattr(var, "is_storage", True)
+                and str(getattr(var, "data_type", "")).upper() != "STRING"
+            )
+            frame_samples.setdefault(frame_key, []).append(
+                (ts_ms, idx, str(point.variable_id), value_text, quality, is_stream)
+            )
+
+        # 拆帧（B041 R2）：按样本自身时间戳分组——每个不同 ts 一帧，帧 ts 即样本 ts，
+        # 每个值只出现在自己时间戳的帧里，绝不借用其它变量的时间。
+        # 同一变量的样本永远落在同一帧键下，子帧按 ts 升序写，因此同变量按时间升序落库。
+        # 同变量同时间戳的重复样本无法区分，批内后项覆盖前项，前项显式报错且不计 accepted。
+        by_frame: List[Tuple[Tuple[str, str, str, int, int, Optional[int]], Dict[str, Any]]] = []
+        for frame_key, samples in frame_samples.items():
+            by_ts: Dict[int, Dict[str, Tuple[int, int, str, str, int, bool]]] = {}
+            for sample in samples:  # samples 按批内顺序追加
+                ts_bucket = by_ts.setdefault(sample[0], {})
+                superseded = ts_bucket.get(sample[2])
+                if superseded is not None:
+                    errors.append(
+                        f"points[{superseded[1]}]: duplicate sample for variable {sample[2]} "
+                        f"at timestamp {superseded[0]} superseded by points[{sample[1]}]"
+                    )
+                ts_bucket[sample[2]] = sample
+            for ts_ms in sorted(by_ts):
+                frame_data: Dict[str, Any] = {
                     "ts": ts_ms,
                     "values": {},
                     "stream_values": {},
                     "stream_qualities": {},
                     "point_indices": set(),
-                },
-            )
-            frame["ts"] = max(frame["ts"], ts_ms)
-            frame["values"][str(point.variable_id)] = value_text
-            frame["point_indices"].add(idx)
-            if getattr(var, "is_storage", True) and str(getattr(var, "data_type", "")).upper() != "STRING":
-                frame["stream_values"][str(point.variable_id)] = value_text
-                frame["stream_qualities"][str(point.variable_id)] = quality
+                    "latest": {},
+                }
+                for variable_id, (_, idx, _, value_text, quality, is_stream) in by_ts[ts_ms].items():
+                    frame_data["values"][variable_id] = value_text
+                    frame_data["point_indices"].add(idx)
+                    frame_data["latest"][variable_id] = {"v": value_text, "t": ts_ms, "q": quality}
+                    if is_stream:
+                        frame_data["stream_values"][variable_id] = value_text
+                        frame_data["stream_qualities"][variable_id] = quality
+                by_frame.append((frame_key, frame_data))
 
         for (
             device_code,
@@ -331,7 +358,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             scan_rate_ms,
             config_version,
             generation,
-        ), frame_data in by_frame.items():
+        ), frame_data in by_frame:
             frame = {
                 "device_code": device_code,
                 "group_code": group_code,
@@ -345,7 +372,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 # 写顺序：window+stream -> latest。latest 必须最后写，
                 # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
                 # 高-1：与 executor 主路径一致，write_window_stream 与 write_latest 在同一线程配对；
-                # EdgeOutboxWriter 据此一帧只做一次 commit_frame，latest 带全部点（含 STRING / is_storage=0）。
+                # EdgeOutboxWriter 据此一帧只做一次 commit_frame，latest 带本帧全部点（含 STRING / is_storage=0）。
                 try:
                     self.redis_writer.write_window_stream(
                         device_code,
@@ -363,12 +390,10 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                     logger.error("redis write_window_stream failed for %s: %s", frame_label, exc)
                     return
 
-                latest_fields = by_latest.get(
-                    (device_code, group_code, scan_rate_ms, generation)
-                )
-                if latest_fields is None:
-                    errors.append(f"redis latest fields missing for {frame_label}")
-                    return
+                # latest 只带本帧（已成功写入 window/stream 的）样本：每个值的 t 即其自身时间戳。
+                # 同变量的帧按 ts 升序写，HSET 合并后 latest = 已落库的最新值，
+                # 后续帧失败时也不会超前于实际落库（B041 R2）。
+                latest_fields = frame_data["latest"]
                 try:
                     self.redis_writer.write_latest(device_code, group_code, latest_fields)
                 except Exception as exc:
@@ -590,7 +615,16 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                         continue
 
                 # 查找 variable_id
-                variable_id = mapper.get_variable_id(item_id)
+                # B045：按 (device_id, item_id) 查找；无 device_id 且 item_id 跨设备重名时明确拒绝
+                lookup_device_id = str(device_id or "").strip()
+                variable_id = mapper.get_variable_id(item_id, lookup_device_id or None)
+                if variable_id is None and not lookup_device_id and mapper.is_ambiguous(item_id):
+                    errors.append(
+                        f"points[{idx}]: item_id is ambiguous across devices, "
+                        f"device_id is required: {item_id}"
+                    )
+                    rejected_indices.add(idx)
+                    continue
                 if variable_id is None:
                     unmapped.append(item_id)
                     errors.append(f"points[{idx}]: item_id not mapped: {item_id}")
@@ -617,8 +651,11 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     rejected_indices.add(idx)
                     continue
 
-                # 获取 device_id（用于 DataPoint）
+                # 获取 device_id（用于 DataPoint）：还原为配置中的原始写法，
+                # 否则大小写不同的 device_id 会在 write_points_to_redis 的 C9 一致性校验里被误拒。
                 device_id = item.get("device_id", "")
+                if lookup_device_id:
+                    device_id = mapper.canonical_device_id(lookup_device_id) or device_id
 
                 points.append(DataPoint(
                     device_id=device_id,

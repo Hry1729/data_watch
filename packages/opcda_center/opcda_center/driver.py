@@ -62,6 +62,7 @@ class OpcDaCenterDriver(BaseDriver):
             config: 连接配置
                 - proxy_host: 代理进程主机地址（默认 127.0.0.1）
                 - proxy_port: 代理进程端口（默认 9090）
+                - proxy_auth_token: 代理预共享令牌（可选；缺省读 DATAWATCH_OPCDA_PROXY_TOKEN）
                 - opc_server: OPC Server ProgID
                 - vm_host: OPC VM 主机地址
                 - update_rate_ms: 订阅更新速率（毫秒）
@@ -81,7 +82,9 @@ class OpcDaCenterDriver(BaseDriver):
 
         # 使用连接池获取客户端（同一代理端口共享连接）
         pool = get_ipc_pool()
-        self._ipc_client = await pool.get_client(proxy_host, proxy_port)
+        self._ipc_client = await pool.get_client(
+            proxy_host, proxy_port, auth_token=config.get("proxy_auth_token")
+        )
         # 客户端按代理端口共享：超时按请求传入，不写回共享对象（高-5）
         self._owns_client = False  # 标记客户端来自连接池，不要在 disconnect 时关闭
 

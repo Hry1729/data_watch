@@ -42,7 +42,8 @@ const DEFAULTS = {
 };
 
 const settingsSaveCode = compile(
-  slice(settings, "  const canSave =", "  async function handleSaveStreamMaxlen(")
+  slice(settings, "function isValidRedisDb(", "// ─── 测试状态类型")
+  + slice(settings, "  const canSave =", "  async function handleSaveStreamMaxlen(")
   + "\nglobalThis.handleSave = handleSave;",
 );
 
@@ -56,6 +57,7 @@ function runSettingsSave({ loadedForm, configError, form, passwordDirty }) {
     agentClient: { putConfig: async (payload) => { calls.put.push(payload); } },
     toast: { error: (message) => calls.errors.push(message), success: (message) => calls.success.push(message) },
     formDirtyRef: { current: true },
+    editVersionRef: { current: { form: 0, redis: 0, mysql: 0, tdengine: 0 } },
     setSaving() {}, setLoadedForm() {}, setPasswordDirty() {}, logout() {},
   };
   runInNewContext(settingsSaveCode, context);
@@ -154,4 +156,93 @@ test("edge settings disables database editing, testing and saving until the conf
   assert.ok(edge.includes("disabled={loading || savingDatabases || !canSaveDatabases}>"));
   assert.ok(edge.includes("disabled={loading || savingDatabases || !canSaveDatabases}\n          onChange"));
   assert.ok(edge.includes("await agentClient.putConfig(databasePatch(loadedDatabases, [target]));"));
+});
+
+// ─── B060：保存在途期间编辑的新密码不得被成功回调清掉 dirty ──────────────────
+
+function deferredPromise() {
+  let resolve;
+  const promise = new Promise((yes) => { resolve = yes; });
+  return { promise, resolve };
+}
+
+test("a password edited while a save is in flight is still sent by the next save", async () => {
+  const puts = [];
+  const pending = [];
+  const context = {
+    loadedForm: LOADED, configError: null,
+    form: { ...LOADED, redis: { ...LOADED.redis, password: "A" } },
+    passwordDirty: { redis: true, mysql: false, tdengine: false },
+    BUILD_ROLE: "centralized",
+    buildConfigPatch,
+    agentClient: { putConfig: (payload) => { puts.push(payload); const d = deferredPromise(); pending.push(d); return d.promise; } },
+    toast: { error() {}, success() {} },
+    formDirtyRef: { current: true },
+    editVersionRef: { current: { form: 1, redis: 1, mysql: 0, tdengine: 0 } },
+    setSaving() {}, logout() {},
+  };
+  context.setLoadedForm = (value) => { context.loadedForm = value; };
+  context.setPasswordDirty = (next) => { context.passwordDirty = typeof next === "function" ? next(context.passwordDirty) : next; };
+  runInNewContext(settingsSaveCode, context);
+
+  const first = context.handleSave();
+  // 请求未返回时用户输入新密码 B（模拟 onRedisChange + markPasswordDirty）
+  context.form = { ...context.form, redis: { ...context.form.redis, password: "B" } };
+  context.editVersionRef.current.form += 2;
+  context.editVersionRef.current.redis += 1;
+  context.passwordDirty = { ...context.passwordDirty, redis: true };
+  pending[0].resolve();
+  await first;
+  assert.equal(context.passwordDirty.redis, true, "保存期间的新输入必须保持 dirty");
+  assert.equal(context.formDirtyRef.current, true);
+
+  const second = context.handleSave();
+  pending[1].resolve();
+  await second;
+  assert.deepEqual(puts[0], { redis: { password: "A" } });
+  assert.deepEqual(puts[1], { redis: { password: "B" } });
+  assert.equal(context.passwordDirty.redis, false);
+  assert.equal(context.formDirtyRef.current, false);
+});
+
+const edgeTestCode = compile(
+  slice(edge, "const DB_META", "const DEFAULT_DATABASES")
+  + slice(edge, "function validateDatabase(", "function testBadge(")
+  + slice(edge, "  const canSaveDatabases =", "  async function saveDatabases()")
+  + "\nglobalThis.testDatabase = testDatabase; globalThis.updatePassword = updatePassword;",
+);
+
+test("edge test-and-apply keeps a password typed while the test was running", async () => {
+  const loaded = { redis: LOADED.redis, mysql: { ...LOADED.mysql }, tdengine: LOADED.tdengine };
+  const health = deferredPromise();
+  const puts = [];
+  const context = {
+    loadedDatabases: loaded, databaseError: null,
+    databases: { ...loaded, mysql: { ...loaded.mysql, password: "A" } },
+    passwordDirty: { redis: false, mysql: true, tdengine: false },
+    tests: {},
+    INITIAL_TESTS: { redis: { status: "idle" }, mysql: { status: "idle" }, tdengine: { status: "idle" } },
+    editVersionRef: { current: { redis: 0, mysql: 1, tdengine: 0 } },
+    buildConfigPatch,
+    agentClient: { checkHealth: () => health.promise, putConfig: async (payload) => { puts.push(payload); } },
+    toast: { error() {}, success() {} },
+    window: { dispatchEvent() {} }, Event: class {}, CONNECTION_HEALTH_REFRESH_EVENT: "x",
+  };
+  // 与 React 一致：setter 只更新"下一次渲染"的状态，进行中的 testDatabase 闭包仍看到提交时的快照
+  const state = { loadedDatabases: context.loadedDatabases, databases: context.databases, passwordDirty: context.passwordDirty, tests: {} };
+  const apply = (key) => (next) => { state[key] = typeof next === "function" ? next(state[key]) : next; };
+  Object.assign(context, {
+    setLoadedDatabases: apply("loadedDatabases"), setDatabases: apply("databases"),
+    setPasswordDirty: apply("passwordDirty"), setTests: apply("tests"),
+  });
+  runInNewContext(edgeTestCode, context);
+
+  const running = context.testDatabase("mysql");
+  context.updatePassword("mysql", "B");
+  health.resolve({ success: true });
+  await running;
+  assert.deepEqual(puts, [{ mysql: { password: "A" } }]);
+  assert.equal(state.databases.mysql.password, "B", "测试期间输入的新密码不得被清空");
+  assert.equal(state.passwordDirty.mysql, true);
+  assert.equal(state.loadedDatabases.mysql.password, "");
 });

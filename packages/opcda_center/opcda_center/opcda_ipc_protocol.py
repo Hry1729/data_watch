@@ -26,6 +26,16 @@ class ResponseStatus(str, Enum):
     ERROR = "error"
 
 
+# 代理预共享令牌的环境变量（与代理配置 authToken 相同；未设置/纯空白 = 不发送）
+PROXY_TOKEN_ENV = "DATAWATCH_OPCDA_PROXY_TOKEN"
+
+
+def normalize_proxy_token(token: Optional[str]) -> Optional[str]:
+    """Trim；空/纯空白视为未配置（与代理端 NormalizeToken 一致）。"""
+    text = (token or "").strip()
+    return text or None
+
+
 # 协议版本
 PROTOCOL_VERSION = "1.0"
 
@@ -45,14 +55,18 @@ class IpcRequest:
     request_id: str          # 请求唯一标识
     request_type: RequestType
     payload: Optional[Dict[str, Any]] = None
+    auth_token: Optional[str] = None  # 代理配置了 authToken 时必须携带
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "request_id": self.request_id,
             "request_type": self.request_type.value,
             "payload": self.payload or {},
             "version": PROTOCOL_VERSION,
         }
+        if self.auth_token:
+            result["auth_token"] = self.auth_token
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "IpcRequest":
@@ -60,6 +74,7 @@ class IpcRequest:
             request_id=data["request_id"],
             request_type=RequestType(data["request_type"]),
             payload=data.get("payload"),
+            auth_token=data.get("auth_token"),
         )
 
 

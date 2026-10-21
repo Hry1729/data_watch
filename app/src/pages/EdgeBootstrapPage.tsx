@@ -343,6 +343,8 @@ export default function EdgeBootstrapPage() {
         setNodeUuid(result.nodeUuid);
         setRegistrationStatus(result.status);
         setRegistered(true);
+        // 与 registered 一起记录已注册中心，finish 失败后同一中心可直接重试完成
+        setRegisteredCenterUrl(centerUrl);
       }
       await agentClient.postBootstrapFinish();
       setBackendBaseUrl(centerUrl);

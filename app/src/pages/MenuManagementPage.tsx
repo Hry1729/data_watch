@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Activity, BriefcaseBusiness, Cable, ChevronDown, Cpu, Database, FileText, Gauge, HardDriveDownload, History, KeyRound, LayoutDashboard, MapPin, Menu, Monitor, Network, Pencil, Plus, Puzzle, Radio, Settings2, Shield, Trash2, Users, type LucideIcon } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -57,9 +57,13 @@ export function MenuManagementPage() {
 
   const rows = useMemo(() => flattenMenus(menus.data ?? [], expanded), [expanded, menus.data]);
 
+  // 仅首次成功加载到菜单时默认展开顶级菜单；之后用户折叠到空集合也保持不变
+  const expandInitializedRef = useRef(false);
   useEffect(() => {
-    if (menus.data && expanded.size === 0) setExpanded(new Set(menus.data.map((menu) => menu.id)));
-  }, [expanded.size, menus.data]);
+    if (expandInitializedRef.current || !menus.data?.length) return;
+    expandInitializedRef.current = true;
+    setExpanded(new Set(menus.data.map((menu) => menu.id)));
+  }, [menus.data]);
 
   function openAdd(parent?: MenuTreeItem) {
     setEditingMenu(null);

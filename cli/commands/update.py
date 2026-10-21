@@ -33,6 +33,19 @@ def install_update_commands(
             )
         return runtime, client, UpdateManager(client)
 
+    def dry_run(ctx: typer.Context) -> bool:
+        return bool(getattr(get_context(ctx), "dry_run", False))
+
+    def preview(command: str, local: list[str], **extra: Any) -> dict[str, Any]:
+        """B017：自更新不经 AuthorizedSession，--dry-run 时只返回本地副作用预览。"""
+        return {
+            "dryRun": True,
+            "command": command,
+            "remoteEffects": [],
+            "localEffects": local,
+            **extra,
+        }
+
     @update_app.command("check")
     def check(
         ctx: typer.Context,
@@ -55,6 +68,14 @@ def install_update_commands(
         def operation() -> dict[str, Any]:
             runtime, client, updater = manager(ctx)
             try:
+                if dry_run(ctx):
+                    checked = updater.check(channel=channel)  # 只读 GET
+                    return preview(
+                        "update download",
+                        ["下载并校验更新包到安装目录 downloads/"],
+                        baseUrl=runtime.base_url,
+                        **checked,
+                    )
                 return {"baseUrl": runtime.base_url, **updater.download(channel=channel)}
             finally:
                 client.close()
@@ -72,6 +93,14 @@ def install_update_commands(
                 raise CliError("confirmation_required", "更新需要 --yes 确认", EXIT_USAGE)
             runtime, client, updater = manager(ctx)
             try:
+                if dry_run(ctx):
+                    checked = updater.check(channel=channel)  # 只读 GET
+                    return preview(
+                        "update apply",
+                        ["下载更新包", "启动二进制交换脚本替换 current，旧版本保留为 previous"],
+                        baseUrl=runtime.base_url,
+                        **checked,
+                    )
                 return {"baseUrl": runtime.base_url, **updater.apply(channel=channel)}
             finally:
                 client.close()
@@ -86,6 +115,12 @@ def install_update_commands(
         def operation() -> dict[str, Any]:
             if not (yes or get_context(ctx).assume_yes):
                 raise CliError("confirmation_required", "回滚需要 --yes 确认", EXIT_USAGE)
+            if dry_run(ctx):
+                return preview(
+                    "update rollback",
+                    ["启动二进制交换脚本，以 previous 替换 current"],
+                    baseUrl=get_context(ctx).runtime().base_url,
+                )
             runtime, client, updater = manager(ctx)
             try:
                 return {"baseUrl": runtime.base_url, **updater.rollback()}

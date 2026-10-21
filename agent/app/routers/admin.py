@@ -162,7 +162,14 @@ def _collector_env() -> dict[str, str]:
                 "DATAWATCH_EDGE_STORAGE_URL": _edge_storage_url(),
             }
         cfg = load_config()
-        return {**_db_env(cfg, "mysql"), **_db_env(cfg, "redis")}
+        # B013：中心式 Collector 生产、Writer 消费，Redis DB/分片数须与 _writer_env 同源下发。
+        redis_db, shard_count = _stream_contract(cfg)
+        return {
+            **_db_env(cfg, "mysql"),
+            **_db_env(cfg, "redis"),
+            "DATAWATCH_REDIS_DB": str(redis_db),
+            "DATAWATCH_REDIS_STREAM_SHARD_COUNT": str(shard_count),
+        }
     except Exception as exc:
         # D6：不得吞成空 env——子进程会回退到空密码的 settings.toml 并崩溃循环。
         logger.exception("Cannot build collector environment")

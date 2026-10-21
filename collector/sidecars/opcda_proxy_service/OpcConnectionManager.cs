@@ -39,9 +39,10 @@ namespace OpcDaProxyService
                     return true; // Already connected
                 }
 
+                OpcServerConnection connection = null;
                 try
                 {
-                    OpcServerConnection connection = new OpcServerConnection(_config, opcServer, vmHost, updateRateMs);
+                    connection = new OpcServerConnection(_config, opcServer, vmHost, updateRateMs);
                     connection.Connect();
                     _connections[key] = connection;
                     Program.Log("Connected to OPC server: " + opcServer + "@" + (vmHost ?? "localhost"));
@@ -49,6 +50,12 @@ namespace OpcDaProxyService
                 }
                 catch (Exception ex)
                 {
+                    // B073：失败/超时的连接对象不纳管，必须显式释放；超时后迟到完成的
+                    // COM 激活由 OpcServerConnection 的 abandoned 标记在完成时自行释放。
+                    if (connection != null)
+                    {
+                        try { connection.Dispose(); } catch { }
+                    }
                     Program.LogError("Failed to connect to OPC server: " + opcServer + "@" + (vmHost ?? "localhost") + " - " + ex.Message);
                     return false;
                 }
@@ -135,6 +142,9 @@ namespace OpcDaProxyService
         private IOPCServer _server;
         private readonly List<GroupContext> _groups = new List<GroupContext>();
         private int _groupCounter;
+        // B073：超时/释放后置位；迟到完成的 ConnectInternal 见到该标记须释放 COM 对象且不再纳管。
+        private readonly object _connectLock = new object();
+        private bool _abandoned;
 
         public OpcServerConnection(ProxyConfig config, string opcServer, string vmHost, int updateRateMs)
         {
@@ -152,9 +162,9 @@ namespace OpcDaProxyService
                 timeoutMs = 10000; // 默认 10 秒
             }
 
-            // 使用 Task 实现超时控制
-            CancellationTokenSource cts = new CancellationTokenSource(timeoutMs);
-            Task connectTask = Task.Run(() => ConnectInternal(), cts.Token);
+            // 使用 Task 实现超时控制。同步 COM 激活无法被取消，超时只是停止等待：
+            // 超时后置 abandoned，迟到完成的 ConnectInternal 自行释放 COM 对象（B073）。
+            Task connectTask = Task.Run(() => ConnectInternal());
 
             try
             {
@@ -170,6 +180,11 @@ namespace OpcDaProxyService
 
                 if (!connectTask.IsCompleted)
                 {
+                    Abandon();
+                    // 观察迟到任务的异常，避免 UnobservedTaskException。
+                    connectTask.ContinueWith(
+                        t => { var ignored = t.Exception; },
+                        TaskContinuationOptions.OnlyOnFaulted);
                     throw new TimeoutException("OPC DA connection timeout after " + timeoutMs + "ms");
                 }
             }
@@ -178,6 +193,22 @@ namespace OpcDaProxyService
                 // 解包聚合异常
                 throw ex.InnerException ?? ex;
             }
+        }
+
+        /// <summary>
+        /// 标记本连接已放弃并释放已持有的 COM 对象（幂等）。
+        /// </summary>
+        private void Abandon()
+        {
+            object serverObject;
+            lock (_connectLock)
+            {
+                _abandoned = true;
+                serverObject = _serverObject;
+                _serverObject = null;
+                _server = null;
+            }
+            ReleaseComObject(serverObject);
         }
 
         private void ConnectInternal()
@@ -195,13 +226,35 @@ namespace OpcDaProxyService
                 serverType = Type.GetTypeFromProgID(_opcServer, _vmHost, true);
             }
 
-            _serverObject = Activator.CreateInstance(serverType);
-            if (_serverObject == null)
+            object serverObject = Activator.CreateInstance(serverType);
+            if (serverObject == null)
             {
                 throw new InvalidOperationException("Could not create COM server: " + _opcServer);
             }
 
-            _server = (IOPCServer)_serverObject;
+            IOPCServer server;
+            try
+            {
+                server = (IOPCServer)serverObject;
+            }
+            catch
+            {
+                ReleaseComObject(serverObject);
+                throw;
+            }
+
+            lock (_connectLock)
+            {
+                if (_abandoned)
+                {
+                    // B073：调用方已超时放弃，迟到的 COM 对象立即释放，不再纳管。
+                    ReleaseComObject(serverObject);
+                    Program.LogWarn("Late OPC DA connection released after timeout: " + _opcServer + "@" + (_vmHost ?? "localhost"));
+                    return;
+                }
+                _serverObject = serverObject;
+                _server = server;
+            }
             Program.Log("OPC DA server connected: " + _opcServer);
         }
 
@@ -527,9 +580,7 @@ namespace OpcDaProxyService
             }
             _groups.Clear();
 
-            ReleaseComObject(_serverObject);
-            _serverObject = null;
-            _server = null;
+            Abandon();
         }
     }
 

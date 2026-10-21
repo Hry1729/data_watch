@@ -55,6 +55,7 @@ import type {
   PermissionItem,
   PermissionPayload,
   RoleGrant,
+  RoleGrantUpdate,
   RoleOption,
   RolePageResult,
   RolePayload,
@@ -207,7 +208,7 @@ export interface BackendClient {
   updateRoleStatus(token: string, id: number, enabled: boolean): Promise<{ id: number }>;
   deleteRole(token: string, id: number): Promise<{ id: number }>;
   roleGrant(token: string, id: number, signal?: AbortSignal): Promise<RoleGrant>;
-  updateRoleGrant(token: string, id: number, payload: RoleGrant): Promise<{ id: number }>;
+  updateRoleGrant(token: string, id: number, payload: RoleGrantUpdate): Promise<{ id: number }>;
   adminMenus(token: string, signal?: AbortSignal): Promise<MenuTreeItem[]>;
   /** 当前用户可见菜单树（已按角色过滤） */
   currentUserMenus(token: string, signal?: AbortSignal): Promise<MenuTreeItem[]>;

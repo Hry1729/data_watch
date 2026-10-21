@@ -20,6 +20,8 @@ export interface UseConnectionHealthResult {
   data: ConnectionHealth | null;
   loading: boolean;
   error: string | null;
+  /** 最近一次成功检测的时间（ms）；error 非空时 data 仅为该时刻的旧快照 */
+  lastSuccessAt: number | null;
   refresh: () => void;
 }
 
@@ -30,6 +32,7 @@ export function useConnectionHealth(): UseConnectionHealthResult {
   const [data, setData] = useState<ConnectionHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastSuccessAt, setLastSuccessAt] = useState<number | null>(null);
 
   const mountedRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -44,6 +47,7 @@ export function useConnectionHealth(): UseConnectionHealthResult {
       if (!mountedRef.current || controller.signal.aborted) return;
       setData(health);
       setError(null);
+      setLastSuccessAt(Date.now());
     } catch (err) {
       if (!mountedRef.current || controller.signal.aborted) return;
       const e = err as AppError;
@@ -106,5 +110,5 @@ export function useConnectionHealth(): UseConnectionHealthResult {
     };
   }, [doFetch, refresh, refreshVersion]);
 
-  return { data, loading, error, refresh };
+  return { data, loading, error, lastSuccessAt, refresh };
 }
