@@ -37,6 +37,7 @@ test("a late grant response for role A never lands on role B or gets saved as B"
     grantSeq: { current: 0 },
     grantRole: null, grantFor: null, grantLoading: false,
     grant: { menuIds: [], permissionIds: [], dataScopes: [] },
+    setClearGrantConfirm() {},
     backendClient: {
       roleGrant: (_token, roleId) => { const d = deferred(); responses.set(roleId, d); return d.promise; },
       updateRoleGrant: async (_token, roleId, grant) => { saved.push({ roleId, grant }); },
@@ -125,7 +126,89 @@ test("unsupported settings controls are disabled and labelled instead of silentl
   const placeholders = settings.match(/<Input[^>]*defaultValue=/g) ?? [];
   assert.equal(placeholders.length, 10);
   for (const input of placeholders) assert.match(input, /<Input disabled defaultValue=/);
-  assert.equal(settings.match(/（暂不支持）<\/Label>/g)?.length, 10);
+  // 10 个输入占位 + 页面密度（PR #22 第二轮）
+  assert.equal(settings.match(/（暂不支持）<\/Label>/g)?.length, 11);
+});
+
+const plain = (value) => JSON.parse(JSON.stringify(value)); // vm 上下文对象原型不同，比较前转普通对象
+
+// ─── PR #22 第二轮 ───────────────────────────────────────────────────────────
+
+test("page density has no mechanism behind it, so the toggle is disabled and labelled", async () => {
+  const settings = await read("../src/pages/SettingsPage.tsx");
+  const basic = slice(settings, "function BasicTab()", "// ─── 标签内容：Collector");
+  assert.match(basic, /页面密度（暂不支持）<\/Label>/);
+  assert.match(basic, /<SegmentedGroup options=\{\["紧凑", "标准", "宽松"\]\} value="标准" onChange=\{\(\) => \{\}\} disabled \/>/);
+  assert.doesNotMatch(basic, /setDensity/);
+  const group = slice(settings, "function SegmentedGroup(", "// ─── 数据库行卡片");
+  assert.match(group, /disabled=\{disabled\}/);
+});
+
+test("redis DB is validated before both save paths and the card says a restart is needed", async () => {
+  const settings = await read("../src/pages/SettingsPage.tsx");
+  const fn = compile(slice(settings, "function isValidRedisDb(", "// ─── 测试状态类型") + "\nglobalThis.isValidRedisDb = isValidRedisDb;");
+  const ctx = {};
+  runInNewContext(fn, ctx);
+  for (const ok of ["0", "3", " 15 "]) assert.equal(ctx.isValidRedisDb(ok), true, ok);
+  for (const bad of ["", "-1", "1.5", "abc"]) assert.equal(ctx.isValidRedisDb(bad), false, bad);
+  for (const name of ["async function handleSave()", "async function handleSaveAndRestart("]) {
+    const body = slice(settings, name, "setSaving(true);");
+    assert.match(body, /if \(!isValidRedisDb\(form\.redis\.database\)\) \{ toast\.error\("Redis DB 必须为非负整数"\); return; \}/, name);
+  }
+  assert.match(settings, /description="实时点位缓冲与 Stream 队列；DB 保存后需重启 Collector\/Writer\/Ingest 才生效/);
+});
+
+test("clearing every menu and permission asks for confirmation, then sends clearAll: true; otherwise clearAll is never sent", async () => {
+  const saved = [];
+  const context = {
+    token: "t",
+    grantSeq: { current: 0 },
+    grantRole: { roleId: 7, roleName: "R" }, grantFor: 7, grantLoading: false,
+    grant: { menuIds: [], permissionIds: [], dataScopes: [{ scopeType: "all", scopeValue: "*" }] },
+    clearGrantConfirm: false,
+    backendClient: { roleGrant: async () => ({}), updateRoleGrant: async (_token, roleId, grant) => { saved.push({ roleId, grant }); } },
+    toast: { error() {}, success() {} },
+  };
+  for (const key of ["grantRole", "grantFor", "grantLoading", "grant", "clearGrantConfirm"]) {
+    context[`set${key[0].toUpperCase()}${key.slice(1)}`] = (value) => { context[key] = value; };
+  }
+  runInNewContext(grantCode, context);
+
+  await context.saveGrant();
+  assert.equal(saved.length, 0, "未确认前不得提交清空");
+  assert.equal(context.clearGrantConfirm, true);
+  await context.saveGrant(true);
+  assert.deepEqual(plain(saved.pop()), { roleId: 7, grant: { menuIds: [], permissionIds: [], dataScopes: [{ scopeType: "all", scopeValue: "*" }], clearAll: true } });
+  assert.equal(context.clearGrantConfirm, false);
+
+  context.grant = { menuIds: [], permissionIds: [5], dataScopes: [] };
+  await context.saveGrant();
+  assert.deepEqual(plain(saved.pop().grant), { menuIds: [], permissionIds: [5], dataScopes: [] });
+  assert.equal("clearAll" in context.grant, false);
+
+  // 加载中 / 加载失败（grantFor 未就绪）仍不可保存，确认后也不行
+  context.grant = { menuIds: [], permissionIds: [], dataScopes: [] };
+  context.grantLoading = true;
+  await context.saveGrant(true);
+  context.grantLoading = false; context.grantFor = null;
+  await context.saveGrant(true);
+  assert.equal(saved.length, 0);
+
+  assert.match(rolePage, /<AlertDialog open=\{clearGrantConfirm\}[\s\S]*?onClick=\{\(\) => void saveGrant\(true\)\}>确认清空</);
+});
+
+test("mock grant endpoint enforces the same clearAll contract as the backend", async () => {
+  const mock = await read("../src/lib/mock-agent.ts");
+  const method = slice(mock, "  async updateRoleGrant(_token, id, payload) {", "  async adminMenus(");
+  const code = compile(`const MOCK_ROLE_GRANTS = new Map();\nconst api = {\n${method}};\nObject.assign(globalThis, { api, MOCK_ROLE_GRANTS });`);
+  const ctx = {};
+  runInNewContext(code, ctx);
+  await assert.rejects(ctx.api.updateRoleGrant("t", 1, { menuIds: [], permissionIds: [], dataScopes: [] }), (e) => e.status === 400);
+  await assert.rejects(ctx.api.updateRoleGrant("t", 1, { menuIds: null, permissionIds: [1], dataScopes: [] }), (e) => e.status === 400);
+  await ctx.api.updateRoleGrant("t", 1, { menuIds: [], permissionIds: [], dataScopes: [], clearAll: true });
+  assert.deepEqual(plain(ctx.MOCK_ROLE_GRANTS.get(1)), { menuIds: [], permissionIds: [], dataScopes: [] });
+  await ctx.api.updateRoleGrant("t", 2, { menuIds: [3], permissionIds: [], dataScopes: [] });
+  assert.deepEqual(plain(ctx.MOCK_ROLE_GRANTS.get(2)), { menuIds: [3], permissionIds: [], dataScopes: [] });
 });
 
 // ─── B061：健康检查失败后不再显示上次的"正常" ───────────────────────────────

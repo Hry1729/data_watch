@@ -42,7 +42,8 @@ const DEFAULTS = {
 };
 
 const settingsSaveCode = compile(
-  slice(settings, "  const canSave =", "  async function handleSaveStreamMaxlen(")
+  slice(settings, "function isValidRedisDb(", "// ─── 测试状态类型")
+  + slice(settings, "  const canSave =", "  async function handleSaveStreamMaxlen(")
   + "\nglobalThis.handleSave = handleSave;",
 );
 

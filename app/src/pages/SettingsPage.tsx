@@ -109,6 +109,11 @@ function configToForm(cfg: ConnectionConfig): FormState {
   };
 }
 
+/** Redis DB 编号：非负整数（Agent 写入服务实际读取的 [redis].db）。 */
+function isValidRedisDb(value: string): boolean {
+  return /^\d+$/.test(value.trim());
+}
+
 // ─── 测试状态类型 ─────────────────────────────────────────────────────────────
 
 type TestStatus = "unknown" | "testing" | "connected" | "disconnected";
@@ -204,10 +209,12 @@ function SegmentedGroup({
   options,
   value,
   onChange,
+  disabled = false,
 }: {
   options: string[];
   value: string;
   onChange: (v: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -218,8 +225,9 @@ function SegmentedGroup({
         <button
           key={opt}
           type="button"
+          disabled={disabled}
           onClick={() => onChange(opt)}
-          className="px-4 py-1.5 text-sm transition-colors"
+          className="px-4 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           style={{
             background: value === opt ? "var(--brand)" : "var(--card)",
             color: value === opt ? "var(--brand-foreground)" : "var(--muted-foreground)",
@@ -358,7 +366,7 @@ function DatabaseTab({
       {/* Redis */}
       <DbCard
         title="Redis 实时缓冲"
-        description="实时点位缓冲与 Stream 队列"
+        description="实时点位缓冲与 Stream 队列；DB 保存后需重启 Collector/Writer/Ingest 才生效，Backend 的 REDIS_DB 需另行同步"
         columns="1.6fr 0.8fr 0.8fr 1.3fr 0.8fr"
         status={redisRow.status}
         error={redisRow.error}
@@ -428,7 +436,6 @@ function DatabaseTab({
 
 function BasicTab() {
   const { theme, setTheme } = useTheme();
-  const [density, setDensity] = useState("标准");
 
   return (
     <Card className="gap-0 py-0">
@@ -446,8 +453,9 @@ function BasicTab() {
           />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Label className="text-sm font-medium">页面密度</Label>
-          <SegmentedGroup options={["紧凑", "标准", "宽松"]} value={density} onChange={setDensity} />
+          {/* 应用样式中没有密度机制；切换无效果，按其它未接入项一样禁用并标注 */}
+          <Label className="text-sm font-medium">页面密度（暂不支持）</Label>
+          <SegmentedGroup options={["紧凑", "标准", "宽松"]} value="标准" onChange={() => {}} disabled />
         </div>
       </CardContent>
     </Card>
@@ -776,6 +784,7 @@ export function SettingsPage() {
 
   async function handleSave() {
     if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
+    if (!isValidRedisDb(form.redis.database)) { toast.error("Redis DB 必须为非负整数"); return; }
     setSaving(true);
     const submitted = form;
     const versions = { ...editVersionRef.current };
@@ -818,6 +827,7 @@ export function SettingsPage() {
   async function handleSaveAndRestart(name: ModuleName) {
     const label = name === "collector" ? "Collector" : name === "ingest" ? "Ingest" : "Writer";
     if (!canSave || !loadedForm) { toast.error("配置未成功加载，不能保存"); return; }
+    if (!isValidRedisDb(form.redis.database)) { toast.error("Redis DB 必须为非负整数"); return; }
     setSaving(true);
     const submitted = form;
     const versions = { ...editVersionRef.current };

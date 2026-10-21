@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
-import type { MenuTreeItem, RoleGrant, RoleListItem, RolePayload, RoleQuery } from "@/types/system-management";
+import type { MenuTreeItem, RoleGrant, RoleGrantUpdate, RoleListItem, RolePayload, RoleQuery } from "@/types/system-management";
 
 const emptyForm: RolePayload = { roleName: "", roleCode: "R_", description: "", enabled: true };
 
@@ -80,6 +80,7 @@ export function RoleManagementPage() {
   const [grantRole, setGrantRole] = useState<RoleListItem | null>(null);
   const [grant, setGrant] = useState<RoleGrant>({ menuIds: [], permissionIds: [], dataScopes: [] });
   const [grantLoading, setGrantLoading] = useState(false);
+  const [clearGrantConfirm, setClearGrantConfirm] = useState(false);
   // 授权数据所属角色 ID 与请求代号：旧角色的迟到响应不得写入当前角色的授权
   const [grantFor, setGrantFor] = useState<number | null>(null);
   const grantSeq = useRef(0);
@@ -140,9 +141,15 @@ export function RoleManagementPage() {
     finally { if (seq === grantSeq.current) setGrantLoading(false); }
   }
 
-  async function saveGrant() {
+  async function saveGrant(confirmedClear = false) {
     if (!token || !grantRole || grantLoading || grantFor !== grantRole.roleId) return;
-    try { await backendClient.updateRoleGrant(token, grantFor, grant); toast.success("菜单权限已保存"); }
+    // 菜单与权限都清空 = 清空该角色全部访问权限：后端要求显式 clearAll: true（否则 400，与 dataScopes 无关）。
+    // 先让用户确认，确认后才带 clearAll；其余情况一律不发送 clearAll。
+    const clearsAll = grant.menuIds.length === 0 && grant.permissionIds.length === 0;
+    if (clearsAll && !confirmedClear) { setClearGrantConfirm(true); return; }
+    setClearGrantConfirm(false);
+    const payload: RoleGrantUpdate = clearsAll ? { ...grant, clearAll: true } : grant;
+    try { await backendClient.updateRoleGrant(token, grantFor, payload); toast.success("菜单权限已保存"); }
     catch { toast.error("权限保存失败"); }
   }
 
@@ -266,6 +273,7 @@ export function RoleManagementPage() {
 
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑角色" : "新增角色"}</DialogTitle></DialogHeader><div className="space-y-4"><div className="space-y-2"><Label>角色名称</Label><Input value={form.roleName} onChange={(event) => setForm((value) => ({ ...value, roleName: event.target.value }))} /></div><div className="space-y-2"><Label>角色编码</Label><Input disabled={Boolean(editing)} value={form.roleCode} onChange={(event) => setForm((value) => ({ ...value, roleCode: event.target.value.toUpperCase() }))} placeholder="如 R_TEST_001" /></div><div className="space-y-2"><Label>描述</Label><Textarea rows={3} value={form.description ?? ""} onChange={(event) => setForm((value) => ({ ...value, description: event.target.value }))} /></div><div className="flex items-center justify-between rounded-md border p-3"><div><p className="text-sm font-medium">角色状态</p><p className="text-xs text-muted-foreground">启用后可分配给用户</p></div><Switch checked={form.enabled} onCheckedChange={(enabled) => setForm((value) => ({ ...value, enabled }))} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={() => void saveRole()}>提交</Button></DialogFooter></DialogContent></Dialog>
     <AlertDialog open={Boolean(deleteRole)} onOpenChange={(open) => { if (!open) setDeleteRole(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>删除角色</AlertDialogTitle><AlertDialogDescription>确定删除角色“{deleteRole?.roleName}”吗？已关联用户可能受到影响。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void confirmDelete()}>确认删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={clearGrantConfirm} onOpenChange={(open) => { if (!open) setClearGrantConfirm(false); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>清空全部权限</AlertDialogTitle><AlertDialogDescription>确定清空角色“{grantRole?.roleName}”的全部菜单和权限吗？保存后该角色的用户将无法访问任何菜单。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={() => void saveGrant(true)}>确认清空</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
   );
 }
