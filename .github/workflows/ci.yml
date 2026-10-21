@@ -1,9 +1,16 @@
 # Linux 基础 CI（HURY-6）。
 # 运行 frontend、cli，以及不依赖 Rust / Tauri 系统库的桌面端 JS 测试和构建。
 # backend job（HURY-20）：ubuntu 上用 free-threaded Python 3.14t 跑 backend/app/tests。
-# 不运行 app/src-tauri 的 cargo check。
+# desktop job 不运行 app/src-tauri 的 cargo；Rust 由 tauri-windows job 负责（HURY-28）。
 # 依赖 Windows 的 CLI 用例在 cli-windows（windows-latest，Python 3.14t）里跑。
 # ingest job（HURY-16）：用 buildx 编 free-threaded 3.14t，再编 ingest，并做 workers=2 冒烟。
+# HURY-28 新增（解释器按 docs/04-运维部署/三角色安装包构建与隔离.md：Agent、Writer 用标准 3.14，
+# Collector、Edge、Ingest 用 free-threaded 3.14t）：
+#   agent-windows / collector-windows：两者只在 Windows 边缘机运行，单测依赖 Windows（见各 job 注释）。
+#   writer、ingest-unit、scripts：ubuntu 单测。edge 已由上面的 edge job 覆盖，direct_read 由 cli / cli-windows 覆盖。
+#   opcda-sidecars：windows-latest 上用 .NET Framework 4.x csc 编 x86 sidecar，并跑不依赖 OPC 运行时的自检。
+#   tauri-windows：windows-latest 上 cargo test --lib（app/src-tauri）。
+# 需要真实 Redis / MySQL / TDengine 的用例靠各自的环境变量门控自动跳过，CI 不设置这些变量。
 
 name: CI
 
@@ -265,3 +272,258 @@ jobs:
           docker logs data-watch-ingest-ci > /tmp/ingest-ci.log 2>&1
           grep -q "Started parent process" /tmp/ingest-ci.log
           test "$(grep -c "Application startup complete" /tmp/ingest-ci.log)" -eq 2
+
+  # ---------------------------------------------------------------------------
+  # HURY-28：补齐各组件单测与 C# / Rust 编译。
+  # ---------------------------------------------------------------------------
+
+  # Agent 是 Windows 服务（NSSM），打包解释器是标准 Python 3.14.6（非 3.14t）。
+  # 不放 ubuntu：进程管理用 subprocess.CREATE_NO_WINDOW，凭据加密用 win32crypt（pywin32），
+  # Linux 上约 70 个用例直接因平台 API 缺失失败，没有可用的跳过标记。
+  # 测试会 import 仓库根的 data_watch_driver_* 与 edge.app.*，因此 PYTHONPATH 指向仓库根，并装 edge 依赖。
+  # 驱动安装预检要找 collector/.venv-pack/Scripts/python.exe（install_root 下的 Collector 运行时），
+  # 所以额外用 3.14t 建一个 .venv-pack，与 installer/build-roles.ps1 的打包布局一致。
+  agent-windows:
+    name: agent (windows)
+    runs-on: windows-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        id: py314t
+        with:
+          python-version: "3.14t"
+          update-environment: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            agent/requirements.txt
+            agent/requirements-dev.txt
+            edge/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r agent/requirements.txt -r agent/requirements-dev.txt -r edge/requirements.txt
+
+      - name: Provision collector/.venv-pack for driver preflight
+        run: |
+          & "${{ steps.py314t.outputs.python-path }}" -m venv collector/.venv-pack
+          collector/.venv-pack/Scripts/python.exe -m pip install --upgrade pip
+          collector/.venv-pack/Scripts/python.exe -m pip install -r collector/requirements.txt -r edge/requirements.txt
+
+      - name: Test
+        working-directory: agent
+        run: python -m pytest tests -q --tb=short
+
+  # Collector 的打包解释器是 free-threaded 3.14t，只在 Windows 边缘机运行。
+  # 不放 ubuntu：packages/*/driver.toml 声明 os=("windows",)，Linux 上驱动拒绝加载；
+  # conftest 把 packages/*/vendor 插到 sys.path 最前，其中 opcua/vendor 带 cp314t-win_amd64 的
+  # cryptography/_cffi_backend 原生扩展，Linux 上会遮住已安装的 cryptography。约 100 个用例因此失败。
+  # 需要真实 Redis/MySQL 的用例靠 DATAWATCH_TEST_REDIS_URL / DW_CENTRAL_TEST_REDIS_URL /
+  # RUN_DB_INTEGRATION 等环境变量门控，CI 不设置，自动跳过。
+  collector-windows:
+    name: collector (windows)
+    runs-on: windows-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      PYTHONUTF8: "1"
+      PYTHON_GIL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+          cache: pip
+          cache-dependency-path: |
+            collector/requirements.txt
+            edge/requirements.txt
+
+      - name: Install
+        # collector 测试会 import edge.app.storage_client（httpx），所以一并装 edge 依赖。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r collector/requirements.txt -r edge/requirements.txt
+
+      - name: Test
+        working-directory: collector
+        run: python -Xgil=0 -m pytest tests -q --tb=short
+
+  # Writer 是唯一仍带 GIL 的模块：taos-ws-py 没有 cp314t 构建（见 docs/02-模块设计/writer/README.md 1.1），
+  # 所以用标准 3.14。taos-ws-py 的 abi3 wheel 在标准 3.14 上可直接安装。
+  # fakeredis 只是测试依赖（部分用例 importorskip，缺了会静默跳过），writer 没有单独的 dev requirements，
+  # 这里直接装。
+  writer:
+    name: writer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: writer/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r writer/requirements.txt pytest pytest-asyncio fakeredis
+
+      - name: Test
+        run: python -m pytest writer/tests -q --tb=short
+
+  # ingest 的单元测试（上面的 ingest job 只做容器构建和冒烟，不跑 ingest/tests）。
+  # Redis / MySQL 集成用例靠 INGEST_TEST_REDIS_URL / INGEST_B7_ISOLATED_MYSQL 门控，CI 不设置，自动跳过。
+  ingest-unit:
+    name: ingest (unit)
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_GIL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+          cache: pip
+          cache-dependency-path: ingest/requirements.txt
+
+      - name: Install
+        # httpx 只在 ingest/tests/test_http.py 里用到，不在运行依赖里。
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ingest/requirements.txt httpx pytest pytest-asyncio
+
+      - name: Drop Windows-only site-packages
+        # 有的 ingest 用例会把 backend/ 插进 sys.path，进而带上 backend/.py314t-site（win_amd64 扩展），
+        # Linux 上会把 cryptography 导崩。与 backend job 同样处理。
+        run: rm -rf backend/.py314t-site
+
+      - name: Test
+        run: python -Xgil=0 -m pytest ingest/tests -q --tb=short
+
+  # scripts/test_*.py：诊断、压测、验收脚本的单测，主要覆盖 data_watch_shared / edge / ingest 侧逻辑，
+  # 用 3.14t。依赖 PowerShell / Windows ACL 的用例自带 skipif(os.name != "nt")，ubuntu 上跳过。
+  scripts:
+    name: scripts
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_GIL: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+          cache: pip
+          cache-dependency-path: |
+            ingest/requirements.txt
+            edge/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r ingest/requirements.txt -r edge/requirements.txt pymysql pytest pytest-asyncio
+
+      - name: Drop Windows-only site-packages
+        run: rm -rf backend/.py314t-site
+
+      - name: Test
+        run: python -Xgil=0 -m pytest scripts -q --tb=short
+
+  # OPC DA sidecar 没有 .csproj：各自的 build.ps1 直接调 .NET Framework 4.x 的 32 位 csc.exe
+  # （%WINDIR%\Microsoft.NET\Framework\v4.0.30319），/platform:x86，目标 net48。windows-latest 自带该编译器，
+  # 不需要 setup-msbuild / setup-dotnet。这里只编译，不需要 OPC 运行时；三个自检程序是纯逻辑
+  # （令牌校验、响应解析、缓存选择），按各自 README 的方式和服务源码一起编译并运行。
+  opcda-sidecars:
+    name: opcda sidecars (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CSC: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build OpcDaProxyService (x86)
+        working-directory: collector/sidecars/opcda_proxy_service
+        run: ./build.ps1
+
+      - name: Build OpcDaPushService (x86)
+        run: ./collector/sidecars/opcda_push_service/build.ps1
+
+      - name: Build OpcDaProbe (x86)
+        run: ./collector/sidecars/opcda_sidecar/build.ps1
+
+      - name: Proxy TokenAuthCheck
+        # TokenAuthCheck.cs 随代理令牌校验的修复一起引入；文件不在时跳过，不让本 job 依赖合并顺序。
+        if: hashFiles('collector/sidecars/opcda_proxy_service/tests/TokenAuthCheck.cs') != ''
+        working-directory: collector/sidecars/opcda_proxy_service
+        run: |
+          New-Item -ItemType Directory -Force bin/tests | Out-Null
+          & $env:CSC /nologo /target:exe /platform:x86 /main:OpcDaProxyService.TokenAuthCheck `
+            /out:bin/tests/TokenAuthCheck.exe `
+            /reference:System.dll /reference:System.Core.dll /reference:System.Web.Extensions.dll `
+            OpcDaProxyService.cs OpcConnectionManager.cs tests/TokenAuthCheck.cs
+          if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
+          ./bin/tests/TokenAuthCheck.exe
+          if ($LASTEXITCODE -ne 0) { throw "TokenAuthCheck failed with exit code $LASTEXITCODE" }
+
+      - name: Push service smoke checks
+        working-directory: collector/sidecars/opcda_push_service
+        run: |
+          New-Item -ItemType Directory -Force bin/tests | Out-Null
+          foreach ($smoke in @("PushClientResponseSmoke", "PushCacheSelectionSmoke")) {
+            & $env:CSC /nologo /platform:x86 /target:exe /reference:System.Web.Extensions.dll `
+              "/main:OpcDaPushService.$smoke" "/out:bin/tests/$smoke.exe" `
+              OpcDaPushService.cs "tests/$smoke.cs"
+            if ($LASTEXITCODE -ne 0) { throw "csc failed for $smoke with exit code $LASTEXITCODE" }
+            & "./bin/tests/$smoke.exe"
+            if ($LASTEXITCODE -ne 0) { throw "$smoke failed with exit code $LASTEXITCODE" }
+          }
+
+  # Tauri 桌面端 Rust crate。只测 lib（http_proxy.rs 的单测都在 lib 里，main.rs 只有 app_lib::run()）。
+  # 1) tauri::generate_context! 编译期要求 frontendDist（app/dist）存在；前端构建已由 desktop job 覆盖，
+  #    这里只放一个占位 index.html，避免再装 Node / pnpm。
+  # 2) tauri-build 只给 bin 嵌 Common-Controls v6 清单，lib 单测 exe 没有，会在启动时
+  #    STATUS_ENTRYPOINT_NOT_FOUND（tauri-apps/tauri#13419）。这里用 CI 专用清单经链接器嵌入。
+  #    显式 --target 让 RUSTFLAGS 只作用于目标产物，不影响 build script / proc-macro；
+  #    只跑 --lib，避免 bin 与 tauri-build 的清单资源重复。
+  tauri-windows:
+    name: tauri (windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      - name: Placeholder frontendDist
+        run: |
+          New-Item -ItemType Directory -Force app/dist | Out-Null
+          Set-Content -Path app/dist/index.html -Value '<!doctype html><title>ci</title>'
+
+      - name: cargo test --lib
+        working-directory: app/src-tauri
+        run: |
+          $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS = "-C link-arg=/MANIFEST:EMBED -C link-arg=/MANIFESTINPUT:$env:GITHUB_WORKSPACE\.github\ci\windows-test-app.manifest"
+          cargo test --locked --lib --target x86_64-pc-windows-msvc
