@@ -315,7 +315,8 @@ import {
   formatStoredPointValue,
   isRealtimeValueAbsent,
   normalizeWsPointValue,
-  toChartSampleValue
+  toChartSampleValue,
+  toSampleText
 } from '@/utils/realtime-point-value'
 import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
@@ -367,6 +368,8 @@ interface RealtimeDataRecord {
   pointName: string
   /** 缺值/非数值为 null（曲线断点），不能伪造成 0 */
   value: number | null
+  /** 有值但非数值（文本/文本布尔）时的原文，导出时原样写出 */
+  text?: string
   quality?: number
 }
 
@@ -458,6 +461,7 @@ const saveChartSnapshot = async () => {
       varSeq: r.varSeq,
       pointName: r.pointName,
       value: r.value,
+      text: r.text,
       quality: r.quality
     }))
 
@@ -540,12 +544,14 @@ const loadChartSnapshot = async (): Promise<boolean> => {
         varSeq: item.varSeq,
         pointName: item.pointName,
         value: toChartSampleValue(item.value),
+        text: typeof item.text === 'string' ? item.text : toSampleText(item.value),
         quality: typeof item.quality === 'number' ? item.quality : undefined
       }))
 
       // 恢复实时值（缺值样本不覆盖为 0）
       realtimeRecords.value.forEach((record) => {
         if (record.value !== null) realtimeValues.value.set(record.varSeq, record.value)
+        else if (record.text !== undefined) realtimeValues.value.set(record.varSeq, record.text)
       })
     }
 
@@ -1490,6 +1496,7 @@ const handleWsMessage = (payload: Record<string, unknown>) => {
           varSeq,
           pointName,
           value: toChartSampleValue(value),
+          text: toSampleText(value),
           quality: typeof quality === 'number' ? quality : undefined
         }
         newRecords.push(record)
@@ -1758,8 +1765,8 @@ const handleExport = async () => {
       if (!timeMap.has(timeKey)) {
         timeMap.set(timeKey, new Map())
       }
-      // 缺值样本导出为占位符+质量文案，不与真实 0 混淆
-      timeMap.get(timeKey)!.set(record.varSeq, formatExportSampleValue(record.value, record.quality))
+      // 文本值原样导出；缺值样本导出为占位符+质量文案，不与真实 0 混淆
+      timeMap.get(timeKey)!.set(record.varSeq, formatExportSampleValue(record.value, record.quality, record.text))
     }
 
     // 3. 构建表头和行数据
@@ -1909,6 +1916,7 @@ onUnmounted(() => {
     varSeq: r.varSeq,
     pointName: r.pointName,
     value: r.value,
+    text: r.text,
     quality: r.quality
   }))
   const existingChartState = (() => {

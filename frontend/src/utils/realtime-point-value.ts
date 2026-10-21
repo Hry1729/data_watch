@@ -57,11 +57,31 @@ export function toChartSampleValue(value: unknown): number | null {
   return null
 }
 
-/** 实时导出单元格：有值导出数值；缺值导出占位符并带质量文案，与真实 0 可区分。 */
+/**
+ * 有值但不是数值的样本（STRING/VARCHAR/NCHAR 文本、"true"/"false" 这类文本布尔）保留原文，
+ * 供导出使用；曲线上它们仍是 null 断点。数值、boolean、缺值返回 undefined。
+ */
+export function toSampleText(value: unknown): string | undefined {
+  if (isRealtimeValueAbsent(value)) return undefined
+  if (typeof value === 'number' || typeof value === 'boolean') return undefined
+  if (typeof value === 'string') return toChartSampleValue(value) === null ? value : undefined
+  try {
+    return typeof value === 'object' ? JSON.stringify(value) : String(value)
+  } catch {
+    return String(value)
+  }
+}
+
+/**
+ * 实时导出单元格：有数值导出数值；有文本导出原文；真正缺值才导出占位符并带质量文案，
+ * 与真实 0 / 文本都可区分。
+ */
 export function formatExportSampleValue(
   value: number | null | undefined,
-  quality: number | null | undefined
+  quality: number | null | undefined,
+  text?: string | null
 ): number | string {
   if (typeof value === 'number') return value
+  if (typeof text === 'string') return text
   return formatMissingValueWithQuality(quality)
 }

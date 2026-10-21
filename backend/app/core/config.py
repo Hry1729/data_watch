@@ -120,6 +120,8 @@ class Settings:
     password_worker_max_queue: int = 8
     login_fail_max: int = 5
     login_fail_window_seconds: int = 60
+    # 仪表盘联调假告警开关（B035）：仅在 BACKEND_ENV ∈ {dev, development, local} 时生效，默认关闭。
+    dashboard_synthetic_alarms: bool = False
 
     @property
     def mysql_async_dsn(self) -> str:
@@ -253,4 +255,6 @@ def get_settings() -> Settings:
         login_fail_window_seconds=int(
             read_setting("LOGIN_FAIL_WINDOW_SECONDS", 60)
         ),
+        dashboard_synthetic_alarms=str(read_setting("DASHBOARD_SYNTHETIC_ALARMS", "")).strip().lower()
+        in {"1", "true", "yes", "on"},
     )

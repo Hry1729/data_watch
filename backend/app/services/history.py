@@ -28,6 +28,91 @@ DEVICE_PREFIX_RE = re.compile(r"^[A-Za-z]+")
 IDENTIFIER_SANITIZE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 
+# TDengine 3.x 错误码（taosdata/TDengine include/util/taoserror.h + source/util/src/terror.c）。
+# 只有这些码表示「对象确实不存在」，历史查询可静默回退到下一种 schema；其余一律视为故障（B032）。
+_TD_TABLE_MISSING_CODES = frozenset({
+    0x2603,  # TSDB_CODE_PAR_TABLE_NOT_EXIST  "Table does not exist"
+    0x0618,  # TSDB_CODE_TDB_TABLE_NOT_EXIST  "Table does not exist"
+    0x0362,  # TSDB_CODE_MND_STB_NOT_EXIST    "STable does not exist"
+    0x061A,  # TSDB_CODE_TDB_STB_NOT_EXIST    "Stable does not exist"
+})
+_TD_SCHEMA_MISSING_CODES = _TD_TABLE_MISSING_CODES | frozenset({
+    0x2602,  # TSDB_CODE_PAR_INVALID_COLUMN   "Invalid column name"
+    0x036C,  # TSDB_CODE_MND_COLUMN_NOT_EXIST "Column does not exist"
+    0x0526,  # TSDB_CODE_VND_COL_NOT_EXISTS   "Table column does not exist"
+    0x0388,  # TSDB_CODE_MND_DB_NOT_EXIST     "Database does not exist"（3.0 为 "Database not exist"）
+})
+# 0x2662 TSDB_CODE_PAR_GET_META_ERROR "Failed to get table info, error: <原因>" 只是包装，
+# 原因可能是网络/权限，必须看原因文本；0x2616 PAR_DB_NOT_SPECIFIED 是配置错误，不算缺表。
+_TD_GET_META_ERROR_CODE = 0x2662
+_TD_CODE_RE = re.compile(r"\[\s*0x([0-9a-fA-F]{4,8})\s*\]")
+_TD_TABLE_MISSING_MESSAGES = (
+    "table does not exist",
+    "stable does not exist",
+    "table not exist",
+    "stable not exist",
+)
+_TD_SCHEMA_MISSING_MESSAGES = _TD_TABLE_MISSING_MESSAGES + (
+    "invalid column name",
+    "column does not exist",
+    "table column does not exist",
+    "database does not exist",
+    "database not exist",
+)
+
+
+def _td_error_root(exc: BaseException) -> BaseException:
+    """SQLAlchemy 池路径把驱动异常包在 DBAPIError.orig 里，且 str() 会附带 SQL 文本；取驱动原始异常。"""
+    orig = getattr(exc, "orig", None)
+    return orig if isinstance(orig, BaseException) else exc
+
+
+def _td_error_code(exc: BaseException) -> int | None:
+    if not isinstance(exc, OSError):  # OSError.errno 是系统 errno，不是 TDengine 码
+        errno = getattr(exc, "errno", None)
+        if isinstance(errno, int) and not isinstance(errno, bool) and errno not in (0, -1):
+            return errno & 0xFFFF
+    match = _TD_CODE_RE.search(str(exc))
+    if match:
+        return int(match.group(1), 16) & 0xFFFF
+    return None
+
+
+def _td_core_message(text: str) -> str:
+    """去掉 "[0x2603]"、"Internal error:"、反引号等包装，得到 TDengine 原始错误文本（小写）。"""
+    core = _TD_CODE_RE.sub(" ", text).strip().lower()
+    core = core.lstrip(":").strip()
+    if core.startswith("internal error:"):
+        core = core[len("internal error:"):]
+    return core.strip().strip("`'\" ").strip()
+
+
+def _td_message_matches(core: str, messages: tuple[str, ...]) -> bool:
+    # 必须整句等于 TDengine 的错误文本（允许 ": <对象名>" 后缀），避免 "timeout ... table" 之类误判。
+    return any(core == message or core.startswith(f"{message}:") for message in messages)
+
+
+def _is_tdengine_missing_error(exc: BaseException, *, codes: frozenset[int], messages: tuple[str, ...]) -> bool:
+    root = _td_error_root(exc)
+    code = _td_error_code(root)
+    if code == _TD_GET_META_ERROR_CODE:
+        detail = _td_core_message(str(root)).split("error:", 1)
+        return len(detail) == 2 and _td_message_matches(_td_core_message(detail[1]), messages)
+    if code is not None:
+        return code in codes
+    return _td_message_matches(_td_core_message(str(root)), messages)
+
+
+def is_tdengine_table_missing_error(exc: BaseException) -> bool:
+    """仅「表/超级表不存在」。"""
+    return _is_tdengine_missing_error(exc, codes=_TD_TABLE_MISSING_CODES, messages=_TD_TABLE_MISSING_MESSAGES)
+
+
+def is_tdengine_schema_missing_error(exc: BaseException) -> bool:
+    """表/超级表/列/库不存在。"""
+    return _is_tdengine_missing_error(exc, codes=_TD_SCHEMA_MISSING_CODES, messages=_TD_SCHEMA_MISSING_MESSAGES)
+
+
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -564,27 +649,13 @@ class HistoryService:
 
     @staticmethod
     def _is_quality_table_missing_error(exc: BaseException) -> bool:
-        """识别 TDengine/驱动「表不存在」类错误，供质量窄表缺表降级。"""
-        text = str(exc).lower()
-        needles = (
-            "table does not exist",
-            "table not exist",
-            "does not exist",
-            "not found",
-            "no such table",
-            "unknown table",
-        )
-        # 仅当消息同时暗示 table/表 时，才把 not found 视为缺表，避免误吞连接错误
-        if "table" in text or "表" in str(exc):
-            return any(n in text for n in needles)
-        return False
+        """质量窄表缺表降级：只认 TDengine「表不存在」错误码/原文，其余故障上抛（B032）。"""
+        return is_tdengine_table_missing_error(exc)
 
-    @classmethod
-    def _is_point_schema_missing_error(cls, exc: BaseException) -> bool:
-        return cls._is_quality_table_missing_error(exc) or any(message in str(exc).lower() for message in (
-            "invalid column name", "unknown column", "column does not exist", "column not exist",
-            "column not found", "database does not exist", "database not exist", "unknown database",
-        ))
+    @staticmethod
+    def _is_point_schema_missing_error(exc: BaseException) -> bool:
+        """表/超级表/列/库不存在才算兼容回退；超时、权限、连接、元数据获取失败等一律算故障。"""
+        return is_tdengine_schema_missing_error(exc)
 
     def _resolve_quality_child_table_name(self, device_code: str) -> str:
         """质量窄表子表名，与 writer.quality_schema.quality_child_table_name 一致。"""

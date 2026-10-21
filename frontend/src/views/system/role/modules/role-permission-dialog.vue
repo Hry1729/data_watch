@@ -58,6 +58,8 @@
 
 <script setup lang="ts">
   import { fetchGetAdminMenus, fetchGetRoleGrant, fetchUpdateRoleGrant } from '@/api/system-manage'
+  import { buildRoleGrantPayload } from '@/utils/role-grant-payload'
+  import { ElMessageBox } from 'element-plus'
   import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
 
   type RoleListItem = Api.SystemManage.RoleListItem
@@ -303,11 +305,23 @@
         }
       })
 
-      // 保留原有的 dataScopes
-      const payload: Api.SystemManage.RoleGrantPayload = {
-        menuIds: [...new Set(menuIds)],
-        permissionIds: [...new Set(permissionIds)],
+      // 保留原有的 dataScopes；菜单和权限全部取消时按后端契约携带 clearAll: true
+      const payload: Api.SystemManage.RoleGrantPayload = buildRoleGrantPayload({
+        menuIds,
+        permissionIds,
         dataScopes: originalGrant.value?.dataScopes || []
+      })
+
+      if (payload.clearAll) {
+        try {
+          await ElMessageBox.confirm(
+            '当前未勾选任何菜单和权限，保存后将清空该角色的全部菜单和权限，确定继续吗？',
+            '清空权限确认',
+            { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning' }
+          )
+        } catch {
+          return
+        }
       }
 
       await fetchUpdateRoleGrant(roleId, payload)

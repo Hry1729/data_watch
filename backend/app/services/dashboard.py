@@ -5,7 +5,6 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
-import os
 import re
 from time import monotonic
 from typing import Any
@@ -13,6 +12,7 @@ from typing import Any
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.core.exceptions import ApiError
 from app.core.status_thresholds import ONLINE_MAX_AGE_SECONDS, UNSTABLE_MAX_AGE_SECONDS
 from app.core.time_utils import format_local_datetime, now_local, parse_local_datetime
@@ -146,17 +146,18 @@ def build_edge_pipeline_health(
         "generatedAt": checked_at.isoformat(timespec="seconds"),
     }
 
-_SYNTHETIC_ALARMS_ENV = "DASHBOARD_SYNTHETIC_ALARMS"
 _DEV_APP_ENVS = {"dev", "development", "local"}
 
 
-def _synthetic_alarms_enabled() -> bool:
-    """联调假告警仅在显式开启且处于开发环境时使用，默认关闭（B035）。"""
-    flag = str(os.getenv(_SYNTHETIC_ALARMS_ENV, "")).strip().lower()
-    if flag not in {"1", "true", "yes", "on"}:
+def _synthetic_alarms_enabled(settings: Settings | None = None) -> bool:
+    """联调假告警仅在显式开启且处于开发环境时使用，默认关闭（B035）。
+
+    开关与 BACKEND_ENV 都经 app.core.config 读取，因此 backend/.env 里的配置同样生效。
+    """
+    settings = settings or get_settings()
+    if not getattr(settings, "dashboard_synthetic_alarms", False):
         return False
-    app_env = str(os.getenv("BACKEND_ENV", "production")).strip().lower()
-    return app_env in _DEV_APP_ENVS
+    return str(getattr(settings, "app_env", "production")).strip().lower() in _DEV_APP_ENVS
 
 
 class DashboardService:

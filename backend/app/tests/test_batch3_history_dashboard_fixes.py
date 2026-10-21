@@ -167,6 +167,175 @@ async def test_b032_raw_matrix_all_empty_with_healthy_db_returns_empty():
     assert result["rows"] == []
 
 
+# ---------------------------------------------------------------- B032 R2：错误分类收紧
+class _TaospyProgrammingError(Exception):
+    """与 taospy taos/error.py 的 Error 同构（导入 taos 需要 libtaos.so，CI 上没有）。"""
+
+    def __init__(self, msg=None, errno=0xFFFF):
+        self.msg = msg
+        self.errno = errno
+        self._full_msg = "[0x%04x]: %s" % (self.errno & 0xFFFF, self.msg)
+
+    def __str__(self):
+        return self._full_msg
+
+
+def _taospy_error(msg, code):
+    return _TaospyProgrammingError(msg, code)
+
+
+def _taosrest_error(msg, code):
+    from taosrest.errors import ConnectError
+
+    return ConnectError(msg, code)
+
+
+def _sqlalchemy_wrapped(message, sql="SELECT ts, `v1` FROM `device_data`.`qc_table` WHERE ts >= 0"):
+    from sqlalchemy.exc import DBAPIError
+
+    class QueryError(Exception):  # 模拟 taosws.QueryError
+        pass
+
+    return DBAPIError(sql, None, QueryError(message))
+
+
+SCHEMA_MISSING_ERRORS = [
+    # taosws（WebSocket / SQLAlchemy 池）原文格式
+    RuntimeError("[0x2603] Internal error: `Table does not exist`"),
+    RuntimeError("[0x0388] Internal error: `Database not exist`"),  # 仓库 evidence/ 里的真实报错
+    RuntimeError("[0x0362] Internal error: `STable does not exist`"),
+    RuntimeError("[0x2602] Internal error: `Invalid column name: v99`"),
+    # taospy 原生 / taosrest：errno 属性 + "[0x....]: msg"
+    "taospy:0x80002603:Table does not exist",
+    "taospy:-2147473917:Table does not exist",  # 0x80002603 的有符号形式
+    "taosrest:9731:Table does not exist",
+    "taosrest:904:Database does not exist",
+    "taosrest:1318:Table column does not exist",  # 0x0526
+    # SQLAlchemy 包装（str 里带 SQL 文本）
+    "sqlalchemy:[0x2603] Internal error: `Table does not exist`",
+    # 0x2662 只在原因是缺表时算缺表
+    RuntimeError("[0x2662] Failed to get table info, error: Table does not exist"),
+    # 无错误码时的精确原文
+    RuntimeError("Table does not exist"),
+    RuntimeError("Database does not exist"),
+]
+
+NOT_MISSING_ERRORS = [
+    TimeoutError("TDengine query queue timed out"),
+    # 近似误判：含 table / not found / does not exist 但不是缺表
+    RuntimeError("Query timeout while scanning table device_data.qc: vnode not found in time"),
+    RuntimeError("timeout: table scan did not finish, table does not exist check skipped"),
+    RuntimeError("[0x0200] Query timeout: table does not exist check skipped"),
+    RuntimeError("permission denied for table device_data.qc"),
+    RuntimeError("[0x000B] Internal error: `Unable to establish connection`"),
+    RuntimeError("[0x0357]: Authentication failure"),
+    RuntimeError("[0x2662] Failed to get table info, error: Unable to establish connection"),
+    RuntimeError("[0x2616] Internal error: `Database not specified`"),
+    RuntimeError("Connection refused: table service not found"),
+    FileNotFoundError(2, "No such file or directory: 'table'"),
+    "taosrest:11:Unable to establish connection",
+    "taospy:0x8000000B:Unable to establish connection",
+    "sqlalchemy:[0x0200] Internal error: `Query timeout`",
+]
+
+
+def _build_error(spec):
+    if isinstance(spec, BaseException):
+        return spec
+    kind, rest = spec.split(":", 1)
+    if kind == "sqlalchemy":
+        return _sqlalchemy_wrapped(rest)
+    code, message = rest.split(":", 1)
+    code_int = int(code, 0)
+    return (_taospy_error if kind == "taospy" else _taosrest_error)(message, code_int)
+
+
+@pytest.mark.parametrize("spec", SCHEMA_MISSING_ERRORS, ids=str)
+def test_b032_r2_schema_missing_errors_are_recognised(spec):
+    assert HistoryService._is_point_schema_missing_error(_build_error(spec)) is True
+
+
+@pytest.mark.parametrize("spec", NOT_MISSING_ERRORS, ids=str)
+def test_b032_r2_near_miss_errors_are_not_schema_missing(spec):
+    exc = _build_error(spec)
+    assert HistoryService._is_point_schema_missing_error(exc) is False
+    assert HistoryService._is_quality_table_missing_error(exc) is False
+
+
+def test_b032_r2_quality_table_missing_only_accepts_table_errors():
+    assert HistoryService._is_quality_table_missing_error(
+        RuntimeError("[0x2603] Internal error: `Table does not exist`")
+    ) is True
+    # 列/库不存在不是"质量窄表不存在"
+    assert HistoryService._is_quality_table_missing_error(
+        RuntimeError("[0x2602] Internal error: `Invalid column name: quality`")
+    ) is False
+
+
+NEAR_MISS_TIMEOUT = RuntimeError("Query timeout while scanning table device_data.qc: vnode not found in time")
+
+
+@pytest.mark.asyncio
+async def test_b032_r2_downsampled_series_near_miss_timeout_is_503():
+    tdengine = _td_mock()
+    tdengine.fetch_all = AsyncMock(side_effect=NEAR_MISS_TIMEOUT)
+    service = HistoryService(MagicMock(), tdengine, settings=SimpleNamespace())
+    service._raise_if_tdengine_unavailable = AsyncMock()  # 库探测健康也不能吞掉
+    with pytest.raises(ApiError) as exc:
+        await service._fetch_downsampled_series(
+            HistoryDevice(1, "QC", "Device", "qc"),
+            HistoryPoint(1, "p", "a", "REAL", 1, None, td_column_name="v1"),
+            datetime(2026, 1, 1), datetime(2026, 1, 2), "1m", "AVG",
+        )
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_b032_r2_point_series_near_miss_timeout_is_503():
+    tdengine = _td_mock()
+    tdengine.fetch_all = AsyncMock(side_effect=NEAR_MISS_TIMEOUT)
+    service = HistoryService(MagicMock(), tdengine, settings=SimpleNamespace())
+    service._raise_if_tdengine_unavailable = AsyncMock()
+    with pytest.raises(ApiError) as exc:
+        await service._fetch_point_series(
+            HistoryDevice(1, "QC", "Device", "qc"),
+            HistoryPoint(1, "p", "a", "REAL", 1, None, td_column_name="v1"),
+            datetime(2026, 1, 1), datetime(2026, 1, 2),
+        )
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_b032_r2_point_series_real_table_missing_is_empty():
+    tdengine = _td_mock()
+    tdengine.fetch_all = AsyncMock(
+        side_effect=RuntimeError("[0x2603] Internal error: `Table does not exist`")
+    )
+    service = HistoryService(MagicMock(), tdengine, settings=SimpleNamespace())
+    service._raise_if_tdengine_unavailable = AsyncMock()
+    rows = await service._fetch_point_series(
+        HistoryDevice(1, "QC", "Device", "qc"),
+        HistoryPoint(1, "p", "a", "REAL", 1, None, td_column_name="v1"),
+        datetime(2026, 1, 1), datetime(2026, 1, 2),
+    )
+    assert rows == []
+    service._raise_if_tdengine_unavailable.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_b032_r2_quality_map_near_miss_is_503_not_null_quality():
+    tdengine = _td_mock()
+    tdengine.fetch_all = AsyncMock(side_effect=NEAR_MISS_TIMEOUT)
+    service = HistoryService(MagicMock(), tdengine, settings=SimpleNamespace())
+    with pytest.raises(ApiError) as exc:
+        await service._fetch_quality_map_for_raw(
+            HistoryDevice(1, "QC", "Device", "qc"),
+            HistoryPoint(1, "p", "a", "REAL", 1, None, td_column_name="v1"),
+            "device_data", "ts >= 0", "1", 10, True,
+        )
+    assert exc.value.status_code == 503
+
+
 # ---------------------------------------------------------------- B034
 @pytest.mark.asyncio
 @pytest.mark.parametrize("granularity,step_ms", [("100ms", 100), ("500ms", 500), ("1s", 1000)])
@@ -226,9 +395,22 @@ def _dashboard(fact_tables, execute=None):
     return service
 
 
-@pytest.mark.asyncio
-async def test_b035_missing_alarm_table_returns_zero_not_fake(monkeypatch):
+@pytest.fixture
+def isolated_settings(monkeypatch):
+    """让 get_settings() 只看本测试给的进程环境/backend/.env，并在前后清缓存。"""
+    from app.core import config
+
+    env_file: dict[str, str] = {}
+    monkeypatch.setattr(config, "_load_backend_env_defaults", lambda: dict(env_file))
     monkeypatch.delenv("DASHBOARD_SYNTHETIC_ALARMS", raising=False)
+    monkeypatch.delenv("BACKEND_ENV", raising=False)
+    config.get_settings.cache_clear()
+    yield env_file
+    config.get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_b035_missing_alarm_table_returns_zero_not_fake(isolated_settings):
     service = _dashboard(set())
     dist = await service.get_alarm_distribution({})
     assert dist["totalAlarmCount"] == 0 and dist["groups"] == []
@@ -261,14 +443,41 @@ async def test_b035_alarm_sql_failure_is_error_not_fake():
 
 
 @pytest.mark.asyncio
-async def test_b035_synthetic_alarms_require_explicit_dev_flag(monkeypatch):
+async def test_b035_synthetic_alarms_require_explicit_dev_flag(monkeypatch, isolated_settings):
+    from app.core.config import get_settings
+
     service = _dashboard(set())
     monkeypatch.setenv("DASHBOARD_SYNTHETIC_ALARMS", "1")
     monkeypatch.setenv("BACKEND_ENV", "production")
+    get_settings.cache_clear()
     assert (await service.get_recent_events({}))["list"] == []
     monkeypatch.setenv("BACKEND_ENV", "development")
+    get_settings.cache_clear()
     events = (await service.get_recent_events({}))["list"]
     assert events and all("联调假数据" in item["content"] for item in events)
+
+
+@pytest.mark.asyncio
+async def test_b035_synthetic_alarm_flag_is_read_from_backend_env_file(isolated_settings):
+    """Codex P2：只写在 backend/.env 里（未导出到进程环境）的开关也必须生效。"""
+    from app.core.config import get_settings
+
+    service = _dashboard(set())
+    isolated_settings.update({"DASHBOARD_SYNTHETIC_ALARMS": "true", "BACKEND_ENV": "development"})
+    get_settings.cache_clear()
+    assert get_settings().dashboard_synthetic_alarms is True
+    events = (await service.get_recent_events({}))["list"]
+    assert events and all("联调假数据" in item["content"] for item in events)
+
+    isolated_settings.update({"BACKEND_ENV": "production"})
+    get_settings.cache_clear()
+    assert (await service.get_recent_events({}))["list"] == []
+
+
+def test_b035_synthetic_alarm_flag_defaults_off(isolated_settings):
+    from app.core.config import get_settings
+
+    assert get_settings().dashboard_synthetic_alarms is False
 
 
 # ---------------------------------------------------------------- B036

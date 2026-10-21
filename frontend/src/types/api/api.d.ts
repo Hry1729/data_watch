@@ -187,6 +187,8 @@ declare namespace Api {
       menuIds: number[]
       permissionIds: number[]
       dataScopes: DataScopeItem[]
+      /** menuIds 与 permissionIds 均为空（清空全部）时必须为 true；其余情况不传 */
+      clearAll?: boolean
     }
 
     /** 数据权限项 */
