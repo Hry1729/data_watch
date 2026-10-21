@@ -231,6 +231,19 @@ jobs:
             data-watch-ingest:ci \
             python3.14t /app/ingest/ci/smoke_upload.py prepare
 
+      - name: Enable Redis AOF (ingest requires Redis >= 7.2 with appendonly)
+        run: |
+          set -euo pipefail
+          rc() { docker run --rm --network host redis:7.4 redis-cli -h 127.0.0.1 "$@"; }
+          rc CONFIG SET appendonly yes
+          for i in $(seq 1 30); do
+            if rc INFO persistence | grep -q '^aof_enabled:1' && rc INFO persistence | grep -q '^aof_rewrite_in_progress:0'; then
+              echo "AOF enabled"; exit 0
+            fi
+            sleep 1
+          done
+          echo "AOF not enabled in time"; rc INFO persistence; exit 1
+
       - name: Start ingest with two workers
         run: |
           docker run -d --name data-watch-ingest-ci --network host \

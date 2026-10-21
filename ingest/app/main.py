@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from uuid import UUID
@@ -11,7 +12,12 @@ from turboapi import JSONResponse
 
 from .config import IngestSettings, get_settings
 from .http_compat import IngestASGI, Request
-from .redis_store import IngestRedisStore, NonceReplayError, TransientStoreError
+from .redis_store import (
+    IngestRedisStore,
+    NonceReplayError,
+    RedisRequirementReport,
+    TransientStoreError,
+)
 from .repository import MySQLIngestRepository
 from .schemas import RequestValidationError, SessionSwitch, UploadBatch
 from .security import (
@@ -60,6 +66,8 @@ async def get_runtime() -> IngestRuntime:
                 migrate_schema=os.getenv("DATAWATCH_INGEST_SCHEMA_READY") != "1",
             )
             store = IngestRedisStore.create(settings)
+            # 部署前提（Redis >= 7.2 + AOF）：只告警、不阻断启动；/healthz 同时报告不健康。
+            _log_redis_requirements(await store.check_persistence_requirements())
             runtime = IngestRuntime(
                 repository=repository,
                 store=store,
@@ -95,6 +103,68 @@ async def close_runtime() -> None:
 
 RuntimeProvider = Callable[[], Awaitable[IngestRuntime]]
 
+_REDIS_REQUIREMENT_RECHECK_S = 30.0
+
+
+def _log_redis_requirements(report: RedisRequirementReport) -> None:
+    if not report.verified:
+        logger.warning(
+            "Cannot verify Redis deployment requirements (Redis >= 7.2, appendonly yes): %s",
+            report.detail,
+        )
+    for problem in report.problems:
+        logger.error("Redis deployment requirement violated: %s", problem)
+
+
+class _RedisRequirementCheck:
+    """/healthz 用：缓存 Redis 部署前提检查结果，至多每 30s 重查一次。"""
+
+    def __init__(self, runtime_provider: RuntimeProvider) -> None:
+        self._runtime_provider = runtime_provider
+        self._report: RedisRequirementReport | None = None
+        self._checked_at = 0.0
+
+    async def report(self) -> RedisRequirementReport | None:
+        now = time.monotonic()
+        if self._checked_at and now - self._checked_at < _REDIS_REQUIREMENT_RECHECK_S:
+            return self._report
+        try:
+            runtime = await self._runtime_provider()
+            report = await runtime.store.check_persistence_requirements()
+        except Exception as exc:
+            # 运行时/Redis 不可用：沿用上次结论，同样 30s 后再试，避免每次探活都去重连。
+            logger.warning("Redis requirement check unavailable: %s", exc)
+            self._checked_at = now
+            return self._report
+        if report.problems and (self._report is None or self._report.problems != report.problems):
+            _log_redis_requirements(report)
+        self._report, self._checked_at = report, now
+        return report
+
+
+def _health_response(
+    settings: IngestSettings, report: RedisRequirementReport | None
+) -> dict[str, Any] | JSONResponse:
+    content: dict[str, Any] = {
+        "service": "ingest",
+        "status": "ready",
+        "port": settings.port,
+        "stream_shard_count": settings.stream_shard_count,
+        "workers": settings.workers,
+        "control_cache_ttl_ms": settings.control_cache_ttl_ms,
+        "mysql_pool_maxsize": settings.mysql_pool_maxsize,
+    }
+    if report is None or not report.verified:
+        content["redis_requirements"] = "unverified"
+        return content
+    if report.problems:
+        # 违反部署前提：上传 ACK 无法达到 AOF 持久化等级（上传/会话切换按 503 推迟）。
+        content["status"] = "unhealthy"
+        content["redis_requirements"] = list(report.problems)
+        return JSONResponse(status_code=503, content=content)
+    content["redis_requirements"] = "ok"
+    return content
+
 
 def create_app(
     runtime_provider: RuntimeProvider = get_runtime,
@@ -110,17 +180,11 @@ def create_app(
         max_body_bytes=current_settings.max_body_bytes,
     )
 
+    redis_requirements = _RedisRequirementCheck(runtime_provider)
+
     @app.get("/healthz")
     async def healthz():
-        return {
-            "service": "ingest",
-            "status": "ready",
-            "port": current_settings.port,
-            "stream_shard_count": current_settings.stream_shard_count,
-            "workers": current_settings.workers,
-            "control_cache_ttl_ms": current_settings.control_cache_ttl_ms,
-            "mysql_pool_maxsize": current_settings.mysql_pool_maxsize,
-        }
+        return _health_response(current_settings, await redis_requirements.report())
 
     @app.post("/ingest")
     async def ingest_upload(payload: dict[str, Any], request: Request):
@@ -173,6 +237,10 @@ def create_app(
             return {"status": status}
         except AuthenticationError as exc:
             return _error(401, "unauthorized", str(exc))
+        except TransientStoreError as exc:
+            # B003：切换未达到持久化等级前不返回 200，边缘保留待完成切换并重试（Lua 幂等）。
+            logger.error("Session switch deferred: transient Redis persistence failure: %s", exc)
+            return _error(503, "store_unavailable", str(exc))
         except (RequestValidationError, ValueError) as exc:
             return _error(400, "bad_request", str(exc))
 

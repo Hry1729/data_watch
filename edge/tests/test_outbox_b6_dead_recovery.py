@@ -236,6 +236,7 @@ def test_dead_recovery_actions_belong_to_operator_not_uploader() -> None:
         {
             "outbox.dead_list",
             "outbox.dead_export",
+            "outbox.dead_export_confirm",
             "outbox.dead_export_batch",
             "outbox.dead_replay",
         }
@@ -312,7 +313,12 @@ def test_unexported_dead_past_cutoff_is_kept_until_exported(tmp_path, monkeypatc
         ).fetchone()["exported_at"]
     assert exported_at is None
 
-    store.export_dead(record.batch_id, record.upload_session_id, record.local_seq)
+    # B001：单条导出只是查看，不授予清理凭证；调用方确认保存后才可清理。
+    exported = store.export_dead(record.batch_id, record.upload_session_id, record.local_seq)
+    assert store.maintenance(retention_days=7)["dead_purged"] == 0
+    assert store.confirm_dead_export(
+        record.batch_id, record.upload_session_id, record.local_seq, exported["payload_sha256"]
+    )
     purged = store.maintenance(retention_days=7)
 
     assert purged["dead_purged"] == 1
@@ -740,6 +746,7 @@ def test_operator_and_uploader_permissions_are_split(tmp_path, monkeypatch) -> N
     operator_actions = (
         "outbox.dead_list",
         "outbox.dead_export",
+        "outbox.dead_export_confirm",
         "outbox.dead_export_batch",
         "outbox.dead_replay",
     )

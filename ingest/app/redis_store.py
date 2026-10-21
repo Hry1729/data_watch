@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -21,6 +22,7 @@ from .config import IngestSettings
 from .schemas import UploadItem
 
 
+logger = logging.getLogger("ingest.redis_store")
 CONTROL_INVALIDATION_CHANNEL = "ingest:control:invalidate"
 STREAM_TRIM_EVERY_ITEMS = 5_000
 
@@ -78,6 +80,10 @@ for index, item in ipairs(items) do
         table.insert(results, "duplicate")
     elseif local_seq > hw + 1 then
         table.insert(results, "seq_reject")
+        break
+    elseif item.action == "retry_later" then
+        -- B026：控制缓存暂时无法权威确认，本条不消费、不推进 hw，后续条目也不再处理。
+        table.insert(results, "retry_later")
         break
     elseif item.action == "consume_reject" then
         redis.call("SET", KEYS[1], local_seq)
@@ -428,21 +434,114 @@ class IngestRedisStore:
             f"hw:{node_uuid}:{old_session_id}",
         )
         try:
-            result = await self._client.eval(
-                SESSION_SWITCH_LUA,
-                3,
-                *keys,
-                old_session_id,
-                new_session_id,
-                str(self._settings.max_offline_retention_days * 24 * 60 * 60),
-            )
+            async with self._client.pipeline(transaction=False) as pipe:
+                pipe.eval(
+                    SESSION_SWITCH_LUA,
+                    3,
+                    *keys,
+                    old_session_id,
+                    new_session_id,
+                    str(self._settings.max_offline_retention_days * 24 * 60 * 60),
+                )
+                # B003：切换 ACK 与上传 ACK 同一持久化等级。边缘收到 switched 就会清掉本地
+                # 待完成切换；若中心随后掉电回滚到旧 session，节点会被当成另一实例而停传。
+                pipe.execute_command("WAITAOF", 1, 0, 2000)
+                result, persisted = await pipe.execute(raise_on_error=False)
+        except _TRANSIENT_REDIS_ERRORS as exc:
+            raise TransientStoreError(str(exc)) from exc
         except RedisError as exc:
             raise CommitUnknownError(str(exc)) from exc
-        return _decode_result(result)
+        if isinstance(result, _TRANSIENT_REDIS_ERRORS):
+            raise TransientStoreError(str(result)) from result
+        if isinstance(result, Exception):
+            raise CommitUnknownError(str(result)) from result
+        decoded = _decode_result(result)
+        if decoded == "session_conflict":
+            # 没有写入，无需持久化确认。
+            return decoded
+        if isinstance(persisted, Exception):
+            if _waitaof_unsupported(persisted):
+                # Redis < 7.2 没有 WAITAOF：退回旧行为（仅 EVAL 成功即确认），记告警。
+                # 切换 Lua 幂等（already_switched），边缘侧另有回滚自愈。
+                logger.warning(
+                    "Redis WAITAOF unsupported; session switch acknowledged without AOF "
+                    "durability barrier: %s",
+                    persisted,
+                )
+                return decoded
+            # AOF 关闭等配置问题或 WAITAOF 暂时失败：不确认，边缘按非 200 重试（幂等）。
+            raise TransientStoreError(f"Redis WAITAOF failed: {persisted}") from persisted
+        if not isinstance(persisted, (list, tuple)) or int(persisted[0]) < 1:
+            raise TransientStoreError("Redis AOF persistence not confirmed for session switch")
+        return decoded
 
     async def get_active_session(self, node_uuid: str) -> str | None:
         value = await self._client.get(f"active_session:{node_uuid}")
         return str(value) if value else None
+
+    async def check_persistence_requirements(self) -> "RedisRequirementReport":
+        """部署前提：Redis >= 7.2（WAITAOF）且开启 AOF（appendonly yes）。
+
+        用 INFO（server / persistence）判断，不依赖 CONFIG 权限。INFO 本身失败（不可达、
+        ACL 无 +info）时 ``verified=False``：无法证明违规，由调用方告警而不判不健康。
+        """
+        try:
+            server = await self._client.info("server")
+            persistence = await self._client.info("persistence")
+        except Exception as exc:
+            return RedisRequirementReport(verified=False, problems=(), detail=str(exc))
+        problems: list[str] = []
+        version = str((server or {}).get("redis_version") or "")
+        parsed = _parse_redis_version(version)
+        if parsed is None:
+            problems.append(
+                f"cannot parse Redis version {version!r}; Redis >= {_MIN_REDIS_VERSION_TEXT} "
+                "is required (WAITAOF)"
+            )
+        elif parsed < _MIN_REDIS_VERSION:
+            problems.append(
+                f"Redis {version} is older than {_MIN_REDIS_VERSION_TEXT}: WAITAOF is unsupported, "
+                "so uploads cannot be durably acknowledged; upgrade Redis"
+            )
+        aof_enabled = str((persistence or {}).get("aof_enabled", "")).strip()
+        if aof_enabled != "1":
+            problems.append(
+                f"Redis AOF is disabled (aof_enabled={aof_enabled or 'missing'}): WAITAOF cannot "
+                "confirm durability; set 'appendonly yes' (see deploy/redis.conf)"
+            )
+        return RedisRequirementReport(verified=True, problems=tuple(problems))
+
+
+_MIN_REDIS_VERSION = (7, 2)
+_MIN_REDIS_VERSION_TEXT = "7.2"
+
+
+@dataclass(frozen=True, slots=True)
+class RedisRequirementReport:
+    """Redis 部署前提检查结果。``verified=False`` 表示无法检查（不等于违规）。"""
+
+    verified: bool
+    problems: tuple[str, ...]
+    detail: str = ""
+
+    @property
+    def healthy(self) -> bool:
+        return not self.problems
+
+
+def _parse_redis_version(value: str) -> tuple[int, int] | None:
+    parts = value.strip().split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def _waitaof_unsupported(error: Exception) -> bool:
+    """Redis 版本过旧、不认识 WAITAOF 命令。"""
+    return "unknown command" in str(error).lower()
 
 
 def _decode_result(value) -> str:

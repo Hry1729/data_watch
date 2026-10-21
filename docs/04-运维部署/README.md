@@ -434,6 +434,17 @@ docker volume rm data_watch_redis_data   # 项目名 data_watch，卷名带此�
 - **已部署机器生效路径**：中心式由 Collector 的 `stream_maxlen` 生效；分布式中心由 `INGEST_STREAM_MAXLEN` 生效。修改目标机实际配置后必须重启对应 Collector 或 Ingest，只改仓库不会让已安装实例生效。
 - **升级前存量**：新版 Writer 只会自动 XDEL 它实际完成终态确认的条目。升级前已经 ACK 的旧 entry 仍可能保留；测试环境需要先停止 Collector/Uploader/Ingest 等写入源，让 Writer 追平后停止 Writer，确认所有消费组 `pending=0` 且 `lag=0`，再对目标 Stream 执行 `XTRIM <key> MAXLEN 0`。正式环境执行前必须备份并逐 Stream 核对，禁止直接 `FLUSHDB`。
 
+- **XDEL 失败的遗留条目**：Writer 在 `XACK` 成功后若 `XDEL` 失败，会把这些 id 记入 `writer:acked_undeleted:<消费组>:<stream>`（Redis SET），之后（含重启后）只删除该集合登记过的 id，并且仅在该 Stream 恰好只有本消费组时删除。Writer 不会根据 `last-delivered-id`/PEL 推断"已确认"——用 `scripts/init_redis_consumer_groups.py --skip-to-latest` 或 `XGROUP SETID` 跳过的积压从未投递，必须保留。若进程恰在 `XACK` 与 `XDEL` 之间退出，条目只会遗留（占空间、不丢数据），按上一条人工清理。
+
+### 5.4.0 Redis 版本与 AOF（分布式中心必需）
+
+分布式中心 Ingest 以 `WAITAOF 1 0 2000` 作为上传与会话切换 ACK 的持久化门禁，因此**要求 Redis >= 7.2 且开启 AOF**：
+
+- `deploy/redis.conf` 已设 `appendonly yes`、`appendfsync everysec`；Compose 固定 `redis:7.4`。使用外部 Redis 时必须自行满足这两条。
+- 检查：`redis-cli INFO server | findstr redis_version`（>= 7.2），`redis-cli INFO persistence | findstr aof_enabled`（必须为 `1`）。
+- Ingest 启动时用 `INFO server` / `INFO persistence` 自检：版本 < 7.2 或 `aof_enabled` 不为 1 时记 ERROR 日志，`GET /healthz` 返回 **503**，`status=unhealthy`，`redis_requirements` 列出原因（每 30s 重查）。INFO 无法执行（如 ACL 未授予 `+info`）时只记 WARNING，`redis_requirements=unverified`，不判不健康。
+- 不满足前提时，上传返回 503（边缘保留并重试）；AOF 关闭时会话切换同样返回 503。Redis < 7.2 时会话切换仍按旧行为在 Lua 成功后确认（不经 AOF 门禁），这不是受支持的部署。
+
 ### 5.4.1 Redis 暴露与认证
 
 Compose 默认将 Redis 端口绑定到 `127.0.0.1:6379`，不会向现场所有网卡发布；使用 `--profile infra` 时 Backend 通过 Compose 私有网络访问服务名 `redis`。启动前必须在 `deploy/backend.env` 设置高强度 `REDIS_PASSWORD`，Redis 容器会拒绝空密码启动。
