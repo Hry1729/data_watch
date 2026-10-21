@@ -219,3 +219,96 @@ async def test_b022_all_bad_quality_points_carry_no_value() -> None:
         "1": {"t": base.ts, "q": 5, "e": 1},
         "2": {"t": base.ts, "q": 7, "e": 1},
     }
+
+
+# ── PR #26 审查：部署前提 Redis >= 7.2 + appendonly yes，启动/健康检查要能发现 ──
+
+
+class _InfoRedis:
+    def __init__(self, version: str = "7.4.1", aof_enabled=1, error: Exception | None = None):
+        self.version = version
+        self.aof_enabled = aof_enabled
+        self.error = error
+
+    async def info(self, section: str):
+        if self.error is not None:
+            raise self.error
+        if section == "server":
+            return {"redis_version": self.version}
+        assert section == "persistence"
+        return {"aof_enabled": self.aof_enabled}
+
+
+@pytest.mark.asyncio
+async def test_pr26_redis_requirements_ok() -> None:
+    report = await IngestRedisStore(_InfoRedis(), _settings()).check_persistence_requirements()
+    assert report.verified and report.healthy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("client", "needle"),
+    [
+        (_InfoRedis(version="7.0.15"), "older than 7.2"),
+        (_InfoRedis(version="6.2.14", aof_enabled=1), "WAITAOF is unsupported"),
+        (_InfoRedis(aof_enabled=0), "appendonly yes"),
+        (_InfoRedis(aof_enabled="0"), "AOF is disabled"),
+        (_InfoRedis(version="weird"), "cannot parse"),
+    ],
+    ids=["7.0", "6.2", "aof-off-int", "aof-off-str", "unparsable"],
+)
+async def test_pr26_redis_requirement_violations_are_reported(client, needle) -> None:
+    report = await IngestRedisStore(client, _settings()).check_persistence_requirements()
+    assert report.verified
+    assert not report.healthy
+    assert any(needle in problem for problem in report.problems)
+
+
+@pytest.mark.asyncio
+async def test_pr26_old_redis_with_aof_off_reports_both() -> None:
+    report = await IngestRedisStore(
+        _InfoRedis(version="7.0.0", aof_enabled=0), _settings()
+    ).check_persistence_requirements()
+    assert len(report.problems) == 2
+
+
+@pytest.mark.asyncio
+async def test_pr26_unverifiable_redis_is_not_a_violation() -> None:
+    report = await IngestRedisStore(
+        _InfoRedis(error=ResponseError("NOPERM this user has no permissions to run 'info'")),
+        _settings(),
+    ).check_persistence_requirements()
+    assert report.verified is False
+    assert report.healthy
+    assert "NOPERM" in report.detail
+
+
+@pytest.mark.asyncio
+async def test_pr26_healthz_is_unhealthy_when_requirements_are_violated() -> None:
+    from types import SimpleNamespace
+
+    from ingest.app import main as ingest_main
+
+    store = IngestRedisStore(_InfoRedis(version="7.0.0"), _settings())
+    calls = {"n": 0}
+
+    async def provider():
+        calls["n"] += 1
+        return SimpleNamespace(store=store)
+
+    check = ingest_main._RedisRequirementCheck(provider)
+    response = ingest_main._health_response(_settings(), await check.report())
+    assert response.status_code == 503
+    body = json.loads(response.body)
+    assert body["status"] == "unhealthy"
+    assert any("7.2" in problem for problem in body["redis_requirements"])
+    await check.report()
+    assert calls["n"] == 1  # 30s 内复用结论
+
+    healthy = IngestRedisStore(_InfoRedis(), _settings())
+    ok = ingest_main._health_response(
+        _settings(), await healthy.check_persistence_requirements()
+    )
+    assert ok["status"] == "ready" and ok["redis_requirements"] == "ok"
+    unknown = ingest_main._health_response(_settings(), None)
+    assert unknown["status"] == "ready" and unknown["redis_requirements"] == "unverified"

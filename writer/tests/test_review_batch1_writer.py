@@ -148,61 +148,145 @@ async def test_b074_buffer_bytes_gauge_includes_isolated_rows():
     assert consumer._remaining_byte_capacity() == consumer._max_buffer_bytes - 100
 
 
-# ── B025：XACK 后 XDEL 失败再重启，遗留条目可被安全清扫 ──────────────────────
+# ── B025：XACK 后 XDEL 失败再重启，只清扫账本里登记过的已确认条目 ─────────────
+#
+# PR #26 审查（P1）：旧实现按 last-delivered-id + PEL 推断"已 ACK"，`--skip-to-latest`（`$`）
+# 建组时会把从未投递的积压整段 XDEL 掉。以下用 fakeredis 的真实 Stream/消费组语义复现。
+
+def _real_redis():
+    fakeredis = pytest.importorskip("fakeredis")
+    return fakeredis.FakeRedis(decode_responses=True)
 
 
-def _sweep_client(last_delivered: str, pending: dict, entries: list[str]):
-    client = MagicMock()
-    client.xinfo_groups.return_value = [
-        {"name": "writer", "last-delivered-id": last_delivered}
-    ]
-    client.xpending.return_value = pending
-    client.xrange.return_value = [(entry_id, {}) for entry_id in entries]
+def _xdel_fails_once(client):
+    """包一层：第一次 XDEL 抛错（模拟 XACK 成功后 XDEL 失败），之后透传到真实实现。"""
+    real_xdel = client.xdel
+    state = {"failed": False}
+
+    def xdel(*args):
+        if not state["failed"]:
+            state["failed"] = True
+            raise ConnectionError("xdel boom")
+        return real_xdel(*args)
+
+    client.xdel = xdel
     return client
 
 
-def test_b025_sweep_deletes_acked_entries_below_pel_after_restart():
-    client = _sweep_client(
-        "50-0", {"pending": 2, "min": "30-0", "max": "40-0", "consumers": []},
-        ["10-0", "20-0"],
-    )
-    consumer = _consumer(MagicMock(), client)  # 新进程：_delete_retry 为空
-
-    assert consumer._sweep_acked_entries(STREAM, 100) == 2
-    client.xrange.assert_called_once_with(STREAM, "-", "(30-0", 100)
-    client.xdel.assert_called_once_with(STREAM, "10-0", "20-0")
+def _stream_ids(client) -> list[str]:
+    return [entry_id for entry_id, _ in client.xrange(STREAM)]
 
 
-def test_b025_sweep_without_pending_is_bounded_by_last_delivered():
-    client = _sweep_client("50-0", {"pending": 0, "min": None}, ["45-0"])
+def test_b025_skip_to_latest_backlog_is_never_swept():
+    client = _real_redis()
+    backlog = [client.xadd(STREAM, {"n": str(i)}) for i in range(5)]
+    # 等价于 scripts/init_redis_consumer_groups.py --skip-to-latest
+    client.xgroup_create(STREAM, "writer", id="$")
+    assert client.xpending(STREAM, "writer")["pending"] == 0  # 旧实现会据此整段删除
     consumer = _consumer(MagicMock(), client)
-    consumer._delete_retry = {STREAM: {"45-0"}}
 
-    assert consumer._sweep_acked_entries(STREAM, 10) == 1
-    client.xrange.assert_called_once_with(STREAM, "-", "50-0", 10)
-    assert consumer._delete_retry == {}
+    assert consumer._sweep_acked_entries(STREAM, 100) == 0
+    assert _stream_ids(client) == backlog
 
 
-@pytest.mark.parametrize(
-    "groups",
-    [
-        [{"name": "writer", "last-delivered-id": "50-0"}, {"name": "other", "last-delivered-id": "1-0"}],
-        [{"name": "someone-else", "last-delivered-id": "50-0"}],
-        [{"name": "writer", "last-delivered-id": "0-0"}],
-        RuntimeError("NOPERM"),
-    ],
-    ids=["multi-group", "foreign-group", "nothing-delivered", "query-error"],
-)
-def test_b025_sweep_refuses_when_safety_is_unproven(groups):
-    client = _sweep_client("50-0", {"pending": 0, "min": None}, ["1-0"])
-    if isinstance(groups, Exception):
-        client.xinfo_groups.side_effect = groups
-    else:
-        client.xinfo_groups.return_value = groups
+def test_b025_setid_past_backlog_is_never_swept():
+    client = _real_redis()
+    client.xgroup_create(STREAM, "writer", id="0", mkstream=True)
+    backlog = [client.xadd(STREAM, {"n": str(i)}) for i in range(3)]
+    client.xgroup_setid(STREAM, "writer", id="$")
+    consumer = _consumer(MagicMock(), client)
+
+    assert consumer._sweep_acked_entries(STREAM, 100) == 0
+    assert _stream_ids(client) == backlog
+
+
+def test_b025_restart_sweeps_only_ids_this_writer_acked():
+    client = _real_redis()
+    backlog = [client.xadd(STREAM, {"n": str(i)}) for i in range(3)]
+    client.xgroup_create(STREAM, "writer", id="$")  # 积压被跳过、从未投递
+    delivered = [client.xadd(STREAM, {"n": f"d{i}"}) for i in range(2)]
+    read = client.xreadgroup("writer", "writer-1", {STREAM: ">"}, count=10)
+    assert [entry_id for entry_id, _ in read[0][1]] == delivered
+    old = _consumer(MagicMock(), _xdel_fails_once(client))
+    old._ack_ids(STREAM, delivered)  # XACK 成功，XDEL 失败
+    assert client.xpending(STREAM, "writer")["pending"] == 0
+    assert _stream_ids(client) == backlog + delivered
+
+    fresh = _consumer(MagicMock(), client)  # 重启：内存里的 _delete_retry 已丢
+    assert fresh._delete_retry == {}
+    assert fresh._sweep_acked_entries(STREAM, 100) == 2
+    assert _stream_ids(client) == backlog  # 积压完整保留
+    assert fresh._sweep_acked_entries(STREAM, 100) == 0  # 账本已清空
+
+
+def test_b025_unacked_pending_entries_are_never_swept():
+    client = _real_redis()
+    client.xgroup_create(STREAM, "writer", id="0", mkstream=True)
+    ids = [client.xadd(STREAM, {"n": str(i)}) for i in range(3)]
+    client.xreadgroup("writer", "writer-1", {STREAM: ">"}, count=10)  # 全部在 PEL，未 ACK
+    consumer = _consumer(MagicMock(), client)
+
+    assert consumer._sweep_acked_entries(STREAM, 100) == 0
+    assert _stream_ids(client) == ids
+
+
+def test_b025_multi_group_keeps_entries_and_ledger():
+    client = _real_redis()
+    client.xgroup_create(STREAM, "writer", id="0", mkstream=True)
+    client.xgroup_create(STREAM, "other", id="0")
+    ids = [client.xadd(STREAM, {"n": str(i)}) for i in range(2)]
+    client.xreadgroup("writer", "writer-1", {STREAM: ">"}, count=10)
+    client.xack(STREAM, "writer", *ids)
+    # 即使账本里有本组确认过的 id，"other" 组尚未处理，全局 XDEL 会毁掉它的数据
+    client.sadd("writer:acked_undeleted:writer:" + STREAM, *ids)
+    consumer = _consumer(MagicMock(), client)
+
+    assert consumer._sweep_acked_entries(STREAM, 100) == 0
+    assert _stream_ids(client) == ids
+    assert client.scard("writer:acked_undeleted:writer:" + STREAM) == 2
+    other = client.xreadgroup("other", "c", {STREAM: ">"}, count=10)
+    assert [entry_id for entry_id, _ in other[0][1]] == ids
+
+
+def test_b025_ack_with_xdel_failure_in_multi_group_records_nothing():
+    client = _real_redis()
+    client.xgroup_create(STREAM, "writer", id="0", mkstream=True)
+    client.xgroup_create(STREAM, "other", id="0")
+    ids = [client.xadd(STREAM, {"n": "1"})]
+    client.xreadgroup("writer", "writer-1", {STREAM: ">"}, count=10)
+    consumer = _consumer(MagicMock(), _xdel_fails_once(client))
+    consumer._ack_ids(STREAM, ids)  # 多组：不 XDEL，也就没有账本
+
+    assert client.scard("writer:acked_undeleted:writer:" + STREAM) == 0
+    assert _stream_ids(client) == ids
+
+
+def test_b025_ledger_write_failure_only_leaks_never_deletes():
+    client = _real_redis()
+    client.xgroup_create(STREAM, "writer", id="0", mkstream=True)
+    ids = [client.xadd(STREAM, {"n": "1"})]
+    client.xreadgroup("writer", "writer-1", {STREAM: ">"}, count=10)
+    _xdel_fails_once(client)
+    client.sadd = MagicMock(side_effect=ConnectionError("sadd boom"))
+    consumer = _consumer(MagicMock(), client)
+    consumer._ack_ids(STREAM, ids)
+
+    assert client.xpending(STREAM, "writer")["pending"] == 0
+    assert _stream_ids(client) == ids  # 遗留（空间泄漏）而非误删
+    assert consumer._delete_retry == {STREAM: set(ids)}  # 本进程内仍会重试 XDEL
+    consumer._retry_pending_deletes()
+    assert _stream_ids(client) == []
+
+
+def test_b025_sweep_refuses_on_topology_query_error():
+    client = MagicMock()
+    client.srandmember.return_value = ["1-0"]
+    client.xinfo_groups.side_effect = RuntimeError("NOPERM")
     consumer = _consumer(MagicMock(), client)
 
     assert consumer._sweep_acked_entries(STREAM, 10) == 0
     client.xdel.assert_not_called()
+    client.srem.assert_not_called()
 
 
 # ── B028：满队列丢了停止哨兵，线程仍能在排空后退出 ───────────────────────────

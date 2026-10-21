@@ -588,3 +588,137 @@ def test_b027_slow_dead_export_does_not_block_other_commands(tmp_path, monkeypat
     finally:
         release.set()
         engine.close()
+
+
+# ── PR #26 审查：导出分页稳定，页间清理不再漏行；行数不符则失败 ─────────────
+
+
+def _ordered_dead(store: OutboxStore, count: int, purgeable: int):
+    """count 条 dead，按顺序排定 dead_at；前 purgeable 条已导出且超出保留期（可被清理）。"""
+    records = _seed_dead(store, count)
+    old = store._clock_ms() - 40 * DAY_MS
+    with store._lock:
+        for index, record in enumerate(records):
+            store._connection.execute(
+                "UPDATE outbox SET dead_at=?, exported_at=? WHERE batch_id=?",
+                (old + index, old if index < purgeable else None, record.batch_id),
+            )
+        store._connection.commit()
+    return records
+
+
+def _export_lines(path: Path) -> list[dict]:
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    return [line for line in lines if line.get("kind") != "header"]
+
+
+def _dead_ids(store: OutboxStore) -> set[str]:
+    with store._lock:
+        return {
+            row["batch_id"]
+            for row in store._connection.execute("SELECT batch_id FROM outbox WHERE state='dead'")
+        }
+
+
+def test_pr26_purge_between_export_pages_does_not_drop_rows(tmp_path, monkeypatch) -> None:
+    import edge.app.outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_DEAD_EXPORT_PAGE_SIZE", 2)
+    store = OutboxStore(tmp_path / "edge.db")
+    _pin_disk(store, monkeypatch)
+    records = _ordered_dead(store, count=6, purgeable=2)
+    real_page = store._snapshot_dead_page
+    maintenance_results: list[dict] = []
+
+    def page_then_maintain(*args, **kwargs):
+        page = real_page(*args, **kwargs)
+        if not maintenance_results:
+            # 第一页读完后，命令线程跑一次 maintenance（与卸载出去的导出线程交错）
+            worker = threading.Thread(
+                target=lambda: maintenance_results.append(
+                    store.maintenance(retention_days=7, dead_max_bytes=10**9)
+                )
+            )
+            worker.start()
+            worker.join(10)
+        return page
+
+    monkeypatch.setattr(store, "_snapshot_dead_page", page_then_maintain)
+    out = store._export_root() / "all.jsonl"
+    result = store.export_dead_batch(out, fmt="jsonl")
+
+    written = [line["batch_id"] for line in _export_lines(out)]
+    assert written == [record.batch_id for record in records]  # 一行不少、顺序不变
+    assert result["count"] == 6
+    assert maintenance_results[0]["dead_purged"] == 0
+    assert maintenance_results[0]["dead_purge_deferred"] is True
+
+    monkeypatch.setattr(store, "_snapshot_dead_page", real_page)
+    after = store.maintenance(retention_days=7, dead_max_bytes=10**9)
+    assert after["dead_purge_deferred"] is False
+    assert after["dead_purged"] == 6  # 导出结束后照常清理（6 行现在都已备份且超期）
+    store.close()
+
+
+def test_pr26_rows_vanishing_mid_export_fail_the_export(tmp_path, monkeypatch) -> None:
+    import edge.app.outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_DEAD_EXPORT_PAGE_SIZE", 2)
+    store = OutboxStore(tmp_path / "edge.db")
+    records = _ordered_dead(store, count=5, purgeable=0)
+    real_page = store._snapshot_dead_page
+    calls = {"n": 0}
+
+    def page_then_remove(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            # 另一条删除路径（不经 maintenance）在页间删掉了后面页里的一行
+            with store._lock:
+                store._connection.execute(
+                    "DELETE FROM outbox WHERE batch_id=?", (records[4].batch_id,)
+                )
+                store._connection.commit()
+        return real_page(*args, **kwargs)
+
+    monkeypatch.setattr(store, "_snapshot_dead_page", page_then_remove)
+    out = store._export_root() / "partial.jsonl"
+    with pytest.raises(RuntimeError, match="changed during export"):
+        store.export_dead_batch(out, fmt="jsonl")
+
+    assert not out.exists()
+    assert list(store._export_root().iterdir()) == []  # 临时文件也已清理
+    assert all(_exported_at(store, r.batch_id) is None for r in records[:4])
+    assert store._dead_exports_active == 0
+    store.close()
+
+
+def test_pr26_offloaded_export_reports_failure_not_success(tmp_path, monkeypatch) -> None:
+    import edge.app.outbox as outbox_module
+
+    monkeypatch.setattr(outbox_module, "_DEAD_EXPORT_PAGE_SIZE", 1)
+    real_page = OutboxStore._snapshot_dead_page
+    calls = {"n": 0}
+
+    def page_then_remove(self, where_sql, params, keys):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            with self._lock:
+                self._connection.execute("DELETE FROM outbox WHERE batch_id=?", (keys[0],))
+                self._connection.commit()
+        return real_page(self, where_sql, params, keys)
+
+    monkeypatch.setattr(OutboxStore, "_snapshot_dead_page", page_then_remove)
+    seeder = OutboxStore(tmp_path / "edge.db")
+    _seed_dead(seeder, 3)
+    seeder.close()
+    engine = StorageEngine(tmp_path / "edge.db", max_queue=32)
+    engine.start()
+    try:
+        with pytest.raises(RuntimeError, match="changed during export"):
+            engine.submit(
+                "outbox.dead_export_batch",
+                {"out": "offloaded.jsonl", "format": "jsonl"},
+                timeout_seconds=20,
+            )
+    finally:
+        engine.close()

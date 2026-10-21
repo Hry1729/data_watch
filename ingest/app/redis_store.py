@@ -479,6 +479,65 @@ class IngestRedisStore:
         value = await self._client.get(f"active_session:{node_uuid}")
         return str(value) if value else None
 
+    async def check_persistence_requirements(self) -> "RedisRequirementReport":
+        """部署前提：Redis >= 7.2（WAITAOF）且开启 AOF（appendonly yes）。
+
+        用 INFO（server / persistence）判断，不依赖 CONFIG 权限。INFO 本身失败（不可达、
+        ACL 无 +info）时 ``verified=False``：无法证明违规，由调用方告警而不判不健康。
+        """
+        try:
+            server = await self._client.info("server")
+            persistence = await self._client.info("persistence")
+        except Exception as exc:
+            return RedisRequirementReport(verified=False, problems=(), detail=str(exc))
+        problems: list[str] = []
+        version = str((server or {}).get("redis_version") or "")
+        parsed = _parse_redis_version(version)
+        if parsed is None:
+            problems.append(
+                f"cannot parse Redis version {version!r}; Redis >= {_MIN_REDIS_VERSION_TEXT} "
+                "is required (WAITAOF)"
+            )
+        elif parsed < _MIN_REDIS_VERSION:
+            problems.append(
+                f"Redis {version} is older than {_MIN_REDIS_VERSION_TEXT}: WAITAOF is unsupported, "
+                "so uploads cannot be durably acknowledged; upgrade Redis"
+            )
+        aof_enabled = str((persistence or {}).get("aof_enabled", "")).strip()
+        if aof_enabled != "1":
+            problems.append(
+                f"Redis AOF is disabled (aof_enabled={aof_enabled or 'missing'}): WAITAOF cannot "
+                "confirm durability; set 'appendonly yes' (see deploy/redis.conf)"
+            )
+        return RedisRequirementReport(verified=True, problems=tuple(problems))
+
+
+_MIN_REDIS_VERSION = (7, 2)
+_MIN_REDIS_VERSION_TEXT = "7.2"
+
+
+@dataclass(frozen=True, slots=True)
+class RedisRequirementReport:
+    """Redis 部署前提检查结果。``verified=False`` 表示无法检查（不等于违规）。"""
+
+    verified: bool
+    problems: tuple[str, ...]
+    detail: str = ""
+
+    @property
+    def healthy(self) -> bool:
+        return not self.problems
+
+
+def _parse_redis_version(value: str) -> tuple[int, int] | None:
+    parts = value.strip().split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
 
 def _waitaof_unsupported(error: Exception) -> bool:
     """Redis 版本过旧、不认识 WAITAOF 命令。"""

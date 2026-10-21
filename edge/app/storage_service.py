@@ -477,6 +477,8 @@ class StorageEngine:
                     # B027：批量 dead 导出的分页读 + 写盘 + fsync 可能很久，交给独立的
                     # 单个导出工作线程，命令线程继续处理 frame.commit / snapshot 等请求。
                     # OutboxStore 自带锁，分页快照与回写 exported_at 仍是短事务串行执行。
+                    # PR #26 审查：导出按主键快照分页（不用 OFFSET），导出进行中 maintenance
+                    # 推迟 dead 清理；写出行数与快照不符时导出失败，命令以错误返回。
                     self._start_offloaded(outbox, config, command)
                 else:
                     started = time.perf_counter()

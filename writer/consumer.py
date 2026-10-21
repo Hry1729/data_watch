@@ -68,19 +68,14 @@ def _as_text(value) -> str:
     return str(value)
 
 
-def _parse_stream_id(value) -> tuple[int, int] | None:
-    """把 ``ms-seq`` 形式的 Stream ID 解析成可比较的元组；不可解析返回 None。"""
-    if value is None:
-        return None
-    try:
-        ms, _, seq = _as_text(value).partition("-")
-        return int(ms), int(seq or 0)
-    except (TypeError, ValueError, UnicodeDecodeError):
-        return None
+def _acked_ledger_key(group_name: str, stream_key: str) -> str:
+    """B025：本组"已 XACK、但 XDEL 失败"的条目账本（Redis SET）。
 
-
-def _format_stream_id(value: tuple[int, int]) -> str:
-    return f"{value[0]}-{value[1]}"
+    周期清扫**只**删除这里登记过的 id。不能用 last-delivered-id + PEL 推断"已 ACK"：
+    `--skip-to-latest`（`$`）或 XGROUP SETID 会让 last-delivered-id 越过从未投递的积压，
+    那些条目同样不在 PEL 中，按推断去删就是数据丢失。
+    """
+    return f"writer:acked_undeleted:{group_name}:{stream_key}"
 
 
 # B8：按**错误类别**（不是次数）判定的永久性 RETRY 原因。命中即推 DLQ，DLQ 写入被接受后才 XACK。
@@ -341,8 +336,10 @@ class StreamConsumer:
         self._pending_stream_cursor = 0
         self._ack_retry: dict[str, set[str]] = {}  # stream_key → 待重试 XACK 的 entry_id (M5)
         self._delete_retry: dict[str, set[str]] = {}  # 已终态且已 ACK，待重试 XDEL 的 entry_id
-        # B025：_delete_retry 只在内存。XACK 后 XDEL 失败再重启，这些条目已不在 PEL，
-        # 正常读取和 pending 回收都看不到；周期清扫按组的 last-delivered-id 与 PEL 下界找回它们。
+        # B025：_delete_retry 只在内存。XACK 成功后 XDEL 失败，失败的 id 会额外 SADD 进 Redis 账本
+        # （_acked_ledger_key）；重启后周期清扫只删除账本里的 id——都是本组确实 XACK 过的条目。
+        # 账本写入本身也失败、或进程恰在 XACK 与 XDEL 之间退出时，条目只会遗留在 Stream 中
+        # （空间泄漏，与修复前相同），绝不会误删未投递/未确认的数据。
         self._acked_sweep_interval_s: float = max(
             1.0, float(w.get("acked_sweep_interval_s", 60.0)))
         self._last_acked_sweep: float = time.monotonic()
@@ -2163,6 +2160,7 @@ class StreamConsumer:
             except Exception as exc:
                 logger.warning("[consumer] xdel failed for %s: %s", stream_key, exc)
                 self._delete_retry.setdefault(stream_key, set()).update(chunk)
+                self._record_acked_undeleted(stream_key, chunk)
 
     def _retry_pending_deletes(
         self, max_ids: int | None = None, deadline: float | None = None,
@@ -2195,49 +2193,54 @@ class StreamConsumer:
                     "[consumer] xdel retry still failing for %s (%d ids pending): %s",
                     stream_key, len(pending), exc,
                 )
+                self._record_acked_undeleted(stream_key, chunk)
             remaining -= len(chunk)
             if not pending:
                 del self._delete_retry[stream_key]
         self._delete_retry_cursor = (start + (visited or 1)) % len(keys)
 
-    def _sweep_acked_entries(self, stream_key: str, max_ids: int) -> int:
-        """B025：删除本组已确认、却仍留在 Stream 里的条目（XACK 成功后 XDEL 失败并重启）。
+    def _record_acked_undeleted(self, stream_key: str, ids: list[str]) -> None:
+        """B025：把本组已 XACK、XDEL 失败的 id 记入持久账本（只在 XDEL 失败路径调用）。
 
-        仅在**确认恰好一个消费组且就是本组**时执行（XDEL 是全局删除，同 B31）。
-        安全边界：id ≤ last-delivered-id（已投递过）且 < PEL 最小 id（不在 PEL，即已 ACK）。
-        缓冲/隔离/待重试 XACK 的条目都还在 PEL 里，不会被删。返回删除条数；任何异常只记录。
+        只能在 XACK **成功之后**调用——账本里的 id 都必须是本组确认过的。失败只告警：
+        结果是条目遗留在 Stream（空间泄漏），不会丢数据。
         """
+        if not ids:
+            return
         try:
+            self._timed_redis_call(
+                "redis_sadd", self._r.sadd, _acked_ledger_key(self._group_name, stream_key), *ids)
+        except Exception as exc:
+            logger.warning(
+                "[consumer] cannot record %d acked-but-undeleted id(s) for %s (%s); they stay in "
+                "the stream until deleted by this process or cleaned up out of band",
+                len(ids), stream_key, exc,
+            )
+
+    def _sweep_acked_entries(self, stream_key: str, max_ids: int) -> int:
+        """B025：删除本组**登记在账本里**的已确认条目（XACK 成功后 XDEL 失败并重启）。
+
+        只删除 `_acked_ledger_key` 里的 id：它们只会在本组 XACK 成功之后写入。**不再**根据
+        last-delivered-id / PEL 推断"已 ACK"——`$`/SETID 跳过的积压同样满足那个条件却从未投递。
+        仍要求恰好一个消费组且就是本组（XDEL 是全局删除，同 B31）；否则保留条目和账本。
+        返回本轮处理（XDEL + 移出账本）的 id 数；任何异常只记录。
+        """
+        ledger = _acked_ledger_key(self._group_name, stream_key)
+        try:
+            members = self._timed_redis_call(
+                "redis_srandmember", self._r.srandmember, ledger, max(1, int(max_ids)))
+            if not isinstance(members, (list, tuple, set)) or not members:
+                return 0
             groups = self._timed_redis_call(
                 "redis_xinfo_groups", self._r.xinfo_groups, stream_key)
             if not isinstance(groups, (list, tuple)) or len(groups) != 1:
                 return 0
             group = groups[0]
-            if not isinstance(group, dict):
+            if not isinstance(group, dict) or _as_text(group.get("name")) != self._group_name:
                 return 0
-            if _as_text(group.get("name")) != self._group_name:
-                return 0
-            last_delivered = _parse_stream_id(group.get("last-delivered-id"))
-            if last_delivered is None or last_delivered == (0, 0):
-                return 0
-            summary = self._timed_redis_call(
-                "redis_xpending", self._r.xpending, stream_key, self._group_name)
-            if not isinstance(summary, dict):
-                return 0
-            pending_count = int(summary.get("pending") or 0)
-            pending_min = _parse_stream_id(summary.get("min")) if pending_count else None
-            if pending_count and pending_min is None:
-                return 0
-            if pending_min is not None and pending_min <= last_delivered:
-                upper = "(" + _format_stream_id(pending_min)
-            else:
-                upper = _format_stream_id(last_delivered)
-            entries = self._timed_redis_call(
-                "redis_xrange", self._r.xrange, stream_key, "-", upper, max(1, int(max_ids)))
-            if not isinstance(entries, (list, tuple)) or not entries:
-                return 0
-            ids = [_as_text(entry[0]) for entry in entries]
+            ids = [_as_text(member) for member in members]
             self._timed_redis_call("redis_xdel", self._r.xdel, stream_key, *ids)
+            self._timed_redis_call("redis_srem", self._r.srem, ledger, *ids)
         except Exception as exc:
             logger.warning("[consumer] acked-entry sweep skipped for %s: %s", stream_key, exc)
             return 0

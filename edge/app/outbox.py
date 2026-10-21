@@ -185,6 +185,9 @@ class OutboxStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self._lock = threading.RLock()
+        # PR #26 审查：进行中的 dead 导出数（批量导出可能在独立线程里跨多个短事务分页）。
+        # 非零时 maintenance 推迟 dead 清理，避免导出中途删掉快照里的行导致导出失败。
+        self._dead_exports_active = 0
         self._connection = sqlite3.connect(
             self.path,
             timeout=5,
@@ -1229,7 +1232,10 @@ class OutboxStore:
                 (sent_cutoff,),
             )
             deleted_terminal = int(sent_cursor.rowcount or 0)
-            doomed = connection.execute(
+            # PR #26 审查：有 dead 导出正在分页时推迟本轮 dead 清理（下一轮再删）。计数在本事务
+            # （持有 store 锁）内读取，与导出的键快照事务互斥，因此不会删掉快照里的行。
+            dead_purge_deferred = self._dead_exports_active > 0
+            doomed = [] if dead_purge_deferred else connection.execute(
                 """
                 SELECT batch_id, upload_session_id, local_seq, payload FROM outbox
                 WHERE state='dead' AND dead_at IS NOT NULL AND dead_at < ?
@@ -1347,6 +1353,7 @@ class OutboxStore:
             "dead_records": dead_records,
             "dead_bytes": dead_bytes,
             "dead_purged": dead_purged,
+            "dead_purge_deferred": dead_purge_deferred,
             "dead_auto_exported": auto_exported,
             "dead_auto_export_path": auto_export_path,
             "dead_auto_export_failed": auto_export_failed,
@@ -1481,27 +1488,40 @@ class OutboxStore:
             "node_uuid": node_uuid,
         }
 
+    def _snapshot_dead_keys(self, where_sql: str, params: list[Any]) -> list[str]:
+        """一次短事务取出匹配行的 batch_id（主键）快照，按导出顺序排列。"""
+        query = (
+            f"SELECT batch_id FROM outbox WHERE {where_sql} "
+            "ORDER BY dead_at IS NULL, dead_at ASC, batch_id ASC"
+        )
+        with self._transaction() as connection:
+            return [str(row["batch_id"]) for row in connection.execute(query, params)]
+
     def _snapshot_dead_page(
         self,
         where_sql: str,
         params: list[Any],
-        *,
-        limit: int,
-        offset: int,
+        keys: list[str],
     ) -> list[dict[str, Any]]:
+        """按快照键读取一页（不再用 OFFSET：页间删除会让后续页整体前移而漏行）。
+
+        仍附带原 WHERE：快照之后已不再匹配（被重放/删除）的行不会被读到，由调用方按
+        行数不符判定导出失败。
+        """
         columns = ", ".join(_DEAD_EXPORT_META_FIELDS)
+        marks = ", ".join("?" for _ in keys)
         query = (
-            f"SELECT {columns}, payload FROM outbox WHERE {where_sql} "
-            "ORDER BY dead_at IS NULL, dead_at ASC, batch_id ASC LIMIT ? OFFSET ?"
+            f"SELECT {columns}, payload FROM outbox "
+            f"WHERE batch_id IN ({marks}) AND ({where_sql})"
         )
         with self._transaction() as connection:
-            fetched = connection.execute(query, (*params, limit, offset)).fetchall()
-            copied: list[dict[str, Any]] = []
+            fetched = connection.execute(query, (*keys, *params)).fetchall()
+            by_key: dict[str, dict[str, Any]] = {}
             for row in fetched:
                 item = {name: row[name] for name in _DEAD_EXPORT_META_FIELDS}
                 item["payload"] = bytes(row["payload"] or b"")
-                copied.append(item)
-            return copied
+                by_key[str(row["batch_id"])] = item
+        return [by_key[key] for key in keys if key in by_key]
 
     def _stream_dead_export_file(
         self,
@@ -1512,11 +1532,31 @@ class OutboxStore:
         params: list[Any],
         node_uuid: str,
     ) -> tuple[list[tuple[str, str, int, str]], str, Path | None]:
-        """分页读取，事务松开后再写盘。没有匹配行时仍写出只含文件头的新文件。"""
-        offset = 0
-        first = self._snapshot_dead_page(
-            where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
-        )
+        """分页读取，事务松开后再写盘。没有匹配行时仍写出只含文件头的新文件。
+
+        PR #26 审查：先取主键快照，再按快照键分页（稳定，不受页间删除影响）；写出的行数
+        必须等于快照行数，否则导出失败（删除临时文件、抛错），绝不以不完整文件报成功。
+        """
+        with self._lock:
+            self._dead_exports_active += 1
+        try:
+            return self._stream_dead_export_snapshot(
+                dest, fmt=fmt, where_sql=where_sql, params=params, node_uuid=node_uuid
+            )
+        finally:
+            with self._lock:
+                self._dead_exports_active -= 1
+
+    def _stream_dead_export_snapshot(
+        self,
+        dest: Path,
+        *,
+        fmt: str,
+        where_sql: str,
+        params: list[Any],
+        node_uuid: str,
+    ) -> tuple[list[tuple[str, str, int, str]], str, Path | None]:
+        keys = self._snapshot_dead_keys(where_sql, params)
         temporary = dest.with_name(dest.name + f".{uuid4().hex}.tmp")
         file_digest = hashlib.sha256()
         identities: list[tuple[str, str, int, str]] = []
@@ -1547,8 +1587,15 @@ class OutboxStore:
                         )
                     )
                     emit(self._csv_line([*_DEAD_EXPORT_META_FIELDS, "payload_sha256"]))
-                page = first
-                while page:
+                for start in range(0, len(keys), _DEAD_EXPORT_PAGE_SIZE):
+                    page_keys = keys[start : start + _DEAD_EXPORT_PAGE_SIZE]
+                    page = self._snapshot_dead_page(where_sql, params, page_keys)
+                    if len(page) != len(page_keys):
+                        raise RuntimeError(
+                            "dead rows changed during export: "
+                            f"{len(page_keys) - len(page)} of {len(keys)} snapshot row(s) "
+                            "were removed or no longer match; export aborted, retry it"
+                        )
                     for row in page:
                         raw = bytes(row["payload"] or b"")
                         digest = hashlib.sha256(raw).hexdigest()
@@ -1572,11 +1619,10 @@ class OutboxStore:
                                 digest,
                             )
                         )
-                    if len(page) < _DEAD_EXPORT_PAGE_SIZE:
-                        break
-                    offset += len(page)
-                    page = self._snapshot_dead_page(
-                        where_sql, params, limit=_DEAD_EXPORT_PAGE_SIZE, offset=offset
+                if len(identities) != len(keys):
+                    raise RuntimeError(
+                        f"dead export wrote {len(identities)} row(s) but the snapshot has "
+                        f"{len(keys)}; export aborted"
                     )
                 self._fsync_export_handle(handle)
             self._publish_export_file(temporary, dest)
