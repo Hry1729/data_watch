@@ -484,11 +484,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force bin/tests | Out-Null
           & $env:CSC /nologo /target:exe /platform:x86 /main:OpcDaProxyService.TokenAuthCheck `
-            /out:bin/tests/TokenAuthCheck.exe `
+            /out:bin\tests\TokenAuthCheck.exe `
             /reference:System.dll /reference:System.Core.dll /reference:System.Web.Extensions.dll `
-            OpcDaProxyService.cs OpcConnectionManager.cs tests/TokenAuthCheck.cs
+            OpcDaProxyService.cs OpcConnectionManager.cs tests\TokenAuthCheck.cs
           if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
-          ./bin/tests/TokenAuthCheck.exe
+          .\bin\tests\TokenAuthCheck.exe
           if ($LASTEXITCODE -ne 0) { throw "TokenAuthCheck failed with exit code $LASTEXITCODE" }
 
       - name: Push service smoke checks
@@ -497,10 +497,10 @@ jobs:
           New-Item -ItemType Directory -Force bin/tests | Out-Null
           foreach ($smoke in @("PushClientResponseSmoke", "PushCacheSelectionSmoke")) {
             & $env:CSC /nologo /platform:x86 /target:exe /reference:System.Web.Extensions.dll `
-              "/main:OpcDaPushService.$smoke" "/out:bin/tests/$smoke.exe" `
-              OpcDaPushService.cs "tests/$smoke.cs"
+              "/main:OpcDaPushService.$smoke" "/out:bin\tests\$smoke.exe" `
+              OpcDaPushService.cs "tests\$smoke.cs"
             if ($LASTEXITCODE -ne 0) { throw "csc failed for $smoke with exit code $LASTEXITCODE" }
-            & "./bin/tests/$smoke.exe"
+            & ".\bin\tests\$smoke.exe"
             if ($LASTEXITCODE -ne 0) { throw "$smoke failed with exit code $LASTEXITCODE" }
           }
 

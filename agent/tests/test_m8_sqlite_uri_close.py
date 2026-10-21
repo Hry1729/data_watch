@@ -2,6 +2,7 @@
 连接显式关闭，读 edge.db 使用只读连接。"""
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pytest
@@ -39,7 +40,9 @@ class _Tracker:
 
 
 def _odd_dir(tmp_path):
-    path = tmp_path / "a#b%c?d" / "edge"
+    # Windows 文件名不允许 "?"，在 Windows 上仍覆盖 # 和 %
+    name = "a#b%c d" if os.name == "nt" else "a#b%c?d"
+    path = tmp_path / name / "edge"
     path.mkdir(parents=True)
     return path
 

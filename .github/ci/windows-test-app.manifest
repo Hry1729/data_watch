@@ -1,21 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!--
-  HURY-28：只给 CI 里 `cargo test --lib` 的测试可执行文件嵌入。
-  内容与 tauri-build 的 windows-app-manifest.xml 相同（Common-Controls v6）。
-  tauri-build 只把这份清单嵌进 bin；lib 单测 exe 没有它，会绑到 comctl32 v5，
-  启动即 STATUS_ENTRYPOINT_NOT_FOUND（TaskDialogIndirect）。见 tauri-apps/tauri#13419。
--->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
     <dependentAssembly>
-      <assemblyIdentity
-        type="win32"
-        name="Microsoft.Windows.Common-Controls"
-        version="6.0.0.0"
-        processorArchitecture="*"
-        publicKeyToken="6595b64144ccf1df"
-        language="*"
-      />
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
     </dependentAssembly>
   </dependency>
 </assembly>
