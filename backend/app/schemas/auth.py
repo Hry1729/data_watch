@@ -131,16 +131,62 @@ class RoleStatusPayload:
 class RoleGrantPayload:
     menu_ids: list[int] = field(default_factory=list)
     permission_ids: list[int] = field(default_factory=list)
-    data_scopes: list[dict[str, Any]] = field(default_factory=list)
+    # None 表示请求未携带 dataScopes：保留现有数据范围（B021）。
+    data_scopes: list[dict[str, Any]] | None = None
+    # 显式确认"清空该角色全部菜单与权限"。仅当 menuIds 与 permissionIds 均为空时需要。
+    clear_all: bool = False
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "RoleGrantPayload":
-        menu_ids = _coerce_int_list(payload.get("menuIds") or payload.get("menu_ids") or [])
-        permission_ids = _coerce_int_list(payload.get("permissionIds") or payload.get("permission_ids") or [])
-        data_scopes = payload.get("dataScopes") or payload.get("data_scopes") or []
+        # B021：授权保存是"先全删再插入"的全量覆盖，缺字段/null 不能被当作空列表静默清空。
+        # 菜单与权限必须显式给出数组；两者都为空（即清空该角色全部访问权限）时，
+        # 还必须显式携带 clearAll: true，防止未加载完成的前端误提交空列表把权限抹掉。
+        if not isinstance(payload, dict):
+            raise ApiError(400, "grant payload must be an object")
+
+        def _pick(name: str, alias: str) -> tuple[bool, Any]:
+            if name in payload:
+                return True, payload[name]
+            if alias in payload:
+                return True, payload[alias]
+            return False, None
+
+        missing: list[str] = []
+        lists: dict[str, list[Any]] = {}
+        for name, alias in (("menuIds", "menu_ids"), ("permissionIds", "permission_ids")):
+            present, value = _pick(name, alias)
+            if not present:
+                missing.append(name)
+                continue
+            if value is None:
+                raise ApiError(400, f"{name} 不能为 null（全量覆盖需显式提供数组，清空请传空数组并携带 clearAll: true）")
+            if not isinstance(value, list):
+                raise ApiError(400, f"{name} must be an array")
+            lists[name] = value
+        if missing:
+            raise ApiError(400, f"缺少授权字段: {', '.join(missing)}（全量覆盖需显式提供，清空请传空数组并携带 clearAll: true）")
+        menu_ids = _coerce_int_list(lists["menuIds"])
+        permission_ids = _coerce_int_list(lists["permissionIds"])
+
+        clear_present, clear_raw = _pick("clearAll", "clear_all")
+        if clear_present and clear_raw is not None and not isinstance(clear_raw, bool):
+            raise ApiError(400, "clearAll must be a boolean")
+        clear_all = clear_raw is True
+        if not menu_ids and not permission_ids and not clear_all:
+            raise ApiError(
+                400,
+                "menuIds 与 permissionIds 均为空会清空该角色的全部菜单和权限；"
+                "如确需清空，请在请求中携带 clearAll: true",
+            )
+
+        data_present, data_scopes = _pick("dataScopes", "data_scopes")
+        if not data_present:
+            return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=None, clear_all=clear_all)
+        if data_scopes is None:
+            data_scopes = []
         if not isinstance(data_scopes, list):
             raise ApiError(400, "dataScopes must be an array")
-        return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=data_scopes)
+        return cls(menu_ids=menu_ids, permission_ids=permission_ids, data_scopes=data_scopes, clear_all=clear_all)
 
 
 @dataclass(slots=True)

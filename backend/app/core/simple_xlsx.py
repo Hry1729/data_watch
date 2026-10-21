@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
+import posixpath
 import re
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -27,6 +28,14 @@ NS = {
 }
 
 CELL_REF_RE = re.compile(r"([A-Z]+)(\d+)")
+
+# B009：Excel 规格上限（最大列 XFD=16384，最大行 1048576），越界引用直接拒绝。
+MAX_COLUMN_INDEX = 16384
+MAX_ROW_INDEX = 1048576
+# 稀疏单元格按行稠密补齐后的总单元格预算，防止小文件展开成巨大列表。
+MAX_EXPANDED_CELLS = 2_000_000
+# 读取的包内部件解压后总字节预算（zipfile 按声明的 file_size 截断读取）。
+MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,8 @@ def build_workbook_bytes(sheets: list[WorkbookSheet]) -> bytes:
 def read_workbook_bytes(content: bytes) -> dict[str, list[list[str]]]:
     buffer = BytesIO(content)
     with ZipFile(buffer, "r") as workbook:
+        if sum(info.file_size for info in workbook.infolist()) > MAX_UNCOMPRESSED_BYTES:
+            raise ValueError("工作簿解压后体积超出限制")
         shared_strings = _read_shared_strings(workbook)
         workbook_xml = ET.fromstring(workbook.read("xl/workbook.xml"))
         rels_xml = ET.fromstring(workbook.read("xl/_rels/workbook.xml.rels"))
@@ -77,10 +88,29 @@ def read_workbook_bytes(content: bytes) -> dict[str, list[list[str]]]:
             if not target:
                 continue
 
-            target_path = target if target.startswith("xl/") else f"xl/{target.lstrip('/')}"
+            target_path = _resolve_workbook_target(target)
             sheets[name] = _read_sheet_rows(workbook.read(target_path), shared_strings)
 
         return sheets
+
+
+def _resolve_workbook_target(target: str) -> str:
+    """B037：按 OOXML 包 URI 规则解析 workbook.xml.rels 的 Target。
+
+    以 / 开头的绝对 Target 相对包根；相对 Target 相对 xl/workbook.xml 所在目录 xl/。
+    兼容历史上直接写 xl/... 的形式。规范化后必须仍在包内部。
+    """
+    normalized = target.replace("\\", "/")
+    if normalized.startswith("/"):
+        path = normalized.lstrip("/")
+    elif normalized.startswith("xl/"):
+        path = normalized
+    else:
+        path = posixpath.join("xl", normalized)
+    path = posixpath.normpath(path)
+    if path in ("", ".", "..") or path.startswith("../") or path.startswith("/"):
+        raise ValueError(f"工作表关系路径非法: {target}")
+    return path
 
 
 def _build_content_types_xml(sheet_count: int) -> str:
@@ -259,6 +289,7 @@ def _read_shared_strings(workbook: ZipFile) -> list[str]:
 def _read_sheet_rows(raw_sheet: bytes, shared_strings: list[str]) -> list[list[str]]:
     sheet_xml = ET.fromstring(raw_sheet)
     rows: list[list[str]] = []
+    expanded_cells = 0
 
     for row_node in sheet_xml.findall("main:sheetData/main:row", NS):
         row_values: dict[int, str] = {}
@@ -269,8 +300,13 @@ def _read_sheet_rows(raw_sheet: bytes, shared_strings: list[str]) -> list[list[s
             if not match:
                 continue
             col_idx = _column_index(match.group(1))
+            if col_idx > MAX_COLUMN_INDEX or int(match.group(2)) > MAX_ROW_INDEX:
+                raise ValueError(f"单元格引用超出 Excel 范围: {ref}")
             row_values[col_idx] = _read_cell_value(cell, shared_strings)
             max_col = max(max_col, col_idx)
+        expanded_cells += max_col
+        if expanded_cells > MAX_EXPANDED_CELLS:
+            raise ValueError("工作表单元格数量超出导入限制")
         rows.append([row_values.get(col, "") for col in range(1, max_col + 1)])
 
     return rows
@@ -311,6 +347,9 @@ def _column_index(name: str) -> int:
     value = 0
     for char in name:
         value = value * 26 + (ord(char) - 64)
+        if value > MAX_COLUMN_INDEX:
+            # 提前终止，避免超长列字母做无界累积。
+            return MAX_COLUMN_INDEX + 1
     return value
 
 

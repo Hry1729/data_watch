@@ -8,6 +8,8 @@ import json
 import logging
 import re
 from typing import Any
+from xml.etree.ElementTree import ParseError as XmlParseError
+from zipfile import BadZipFile
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
@@ -61,6 +63,14 @@ POINT_IMPORT_FIELD_ALIASES = {
     "采集周期(ms)": ("采集周期(ms)", "scanRate", "scan_rate"),
     "是否存储": ("是否存储", "isStorage", "is_storage"),
 }
+
+
+def _read_import_workbook(content: bytes) -> dict[str, list[list[str]]]:
+    """解析导入工作簿；越界引用/超预算/损坏文件返回业务 400 而不是 500（B009/B037）。"""
+    try:
+        return read_workbook_bytes(content)
+    except (ValueError, KeyError, BadZipFile, XmlParseError) as exc:
+        raise ApiError(400, f"Excel 文件无法解析: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -410,7 +420,7 @@ class CatalogService:
         return build_workbook_bytes(sheets)
 
     async def import_devices_workbook(self, content: bytes, *, actor: str) -> dict[str, Any]:
-        workbook = read_workbook_bytes(content)
+        workbook = _read_import_workbook(content)
         rows = self._extract_import_rows(workbook, expected_sheet_name=DEVICE_DATA_SHEET_NAME)
         records = self._map_import_rows(
             rows,
@@ -850,7 +860,8 @@ class CatalogService:
 
         return list(groups.values())
 
-    async def list_points(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _apply_point_device_prefilter(self, params: dict[str, Any]) -> dict[str, Any]:
+        """设备类型/连接状态预筛选：转换成 deviceIds，列表与导出共用（B058）。"""
         if params.get("deviceType") or params.get("connectStatus"):
             device_params = {
                 "deviceTypeExact": params.get("deviceType"),
@@ -863,6 +874,10 @@ class CatalogService:
                 latest = await self._fetch_latest_collect_times(devices)
                 devices = [device for device in devices if self._serialize_device_item(device, latest.get(device.device_code))["connectStatus"] == status]
             params = {**params, "deviceIds": [device.device_id for device in devices]}
+        return params
+
+    async def list_points(self, params: dict[str, Any]) -> dict[str, Any]:
+        params = await self._apply_point_device_prefilter(params)
         page_no = self._to_positive_int(params.get("pageNo") or params.get("current"), default=1)
         page_size = self._to_positive_int(params.get("pageSize") or params.get("size"), default=20)
         if params.get("deviceIds") == []:
@@ -1047,7 +1062,7 @@ class CatalogService:
         return build_workbook_bytes(sheets)
 
     async def import_points_workbook(self, content: bytes, *, actor: str) -> dict[str, Any]:
-        workbook = read_workbook_bytes(content)
+        workbook = _read_import_workbook(content)
         rows = self._extract_import_rows(workbook, expected_sheet_name=POINT_DATA_SHEET_NAME)
         records = self._map_import_rows(
             rows,
@@ -1565,7 +1580,11 @@ class CatalogService:
         var_seq = self._to_positive_int(payload.get("varSeq"))
         point_name = self._require_text(payload.get("pointName"), field_name="pointName", max_length=50)
         io_address = self._require_text(payload.get("ioAddress"), field_name="ioAddress", max_length=20)
-        data_type = self._normalize_requested_data_type(payload.get("dataType"))
+        # B054：编辑不走新建白名单。回传的是显示口径（BOOL/REAL/BYTE…），
+        # 只用于和库里原物理类型按同一口径比对；写库时保持原物理类型不变。
+        requested_data_type = str(payload.get("dataType") or "").strip()
+        if not requested_data_type:
+            raise ApiError(400, "dataType is invalid")
         description = self._optional_text(payload.get("description"), max_length=255)
         is_readonly = self._to_bool(payload.get("isReadonly"), field_name="isReadonly")
         driver_name = self._require_text(payload.get("driverName"), field_name="driverName", max_length=50)
@@ -1616,8 +1635,9 @@ class CatalogService:
             raise ApiError(404, "Point not found")
         if int(existing_point["device_id"]) != device_id:
             raise ApiError(400, "point device cannot be changed after creation")
-        if str(existing_point["var_type"] or "").strip().upper() != data_type.upper():
+        if normalize_data_type(existing_point["var_type"]) != normalize_data_type(requested_data_type):
             raise ApiError(400, "point dataType cannot be changed after creation")
+        data_type = existing_point["var_type"]
 
         existing_address = (
             await self.session.execute(
@@ -2693,6 +2713,10 @@ class CatalogService:
         return serialized
 
     async def _fetch_export_points(self, params: dict[str, Any]) -> list[PointCatalogItem]:
+        # B058：导出复用列表的设备类型/连接状态预筛选，导出范围与所见列表一致。
+        params = await self._apply_point_device_prefilter(params)
+        if params.get("deviceIds") == []:
+            return []
         rows = await self._fetch_point_rows()
         points = [self._to_point_item(row) for row in rows]
         return self._filter_point_items(points, params)
@@ -2796,7 +2820,8 @@ class CatalogService:
                 for key, value in row.items()
                 if self._normalize_import_field_key(key)
             }
-            if not any(str(value or "").strip() for value in row_lookup.values()):
+            # B050：只把 None 视为空，False/0 是有效取值，不能被 truthiness 抹掉。
+            if not any(("" if value is None else str(value)).strip() for value in row_lookup.values()):
                 continue
 
             missing_headers: list[str] = []
@@ -2809,7 +2834,7 @@ class CatalogService:
                         break
                 if header in required_headers and resolved_value is None:
                     missing_headers.append(header)
-                values[header] = str(resolved_value or "").strip()
+                values[header] = "" if resolved_value is None else str(resolved_value).strip()
 
             if missing_headers:
                 raise ApiError(400, f"缺少必填列: {', '.join(missing_headers)}")

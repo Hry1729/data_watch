@@ -7,6 +7,7 @@ from turboapi import APIRouter, Depends, Request
 from turboapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.config import get_settings
+from app.core.exceptions import ApiError
 from app.core.log_writer import write_system_log
 from app.core.responses import success_response
 from app.db.mysql import get_mysql_session_factory
@@ -79,8 +80,10 @@ async def logout(
                     "client_ip": client_ip,
                 },
             )
-        except Exception:
-            # Token 无效时也记录登出，但用户信息为空
+        except ApiError as exc:
+            if exc.code not in (401, 403):
+                raise
+            # Token 无效/已失效时登出幂等成功，但用户信息为空
             await write_system_log(
                 level="INFO",
                 log_type="auth",
@@ -88,6 +91,16 @@ async def logout(
                 content="登出（无有效登录状态）",
                 detail={"client_ip": client_ip},
             )
+        except Exception as exc:
+            # B039：数据库/提交故障时 token_version 未递增，旧令牌仍有效，不能报告成功。
+            await write_system_log(
+                level="WARN",
+                log_type="auth",
+                source="backend.logout",
+                content="登出失败：令牌撤销未完成",
+                detail={"client_ip": client_ip, "error": type(exc).__name__},
+            )
+            raise ApiError(503, "登出失败：令牌撤销未完成，请稍后重试") from exc
 
         return success_response(data=True, msg="logout success")
 

@@ -86,7 +86,8 @@ def load_workbook_rows(path_value: str, kind: str) -> list[dict[str, Any]]:
             for field, value in zip(mapped_headers, values, strict=False):
                 if not field:
                     continue
-                item[field] = value.strip() if isinstance(value, str) else (value or "")
+                # B050：只把空单元格(None)视为空，布尔 FALSE / 数值 0 必须保留。
+                item[field] = value.strip() if isinstance(value, str) else ("" if value is None else value)
             if any(str(value).strip() for value in item.values()):
                 result.append(item)
         workbook.close()
