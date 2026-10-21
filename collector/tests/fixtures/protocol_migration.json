@@ -41,7 +41,7 @@
       [
         "%T5",
         1,
-        "INT"
+        "WORD"
       ],
       [
         "DB1.DBB0",
@@ -76,7 +76,8 @@
         "block_address": "%T5",
         "area": "T",
         "value_offset": 0,
-        "data_type": "INT"
+        "data_type": "INT",
+        "raw_word": true
       },
       "0": {
         "block_address": "DB1.DBB0",

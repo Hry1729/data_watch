@@ -253,7 +253,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             device_meta = self._device_meta
             device_generations = self._device_generations
 
-        by_latest: Dict[Tuple[str, str, int, Optional[int]], Dict[str, Dict[str, Any]]] = {}
         # B041：先按帧键收集全部样本，再拆帧——同一批次同一变量的多个不同时间样本
         # 不得在一帧 values 里互相覆盖却全部计为 accepted。
         frame_samples: Dict[
@@ -302,21 +301,6 @@ class _IngestHTTPServer(ThreadingHTTPServer):
             value_text = str(_normalize_point_value(point.value))
             quality = int(getattr(point, "quality", 0))
 
-            # latest 聚合键必须包含 scan_rate_ms：同一 (device, group) 不同 scan_rate 的
-            # 帧各自独立落库，latest 字段也要与 frame 对齐，否则任一帧失败时其它帧的
-            # 变量会先于失败帧进 latest，客户端据此误判已落库。
-            # latest 取该变量时间戳最新的样本（同 ts 时批内后项优先），而非批内最后一项（B041）。
-            latest_bucket = by_latest.setdefault(
-                (device_code, group_code, scan_rate_ms, generation), {}
-            )
-            previous_latest = latest_bucket.get(str(point.variable_id))
-            if previous_latest is None or ts_ms >= previous_latest["t"]:
-                latest_bucket[str(point.variable_id)] = {
-                    "v": value_text,
-                    "t": ts_ms,
-                    "q": quality,
-                }
-
             frame_key = (
                 device_code,
                 device_type,
@@ -333,45 +317,39 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 (ts_ms, idx, str(point.variable_id), value_text, quality, is_stream)
             )
 
-        # 拆帧：同一变量的第 k 个（按时间升序）样本进入第 k 个子帧，每个历史样本各自落 stream；
-        # 子帧按 k 顺序写，同变量样本按时间升序落库，latest 最终为最新时间戳样本。
-        # 同变量同时间戳的重复样本无法区分，后项覆盖前项，前项显式报错且不计 accepted。
+        # 拆帧（B041 R2）：按样本自身时间戳分组——每个不同 ts 一帧，帧 ts 即样本 ts，
+        # 每个值只出现在自己时间戳的帧里，绝不借用其它变量的时间。
+        # 同一变量的样本永远落在同一帧键下，子帧按 ts 升序写，因此同变量按时间升序落库。
+        # 同变量同时间戳的重复样本无法区分，批内后项覆盖前项，前项显式报错且不计 accepted。
         by_frame: List[Tuple[Tuple[str, str, str, int, int, Optional[int]], Dict[str, Any]]] = []
         for frame_key, samples in frame_samples.items():
-            per_variable: Dict[str, List[Tuple[int, int, str, str, int, bool]]] = {}
-            for sample in samples:
-                per_variable.setdefault(sample[2], []).append(sample)
-            sub_frames: List[Dict[str, Any]] = []
-            for variable_id, var_samples in per_variable.items():
-                var_samples.sort(key=lambda item: (item[0], item[1]))
-                kept: List[Tuple[int, int, str, str, int, bool]] = []
-                for sample in var_samples:
-                    if kept and kept[-1][0] == sample[0]:
-                        superseded = kept.pop()
-                        errors.append(
-                            f"points[{superseded[1]}]: duplicate sample for variable {variable_id} "
-                            f"at timestamp {superseded[0]} superseded by points[{sample[1]}]"
-                        )
-                    kept.append(sample)
-                for position, (ts_ms, idx, _, value_text, quality, is_stream) in enumerate(kept):
-                    while len(sub_frames) <= position:
-                        sub_frames.append({
-                            "ts": ts_ms,
-                            "values": {},
-                            "stream_values": {},
-                            "stream_qualities": {},
-                            "point_indices": set(),
-                            "latest": {},
-                        })
-                    frame = sub_frames[position]
-                    frame["ts"] = max(frame["ts"], ts_ms)
-                    frame["values"][variable_id] = value_text
-                    frame["point_indices"].add(idx)
-                    frame["latest"][variable_id] = {"v": value_text, "t": ts_ms, "q": quality}
+            by_ts: Dict[int, Dict[str, Tuple[int, int, str, str, int, bool]]] = {}
+            for sample in samples:  # samples 按批内顺序追加
+                ts_bucket = by_ts.setdefault(sample[0], {})
+                superseded = ts_bucket.get(sample[2])
+                if superseded is not None:
+                    errors.append(
+                        f"points[{superseded[1]}]: duplicate sample for variable {sample[2]} "
+                        f"at timestamp {superseded[0]} superseded by points[{sample[1]}]"
+                    )
+                ts_bucket[sample[2]] = sample
+            for ts_ms in sorted(by_ts):
+                frame_data: Dict[str, Any] = {
+                    "ts": ts_ms,
+                    "values": {},
+                    "stream_values": {},
+                    "stream_qualities": {},
+                    "point_indices": set(),
+                    "latest": {},
+                }
+                for variable_id, (_, idx, _, value_text, quality, is_stream) in by_ts[ts_ms].items():
+                    frame_data["values"][variable_id] = value_text
+                    frame_data["point_indices"].add(idx)
+                    frame_data["latest"][variable_id] = {"v": value_text, "t": ts_ms, "q": quality}
                     if is_stream:
-                        frame["stream_values"][variable_id] = value_text
-                        frame["stream_qualities"][variable_id] = quality
-            by_frame.extend((frame_key, frame_data) for frame_data in sub_frames)
+                        frame_data["stream_values"][variable_id] = value_text
+                        frame_data["stream_qualities"][variable_id] = quality
+                by_frame.append((frame_key, frame_data))
 
         for (
             device_code,
@@ -394,7 +372,7 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                 # 写顺序：window+stream -> latest。latest 必须最后写，
                 # 否则 stream/window 失败时 latest 已被刷新，客户端据此误判批次已落库。
                 # 高-1：与 executor 主路径一致，write_window_stream 与 write_latest 在同一线程配对；
-                # EdgeOutboxWriter 据此一帧只做一次 commit_frame，latest 带全部点（含 STRING / is_storage=0）。
+                # EdgeOutboxWriter 据此一帧只做一次 commit_frame，latest 带本帧全部点（含 STRING / is_storage=0）。
                 try:
                     self.redis_writer.write_window_stream(
                         device_code,
@@ -412,15 +390,10 @@ class _IngestHTTPServer(ThreadingHTTPServer):
                     logger.error("redis write_window_stream failed for %s: %s", frame_label, exc)
                     return
 
-                latest_fields = by_latest.get(
-                    (device_code, group_code, scan_rate_ms, generation)
-                )
-                if latest_fields is None:
-                    errors.append(f"redis latest fields missing for {frame_label}")
-                    return
-                # 本子帧内变量的 latest 用本子帧样本（更新的样本由后续子帧写入），
-                # 避免后续子帧失败时 latest 已超前于实际落库（B041）。
-                latest_fields = {**latest_fields, **frame_data["latest"]}
+                # latest 只带本帧（已成功写入 window/stream 的）样本：每个值的 t 即其自身时间戳。
+                # 同变量的帧按 ts 升序写，HSET 合并后 latest = 已落库的最新值，
+                # 后续帧失败时也不会超前于实际落库（B041 R2）。
+                latest_fields = frame_data["latest"]
                 try:
                     self.redis_writer.write_latest(device_code, group_code, latest_fields)
                 except Exception as exc:
@@ -678,8 +651,11 @@ class _IngestRequestHandler(BaseHTTPRequestHandler):
                     rejected_indices.add(idx)
                     continue
 
-                # 获取 device_id（用于 DataPoint）
+                # 获取 device_id（用于 DataPoint）：还原为配置中的原始写法，
+                # 否则大小写不同的 device_id 会在 write_points_to_redis 的 C9 一致性校验里被误拒。
                 device_id = item.get("device_id", "")
+                if lookup_device_id:
+                    device_id = mapper.canonical_device_id(lookup_device_id) or device_id
 
                 points.append(DataPoint(
                     device_id=device_id,

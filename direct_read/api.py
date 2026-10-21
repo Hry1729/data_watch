@@ -129,6 +129,9 @@ def read_point(
         except DirectReadError as exc:
             exc.details.setdefault("topologySource", resolved.topology_source)
             raise
+        # 并发名额交给 run_with_deadline 后，由它在所有驱动线程调用真正结束时释放
+        # （超时返回后仍阻塞的 PLC 调用继续计入 MAX_CONCURRENCY）；交接前出错则这里释放。
+        permit_handed_off = False
         try:
             try:
                 remaining = deadline - time.monotonic()
@@ -139,20 +142,23 @@ def read_point(
                         quality=QUALITY_NOT_CONNECTED,
                     )
                 read_timeout_ms = max(1, min(int(timeout_ms), int(remaining * 1000)))
+                coro = read_once(
+                    factory,
+                    resolved.connection_config(read_timeout_ms),
+                    address=resolved.io_address,
+                    data_type=resolved.data_type,
+                    deadline=deadline,
+                )
+                permit_handed_off = True
                 value, quality, elapsed_ms = run_with_deadline(
-                    read_once(
-                        factory,
-                        resolved.connection_config(read_timeout_ms),
-                        address=resolved.io_address,
-                        data_type=resolved.data_type,
-                        deadline=deadline,
-                    )
+                    coro, on_settled=permit.release
                 )
             except DirectReadError as exc:
                 exc.details.setdefault("topologySource", resolved.topology_source)
                 raise
         finally:
-            permit.release()
+            if not permit_handed_off:
+                permit.release()
         point_payload: dict[str, Any] = {
             "pointName": resolved.point_name,
             "ioAddress": resolved.io_address,

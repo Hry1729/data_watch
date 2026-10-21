@@ -183,8 +183,8 @@ def test_ingest_server_writes_points_to_redis_with_current_schema():
     assert args[7:] == ({"30041800": "12.5"}, {"30041800": 4})
 
 
-def test_frame_timestamp_uses_max_point_timestamp_for_stream_and_window():
-    """同一 frame 的宽行时间戳取点位时间戳最大值，latest 仍保留点位时间。"""
+def test_points_with_different_timestamps_are_framed_by_their_own_timestamp():
+    """PR #27 R2：不同时间戳的点各自成帧，帧 ts 即点位 ts，不借用其它变量的时间（原先取最大值会改写历史）。"""
     redis_writer = MagicMock()
     config = CollectorConfig(
         devices=[
@@ -239,11 +239,16 @@ def test_frame_timestamp_uses_max_point_timestamp_for_stream_and_window():
 
     assert accepted == 2
     assert errors == []
-    frame_ts = int(later.timestamp() * 1000)
-    assert redis_writer.write_window_stream.call_args.args[6]["ts"] == frame_ts
-    assert redis_writer.write_window_stream.call_args.args[4] == frame_ts
-    assert redis_writer.write_latest.call_args.args[2]["fast"]["t"] == int(earlier.timestamp() * 1000)
-    assert redis_writer.write_latest.call_args.args[2]["slow"]["t"] == frame_ts
+    earlier_ts = int(earlier.timestamp() * 1000)
+    later_ts = int(later.timestamp() * 1000)
+    stream_calls = redis_writer.write_window_stream.call_args_list
+    assert [(c.args[4], c.args[6]["ts"], dict(c.args[7])) for c in stream_calls] == [
+        (earlier_ts, earlier_ts, {"fast": "1.0"}),
+        (later_ts, later_ts, {"slow": "2.0"}),
+    ]
+    latest_calls = redis_writer.write_latest.call_args_list
+    assert latest_calls[0].args[2]["fast"]["t"] == earlier_ts
+    assert latest_calls[1].args[2]["slow"]["t"] == later_ts
 
 
 def test_ingest_server_update_metadata_refreshes_snapshot():
@@ -365,6 +370,9 @@ class _FakeOpcDaMapper:
 
     def is_ambiguous(self, item_id):
         return False
+
+    def canonical_device_id(self, device_id):
+        return "AGV801" if str(device_id or "").strip().casefold() == "agv801" else None
 
 
 def _post_opcda_payload(server, payload):

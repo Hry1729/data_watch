@@ -589,3 +589,79 @@ def test_blocking_thread_connect_does_not_extend_wall_clock_past_deadline(tmp_pa
     assert captured.value.error_type == "timeout"
     assert elapsed < 0.8
     assert "disconnect" in created[0].events
+
+
+def test_timed_out_thread_calls_stay_counted_under_max_concurrency(tmp_path: Path) -> None:
+    """PR #27 Codex P1：超时返回后仍在线程里阻塞的驱动调用必须继续占用并发名额，
+    反复超时不能让在途 PLC 调用超过 MAX_CONCURRENCY；调用真正结束后名额才释放。"""
+    import threading
+
+    source = MemorySource("mysql", [_qc100()])
+    clock = Clock()
+    release = threading.Event()
+    lock = threading.Lock()
+    active = {"now": 0, "peak": 0}
+
+    def blocking_connect() -> None:
+        with lock:
+            active["now"] += 1
+            active["peak"] = max(active["peak"], active["now"])
+        try:
+            release.wait(5)
+        finally:
+            with lock:
+                active["now"] -= 1
+
+    class ThreadBlocking(FakeDriver):
+        async def connect(self, config):
+            self.events.append("connect")
+            await asyncio.get_running_loop().run_in_executor(None, blocking_connect)
+
+    errors: list[str] = []
+    try:
+        for _ in range(5):
+            clock.advance(1.0)  # 避开同 PLC 最小间隔，只考察并发上限
+            with pytest.raises(DirectReadError) as captured:
+                _read(
+                    tmp_path,
+                    sources=[source],
+                    timeout_ms=100,
+                    now=clock,
+                    driver_factory=ThreadBlocking,
+                )
+            errors.append(captured.value.error_type)
+            if captured.value.error_type == "rate_limited":
+                assert captured.value.details["limit"] == "concurrency"
+        # 前两次超时（线程仍阻塞），之后全部被并发上限拒绝，不再启动新的驱动调用
+        assert errors == ["timeout", "timeout", "rate_limited", "rate_limited", "rate_limited"]
+        assert active["peak"] <= 2
+        assert len(list((tmp_path / "slots").glob("*.slot"))) == 2
+    finally:
+        release.set()
+
+    # 残留调用真正结束后才释放名额
+    deadline = time.monotonic() + 3
+    while list((tmp_path / "slots").glob("*.slot")) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert list((tmp_path / "slots").glob("*.slot")) == []
+    clock.advance(1.0)
+    result, _ = _read(tmp_path, sources=[source], now=clock)
+    assert result["value"] == 7
+
+
+def test_run_with_deadline_settles_exactly_once() -> None:
+    from direct_read.session import run_with_deadline
+
+    calls: list[str] = []
+
+    async def ok():
+        await asyncio.get_running_loop().run_in_executor(None, lambda: None)
+        return 1
+
+    async def boom():
+        raise RuntimeError("x")
+
+    assert run_with_deadline(ok(), on_settled=lambda: calls.append("ok")) == 1
+    with pytest.raises(RuntimeError):
+        run_with_deadline(boom(), on_settled=lambda: calls.append("boom"))
+    assert calls == ["ok", "boom"]

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Callable, Coroutine
 
 from direct_read.driver_loader import import_read_block
@@ -25,7 +26,64 @@ _CONFIG_HINTS = ("data type", "address", "bool", "dbx", "decode", "config")
 _DIRECT_READ_WORKERS = 4
 
 
-def run_with_deadline(coro: Coroutine[Any, Any, Any]) -> Any:
+class _SettleTrackingExecutor(ThreadPoolExecutor):
+    """记录在途的驱动线程调用；关闭后最后一个调用真正结束时回调 ``on_settled``（只一次）。
+
+    超时后调用方立即返回，但仍在线程里阻塞的 PLC 调用必须继续占着全局并发名额
+    （RatePermit），直到它真正结束，否则反复超时会绕过 MAX_CONCURRENCY（PR #27 Codex P1）。
+    """
+
+    def __init__(self, *, on_settled: Callable[[], None] | None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._settle_lock = threading.Lock()
+        self._inflight = 0
+        self._closing = False
+        self._settled = False
+        self._on_settled = on_settled
+
+    def submit(self, fn, /, *args, **kwargs) -> Future:  # type: ignore[override]
+        with self._settle_lock:
+            self._inflight += 1
+        try:
+            future = super().submit(fn, *args, **kwargs)
+        except BaseException:
+            self._finish_one(None)
+            raise
+        future.add_done_callback(self._finish_one)
+        return future
+
+    def _finish_one(self, _future: Future | None) -> None:
+        with self._settle_lock:
+            self._inflight -= 1
+            fire = self._closing and self._inflight == 0 and not self._settled
+            if fire:
+                self._settled = True
+        if fire:
+            self._fire()
+
+    def close_and_settle(self) -> None:
+        """不等待在途调用；未开始的排队任务直接取消。在途清零时（可能就是现在）回调。"""
+        self.shutdown(wait=False, cancel_futures=True)
+        with self._settle_lock:
+            self._closing = True
+            fire = self._inflight == 0 and not self._settled
+            if fire:
+                self._settled = True
+        if fire:
+            self._fire()
+
+    def _fire(self) -> None:
+        if self._on_settled is None:
+            return
+        with contextlib.suppress(Exception):
+            self._on_settled()
+
+
+def run_with_deadline(
+    coro: Coroutine[Any, Any, Any],
+    *,
+    on_settled: Callable[[], None] | None = None,
+) -> Any:
     """同步运行 ``coro``，收尾不等待仍在线程里阻塞的驱动调用（B043）。
 
     ``asyncio.run`` 退出时会 ``shutdown_default_executor()``，等待默认线程池里所有
@@ -33,11 +91,21 @@ def run_with_deadline(coro: Coroutine[Any, Any, Any]) -> Any:
     同步 API 的真实墙钟。这里给事件循环一个专用线程池，结束时 ``shutdown(wait=False)``：
     超时结果按 deadline 返回，残留阻塞调用在后台线程里自行结束（受驱动自身
     Send/Recv 超时约束），不再拖住调用方。
+
+    ``on_settled`` 在该线程池里所有调用都真正结束后才被调用（可能在后台线程里，
+    也可能在本函数返回前）；调用方把并发名额的释放放在这里，超时残留的调用就
+    仍计入并发上限。无论 ``coro`` 成功、失败还是超时，``on_settled`` 恰好调用一次。
     """
-    executor = ThreadPoolExecutor(
-        max_workers=_DIRECT_READ_WORKERS, thread_name_prefix="direct-read"
+    executor = _SettleTrackingExecutor(
+        on_settled=on_settled,
+        max_workers=_DIRECT_READ_WORKERS,
+        thread_name_prefix="direct-read",
     )
-    loop = asyncio.new_event_loop()
+    try:
+        loop = asyncio.new_event_loop()
+    except BaseException:
+        executor.close_and_settle()
+        raise
     loop.set_default_executor(executor)
     try:
         asyncio.set_event_loop(loop)
@@ -52,7 +120,7 @@ def run_with_deadline(coro: Coroutine[Any, Any, Any]) -> Any:
             loop.run_until_complete(loop.shutdown_asyncgens())
         finally:
             asyncio.set_event_loop(None)
-            executor.shutdown(wait=False, cancel_futures=True)
+            executor.close_and_settle()
             loop.close()
 
 
