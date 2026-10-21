@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -150,10 +152,36 @@ def assign_sticky_ports(
     return mapping
 
 
+logger = logging.getLogger(__name__)
+
+
+def _backup_path(p: Path) -> Path:
+    return p.with_name(p.name + ".bak")
+
+
 def load_port_mapping(path: str | Path) -> dict[str, int]:
+    """读取粘性映射；主文件损坏时回退到最后一次成功保存的 .bak 副本（B052）。
+
+    两者都不可用才 fail-fast：静默清空会导致端口重排、违反粘性（FR-P03/P04）。
+    """
     p = Path(path)
     if not p.exists():
         return {}
+    try:
+        return _read_port_mapping(p)
+    except (ValueError, OSError) as exc:  # json.JSONDecodeError 是 ValueError 子类
+        backup = _backup_path(p)
+        if not backup.exists():
+            raise
+        try:
+            data = _read_port_mapping(backup)
+        except (ValueError, OSError):
+            raise exc
+        logger.warning("port_mapping %s is corrupt (%s); using last good copy %s", p, exc, backup)
+        return data
+
+
+def _read_port_mapping(p: Path) -> dict[str, int]:
     with open(p, "r", encoding="utf-8") as f:
         data = json.load(f)
     # 已存在但格式损坏须 fail-fast：静默清空会导致端口从 9090 重排、违反粘性（FR-P03/P04）。
@@ -165,10 +193,32 @@ def load_port_mapping(path: str | Path) -> dict[str, int]:
     return data
 
 
+def _atomic_write_text(p: Path, text: str) -> None:
+    """同目录临时文件写入 + flush/fsync 后 os.replace；失败保留原文件不动。"""
+    tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def save_port_mapping(path: str | Path, mapping: Mapping[str, int]) -> None:
+    """B052：原子覆写，写失败/中断不破坏最后有效映射；成功后同步一份 .bak 供损坏回退。"""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(dict(mapping), f, indent=2, ensure_ascii=False)
+    text = json.dumps(dict(mapping), indent=2, ensure_ascii=False)
+    _atomic_write_text(p, text)
+    try:
+        _atomic_write_text(_backup_path(p), text)
+    except OSError as exc:  # 备份失败不影响主映射已原子落盘
+        logger.warning("Failed to write port_mapping backup for %s: %s", p, exc)
 
 

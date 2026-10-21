@@ -81,16 +81,23 @@ class ConfigStore:
         timeout_seconds = self._resolve_timeout(profile_data, timeout_override)
         return RuntimeSettings(profile, base_url, timeout_seconds)
 
-    def set_url(self, url: str, *, profile: str | None = None) -> dict:
+    def set_url(self, url: str, *, profile: str | None = None, dry_run: bool = False) -> dict:
         document = self.load()
         profile_name = profile or str(document["currentProfile"])
         if profile_name not in document["profiles"]:
             raise CliError("config_error", f"Profile 不存在: {profile_name}", EXIT_USAGE)
         document["profiles"][profile_name]["baseUrl"] = self.normalize_base_url(url)
-        self.save(document)
+        self._commit(document, dry_run=dry_run)
         return self.public_document(document)
 
-    def create_profile(self, name: str, url: str, *, timeout_seconds: float = 15.0) -> dict:
+    def create_profile(
+        self,
+        name: str,
+        url: str,
+        *,
+        timeout_seconds: float = 15.0,
+        dry_run: bool = False,
+    ) -> dict:
         self.validate_profile_name(name)
         document = self.load()
         if name in document["profiles"]:
@@ -100,7 +107,7 @@ class ConfigStore:
             "output": "json",
             "timeoutSeconds": self.validate_timeout(timeout_seconds),
         }
-        self.save(document)
+        self._commit(document, dry_run=dry_run)
         return self.public_document(document)
 
     def update_profile(
@@ -109,6 +116,7 @@ class ConfigStore:
         *,
         url: str | None = None,
         timeout_seconds: float | None = None,
+        dry_run: bool = False,
     ) -> dict:
         document = self.load()
         if name not in document["profiles"]:
@@ -120,10 +128,10 @@ class ConfigStore:
             profile["baseUrl"] = self.normalize_base_url(url)
         if timeout_seconds is not None:
             profile["timeoutSeconds"] = self.validate_timeout(timeout_seconds)
-        self.save(document)
+        self._commit(document, dry_run=dry_run)
         return self.public_document(document)
 
-    def delete_profile(self, name: str) -> dict:
+    def delete_profile(self, name: str, *, dry_run: bool = False) -> dict:
         document = self.load()
         profiles = document["profiles"]
         if name not in profiles:
@@ -133,16 +141,24 @@ class ConfigStore:
         del profiles[name]
         if document["currentProfile"] == name:
             document["currentProfile"] = sorted(profiles)[0]
-        self.save(document)
+        self._commit(document, dry_run=dry_run)
         return self.public_document(document)
 
-    def use_profile(self, name: str) -> dict:
+    def use_profile(self, name: str, *, dry_run: bool = False) -> dict:
         document = self.load()
         if name not in document["profiles"]:
             raise CliError("config_error", f"Profile 不存在: {name}", EXIT_USAGE)
         document["currentProfile"] = name
-        self.save(document)
+        self._commit(document, dry_run=dry_run)
         return self.public_document(document)
+
+    def _commit(self, document: dict, *, dry_run: bool) -> None:
+        """写操作的唯一落盘点。dry_run 时与真实命令走完全相同的校验（含整份文档校验），
+        只是不写文件——审查 R2：--dry-run 的预览必须与真实命令同样会失败。"""
+        if dry_run:
+            self._validate_document(document)
+            return
+        self.save(document)
 
     def public_document(self, document: dict | None = None) -> dict:
         validated = self._validate_document(document or self.load())

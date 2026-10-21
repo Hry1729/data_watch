@@ -122,6 +122,11 @@ class DriverLifecycleService:
 
         await self._ensure_installed_driver_table()
         await self._ensure_driver_operation_table()
+        with _operations_lock:
+            current = _operations.get(_normalize_protocol(protocol))
+            if current and current.get("status") == "uninstalling":
+                # B053：卸载仍在进行时注册会与其最终清理竞争，先拒绝。
+                raise ApiError(409, "该驱动正在卸载中，请等待卸载完成后再注册")
 
         service_token = _agent_token()
         if not service_token:
@@ -240,15 +245,9 @@ class DriverLifecycleService:
 
         await self._ensure_installed_driver_table()
         await self._ensure_driver_operation_table()
-        resolved_driver_id = str(driver_id or "").strip()
-        if not resolved_driver_id:
-            meta = await self._fetch_installed_driver(protocol)
-            resolved_driver_id = str((meta or {}).get("driver_id") or "").strip()
-        if not resolved_driver_id:
-            raise ApiError(
-                400,
-                "缺少 driver_id：请重新安装注册后再卸载，或显式传入 driverId",
-            )
+        resolved_driver_id = await self._resolve_uninstall_driver_id(
+            protocol, str(driver_id or "").strip(), token
+        )
 
         row = await self._fetch_protocol_row(protocol)
         with _operations_lock:
@@ -337,9 +336,13 @@ class DriverLifecycleService:
             await self.session.commit()
 
             deleted = False  # Local package removal never deletes the global protocol catalog.
+            # B053：只删除本操作持有门禁的那一代安装记录；期间重新注册（新代际）不得被删。
             await self.session.execute(
-                text("DELETE FROM installed_driver WHERE protocol = :protocol"),
-                {"protocol": protocol},
+                text(
+                    "DELETE FROM installed_driver WHERE protocol = :protocol "
+                    "AND lifecycle_operation_id = :operation_id"
+                ),
+                {"protocol": protocol, "operation_id": operation_id},
             )
             await self._update_operation_phases(
                 operation_id,
@@ -404,6 +407,51 @@ class DriverLifecycleService:
                 if cur and cur.get("operation_id") == operation_id:
                     if cur.get("status") == "uninstalling":
                         _operations.pop(key, None)
+
+    async def _resolve_uninstall_driver_id(
+        self, protocol: str, explicit_driver_id: str, token: str
+    ) -> str:
+        """B019：以 protocol 的 canonical 安装记录确定 driverId，检查/门禁/卸载/清理同一条记录。
+
+        显式 driverId 与安装记录不符 → 409；无安装映射时必须由 Agent 清单核对 protocol-ID 对。
+        """
+        meta = await self._fetch_installed_driver(protocol)
+        canonical = str((meta or {}).get("driver_id") or "").strip()
+        if canonical:
+            if explicit_driver_id and explicit_driver_id != canonical:
+                raise ApiError(
+                    409,
+                    f"driverId {explicit_driver_id} 与 protocol {protocol} 的安装记录"
+                    f"（{canonical}）不一致",
+                )
+            return canonical
+        if not explicit_driver_id:
+            raise ApiError(
+                400,
+                "缺少 driver_id：请重新安装注册后再卸载，或显式传入 driverId",
+            )
+        agent_drivers = await self._list_agent_drivers(token)
+        if agent_drivers is None:
+            raise ApiError(503, "Agent 不可达，无法核对 driverId 与 protocol")
+        agent_info = next(
+            (
+                item
+                for item in agent_drivers
+                if isinstance(item, dict)
+                and str(item.get("id") or "").strip() == explicit_driver_id
+            ),
+            None,
+        )
+        if agent_info is None:
+            raise ApiError(409, f"Agent 未安装驱动 {explicit_driver_id}")
+        agent_protocol = str(agent_info.get("protocol") or "").strip()
+        if _normalize_protocol(agent_protocol) != _normalize_protocol(protocol):
+            raise ApiError(
+                409,
+                f"driverId {explicit_driver_id} 在 Agent 上对应 protocol "
+                f"{agent_protocol or '(空)'}，与请求的 {protocol} 不一致",
+            )
+        return explicit_driver_id
 
     async def uninstall_status(self, protocol: str) -> dict[str, Any]:
         key = _normalize_protocol(protocol)
@@ -598,6 +646,21 @@ class DriverLifecycleService:
             return "skipped"
 
         if presence == "present":
+            meta = await self._fetch_installed_driver_by_id(driver_id)
+            if meta is not None and str(meta.get("lifecycle_operation_id") or "") != operation_id:
+                # B053：Agent 上的驱动属于之后重新安装注册的新代际，旧操作不得重试 DELETE。
+                logger.warning(
+                    "reconcile uninstall: driver_id=%s 已被重新注册（新代际），终结过期 operation=%s",
+                    driver_id,
+                    operation_id,
+                )
+                await self._update_operation_phases(
+                    operation_id,
+                    agent_phase="failed",
+                    db_phase="failed",
+                )
+                await self.session.commit()
+                return "skipped"
             try:
                 await self._call_agent_uninstall(driver_id, token)
             except AgentOutcomeUnknown:
@@ -687,17 +750,26 @@ class DriverLifecycleService:
         driver_id = str(op.get("driver_id") or "").strip()
         if not driver_id:
             return False
+        operation_id = str(op.get("operation_id") or "")
         meta = await self._fetch_installed_driver_by_id(driver_id)
         protocol = str((meta or {}).get("protocol") or "").strip()
+        # B053：补偿只作用于当初持有门禁（lifecycle_operation_id 一致）的那一代记录；
+        # 之后重新安装注册的新代际（门禁已重置）保持不动，过期操作直接终结。
         if protocol:
             await self.session.execute(
-                text("DELETE FROM installed_driver WHERE protocol = :protocol"),
-                {"protocol": protocol},
+                text(
+                    "DELETE FROM installed_driver WHERE protocol = :protocol "
+                    "AND lifecycle_operation_id = :operation_id"
+                ),
+                {"protocol": protocol, "operation_id": operation_id},
             )
         else:
             await self.session.execute(
-                text("DELETE FROM installed_driver WHERE driver_id = :driver_id"),
-                {"driver_id": driver_id},
+                text(
+                    "DELETE FROM installed_driver WHERE driver_id = :driver_id "
+                    "AND lifecycle_operation_id = :operation_id"
+                ),
+                {"driver_id": driver_id, "operation_id": operation_id},
             )
         return True
 
@@ -1260,6 +1332,7 @@ class DriverLifecycleService:
         version: str,
         sha256: str,
     ) -> None:
+        # B053：重新安装注册即新代际，重置旧卸载门禁（lifecycle_*），旧操作不得再修改本记录。
         await self.session.execute(
             text(
                 """
@@ -1272,6 +1345,8 @@ class DriverLifecycleService:
                     driver_version = VALUES(driver_version),
                     driver_sha256 = VALUES(driver_sha256),
                     install_source = 'zip',
+                    lifecycle_status = 'active',
+                    lifecycle_operation_id = NULL,
                     updated_at = VALUES(updated_at)
                 """
             ),
@@ -1304,7 +1379,8 @@ class DriverLifecycleService:
             await self.session.execute(
                 text(
                     """
-                    SELECT protocol, driver_id, driver_version, driver_sha256
+                    SELECT protocol, driver_id, driver_version, driver_sha256,
+                           lifecycle_operation_id
                     FROM installed_driver
                     WHERE driver_id = :driver_id
                     LIMIT 1

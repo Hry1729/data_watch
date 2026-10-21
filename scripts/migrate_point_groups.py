@@ -29,6 +29,10 @@ except ImportError:
     sys.exit(1)
 
 
+# 单个点位分组的 TDengine 列容量（v0001..v3072）。
+GROUP_CAPACITY = 3072
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Migrate point groups for all devices")
     p.add_argument("--host",     default="127.0.0.1")
@@ -118,6 +122,8 @@ def migrate(conn, dry_run: bool) -> None:
                 point_count = cur.fetchone()["cnt"]
 
                 if not dry_run:
+                    # B018：新组列计数从 0 起，由第 3 步按实际分配的列统一设置
+                    # used/next，避免先置 N 再以 N+1 起分配导致计数翻倍。
                     cur.execute("""
                         INSERT INTO device_point_group
                             (device_id, group_no, group_code, group_name,
@@ -125,16 +131,18 @@ def migrate(conn, dry_run: bool) -> None:
                              used_column_count, next_column_index,
                              status, config_version)
                         VALUES (%s, 1, 'g001', NULL,
-                                3072, %s,
                                 %s, %s,
+                                0, 1,
                                 'active', 1)
-                    """, (device_id, point_count, point_count, point_count + 1))
+                    """, (device_id, GROUP_CAPACITY, point_count))
                     group_id = cur.lastrowid
                     created += 1
                     print(f"  [created] device={device_code} group_id={group_id} points={point_count}")
                 else:
+                    # 审查 R2：dry-run 不建组，但仍须按“新组 used=0、容量 GROUP_CAPACITY”
+                    # 走下面同一套映射与容量校验，否则超容量设备会得到成功的预览。
+                    group_id = None
                     print(f"  [dry-run] would create g001 for device={device_code} points={point_count}")
-                    continue
 
             # ── 3. 填充 device_variable 的分组映射字段（幂等：只处理 td_column_name IS NULL）
             cur.execute("""
@@ -149,12 +157,29 @@ def migrate(conn, dry_run: bool) -> None:
                 continue
 
             # 计算本轮起始 group_index（接续已分配的列位）
-            cur.execute(
-                "SELECT used_column_count FROM device_point_group WHERE id = %s",
-                (group_id,)
-            )
-            row = cur.fetchone()
-            start_index = (row["used_column_count"] + 1) if row else 1
+            if group_id is None:
+                row = {"used_column_count": 0, "max_point_count": GROUP_CAPACITY}  # dry-run 预计新组
+            else:
+                cur.execute(
+                    "SELECT used_column_count, max_point_count FROM device_point_group WHERE id = %s",
+                    (group_id,)
+                )
+                row = cur.fetchone()
+            start_index = (int(row["used_column_count"] or 0) + 1) if row else 1
+            capacity = int((row or {}).get("max_point_count") or GROUP_CAPACITY)
+            last_index = start_index - 1 + len(unmapped_vars)
+            if last_index > capacity:
+                # B018：拒绝超出分组列容量的迁移，整个事务回滚，不写入越界列。
+                if not dry_run:
+                    conn.rollback()
+                print(
+                    f"ERROR: device={device_code} needs columns up to v{last_index:04d}, "
+                    f"exceeds g001 capacity {capacity}; "
+                    + ("dry-run: the real migration would abort here."
+                       if dry_run else "migration aborted (no changes committed)."),
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
             if not dry_run:
                 for offset, var in enumerate(unmapped_vars):
@@ -168,7 +193,7 @@ def migrate(conn, dry_run: bool) -> None:
                     updated_vars += 1
 
                 # 更新分组计数
-                new_used = start_index - 1 + len(unmapped_vars)
+                new_used = last_index
                 cur.execute("""
                     UPDATE device_point_group
                     SET used_column_count = %s, next_column_index = %s

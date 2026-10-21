@@ -252,6 +252,23 @@ def _select_data(state: CliContext, data: Any) -> Any:
         ) from exc
 
 
+def _dry_run_preview(
+    command: str,
+    *,
+    remote: list[str] | None = None,
+    local: list[str] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """B017：不经 AuthorizedSession 的写路径在 --dry-run 下只返回副作用预览，不执行。"""
+    return {
+        "dryRun": True,
+        "command": command,
+        "remoteEffects": remote or [],
+        "localEffects": local or [],
+        **extra,
+    }
+
+
 def _load_credentials(state: CliContext, runtime: RuntimeSettings) -> StoredCredentials:
     credentials = state.credential_store.load(
         runtime.profile,
@@ -302,8 +319,19 @@ def config_set_url(ctx: typer.Context, url: str = typer.Argument(...)) -> None:
         if profile not in document["profiles"]:
             raise CliError("config_error", f"Profile 不存在: {profile}", EXIT_USAGE)
         old_url = str(document["profiles"][profile]["baseUrl"])
-        result = state.config_store.set_url(url, profile=profile)
+        # 审查 R2：dry-run 走与真实命令相同的 ConfigStore 校验（URL 规范化等），只是不落盘。
+        result = state.config_store.set_url(url, profile=profile, dry_run=state.dry_run)
         new_url = str(result["profiles"][profile]["baseUrl"])
+        if state.dry_run:
+            return _dry_run_preview(
+                "config set-url",
+                local=[f"更新 profile {profile} 的 baseUrl"]
+                + ([f"清除 profile {profile} 的本地凭据"] if old_url != new_url else []),
+                profile=profile,
+                oldUrl=old_url,
+                newUrl=new_url,
+                result=result,
+            )
         credentials_removed = (
             state.credential_store.clear(profile) if old_url != new_url else False
         )
@@ -333,15 +361,23 @@ def profile_create(
     url: str = typer.Option(..., "--url", help="Backend HTTP(S) URL."),
     timeout: float = typer.Option(15.0, "--timeout", min=0.001, max=300.0),
 ) -> None:
-    _execute(
-        ctx,
-        "config profile create",
-        lambda: _context(ctx).config_store.create_profile(
-            name,
-            url,
-            timeout_seconds=timeout,
-        ),
-    )
+    def operation() -> dict[str, Any]:
+        state = _context(ctx)
+        result = state.config_store.create_profile(
+            name, url, timeout_seconds=timeout, dry_run=state.dry_run
+        )
+        if state.dry_run:
+            return _dry_run_preview(
+                "config profile create",
+                local=[f"创建 profile {name}"],
+                profile=name,
+                url=result["profiles"][name]["baseUrl"],
+                timeoutSeconds=result["profiles"][name]["timeoutSeconds"],
+                result=result,
+            )
+        return result
+
+    _execute(ctx, "config profile create", operation)
 
 
 @profile_app.command("update")
@@ -359,8 +395,19 @@ def profile_update(
             name,
             url=url,
             timeout_seconds=timeout,
+            dry_run=state.dry_run,
         )
         new_url = str(result["profiles"][name]["baseUrl"])
+        if state.dry_run:
+            return _dry_run_preview(
+                "config profile update",
+                local=[f"更新 profile {name}"]
+                + ([f"清除 profile {name} 的本地凭据"] if old_url and old_url != new_url else []),
+                profile=name,
+                url=new_url,
+                timeoutSeconds=result["profiles"][name]["timeoutSeconds"],
+                result=result,
+            )
         credentials_removed = (
             state.credential_store.clear(name) if old_url and old_url != new_url else False
         )
@@ -373,7 +420,14 @@ def profile_update(
 def profile_delete(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
     def operation() -> dict[str, Any]:
         state = _context(ctx)
-        result = state.config_store.delete_profile(name)
+        result = state.config_store.delete_profile(name, dry_run=state.dry_run)
+        if state.dry_run:
+            return _dry_run_preview(
+                "config profile delete",
+                local=[f"删除 profile {name}", f"清除 profile {name} 的本地凭据"],
+                profile=name,
+                result=result,
+            )
         return {
             **result,
             "credentialsRemoved": state.credential_store.clear(name),
@@ -384,11 +438,19 @@ def profile_delete(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
 
 @profile_app.command("use")
 def profile_use(ctx: typer.Context, name: str = typer.Argument(...)) -> None:
-    _execute(
-        ctx,
-        "config profile use",
-        lambda: _context(ctx).config_store.use_profile(name),
-    )
+    def operation() -> dict[str, Any]:
+        state = _context(ctx)
+        result = state.config_store.use_profile(name, dry_run=state.dry_run)
+        if state.dry_run:
+            return _dry_run_preview(
+                "config profile use",
+                local=[f"切换当前 profile 为 {name}"],
+                profile=name,
+                result=result,
+            )
+        return result
+
+    _execute(ctx, "config profile use", operation)
 
 
 @auth_app.command("login")
@@ -405,6 +467,15 @@ def auth_login(
         state = _context(ctx)
         runtime = state.runtime()
         password = _read_password(password_stdin)
+        if state.dry_run:
+            return _dry_run_preview(
+                "auth login",
+                remote=["POST /api/auth/login"],
+                local=[f"保存 profile {runtime.profile} 的凭据"],
+                profile=runtime.profile,
+                baseUrl=runtime.base_url,
+                username=username,
+            )
         with BackendClient(
             runtime.base_url,
             timeout_seconds=runtime.timeout_seconds,
@@ -437,6 +508,19 @@ def auth_refresh(ctx: typer.Context) -> None:
         state = _context(ctx)
         runtime = state.runtime()
         credentials = _load_credentials(state, runtime)
+        if state.dry_run:
+            return _dry_run_preview(
+                "auth refresh",
+                remote=["刷新并轮换 Backend Token"],
+                local=(
+                    [f"保存 profile {runtime.profile} 的新凭据"]
+                    if credentials.source == "keyring"
+                    else []
+                ),
+                profile=runtime.profile,
+                baseUrl=runtime.base_url,
+                credentialSource=credentials.source,
+            )
         with BackendClient(
             runtime.base_url,
             token=credentials.token,
@@ -513,6 +597,19 @@ def auth_logout(ctx: typer.Context) -> None:
         state = _context(ctx)
         runtime = state.runtime()
         credentials = _load_credentials(state, runtime)
+        if state.dry_run:
+            return _dry_run_preview(
+                "auth logout",
+                remote=["Backend 注销当前 Token"],
+                local=(
+                    [f"清除 profile {runtime.profile} 的本地凭据"]
+                    if credentials.source == "keyring"
+                    else []
+                ),
+                profile=runtime.profile,
+                baseUrl=runtime.base_url,
+                credentialSource=credentials.source,
+            )
         remote_error: CliError | None = None
         try:
             with BackendClient(

@@ -141,3 +141,17 @@ def test_realtime_get_filters_one_point_without_changing_status_fields(monkeypat
     data = json.loads(result.stdout)["data"]
     assert data["deviceCode"] == "QC100"
     assert [point["pointName"] for point in data["data"]] == ["TEMP001"]
+
+
+def test_filter_point_matches_resolved_point_id_only() -> None:
+    """B051：已解析 pointId=10 时，同组另一点 varSeq/名称/地址同为 10 不得引发歧义。"""
+    from cli.commands.realtime import _filter_point
+
+    payload = {
+        "data": [
+            {"pointId": 10, "varSeq": 1, "pointName": "A", "ioAddress": "DB1.DBW0"},
+            {"pointId": 20, "varSeq": 10, "pointName": "10", "ioAddress": "10"},
+        ]
+    }
+    result = _filter_point(payload, "10")
+    assert [item["pointId"] for item in result["data"]] == [10]

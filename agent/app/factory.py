@@ -10,7 +10,7 @@ from app.core.config import initialize_config_permissions, data_root, install_ro
 from app.core.exceptions import generic_exception_handler, validation_exception_handler
 from app.core.role import build_role, managed_module_names
 from app.core.security import dpapi_decrypt
-from app.routers.admin import _collector_env, _edge_storage_url, _storage_env, start_process
+from app.routers.admin import _collector_env, _edge_storage_url, _storage_env, _uploader_env, start_process
 from app.services.driver_installer import DriverInstaller
 from app.services.edge_sync import EdgeSyncService
 from app.services.edge_storage_client import EdgeStorageClient
@@ -85,7 +85,9 @@ async def _recover_edge_storage(app: FastAPI) -> None:
                     app.state._storage_recovery_pending = False
                     continue
                 status = pm.status("storage").status
-                if status == "crashed":
+                # B014：期望运行却无 PID（首启 spawn/PID 落盘失败）时 status 为 stopped，
+                # 同样必须进入恢复，否则通用恢复循环跳过 storage 后再无人拉起。
+                if status in {"crashed", "stopped"}:
                     app.state._storage_recovery_pending = True
                 if not getattr(app.state, "_storage_recovery_pending", False):
                     now = asyncio.get_running_loop().time()
@@ -112,6 +114,68 @@ async def _recover_edge_storage(app: FastAPI) -> None:
             logger.error("Cannot recover Edge Storage: %s", exc.detail)
         except Exception:
             logger.exception("Failed to restart crashed Edge Storage")
+
+
+async def _reconcile_sidecars_after_config_apply(app: FastAPI) -> None:
+    """B015：边缘配置快照变更后，在统一生命周期锁内 reconcile OPC DA Sidecar。
+
+    运行中的 Collector 热加载新增 OPC 设备时只会重读同一映射文件，故 Agent 须先
+    差量起新端点代理、写映射并回收被删端点代理。若 Collector 启动时没有任何 OPC
+    端点（未带 --port-mapping），则须重启 Collector 让其拿到映射文件。
+    """
+    pm: ProcessManager = app.state.pm
+    sm = getattr(app.state, "sidecar_manager", None)
+    if sm is None:
+        return
+    async with collector_lifecycle(pm):
+        status = pm.status("collector").status
+        # 审查 R2：“需要带 --port-mapping 重启 Collector”是一项独立的待办，不能由
+        # sm._proxies 推导——首次尝试已起好代理（_proxies 非空）但 pm.restart 失败后，
+        # 重试会误判为“Collector 已带映射”而永远不再重启。待办只在重启/启动真正成功后清除。
+        restart_pending = bool(getattr(app.state, "_collector_port_mapping_restart_pending", False))
+        if status != "running":
+            if not restart_pending or not pm.wants_running("collector"):
+                # 未运行且无待办 / 用户已停用：下一次启动会走 prepare_for_collector_start。
+                app.state._collector_port_mapping_restart_pending = False
+                return
+        had_proxies = bool(sm._proxies)
+        plan = await wait_for_sidecar_operation(sm.prepare_for_collector_start)
+        if plan.port_mapping_path is None:
+            app.state._collector_port_mapping_restart_pending = False
+            return
+        if had_proxies and not restart_pending:
+            return
+        app.state._collector_port_mapping_restart_pending = True
+        settings_path = sm.collector_settings_path
+        if settings_path is None or not Path(settings_path).exists():
+            raise RuntimeError("collector settings.toml not found; run bootstrap first")
+        extra_args = [
+            "--config",
+            str(settings_path),
+            "--runtime-dir",
+            str(pm.runtime_dir),
+            "--port-mapping",
+            str(plan.port_mapping_path),
+        ]
+        if status == "running":
+            info = await pm.restart("collector", extra_args=extra_args, env=_collector_env())
+        else:
+            # 上一次 restart 停掉了旧进程但启动失败（stopped/crashed）：直接带映射启动。
+            info = await pm.start("collector", extra_args=extra_args, env=_collector_env())
+        if getattr(info, "status", "running") != "running":
+            raise RuntimeError(f"collector restart did not reach running (status={info.status})")
+        app.state._collector_port_mapping_restart_pending = False
+        log_manager = getattr(app.state, "log_manager", None)
+        if log_manager is not None:
+            log_manager.attach("collector", pm.log_file("collector"), asyncio.get_running_loop())
+
+
+async def _restart_uploader_after_identity_rotation(app: FastAPI) -> None:
+    """B016：后台用 pending key 恢复轮换后，Uploader 须以新 key 重启（同 /local/identity/rotate）。"""
+    pm: ProcessManager = app.state.pm
+    async with collector_lifecycle(pm):
+        if "uploader" in pm.modules and pm.status("uploader").status == "running":
+            await pm.restart("uploader", env=_uploader_env())
 
 
 def _driver_gate_status(app: FastAPI) -> object:
@@ -283,6 +347,8 @@ async def lifespan(app: FastAPI):
                     asyncio.get_running_loop(),
                 )
         except Exception:
+            # B014：首启失败保留恢复意图，交给 _recover_edge_storage 重试。
+            app.state._storage_recovery_pending = True
             logger.exception("Edge Storage failed to start during Agent startup")
     # 崩溃补偿只属于包含 Collector 的角色。
     if "collector" in modules:
@@ -309,6 +375,8 @@ async def lifespan(app: FastAPI):
             decrypt=dpapi_decrypt,
             process_status=process_status,
             config_store=app.state.edge_storage,
+            on_config_applied=lambda: _reconcile_sidecars_after_config_apply(app),
+            on_identity_rotated=lambda: _restart_uploader_after_identity_rotation(app),
         )
         app.state.edge_sync = edge_sync
         edge_sync_task = asyncio.create_task(edge_sync.run_forever())
