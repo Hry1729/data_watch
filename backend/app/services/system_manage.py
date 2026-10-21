@@ -390,6 +390,9 @@ class SystemManageService:
     ) -> dict[str, int]:
         role = await self._get_role_or_raise(role_id)
         await self._assert_can_manage_role(role, current_user_roles=current_user_roles)
+        # 纵深防御：即使绕过 from_dict 直接构造 payload，也不允许无确认地清空全部授权。
+        if not payload.menu_ids and not payload.permission_ids and not payload.clear_all:
+            raise ApiError(400, "清空角色全部菜单和权限需要显式携带 clearAll: true")
         menu_ids = await self._expand_menu_ids(payload.menu_ids)
         explicit_permission_ids = await self._resolve_permission_ids(payload.permission_ids)
         page_permission_ids = await self._resolve_page_permission_ids(menu_ids)

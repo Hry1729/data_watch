@@ -59,7 +59,7 @@ def _service(session: _GrantSession) -> SystemManageService:
 
 def _payload(scopes):
     return RoleGrantPayload.from_dict(
-        {"menuIds": [], "permissionIds": [], "dataScopes": scopes}
+        {"menuIds": [], "permissionIds": [], "dataScopes": scopes, "clearAll": True}
     )
 
 

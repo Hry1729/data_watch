@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from app.core.log_writer import write_system_log
@@ -21,6 +21,20 @@ from sqlalchemy import and_, delete, func, select, text
 
 logger = get_logger("backend.log_scheduler")
 
+# 定时清理的轮询粒度（秒）。不再一次睡到目标点，而是最多睡这么久就重新读取策略，
+# 这样管理员修改清理时间/启用状态后最迟一个轮询周期内生效。
+CLEANUP_POLL_SECONDS = 60
+
+
+def _parse_cleanup_time(value: Any) -> tuple[int, int]:
+    try:
+        hour, minute = map(int, str(value or "03:00").split(":"))
+    except (ValueError, AttributeError):
+        return 3, 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return 3, 0
+    return hour, minute
+
 
 class LogScheduler:
     """日志定时任务调度器"""
@@ -29,6 +43,12 @@ class LogScheduler:
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._last_capacity_check: datetime | None = None
+        # 已执行过定时清理的日期（每天至多一次）。
+        self._last_scheduled_cleanup_date: date | None = None
+        # 启动时今天的清理点已过：今天不补跑（保持原有语义），除非之后策略发生变化。
+        self._cleanup_skip_date: date | None = None
+        # 上一次轮询看到的 (enabled, (hour, minute))，用于识别策略变化。
+        self._observed_cleanup_policy: tuple[bool, tuple[int, int]] | None = None
 
     async def start(self) -> None:
         """启动定时任务"""
@@ -75,53 +95,70 @@ class LogScheduler:
             content="日志定时任务调度器停止",
         )
 
+    def _cleanup_decision(self, policy: Any, now: datetime) -> tuple[bool, float]:
+        """根据最新策略判断此刻是否应执行定时清理，返回 (是否执行, 下次轮询前的睡眠秒数)。
+
+        规则：
+        - 每天至多执行一次定时清理；
+        - 到达/越过今天的清理时间且今天尚未执行 → 执行；
+        - 调度器启动时今天的清理点已过 → 今天不补跑（与旧行为一致）；
+        - 但若运行中策略变化（改清理时间、重新启用）使今天的清理点已过且今天尚未执行，
+          则立即补跑，而不是像旧实现那样跳过当天（PR #23 审查意见）。
+        """
+        hour, minute = _parse_cleanup_time(getattr(policy, "cleanup_time", None))
+        enabled = bool(getattr(policy, "enabled", False))
+        signature = (enabled, (hour, minute))
+        today = now.date()
+        today_target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+        first_observation = self._observed_cleanup_policy is None
+        changed = not first_observation and signature != self._observed_cleanup_policy
+        self._observed_cleanup_policy = signature
+        if first_observation:
+            last_time = getattr(policy, "last_cleanup_time", None)
+            last_result = getattr(policy, "last_cleanup_result_json", None) or {}
+            if (
+                isinstance(last_time, datetime)
+                and isinstance(last_result, dict)
+                and last_result.get("triggerMode") == "scheduled"
+            ):
+                self._last_scheduled_cleanup_date = last_time.date()
+            if now >= today_target:
+                self._cleanup_skip_date = today
+        elif changed:
+            self._cleanup_skip_date = None
+
+        if not enabled:
+            return False, float(CLEANUP_POLL_SECONDS)
+
+        if now >= today_target:
+            if self._last_scheduled_cleanup_date != today and self._cleanup_skip_date != today:
+                return True, 0.0
+            next_target = today_target + timedelta(days=1)
+        else:
+            next_target = today_target
+        wait = (next_target - now).total_seconds()
+        return False, float(max(1.0, min(CLEANUP_POLL_SECONDS, wait)))
+
     async def _cleanup_scheduler(self) -> None:
         """每天定时清理任务
 
-        根据 policy.cleanup_time 在指定时间执行清理。
+        根据 policy.cleanup_time 在指定时间执行清理。每次轮询都重新读取策略（B008），
+        因此禁用、改时间、改留存天数都按最新值生效。
         """
         while self._running:
             try:
-                # 获取策略配置
                 policy = await self._get_policy()
-                if not policy.enabled:
-                    await asyncio.sleep(60)
-                    continue
-
-                # 计算下次清理时间
-                cleanup_time = policy.cleanup_time or "03:00"
-                now = now_local()
-
-                # 解析清理时间
-                try:
-                    hour, minute = map(int, cleanup_time.split(":"))
-                except (ValueError, AttributeError):
-                    hour, minute = 3, 0
-
-                # 计算下一个清理时间点：今天未到点则等今天，已过点则等明天。
-                # 睡到目标点再执行可天然保证每天恰好触发一次，无需“今天是否清过”的标志
-                # （旧逻辑因 +60 过冲到次日目标点之后、target 又顺延一天，实际每 48h 才清一次）。
-                today_target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-                if now < today_target:
-                    next_target = today_target
-                else:
-                    next_target = today_target + timedelta(days=1)
-
-                # 等待到清理时间
-                sleep_seconds = (next_target - now).total_seconds()
-                if sleep_seconds > 0:
-                    await asyncio.sleep(sleep_seconds)
-
-                # B008：睡眠可能长达 24 小时，期间管理员可能已禁用清理、改清理时间或延长留存，
-                # 醒来后必须重新读取策略，不能按睡前快照删除。
                 if not self._running:
+                    break
+                now = now_local()
+                due, sleep_seconds = self._cleanup_decision(policy, now)
+                if due:
+                    # 先记日期再执行：执行失败也不在同一天内每分钟重试（与旧行为一致）。
+                    self._last_scheduled_cleanup_date = now.date()
+                    await self._execute_cleanup(policy)
                     continue
-                policy = await self._get_policy()
-                if not policy.enabled or (policy.cleanup_time or "03:00") != cleanup_time:
-                    continue
-
-                # 执行清理
-                await self._execute_cleanup(policy)
+                await asyncio.sleep(sleep_seconds)
 
             except asyncio.CancelledError:
                 break

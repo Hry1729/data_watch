@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
@@ -214,11 +215,64 @@ def test_grant_payload_rejects_non_array_fields() -> None:
 
 
 def test_grant_payload_explicit_empty_is_legit_clear_all() -> None:
-    payload = RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [], "dataScopes": []})
+    payload = RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [], "dataScopes": [], "clearAll": True})
+    assert payload.clear_all is True
     assert payload.menu_ids == [] and payload.permission_ids == [] and payload.data_scopes == []
     snake = RoleGrantPayload.from_dict({"menu_ids": [2], "permission_ids": [3]})
     assert snake.menu_ids == [2] and snake.permission_ids == [3]
     assert snake.data_scopes is None
+
+
+# --- PR #23 第二轮：null 不能当作空数组；清空全部需 clearAll ---
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"menuIds": None, "permissionIds": None},
+        {"menuIds": None, "permissionIds": [1]},
+        {"menuIds": [1], "permissionIds": None},
+        {"menu_ids": None, "permission_ids": [1]},
+        {"menuIds": None, "permissionIds": None, "clearAll": True},
+    ],
+)
+def test_grant_payload_rejects_null_arrays(payload) -> None:
+    with pytest.raises(ApiError) as excinfo:
+        RoleGrantPayload.from_dict(payload)
+    assert excinfo.value.code == 400
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"menuIds": [], "permissionIds": []},
+        {"menuIds": [], "permissionIds": [], "dataScopes": []},
+        {"menuIds": [], "permissionIds": [], "dataScopes": [{"scopeType": "all", "scopeValue": "*"}]},
+        {"menuIds": [], "permissionIds": [], "clearAll": False},
+        {"menuIds": [], "permissionIds": [], "clearAll": None},
+    ],
+)
+def test_grant_payload_empty_without_clear_all_is_rejected(payload) -> None:
+    with pytest.raises(ApiError) as excinfo:
+        RoleGrantPayload.from_dict(payload)
+    assert excinfo.value.code == 400
+    assert "clearAll" in excinfo.value.message
+
+
+@pytest.mark.parametrize("raw", ["true", 1, "yes", [True]])
+def test_grant_payload_clear_all_must_be_boolean(raw) -> None:
+    with pytest.raises(ApiError) as excinfo:
+        RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [], "clearAll": raw})
+    assert excinfo.value.code == 400
+
+
+def test_grant_payload_partial_updates_unchanged() -> None:
+    only_menus = RoleGrantPayload.from_dict({"menuIds": [1], "permissionIds": []})
+    assert only_menus.menu_ids == [1] and only_menus.permission_ids == [] and only_menus.clear_all is False
+    only_perms = RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [7]})
+    assert only_perms.permission_ids == [7]
+    snake_clear = RoleGrantPayload.from_dict({"menu_ids": [], "permission_ids": [], "clear_all": True})
+    assert snake_clear.clear_all is True
 
 
 class _GrantSession:
@@ -288,13 +342,28 @@ async def test_grant_with_explicit_empty_lists_still_clears_all() -> None:
     service = _grant_service(session)
     await service.update_role_grant(
         1,
-        RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [], "dataScopes": []}),
+        RoleGrantPayload.from_dict({"menuIds": [], "permissionIds": [], "dataScopes": [], "clearAll": True}),
         current_user_id=1,
         current_user_roles=["R_SUPER"],
     )
     assert len(_deleted_tables(session)) == 3
     assert session.added == []
     assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_service_refuses_unconfirmed_clear_all_even_without_from_dict() -> None:
+    session = _GrantSession()
+    service = _grant_service(session)
+    with pytest.raises(ApiError) as excinfo:
+        await service.update_role_grant(
+            1,
+            RoleGrantPayload(menu_ids=[], permission_ids=[], data_scopes=[]),
+            current_user_id=1,
+            current_user_roles=["R_SUPER"],
+        )
+    assert excinfo.value.code == 400
+    assert session.statements == [] and session.commits == 0
 
 
 # ---------------------------------------------------------------------------
@@ -412,68 +481,195 @@ async def test_logout_other_business_error_is_propagated(monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_cleanup_rereads_policy_after_sleep(monkeypatch) -> None:
+class _FakeClock:
+    def __init__(self, start: datetime) -> None:
+        self.now = start
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+def _drive_cleanup(monkeypatch, *, start: datetime, policy_at, until: datetime, max_steps: int = 20000):
+    """用假时钟驱动 _cleanup_scheduler：asyncio.sleep 只推进假时钟。
+
+    policy_at(now) 返回该时刻管理员看到/保存的策略；返回已执行清理的时刻列表。
+    """
     from app.core import log_scheduler as module
 
     scheduler = module.LogScheduler()
     scheduler._running = True
-    policies = [
-        SimpleNamespace(enabled=True, cleanup_time="03:00", retention_days=7),
-        # 睡眠期间被禁用
-        SimpleNamespace(enabled=False, cleanup_time="03:00", retention_days=7),
-    ]
-    reads = {"n": 0}
+    clock = _FakeClock(start)
+    executed: list[tuple[datetime, Any]] = []
+    steps = {"n": 0}
 
     async def _get_policy():
-        reads["n"] += 1
-        if reads["n"] > len(policies):
+        if clock.now >= until:
             scheduler._running = False
-            return policies[-1]
-        return policies[reads["n"] - 1]
-
-    executed = []
+        return policy_at(clock.now)
 
     async def _execute(policy):
-        executed.append(policy)
+        executed.append((clock.now, policy))
+        clock.now += timedelta(seconds=5)
 
-    async def _sleep(_seconds):
-        if reads["n"] >= len(policies):
+    async def _sleep(seconds):
+        steps["n"] += 1
+        clock.now += timedelta(seconds=seconds)
+        if steps["n"] >= max_steps or clock.now >= until:
             scheduler._running = False
 
     scheduler._get_policy = _get_policy
     scheduler._execute_cleanup = _execute
+    monkeypatch.setattr(module, "now_local", clock)
     monkeypatch.setattr(module.asyncio, "sleep", _sleep)
-    await _run_with_timeout(scheduler._cleanup_scheduler())
+    return scheduler, clock, executed
+
+
+def _policy(enabled=True, cleanup_time="03:00", retention_days=7, **extra):
+    return SimpleNamespace(enabled=enabled, cleanup_time=cleanup_time, retention_days=retention_days, **extra)
+
+
+async def _run_until(scheduler) -> None:
+    await _run_with_timeout(scheduler._cleanup_scheduler(), seconds=10.0)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_rereads_policy_after_sleep(monkeypatch) -> None:
+    # 01:00 启动，策略 03:00；02:30 管理员禁用 → 03:00 不应执行
+    start = datetime(2026, 10, 21, 1, 0, 0)
+
+    def policy_at(now):
+        return _policy(enabled=now < datetime(2026, 10, 21, 2, 30))
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 6, 0))
+    await _run_until(scheduler)
     assert executed == []
 
 
 @pytest.mark.asyncio
 async def test_cleanup_uses_fresh_retention_after_sleep(monkeypatch) -> None:
-    from app.core import log_scheduler as module
+    start = datetime(2026, 10, 21, 1, 0, 0)
 
-    scheduler = module.LogScheduler()
-    scheduler._running = True
-    before = SimpleNamespace(enabled=True, cleanup_time="03:00", retention_days=7)
-    after = SimpleNamespace(enabled=True, cleanup_time="03:00", retention_days=30)
-    queue = [before, after]
-    executed = []
+    def policy_at(now):
+        return _policy(retention_days=7 if now < datetime(2026, 10, 21, 2, 0) else 30)
 
-    async def _get_policy():
-        return queue.pop(0) if queue else after
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 6, 0))
+    await _run_until(scheduler)
+    assert [p.retention_days for _t, p in executed] == [30]
+    assert executed[0][0] - datetime(2026, 10, 21, 3, 0) < timedelta(seconds=61)
 
-    async def _execute(policy):
-        executed.append(policy)
-        scheduler._running = False
 
-    async def _sleep(_seconds):
-        return None
+@pytest.mark.asyncio
+async def test_cleanup_runs_once_per_day_at_configured_time(monkeypatch) -> None:
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=lambda _now: _policy(), until=datetime(2026, 10, 23, 12, 0))
+    await _run_until(scheduler)
+    days = [t.date() for t, _p in executed]
+    assert days == [datetime(2026, 10, 21).date(), datetime(2026, 10, 22).date(), datetime(2026, 10, 23).date()]
+    for t, _p in executed:
+        assert t.hour == 3 and t.minute <= 1
 
-    scheduler._get_policy = _get_policy
-    scheduler._execute_cleanup = _execute
-    monkeypatch.setattr(module.asyncio, "sleep", _sleep)
-    await _run_with_timeout(scheduler._cleanup_scheduler())
-    assert [p.retention_days for p in executed] == [30]
+
+@pytest.mark.asyncio
+async def test_cleanup_time_moved_earlier_past_now_runs_today(monkeypatch) -> None:
+    # 回归（PR #23 人工审查）：01:00 启动，策略 03:00；02:00 把清理时间改成 01:30（今天已过点），
+    # 今天还没清理过 → 应在一个轮询周期内补跑，而不是跳过当天。
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    change = datetime(2026, 10, 21, 2, 0)
+
+    def policy_at(now):
+        return _policy(cleanup_time="03:00" if now < change else "01:30")
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 22, 12, 0))
+    await _run_until(scheduler)
+    times = [t for t, _p in executed]
+    assert len(times) == 2
+    assert change <= times[0] <= change + timedelta(seconds=61)
+    assert times[1].date() == datetime(2026, 10, 22).date() and (times[1].hour, times[1].minute) == (1, 30)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_time_moved_earlier_but_still_future_runs_at_new_time(monkeypatch) -> None:
+    # 旧实现一直睡到 03:00，醒来发现时间改成 02:00 已过点，就顺延到次日 → 当天被跳过。
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    change = datetime(2026, 10, 21, 1, 10)
+
+    def policy_at(now):
+        return _policy(cleanup_time="03:00" if now < change else "02:00")
+
+    scheduler, clock, executed = _drive_cleanup(
+        monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 23, 0)
+    )
+    await _run_until(scheduler)
+    assert len(executed) == 1
+    assert (executed[0][0].hour, executed[0][0].minute) == (2, 0)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_time_changed_after_todays_run_does_not_rerun(monkeypatch) -> None:
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    change = datetime(2026, 10, 21, 4, 0)
+
+    def policy_at(now):
+        return _policy(cleanup_time="03:00" if now < change else "03:30")
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 23, 0))
+    await _run_until(scheduler)
+    assert len(executed) == 1 and executed[0][0].hour == 3 and executed[0][0].minute == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_time_moved_later_waits_for_new_time(monkeypatch) -> None:
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    change = datetime(2026, 10, 21, 2, 0)
+
+    def policy_at(now):
+        return _policy(cleanup_time="03:00" if now < change else "05:00")
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 23, 0))
+    await _run_until(scheduler)
+    assert len(executed) == 1
+    assert (executed[0][0].hour, executed[0][0].minute) == (5, 0)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_startup_after_time_does_not_backfill(monkeypatch) -> None:
+    # 启动时今天的清理点已过：保持旧语义，不补跑，次日按时执行。
+    start = datetime(2026, 10, 21, 10, 0, 0)
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=lambda _now: _policy(), until=datetime(2026, 10, 22, 12, 0))
+    await _run_until(scheduler)
+    assert [t.date() for t, _p in executed] == [datetime(2026, 10, 22).date()]
+
+
+@pytest.mark.asyncio
+async def test_cleanup_restart_after_todays_run_then_change_does_not_rerun(monkeypatch) -> None:
+    # 今天 03:00 已执行（库里记录 triggerMode=scheduled），10:00 重启，11:00 改成 09:00 → 今天不重复。
+    start = datetime(2026, 10, 21, 10, 0, 0)
+    change = datetime(2026, 10, 21, 11, 0)
+    ran = dict(
+        last_cleanup_time=datetime(2026, 10, 21, 3, 0, 2),
+        last_cleanup_result_json={"triggerMode": "scheduled"},
+    )
+
+    def policy_at(now):
+        return _policy(cleanup_time="03:00" if now < change else "09:00", **ran)
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 23, 0))
+    await _run_until(scheduler)
+    assert executed == []
+
+
+@pytest.mark.asyncio
+async def test_cleanup_reenabled_after_time_runs_today(monkeypatch) -> None:
+    start = datetime(2026, 10, 21, 1, 0, 0)
+    reenable = datetime(2026, 10, 21, 8, 0)
+
+    def policy_at(now):
+        return _policy(enabled=not (datetime(2026, 10, 21, 2, 0) <= now < reenable))
+
+    scheduler, clock, executed = _drive_cleanup(monkeypatch, start=start, policy_at=policy_at, until=datetime(2026, 10, 21, 23, 0))
+    await _run_until(scheduler)
+    assert len(executed) == 1
+    assert reenable <= executed[0][0] <= reenable + timedelta(seconds=61)
 
 
 @pytest.mark.asyncio
@@ -825,3 +1021,99 @@ def test_export_route_accepts_device_type_and_connect_status() -> None:
 
     params = inspect.signature(catalog_routes.export_points).parameters
     assert "deviceType" in params and "connectStatus" in params
+
+
+# --- PR #22/#23 第二轮：导出与列表的设备类型/连接状态预筛选严格一致 ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"deviceType": "boiler"},
+        {"connectStatus": "offline"},
+        {"connectStatus": "ONLINE"},
+        {"deviceType": "boiler", "connectStatus": "online"},
+        {"deviceType": "pump", "connectStatus": "online"},
+        {"deviceType": "boiler", "deviceIds": ["2", "3"]},
+        {"connectStatus": "offline", "deviceId": "3"},
+        {},
+    ],
+)
+async def test_export_points_match_list_points_device_scope(filters) -> None:
+    service = _export_service()
+    seen: dict[str, Any] = {}
+    original_build = service._build_point_filter
+
+    def _capture(params):
+        seen["deviceIds"] = params.get("deviceIds")
+        seen["deviceId"] = params.get("deviceId")
+        return original_build(params)
+
+    async def _count(*_args, **_kwargs):
+        return 0
+
+    service._build_point_filter = _capture
+    service._count_point_rows = _count
+    listed = await service.list_points(dict(filters))
+    exported = await service._fetch_export_points(dict(filters))
+
+    all_points = await service._fetch_point_rows()
+    if "deviceIds" not in seen:
+        # list_points 在预筛选结果为空时不查库，直接返回空页
+        assert listed["list"] == [] if "list" in listed else True
+        expected = []
+    else:
+        allowed = None if seen["deviceIds"] is None else {int(x) for x in seen["deviceIds"]}
+        only = int(seen["deviceId"]) if seen["deviceId"] else None
+        expected = [
+            p.point_id
+            for p in all_points
+            if (allowed is None or p.device_id in allowed) and (only is None or p.device_id == only)
+        ]
+    assert [p.point_id for p in exported] == expected
+
+
+@pytest.mark.asyncio
+async def test_export_route_forwards_device_filters_to_service(monkeypatch) -> None:
+    from app.api.routes import catalog as catalog_routes
+
+    captured: dict[str, Any] = {}
+
+    class _FakeService:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def export_points_workbook(self, params, *, template):
+            captured["params"] = params
+            captured["template"] = template
+            return b"xlsx"
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def _allow(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(catalog_routes, "require_permissions", _allow)
+    monkeypatch.setattr(catalog_routes, "get_mysql_session_factory", lambda: _FakeSession)
+    monkeypatch.setattr(catalog_routes, "get_tdengine_client", lambda: None)
+    monkeypatch.setattr(catalog_routes, "CatalogService", _FakeService)
+    await catalog_routes.export_points(
+        deviceType="boiler",
+        connectStatus="offline",
+        deviceIds=["1", "2"],
+        groupId="5",
+        credentials=None,
+    )
+    params = captured["params"]
+    assert params["deviceType"] == "boiler"
+    assert params["connectStatus"] == "offline"
+    assert params["deviceIds"] == ["1", "2"]
+    assert params["groupId"] == "5"
+    assert captured["template"] is False
+
