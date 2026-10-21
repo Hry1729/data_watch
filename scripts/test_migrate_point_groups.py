@@ -8,17 +8,27 @@ from pathlib import Path
 
 import pytest
 
-if "pymysql" not in sys.modules:  # 纯逻辑测试不需要真实驱动
-    fake = types.ModuleType("pymysql")
-    fake.cursors = types.SimpleNamespace(DictCursor=object)
-    sys.modules["pymysql"] = fake
-    sys.modules["pymysql.cursors"] = fake.cursors
-
 _SPEC = importlib.util.spec_from_file_location(
     "migrate_point_groups", Path(__file__).with_name("migrate_point_groups.py")
 )
 mpg = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(mpg)
+
+# 纯逻辑测试不需要真实驱动：只在加载脚本期间临时注入假 pymysql，加载后恢复，
+# 避免污染同一 pytest 进程里的其它测试。
+_saved = {name: sys.modules.get(name) for name in ("pymysql", "pymysql.cursors")}
+if _saved["pymysql"] is None:
+    _fake = types.ModuleType("pymysql")
+    _fake.cursors = types.SimpleNamespace(DictCursor=object)
+    sys.modules["pymysql"] = _fake
+    sys.modules["pymysql.cursors"] = _fake.cursors
+try:
+    _SPEC.loader.exec_module(mpg)
+finally:
+    for _name, _mod in _saved.items():
+        if _mod is None:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _mod
 
 
 class FakeDb:
