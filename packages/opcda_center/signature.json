@@ -1,0 +1,17 @@
+{
+  "algorithm": "ed25519",
+  "key_id": "0924dd172443321c",
+  "payload": {
+    "id": "opcda_center",
+    "publisher": "datawatch",
+    "version": "1.0.2",
+    "files": {
+      "driver.toml": "d3db6e63d5874913b4225bac0539a3dd5261aa315ef950de1f335eb55c724e74",
+      "opcda_center/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "opcda_center/driver.py": "9526ebe246220895b6191270557c12c99b23525543d247c6e42e88bfea82a201",
+      "opcda_center/opcda_ipc_client.py": "ed7b920df9ca031ef49adc550235194de0abf574e7af4b2edc86f1819a75f6fc",
+      "opcda_center/opcda_ipc_protocol.py": "1e6a6026bc5b800597f8ee7575ff19f12ed6bcc381df93f4f58850e877d4824f"
+    }
+  },
+  "signature": "Eivu0oADnQO5Rx5XUj6/1l5lTlWirErF86ZPDcS2HbkFXtAtpNCb49YcGVyW50dX0hiDoQUsogtys4j6kFFyBg=="
+}
