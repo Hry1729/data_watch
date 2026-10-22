@@ -44,11 +44,10 @@ def test_catalog_entry_matches_package_source(driver_id):
 
 @pytest.mark.parametrize("driver_id", sorted(OFFICIAL_ALIASES))
 def test_signed_package_signature_covers_current_version_and_files(driver_id):
-    """带 signature.json 的包：签名载荷的版本与逐文件哈希必须是当前源码（改代码/升版本后需重签）。"""
+    """每个官方包都必须带 signature.json，且签名载荷的版本与逐文件哈希是当前源码（改代码/升版本后需重签）。"""
     root = PACKAGES / driver_id
     signature = root / "signature.json"
-    if not signature.is_file():
-        pytest.skip("未独立签名的官方包，由可信离线目录 tree_sha256 担保")
+    assert signature.is_file(), f"{driver_id} 缺少 signature.json：请用 packaging/sign-driver.py 签名后运行 packaging/regen-driver-catalog.py"
     manifest = load_driver_toml(root / "driver.toml")
     payload = json.loads(signature.read_text(encoding="utf-8"))["payload"]
     assert payload["version"] == manifest.version, "驱动版本已升级但未重新签名"
