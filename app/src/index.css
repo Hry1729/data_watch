@@ -272,4 +272,9 @@
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 100%);
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.dw-acrylic-header[data-scrolled]::before {
+  opacity: 1;
 }

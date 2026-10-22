@@ -240,11 +240,12 @@ test("status bar shows an unknown state with the last success time when health c
 
 // ─── B062：设备变更后刷新汇总 KPI ────────────────────────────────────────────
 
-test("every successful device mutation also refreshes the summary KPIs", async () => {
+test("every successful device mutation refreshes the list and the type catalog", async () => {
   const page = await read("../src/pages/DeviceManagementPage.tsx");
-  assert.match(page, /function refreshAfterMutation\(\) \{ devices\.refresh\(\); deviceCatalog\.refresh\(\); summary\.refresh\(\); \}/);
+  // 顶部 KPI 卡已按用户要求移除，不再请求 summary
+  assert.match(page, /function refreshAfterMutation\(\) \{ devices\.refresh\(\); deviceCatalog\.refresh\(\); \}/);
   assert.equal(page.match(/refreshAfterMutation\(\);/g)?.length, 5);
-  assert.doesNotMatch(page, /devices\.refresh\(\); deviceCatalog\.refresh\(\);(?! summary)/);
+  assert.doesNotMatch(page, /deviceSummary|KpiTile/);
 });
 
 // ─── B064：注册成功、finish 失败后同页可重试完成 ─────────────────────────────

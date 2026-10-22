@@ -11,7 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MonitorKpiCard, formatShort } from "@/components/MonitorKpiCard";
+import { KpiStats, MonitorKpiCard, formatShort } from "@/components/MonitorKpiCard";
 import { ModuleSummaryCard } from "@/components/ModuleSummaryCard";
 import { TrendChart } from "@/components/TrendChart";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
@@ -166,7 +166,7 @@ export function OverviewPage() {
   const rateDetail = (stats: ReturnType<typeof rateStats>, short = false) => {
     if (!stats) return "近 10 分钟暂无数据";
     const f = short ? formatShort : formatNumber;
-    return `峰值 ${f(stats.max)} · 均值 ${f(stats.avg)} · 谷值 ${f(stats.min)}`;
+    return <KpiStats items={[["峰", f(stats.max)], ["均", f(stats.avg)], ["谷", f(stats.min)]]} />;
   };
   // 集中式：collector 速率即“采集量”，无汇聚模块；分布式中心：同一 Redis 入队速率来自 Ingest，即“汇聚量”
   const collectKpi = isCenter
@@ -209,7 +209,7 @@ export function OverviewPage() {
           icon={ChartLine}
           value={writerMetrics.data ? formatNumber(writerMetrics.data.streamLagTotal) : "—"}
           unit="条"
-          detail={`阈值 ${formatNumber(BACKLOG_THRESHOLD)} · ${writerMetrics.data?.streams.length ?? 0} 个 Stream`}
+          detail={<KpiStats items={[["阈值", formatNumber(BACKLOG_THRESHOLD)], ["Stream", `${writerMetrics.data?.streams.length ?? 0} 个`]]} />}
           tone={(writerMetrics.data?.streamLagTotal ?? 0) >= BACKLOG_THRESHOLD ? "warning" : "normal"}
         />
         <MonitorKpiCard

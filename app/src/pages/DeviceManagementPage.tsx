@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Cable, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cpu, Download, MapPin, Plus, Power, Search, SquarePen, Trash2, TriangleAlert, Upload, WifiOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, MapPin, Plus, Power, Search, SquarePen, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CTRL, DANGER_BTN, TAB_LIST, DotText, HEAD_ROW, ICON_BTN, KpiTile, PAGER, PAGER_BTN, PRIMARY_BTN, ROW_ICON, ROW_SELECTED, SelectedCount, SoftBadge, StatusPill, TABLE_FRAME, TABLE_TEXT, TD, TH } from "@/components/DevicePageUi";
+import { CTRL, DANGER_BTN, TAB_LIST, DotText, HEAD_ROW, ICON_BTN, PAGER, PAGER_BTN, PRIMARY_BTN, ROW_ICON, ROW_SELECTED, SelectedCount, SoftBadge, StatusPill, TABLE_FRAME, TABLE_TEXT, TD, TH } from "@/components/DevicePageUi";
 import { useAuth } from "@/contexts/AuthContext";
 import { useBackendQuery } from "@/hooks/useBackendQuery";
 import { backendClient } from "@/lib/backend-client";
@@ -81,17 +81,7 @@ export default function DeviceManagementPage() {
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
   const typeTabs = useMemo(() => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })), [deviceCatalog.data]);
   const drivers = useBackendQuery(loadDrivers);
-  const loadSummary = useCallback(
-    (token: string, signal: AbortSignal) => backendClient.deviceSummary(token, { keyword: keyword.trim() || undefined }, signal),
-    [keyword],
-  );
-  const summary = useBackendQuery(loadSummary);
   const rows = devices.data?.list ?? [];
-  const total = summary.data?.total ?? 0;
-  const online = summary.data?.enabledOnlineCount ?? 0;
-  const unstable = summary.data?.unstableCount ?? 0;
-  const offline = summary.data?.enabledOfflineCount ?? 0;
-  const disabled = summary.data?.disabledCount ?? 0;
   const totalPages = Math.max(1, Math.ceil((devices.data?.total ?? 0) / pageSize));
 
   useEffect(() => {
@@ -103,7 +93,7 @@ export default function DeviceManagementPage() {
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.includes(row.id));
 
   // 设备变更成功后统一刷新列表、类型目录与汇总 KPI，避免同屏数字矛盾
-  function refreshAfterMutation() { devices.refresh(); deviceCatalog.refresh(); summary.refresh(); }
+  function refreshAfterMutation() { devices.refresh(); deviceCatalog.refresh(); }
   function openCreate() { setEditing(null); setForm({ ...EMPTY_FORM, driverName: drivers.data?.[0]?.driverName ?? "" }); setDialogOpen(true); }
   function openEdit(row: DeviceListItem) { setEditing(row); setForm({ deviceType: row.deviceType, deviceCode: row.deviceCode, deviceName: row.deviceName, driverName: row.driverName, deviceStatus: row.deviceStatus, endpoint: row.endpoint, endpointBackup: row.endpointBackup, description: row.description ?? "" }); setDialogOpen(true); }
   async function save() {
@@ -174,13 +164,6 @@ export default function DeviceManagementPage() {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-4">
-      <div className="grid shrink-0 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <KpiTile icon={Cpu} label="设备总数" value={summary.data ? String(total) : "—"} sub={typeTabs.length ? `${typeTabs.length} 类设备` : "—"} />
-        <KpiTile icon={Cable} label="在线" value={summary.data ? String(online) : "—"} sub={summary.data ? `在线率 ${(total ? online / total * 100 : 0).toFixed(1)}%` : "—"} />
-        <KpiTile icon={TriangleAlert} label="不稳定" value={summary.data ? String(unstable) : "—"} sub="通讯时断时续" />
-        <KpiTile icon={WifiOff} label="离线" value={summary.data ? String(offline) : "—"} sub="通讯中断" />
-        <KpiTile icon={Power} label="已停用" value={summary.data ? String(disabled) : "—"} sub="不参与采集" />
-      </div>
       <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
         <TooltipProvider delayDuration={200}>
         <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5">

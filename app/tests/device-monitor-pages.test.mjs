@@ -7,9 +7,9 @@ import { getPageMeta, placeholderPages } from "../src/config/navigation.ts";
 const pages = [
   ["DeviceCommunicationPage.tsx", "/device/communication", ["设备通讯", "总数", "在线", "离线", "异常", "未启用"]],
   ["DriverManagementPage.tsx", "/device/drivers", ["驱动列表", "驱动名称", "说明", "关联设备"]],
-  ["DeviceManagementPage.tsx", "/device/devices", ["设备总数", "汇总", "新增设备", "设备编号"]],
+  ["DeviceManagementPage.tsx", "/device/devices", ["汇总", "新增设备", "设备编号"]],
   ["PointManagementPage.tsx", "/device/points", ["汇总", "新增点位", "点位名称", "设备号"]],
-  ["RealtimeMonitorPage.tsx", "/device/realtime", ["当前设备", "选择点位", "中心实时连接", "实时监测点", "实时趋势"]],
+  ["RealtimeMonitorPage.tsx", "/device/realtime", ["选择设备", "选择点位", "点位组", "中心实时连接", "实时监测点", "实时趋势"]],
   ["HistoryDataPage.tsx", "/device/history", ["选择设备", "查询点位", "时间范围", "折线图", "原始数据"]],
 ];
 
@@ -55,14 +55,16 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /realtimePointGroups/);
   assert.doesNotMatch(source, /点位分组/);
   assert.match(source, /groupCode: selectedGroupCode/);
-  assert.match(source, /chartType === "status"/);
+  // Bool 点位始终走状态泳道，不再有“状态图整页替换”分支
+  assert.doesNotMatch(source, /chartType === "status" \? <TrendChart/);
   assert.match(source, /deviceDialogOpen/);
   assert.match(source, /设备类型/);
   assert.match(source, /设备编号/);
   assert.match(source, /搜索设备名称或编号/);
   assert.match(source, /!flex shrink-0 items-center gap-3 border-b/);
   assert.match(source, /暂未选择监控点位/);
-  assert.match(source, /max-w-56/);
+  assert.match(source, /max-w-44/);
+  assert.doesNotMatch(source, /当前设备/);
   assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
   // 点位数值卡：灰底圆角卡片，始终单行，多了横向滚动（细滚动条）
   assert.match(source, /<PointValueTileRow /);
@@ -87,6 +89,7 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /设备编号/);
   assert.match(source, /搜索设备名称或编号/);
   assert.match(source, /快捷时间范围/);
+  assert.doesNotMatch(source, /当前设备/);
   assert.match(source, /setRecentRange\(Number\(value\), setStartTime, setEndTime\)/);
   assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
   // 已选点位：与实时监控共用同一数值卡组件（单行，多了横向滚动），值为查询区间最新值；不再显示 最小/平均/最大
@@ -100,10 +103,10 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /!flex shrink-0 items-center gap-3 border-b px-5 py-3\.5/);
   assert.match(source, /折线图/);
   assert.match(source, /aria-label="时间对齐颗粒度"/);
-  assert.match(source, /w-\[110px\] !text-xs`\} aria-label="快捷时间范围"/);
+  assert.match(source, /w-\[100px\] !text-xs`\} aria-label="快捷时间范围"/);
   assert.match(source, /aria-label="时间范围"/);
   assert.equal((source.match(/type="datetime-local" value=\{(startTime|endTime)\}/g) ?? []).length, 2);
-  assert.match(source, /w-\[88px\]`\} aria-label="时间对齐颗粒度"/);
+  assert.match(source, /w-\[76px\]`\} aria-label="时间对齐颗粒度"/);
   assert.match(source, /currentDevice \? currentDevice\.deviceCode \?\? currentDevice\.name : "选择设备"/);
   assert.match(source, /ml-auto flex items-center gap-2/);
   assert.match(source, /每页 200 行/);
