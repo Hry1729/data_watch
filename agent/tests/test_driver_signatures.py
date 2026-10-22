@@ -11,18 +11,18 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from app.services.driver_zip import validate_and_extract, DriverZipError
 from app.services.driver_installer import DriverInstaller
-from data_watch_driver_catalog import read_catalog, package_files
+from data_watch_driver_catalog import OFFICIAL_ALIASES, read_catalog, package_files
 from tests.test_driver_install import _minimal_driver_toml
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("driver_id, version", [("s7", "1.0.2"), ("opcua", "1.0.1")])
-def test_published_signed_archives_verify_through_installer(driver_id, version, tmp_path):
+@pytest.mark.parametrize("driver_id", sorted(OFFICIAL_ALIASES))
+def test_published_signed_archives_verify_through_installer(driver_id, tmp_path):
+    """离线目录里每个官方驱动 zip 都必须通过安装器的 Ed25519 签名校验（不再靠 tree_sha256 兜底）。"""
     catalog_path = ROOT / "packages/driver-catalog/catalog.json"
     catalog = read_catalog(catalog_path)
     entry = next(item for item in catalog["drivers"] if item["id"] == driver_id)
-    assert entry["version"] == version
     result = validate_and_extract((catalog_path.parent / entry["archive"]).read_bytes(), tmp_path / "staging", catalog_path=catalog_path)
     assert result.signature_verified
     assert result.publisher == "datawatch"

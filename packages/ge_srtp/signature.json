@@ -1,0 +1,23 @@
+{
+  "algorithm": "ed25519",
+  "key_id": "0924dd172443321c",
+  "payload": {
+    "id": "ge_srtp",
+    "publisher": "datawatch",
+    "version": "1.0.1",
+    "files": {
+      "GE-SRTP-LICENSE": "c5f75a78dcf9700ac576228e5d27ad8639728c023040a3b88dffb0d4c2dd14c5",
+      "driver.toml": "d25d04506c14c71da393695cfaeedf62f7595f7e085bac9d9ef4e7e22fc71995",
+      "ge_srtp/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "ge_srtp/driver.py": "b56394ad36f3e1cf165f9d04a23d0fb459f66e7f8d6ffb2e68cfb0e9b7e80e2a",
+      "ge_srtp/planner.py": "11518e3a9b2c9ca8db80a2780a0b39b59939f4c27e07ffb3ffb9546a47836702",
+      "ge_srtp/transport/__init__.py": "17a237cbaad4fe6926cd51e6cbee7795ef4fe7e743474ad960bc5c6acda4de06",
+      "ge_srtp/transport/connection.py": "5b79c425853aeb981db106a7aeac07298aa4e650d6767cb7033b9bceb3eeb3af",
+      "ge_srtp/transport/driver.py": "4bb96eb71e68bbb009e74297ad18ac618d01764bff00f154547182c6c463985d",
+      "ge_srtp/transport/exceptions.py": "fa1813cc81c6d5228b812bb2a787c0b7538faf65f72f0839b48ce033ab53ffc2",
+      "ge_srtp/transport/packet.py": "0ed277b0cfda3bef06dd38c1d02677a077b457b2f9955ab3a061a14b07a75b25",
+      "ge_srtp/transport/protocol.py": "9332447f9f25426941d27b3e0993ef9d5444ada3ef3634ae4b9e47e7c1dfeac6"
+    }
+  },
+  "signature": "k/FiIw3LtRI/UvTuiwoPI8o0A7qCxowoYM402k0qeso53kN1mFUD1I4ooSXQm3DXW9YqOJ+VRMVtLvovp+ZgDQ=="
+}

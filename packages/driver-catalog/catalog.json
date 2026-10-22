@@ -46,8 +46,8 @@
       ],
       "readWriteType": "只读",
       "archive": "ge_srtp-1.0.1.zip",
-      "sha256": "db36c5375227bd1e7626535724e1549f159040f0bd4c1593f8263dfbc155d949",
-      "tree_sha256": "635f403fce784a8eca07fb9d03c8b9403f0956d7926255e1fbbbb5d46cd768ba"
+      "sha256": "9f636c3ae94aadfd536d9afb8420b5152a9f2e9425a98929da95ae78b9b66815",
+      "tree_sha256": "32353c40dd760b3ed2276a3552e0b0e3305060d99e79f7caadaab81aa7bc1e98"
     },
     {
       "id": "opcua",
@@ -90,8 +90,8 @@
       ],
       "readWriteType": "只读",
       "archive": "opcda_center-1.0.2.zip",
-      "sha256": "ed316e64612b72a3b504aa4fe4338e16cde46512548900900e723356947f7d69",
-      "tree_sha256": "58cb15ac3df0d0e6b44ce4f53a1c25ad6df780426e41eb9f0588ee38041342e2"
+      "sha256": "49025d98246489f105a53b03ac0df40f559ead2c877d7f27ee2328f287f5238d",
+      "tree_sha256": "d90d01303bf1c31695174139772c156f9f8ab85beca18b83a223ab8c87f2fc52"
     },
     {
       "id": "modbus_tcp",
@@ -110,8 +110,8 @@
       ],
       "readWriteType": "只读",
       "archive": "modbus_tcp-1.0.0.zip",
-      "sha256": "f4c45944e8a7300b400b3a0cb6373ddb19b918f4188483ff9badbb4c528e6147",
-      "tree_sha256": "f0c1e6a6a432eb5d84809a02360f98803586586cf9a934dab79905202f555a16"
+      "sha256": "999540b52ae4fbee6655361308c9e24c1498372b543fa06c65e55e9d2e8ce450",
+      "tree_sha256": "bc638e0be39db47a512c03f02ece647dd38e9e8b143a98b1b90f4d83a64736d2"
     }
   ],
   "trusted_publishers": [
@@ -121,5 +121,5 @@
       "public_key": "6E8AnH97GOPkFaq5i5ND4nIsc8ofu4JM7NElZmCHR6w="
     }
   ],
-  "build_id": "404f3b3d6b2e31fdaf772f8b21340222ca02911d68d954662625bf97dbffe069"
+  "build_id": "eaadf6b8409fc954173ec54cf4517386e6b397b01e00f40210c70e281d06ec64"
 }
