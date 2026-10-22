@@ -92,7 +92,6 @@ interface SavedMonitorState {
   refreshRate?: number;
   viewWindowMs?: number;
   chartType?: ChartType;
-  separateBoolChart?: boolean;
   wasMonitoring?: boolean;
 }
 

@@ -39,8 +39,6 @@ test("realtime page retains the original monitoring workflow", () => {
     "折线图",
     "面积图",
     "状态图",
-    "图表设置",
-    "Bool 型变量独立图表",
     "最后同步时间",
   ]) {
     assert.match(pageSource, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), label);
@@ -57,7 +55,9 @@ test("realtime trend stays inside the viewport and compacts the bool chart", () 
   assert.match(pageSource, /function BoolLanes/);
   assert.match(pageSource, /<BoolLanes points=\{boolColored\}/);
   assert.match(pageSource, /compact \? "h-16 max-h-16"/);
-  assert.match(pageSource, /chartType !== "status" && separateBoolChart/);
+  // Bool 点位不再受“独立图表”开关/本地缓存影响，始终以泳道展示（与历史数据一致）
+  assert.doesNotMatch(pageSource, /separateBoolChart/);
+  assert.match(pageSource, /<TrendChart points=\{numericColored\}/);
   assert.doesNotMatch(pageSource, /h-\[420px\]/);
 });
 
