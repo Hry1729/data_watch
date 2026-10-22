@@ -129,24 +129,32 @@ function niceScale(values: number[]) {
   return { lo, hi, ticks };
 }
 
-/** 双轴：每侧 4 段等分刻度，左右网格线对齐 */
+/** 双轴：每侧 4 段等分刻度，左右网格线对齐。
+ *  步长从更密的“好看”数列里取最小可行值，让峰值落在图高约 65%~88%，不再出现只占一半的情况。 */
+const FIT_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
 function fitScale(values: number[]) {
   const a = Math.min(...values);
   const b = Math.max(...values);
-  const nstep = (raw: number) => {
-    const m = Math.pow(10, Math.floor(Math.log10(raw || 1)));
-    return [1, 2, 2.5, 5, 10].map((k) => k * m).find((v) => v >= raw) ?? 10 * m;
-  };
-  let step = Math.max(values.every(Number.isInteger) ? 1 : 0, nstep(Math.max(b - a, b * 0.02, 1) / 3));
-  let lo = 0;
-  for (let k = 0; k < 8; k += 1) {
-    lo = Math.floor(a / step) * step;
-    if (lo + 4 * step >= b) break;
-    step = nstep(step * 1.01);
+  const integer = values.every(Number.isInteger);
+  const span = Math.max(b - a, b * 0.02, 1);
+  const mag0 = Math.pow(10, Math.floor(Math.log10(span / 4)) - 1);
+  for (let e = 0; e < 4; e += 1) {
+    const mag = mag0 * Math.pow(10, e);
+    for (const k of FIT_STEPS) {
+      const step = k * mag;
+      if (integer && step < 1) continue;
+      const lo = Math.max(0, Math.floor(a / step) * step);
+      const hi = lo + 4 * step;
+      // 峰值上方至少留 12% 余量
+      if ((b - lo) / (hi - lo) <= 0.88) {
+        const ticks = Array.from({ length: 5 }, (_, i) => Number((lo + i * step).toFixed(6)));
+        return { lo, hi, ticks };
+      }
+    }
   }
-  lo = Math.max(0, lo);
-  const ticks = Array.from({ length: 5 }, (_, k) => Number((lo + k * step).toFixed(6)));
-  return { lo, hi: lo + 4 * step, ticks };
+  const step = Math.max(integer ? 1 : 0, span / 3);
+  const lo = 0;
+  return { lo, hi: lo + 4 * step, ticks: Array.from({ length: 5 }, (_, i) => Number((lo + i * step).toFixed(6))) };
 }
 
 function buildTimeTicks(points: { t: string }[], range: RangeMinutes): string[] {

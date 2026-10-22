@@ -46,11 +46,25 @@ export function MonitorKpiCard({
         {unit && <small className={cn("ml-0.5 font-medium tracking-normal text-muted-foreground", lg ? "text-sm" : "text-xs")}>{unit}</small>}
       </p>
       {detail != null && (
-        <p className={cn("mt-0.5 truncate text-xs leading-5 text-muted-foreground", denseDetail && "text-[11.5px] tracking-[-0.01em] tabular-nums")} title={typeof detail === "string" ? detail : undefined}>
+        <p className={cn("mt-0.5 truncate text-xs leading-5 text-muted-foreground/75", denseDetail && "text-[11.5px] tabular-nums")} title={typeof detail === "string" ? detail : undefined}>
           {detail}
         </p>
       )}
     </Card>
+  );
+}
+
+/** 说明行里的 峰/均/谷：标签更浅、数值稍深，项之间留白代替“·”，避免一串数字挤在一起 */
+export function KpiStats({ items }: { items: [string, string][] }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-2" title={items.map(([label, value]) => `${label} ${value}`).join("  ")}>
+      {items.map(([label, value]) => (
+        <span key={label} className="inline-flex items-baseline gap-1 whitespace-nowrap">
+          <span className="text-[11px] text-muted-foreground/55">{label}</span>
+          <span className="text-muted-foreground/90">{value}</span>
+        </span>
+      ))}
+    </span>
   );
 }
 
