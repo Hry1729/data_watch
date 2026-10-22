@@ -11,6 +11,8 @@ package in production. Covered here:
 """
 from __future__ import annotations
 
+import time
+
 import json
 import os
 import socket
@@ -211,5 +213,7 @@ def test_client_uses_rotated_token_without_reconstruction(storage):
     old_token = client._token
     ensure_token_file(storage["token_file"], rotate=True)
     # Storage checks token-file changes on a bounded one-second interval.
+    # 等服务端完成一次重新加载（Windows 上 mtime 粒度与调度更粗，立即请求可能仍命中旧 token 而 401）。
+    time.sleep(1.5)
     assert client.wait_ready(timeout_seconds=3.0)["counts"] == {}
     assert client._token != old_token

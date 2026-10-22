@@ -124,7 +124,7 @@ def test_write_runtime_uses_same_connection_config(tmp_path):
     cfg = cap.load_test_config(_cfg_file(tmp_path))
     path = cap.write_runtime(tmp_path / "rt", cfg, database="dwcap_abc123",
                              stable="sdcap", device_type="capabc", shard_count=2,
-                             group="gcap", consumer_workers=1)
+                             group="gcap", consumer_workers=1, batch_count=1)
     settings = tomllib.loads(path.read_text(encoding="utf-8"))
     assert settings["mysql"] == {"host": cfg["mysql"]["host"], "port": cfg["mysql"]["port"],
                                  "user": cfg["mysql"]["user"],
@@ -237,7 +237,7 @@ def test_runtime_toml_strings_round_trip(tmp_path, password):
         cfg[section]["user"] = 'user"\\name'
     path = cap.write_runtime(tmp_path / "runtime", cfg, database="dwcap_strings",
                              stable="sdtest", device_type="test", shard_count=1,
-                             group="gtest", consumer_workers=1)
+                             group="gtest", consumer_workers=1, batch_count=1)
     parsed = tomllib.loads(path.read_text(encoding="utf-8"))
     for section in ("mysql", "redis", "tdengine"):
         assert parsed[section]["password"] == password

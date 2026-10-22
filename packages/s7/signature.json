@@ -4,13 +4,13 @@
   "payload": {
     "id": "s7",
     "publisher": "datawatch",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "files": {
-      "driver.toml": "e8ef62f760eb7ad30bf0c6f0adda7f5aab298f9956d700bc353ebf30935edf19",
+      "driver.toml": "2ec12be0f0079ae4ca2fec267c19ea9845f9b62f71d85b953ff886eb149cca4e",
       "requirements-vendor.txt": "6fa41bdfac7761dc804dc5f5dea923054ec89d2cfe33cb3500518ac590239d18",
       "s7/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "s7/driver.py": "80badaea9cc37caa311169c1f0bb7d80d21a3983476364829fb2fd72e8d3418a",
-      "s7/planner.py": "afeb19edfa0045b81980e8c363c4ac92b5937c517caf029ef564aadb17796d5a",
+      "s7/driver.py": "644b2a4b7229e306623f38c08279cc37ba41b89c647ee2e76879e01b28b924ab",
+      "s7/planner.py": "fee7e881ef5f40e7f3a12f0ad2b6116dbd25749d0d3ebc10009ed87be9580082",
       "vendor/bin/snap7-server.exe": "4664480df8f91c371c1ad47e9f7aa2748f24e8ed05085781b4562fc7ca7fd4c2",
       "vendor/python_snap7-3.0.0.dist-info/INSTALLER": "ceebae7b8927a3227e5303cf5e0f1f7b34bb542ad7250ac03fbcde36ec2f1508",
       "vendor/python_snap7-3.0.0.dist-info/METADATA": "c40054831e6c5e5b277c952c6bb5c283ea82db1c0329962199f50ba9d592869a",
@@ -39,5 +39,5 @@
       "vendor_meta.toml": "8a992466d315d9d1ea2c76cb1a648ba74d7eea39ae04b71dcc6e72d35bb3d068"
     }
   },
-  "signature": "fhYRRLI3zY1g0TFzS1AmR6YYIaOBbnpw3xlmYXtPHZEkS9YHZhp6lInuf0V9bL9LRN4dq8DA5WsSugaxUjhRDg=="
+  "signature": "+vLhsYxMur9FI626ybLTQF9z+XZPN49Ipl3ULgE/lDlEQ9o3x5CAFd0YCVasUJXB5PhUqEMZCB/r3QJRQZ24DQ=="
 }
