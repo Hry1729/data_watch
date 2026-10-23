@@ -24,7 +24,18 @@ import { parseImportWorkbook } from "@/lib/import-workbook";
 import { saveDownload } from "@/lib/save-download";
 import type { DeviceForm, DeviceListItem, ImportResult } from "@/types/device-monitor";
 
-const EMPTY_FORM: DeviceForm = { deviceType: "PLC", deviceCode: "", deviceName: "", driverName: "", deviceStatus: "enabled", endpoint: "", endpointBackup: "", description: "" };
+const EMPTY_FORM: DeviceForm = { deviceType: "", deviceCode: "", deviceName: "", driverName: "", deviceStatus: "enabled", endpoint: "", endpointBackup: "", description: "", rack: "", slot: "", scanCycle: "" };
+// 主/备地址：IPv4[:端口]、主机名[:端口]，或 OPC 这类 opc.tcp:// 前缀地址；后端限长 20。
+const ENDPOINT_RE = /^(?:[a-z][a-z0-9.+-]*:\/\/)?[A-Za-z0-9.-]+(?::\d{1,5})?(?:\/\S*)?$/;
+export function isS7Driver(driverName: string): boolean {
+  const key = driverName.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  return key.includes("S7") || key.includes("SNAP7");
+}
+function toOptionalInt(value: string): number | "" {
+  if (value.trim() === "") return "";
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : "";
+}
 
 const TYPE_COLORS: Record<string, string> = {
   岸桥: "var(--brand)",
@@ -81,6 +92,8 @@ export default function DeviceManagementPage() {
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
   const typeTabs = useMemo(() => (deviceCatalog.data ?? []).map((value) => ({ value, label: value })), [deviceCatalog.data]);
   const drivers = useBackendQuery(loadDrivers);
+  const loadTypeOptions = useCallback((token: string, signal: AbortSignal) => backendClient.deviceTypeOptions(token, signal), []);
+  const typeOptions = useBackendQuery(loadTypeOptions);
   const rows = devices.data?.list ?? [];
   const totalPages = Math.max(1, Math.ceil((devices.data?.total ?? 0) / pageSize));
 
@@ -94,13 +107,53 @@ export default function DeviceManagementPage() {
 
   // 设备变更成功后统一刷新列表、类型目录与汇总 KPI，避免同屏数字矛盾
   function refreshAfterMutation() { devices.refresh(); deviceCatalog.refresh(); }
-  function openCreate() { setEditing(null); setForm({ ...EMPTY_FORM, driverName: drivers.data?.[0]?.driverName ?? "" }); setDialogOpen(true); }
-  function openEdit(row: DeviceListItem) { setEditing(row); setForm({ deviceType: row.deviceType, deviceCode: row.deviceCode, deviceName: row.deviceName, driverName: row.driverName, deviceStatus: row.deviceStatus, endpoint: row.endpoint, endpointBackup: row.endpointBackup, description: row.description ?? "" }); setDialogOpen(true); }
+  function openCreate() { setEditing(null); setForm({ ...EMPTY_FORM }); setDialogOpen(true); }
+  function openEdit(row: DeviceListItem) {
+    setEditing(row);
+    // 列表里的类型是名称（如"轨道吊"），下拉用编码；对不上时保留原值，后端按名称也能识别。
+    const option = (typeOptions.data ?? []).find((item) => item.typeCode === row.deviceType || item.typeName === row.deviceType);
+    setForm({ deviceType: option?.typeCode ?? row.deviceType, deviceCode: row.deviceCode, deviceName: row.deviceName, driverName: row.driverName, deviceStatus: row.deviceStatus, endpoint: row.endpoint, endpointBackup: row.endpointBackup, description: row.description ?? "", rack: "", slot: "", scanCycle: "" });
+    setDialogOpen(true);
+    if (!auth?.backendToken) return;
+    backendClient.deviceDetail(auth.backendToken, row.id)
+      .then((detail) => setForm((current) => (current.deviceCode !== row.deviceCode ? current : {
+        ...current,
+        rack: detail.rack ?? "",
+        slot: detail.slot ?? "",
+        scanCycle: detail.scanCycle ?? "",
+      })))
+      .catch(() => undefined);
+  }
+  function validateForm(): string | null {
+    if (!form.deviceCode.trim()) return "请填写设备编号";
+    if (/\s/.test(form.deviceCode.trim())) return "设备编号不能包含空格";
+    if (!form.deviceName.trim()) return "请填写设备名称";
+    if (!form.deviceType.trim()) return "请选择设备类型";
+    if (!form.driverName) return "请选择关联驱动";
+    if (!form.endpoint.trim()) return "请填写主地址";
+    if (!ENDPOINT_RE.test(form.endpoint.trim())) return "主地址格式不对，例如 192.168.1.10:102";
+    if (form.endpointBackup?.trim() && !ENDPOINT_RE.test(form.endpointBackup.trim())) return "备用地址格式不对";
+    if (form.rack !== "" && form.rack !== undefined && (form.rack < 0 || form.rack > 7)) return "机架号范围 0~7";
+    if (form.slot !== "" && form.slot !== undefined && (form.slot < 0 || form.slot > 31)) return "槽号范围 0~31";
+    if (form.scanCycle !== "" && form.scanCycle !== undefined && (form.scanCycle < 10 || form.scanCycle > 600000)) return "采集周期范围 10~600000 ms";
+    return null;
+  }
   async function save() {
-    if (!auth?.backendToken || !form.deviceCode.trim() || !form.deviceName.trim() || !form.driverName || !form.endpoint.trim()) { toast.error("请完整填写设备信息"); return; }
+    if (!auth?.backendToken) return;
+    const invalid = validateForm();
+    if (invalid) { toast.error(invalid); return; }
+    const payload: DeviceForm = {
+      ...form,
+      deviceType: form.deviceType.trim(),
+      deviceCode: form.deviceCode.trim(),
+      deviceName: form.deviceName.trim(),
+      endpoint: form.endpoint.trim(),
+      endpointBackup: form.endpointBackup?.trim() ?? "",
+      description: form.description?.trim() ?? "",
+    };
     setSaving(true);
     try {
-      if (editing) await backendClient.updateDevice(auth.backendToken, editing.id, form); else await backendClient.createDevice(auth.backendToken, form);
+      if (editing) await backendClient.updateDevice(auth.backendToken, editing.id, payload); else await backendClient.createDevice(auth.backendToken, payload);
       toast.success(editing ? "设备已更新" : "设备已新增"); setDialogOpen(false); refreshAfterMutation();
     } catch (reason) {
       const message = (reason as { message?: string })?.message;
@@ -198,7 +251,7 @@ export default function DeviceManagementPage() {
 
       <input ref={fileInputRef} className="hidden" type="file" accept=".xlsx" onChange={importWorkbook} />
       <Dialog open={importOpen} onOpenChange={setImportOpen}><DialogContent><DialogHeader><DialogTitle>导入设备</DialogTitle><DialogDescription>仅支持 .xlsx 文件。请按模板填写设备类型、设备编号、设备名称、关联驱动和设备状态。</DialogDescription></DialogHeader>{importResult && <div className="rounded-md border bg-muted/30 p-3 text-sm"><p>成功 {importResult.success} 条，失败 {importResult.fail} 条</p>{importResult.errors?.slice(0, 5).map((item) => <p key={item.rowNumber} className="mt-1 text-xs text-destructive">第 {item.rowNumber} 行：{item.reason}</p>)}</div>}<DialogFooter className="sm:justify-between"><Button variant="ghost" onClick={() => exportWorkbook(true)} disabled={transferring}><Download className="size-4" />下载模板</Button><div className="flex gap-2"><Button variant="outline" onClick={() => setImportOpen(false)}>取消</Button><Button onClick={() => fileInputRef.current?.click()} disabled={transferring}><Upload className="size-4" />{transferring ? "处理中…" : "选择文件"}</Button></div></DialogFooter></DialogContent></Dialog>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑设备" : "新增设备"}</DialogTitle></DialogHeader><div className="grid gap-4 py-2"><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>设备编号</Label><Input value={form.deviceCode} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, deviceCode: event.target.value })} /></div><div className="space-y-2"><Label>设备名称</Label><Input value={form.deviceName} onChange={(event) => setForm({ ...form, deviceName: event.target.value })} /></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>设备类型</Label><Input value={form.deviceType} onChange={(event) => setForm({ ...form, deviceType: event.target.value })} /></div><div className="space-y-2"><Label>关联驱动</Label><Select value={form.driverName} onValueChange={(value) => setForm({ ...form, driverName: value })}><SelectTrigger><SelectValue placeholder="选择驱动" /></SelectTrigger><SelectContent>{(drivers.data ?? []).map((driver) => <SelectItem key={driver.driverName} value={driver.driverName}>{driver.driverName}</SelectItem>)}</SelectContent></Select></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>主地址</Label><Input value={form.endpoint} maxLength={20} placeholder="例如 192.168.1.10:102" onChange={(event) => setForm({ ...form, endpoint: event.target.value })} /></div><div className="space-y-2"><Label>备用地址</Label><Input value={form.endpointBackup ?? ""} maxLength={20} placeholder="选填" onChange={(event) => setForm({ ...form, endpointBackup: event.target.value })} /></div></div><div className="space-y-2"><Label>设备状态</Label><Select value={form.deviceStatus} onValueChange={(value: "enabled" | "disabled") => setForm({ ...form, deviceStatus: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>描述说明</Label><Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑设备" : "新增设备"}</DialogTitle></DialogHeader><div className="grid gap-4 py-2"><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>设备编号</Label><Input value={form.deviceCode} maxLength={20} placeholder="如 asc7181" disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, deviceCode: event.target.value })} /></div><div className="space-y-2"><Label>设备名称</Label><Input value={form.deviceName} maxLength={20} placeholder="如 718L轨道吊" onChange={(event) => setForm({ ...form, deviceName: event.target.value })} /></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>设备类型</Label><Select value={form.deviceType} onValueChange={(value) => setForm({ ...form, deviceType: value })}><SelectTrigger><SelectValue placeholder="选择设备类型" /></SelectTrigger><SelectContent>{form.deviceType && !(typeOptions.data ?? []).some((item) => item.typeCode === form.deviceType) && <SelectItem value={form.deviceType}>{form.deviceType}</SelectItem>}{(typeOptions.data ?? []).map((item) => <SelectItem key={item.typeCode} value={item.typeCode}>{item.typeName === item.typeCode ? item.typeCode : `${item.typeName} · ${item.typeCode}`}</SelectItem>)}</SelectContent></Select></div><div className="space-y-2"><Label>关联驱动</Label><Select value={form.driverName} onValueChange={(value) => setForm({ ...form, driverName: value })}><SelectTrigger><SelectValue placeholder="选择驱动" /></SelectTrigger><SelectContent>{(drivers.data ?? []).map((driver) => <SelectItem key={driver.driverName} value={driver.driverName}>{driver.driverName}</SelectItem>)}</SelectContent></Select></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>主地址</Label><Input value={form.endpoint} maxLength={20} placeholder="例如 192.168.1.10:102" onChange={(event) => setForm({ ...form, endpoint: event.target.value })} /></div><div className="space-y-2"><Label>备用地址</Label><Input value={form.endpointBackup ?? ""} maxLength={20} placeholder="选填" onChange={(event) => setForm({ ...form, endpointBackup: event.target.value })} /></div></div><div className="grid grid-cols-3 gap-3"><div className="space-y-2"><Label>机架号{isS7Driver(form.driverName) ? "" : "（S7 用）"}</Label><Input type="number" min={0} max={7} value={form.rack ?? ""} placeholder="默认 0" onChange={(event) => setForm({ ...form, rack: toOptionalInt(event.target.value) })} /></div><div className="space-y-2"><Label>槽号{isS7Driver(form.driverName) ? "" : "（S7 用）"}</Label><Input type="number" min={0} max={31} value={form.slot ?? ""} placeholder={isS7Driver(form.driverName) ? "S7-300 一般为 2" : "默认 1"} onChange={(event) => setForm({ ...form, slot: toOptionalInt(event.target.value) })} /></div><div className="space-y-2"><Label>采集周期 (ms)</Label><Input type="number" min={10} step={100} value={form.scanCycle ?? ""} placeholder="默认 1000" onChange={(event) => setForm({ ...form, scanCycle: toOptionalInt(event.target.value) })} /></div></div><div className="space-y-2"><Label>设备状态</Label><Select value={form.deviceStatus} onValueChange={(value: "enabled" | "disabled") => setForm({ ...form, deviceStatus: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent></Select></div><div className="space-y-2"><Label>描述说明</Label><Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</Button></DialogFooter></DialogContent></Dialog>
       <AlertDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>批量删除设备</AlertDialogTitle><AlertDialogDescription>确认删除选中的 {selectedIds.length} 台设备吗？关联点位也会被删除。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={confirmBatchDelete}>删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>删除设备</AlertDialogTitle><AlertDialogDescription>确认删除设备“{deleting?.deviceName}”吗？该操作不可撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={confirmDelete}>删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </div>
