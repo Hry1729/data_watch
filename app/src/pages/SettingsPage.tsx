@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Lock, Plug, RotateCcw, Save } from "lucide-react";
+import { Boxes, Check, Database, Keyboard, Lock, Monitor, Moon, Plug, RotateCcw, Save, Sun, Zap } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import pkg from "../../package.json";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -17,8 +19,6 @@ import { normalizeSettingsTab } from "@/components/layout/settings-tabs";
 import { BUILD_ROLE } from "@/config/build-role";
 import type { AppError, ConnectionConfig, DbConfig, ModuleName } from "@/types";
 
-const ZH_TO_THEME = { "浅色": "light", "深色": "dark", "跟随系统": "system" } as const;
-const THEME_TO_ZH = { light: "浅色", dark: "深色", system: "跟随系统" } as const;
 
 // ─── 内部表单状态类型 ─────────────────────────────────────────────────────────
 
@@ -203,47 +203,10 @@ function FieldRow({
   );
 }
 
-// ─── Segmented 按钮组（外观/密度静态切换）────────────────────────────────────
-
-function SegmentedGroup({
-  options,
-  value,
-  onChange,
-  disabled = false,
-}: {
-  options: string[];
-  value: string;
-  onChange: (v: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div
-      className="inline-flex rounded-lg overflow-hidden"
-      style={{ border: "1px solid var(--border)" }}
-    >
-      {options.map((opt, i) => (
-        <button
-          key={opt}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(opt)}
-          className="px-4 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          style={{
-            background: value === opt ? "var(--brand)" : "var(--card)",
-            color: value === opt ? "var(--brand-foreground)" : "var(--muted-foreground)",
-            borderRight: i < options.length - 1 ? "1px solid var(--border)" : "none",
-          }}
-        >
-          {opt}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ─── 数据库行卡片 ─────────────────────────────────────────────────────────────
 
 function DbCard({
+  icon: Icon = Database,
   title,
   description,
   columns,
@@ -252,6 +215,7 @@ function DbCard({
   onTest,
   children,
 }: {
+  icon?: LucideIcon;
   title: string;
   description: string;
   /** 字段网格列宽（概念稿按字段长度分配） */
@@ -264,6 +228,7 @@ function DbCard({
   return (
     <Card className="gap-0 py-0">
       <div className="flex items-start gap-3 px-5 pt-5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand"><Icon className="size-[18px]" /></span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="text-sm leading-5 font-semibold">{title}</p>
@@ -365,6 +330,7 @@ function DatabaseTab({
     <>
       {/* Redis */}
       <DbCard
+        icon={Zap}
         title="Redis 实时缓冲"
         description="实时点位缓冲与 Stream 队列；DB 保存后需重启 Collector/Writer/Ingest 才生效，Backend 的 REDIS_DB 需另行同步"
         columns="1.6fr 0.8fr 0.8fr 1.3fr 0.8fr"
@@ -434,31 +400,97 @@ function DatabaseTab({
 
 // ─── 标签内容：基础 ───────────────────────────────────────────────────────────
 
-function BasicTab() {
-  const { theme, setTheme } = useTheme();
+const ROLE_LABEL: Record<string, string> = { centralized: "集中式部署", "distributed-center": "分布式 · 中心", edge: "分布式 · 边缘" };
 
+function ThemePreview({ mode }: { mode: "light" | "dark" | "system" }) {
+  const pane = (dark: boolean) => (
+    <div className={["flex h-full flex-1 gap-1.5 p-2", dark ? "bg-[#14171c]" : "bg-[#eef1f5]"].join(" ")}>
+      <div className="flex w-5 flex-col gap-1 pt-1">
+        {[0, 1, 2].map(i => <span key={i} className={["h-1 rounded-full", i === 0 ? "bg-[#1677FF]" : dark ? "bg-white/15" : "bg-black/10"].join(" ")} />)}
+      </div>
+      <div className={["flex flex-1 flex-col gap-1.5 rounded-[5px] p-1.5", dark ? "bg-[#1d2128]" : "bg-white"].join(" ")}>
+        <span className={["h-1.5 w-1/2 rounded-full", dark ? "bg-white/25" : "bg-black/15"].join(" ")} />
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="h-full w-full flex-1">
+          <path d="M0 30 L15 24 L30 27 L45 16 L60 20 L75 9 L90 13 L100 6 L100 40 L0 40Z" fill="#1677FF" fillOpacity={dark ? 0.28 : 0.16} />
+          <path d="M0 30 L15 24 L30 27 L45 16 L60 20 L75 9 L90 13 L100 6" fill="none" stroke="#1677FF" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+        </svg>
+        <div className="flex gap-1">
+          {[0, 1, 2].map(i => <span key={i} className={["h-3 flex-1 rounded-[3px]", dark ? "bg-white/8" : "bg-black/5"].join(" ")} />)}
+        </div>
+      </div>
+    </div>
+  );
+  if (mode === "system") return <div className="flex h-full">{pane(false)}{pane(true)}</div>;
+  return pane(mode === "dark");
+}
+
+function SettingRow({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-4 py-3.5 [&+&]:border-t [&+&]:border-border/60">
+      <div className="min-w-0">
+        <p className="text-sm font-medium">{title}</p>
+        {description && <p className="mt-0.5 text-[13px] text-muted-foreground">{description}</p>}
+      </div>
+      <div className="flex items-center gap-2 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function SectionCard({ icon: Icon, title, description, children }: { icon: LucideIcon; title: string; description?: string; children: React.ReactNode }) {
   return (
     <Card className="gap-0 py-0">
-      <div className="px-5 pt-5">
-        <p className="text-sm leading-5 font-semibold">基础设置</p>
-        <p className="mt-1 text-[13px] text-muted-foreground">仅作用于本机</p>
+      <div className="flex items-center gap-3 px-5 pt-5">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand"><Icon className="size-[18px]" /></span>
+        <div className="min-w-0">
+          <p className="text-sm leading-5 font-semibold">{title}</p>
+          {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
+        </div>
       </div>
-      <CardContent className="space-y-3 px-5 pt-4 pb-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Label className="text-sm font-medium">外观主题</Label>
-          <SegmentedGroup
-            options={["浅色", "深色", "跟随系统"]}
-            value={THEME_TO_ZH[theme]}
-            onChange={(zh) => setTheme(ZH_TO_THEME[zh as keyof typeof ZH_TO_THEME])}
-          />
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* 应用样式中没有密度机制；切换无效果，按其它未接入项一样禁用并标注 */}
-          <Label className="text-sm font-medium">页面密度（暂不支持）</Label>
-          <SegmentedGroup options={["紧凑", "标准", "宽松"]} value="标准" onChange={() => {}} disabled />
-        </div>
-      </CardContent>
+      <CardContent className="px-5 pt-2 pb-3">{children}</CardContent>
     </Card>
+  );
+}
+
+function BasicTab() {
+  const { theme, setTheme } = useTheme();
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const mod = isMac ? "⌘" : "Ctrl";
+  const kbd = "inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-muted px-1.5 text-xs font-medium text-muted-foreground shadow-[inset_0_-1px_0_rgb(0_0_0/0.08)]";
+  const options = [
+    { value: "light", label: "浅色", icon: Sun },
+    { value: "dark", label: "深色", icon: Moon },
+    { value: "system", label: "跟随系统", icon: Monitor },
+  ] as const;
+
+  return (
+    <>
+      <SectionCard icon={Sun} title="外观" description="仅作用于本机">
+        <div className="grid grid-cols-3 gap-4 py-3">
+          {options.map(opt => {
+            const active = theme === opt.value; const Icon = opt.icon;
+            return (
+              <button key={opt.value} type="button" aria-pressed={active} onClick={() => setTheme(opt.value)} className="group flex flex-col gap-2.5 text-left">
+                <div className={["relative h-28 overflow-hidden rounded-xl transition-shadow", active ? "shadow-[0_0_0_2px_var(--brand)]" : "shadow-[0_0_0_1px_var(--border)] group-hover:shadow-[0_0_0_1px_var(--muted-foreground)]"].join(" ")}>
+                  <ThemePreview mode={opt.value} />
+                  {active && <span className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-full bg-brand text-brand-foreground"><Check className="size-3" strokeWidth={3} /></span>}
+                </div>
+                <span className={["flex items-center gap-1.5 text-sm", active ? "font-medium text-foreground" : "text-muted-foreground"].join(" ")}><Icon className="size-3.5" />{opt.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </SectionCard>
+
+      <SectionCard icon={Keyboard} title="快捷键">
+        <SettingRow title="搜索页面与操作"><span className={kbd}>{mod}</span><span className={kbd}>K</span></SettingRow>
+        <SettingRow title="在结果中选择"><span className={kbd}>↑</span><span className={kbd}>↓</span><span className={kbd}>Enter</span></SettingRow>
+      </SectionCard>
+
+      <SectionCard icon={Boxes} title="关于 Data Watch">
+        <SettingRow title="应用版本"><span className="font-mono text-[13px] text-muted-foreground">v{pkg.version}</span></SettingRow>
+        <SettingRow title="部署模式"><span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">{ROLE_LABEL[BUILD_ROLE] ?? BUILD_ROLE}</span></SettingRow>
+      </SectionCard>
+    </>
   );
 }
 
@@ -624,12 +656,14 @@ function moduleLabel(name: ModuleName): string {
 
 function SaveCard({
   saving,
+  dirty,
   restartModules,
   disabled,
   onSave,
   onSaveAndRestart,
 }: {
   saving: boolean;
+  dirty: boolean;
   restartModules: ModuleName[];
   disabled: boolean;
   onSave: () => void;
@@ -638,7 +672,11 @@ function SaveCard({
   return (
     <Card className="py-0">
       <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3.5">
-        <span className="mr-2 text-sm font-semibold">保存策略</span>
+        <span className="mr-auto flex items-center gap-2 text-[13px]">
+          <span className={["size-2 rounded-full", dirty ? "bg-warning" : "bg-success"].join(" ")} />
+          <span className={dirty ? "font-medium text-foreground" : "text-muted-foreground"}>{dirty ? "有未保存的修改" : "所有修改已保存"}</span>
+          {restartModules.length > 0 && <span className="text-muted-foreground">· 部分配置需重启对应模块后生效</span>}
+        </span>
         <Button className="h-8 gap-1.5 bg-brand px-3 text-[13px] text-brand-foreground hover:bg-brand/90" disabled={saving || disabled} onClick={onSave}>
           <Save className="size-3.5" />
           保存
@@ -655,9 +693,6 @@ function SaveCard({
             保存并重启 {moduleLabel(name)}
           </Button>
         ))}
-        {restartModules.length > 0 && (
-          <span className="text-[13px] text-muted-foreground">重启后生效</span>
-        )}
       </CardContent>
     </Card>
   );
@@ -737,6 +772,7 @@ export function SettingsPage() {
   }, [navigate]);
 
   const canSave = loadedForm !== null && configError === null;
+  const formIsDirty = loadedForm !== null && (JSON.stringify(form) !== JSON.stringify(loadedForm) || Object.values(passwordDirty).some(Boolean));
 
   /** 构建 PUT /admin/config 的请求体：只包含相对已加载配置改动过的字段 */
   function buildPayload(baseline: FormState): Partial<ConnectionConfig> {
@@ -972,6 +1008,7 @@ export function SettingsPage() {
         <div className="mt-auto">
         <SaveCard
           saving={saving}
+          dirty={formIsDirty}
           disabled={!canSave}
           restartModules={restartModules}
           onSave={handleSave}

@@ -126,22 +126,20 @@ test("unsupported settings controls are disabled and labelled instead of silentl
   const placeholders = settings.match(/<Input[^>]*defaultValue=/g) ?? [];
   assert.equal(placeholders.length, 10);
   for (const input of placeholders) assert.match(input, /<Input disabled defaultValue=/);
-  // 10 个输入占位 + 页面密度（PR #22 第二轮）
-  assert.equal(settings.match(/（暂不支持）<\/Label>/g)?.length, 11);
+  // 10 个输入占位（页面密度在第七轮 UI 中移除，不再展示无效控件）
+  assert.equal(settings.match(/（暂不支持）<\/Label>/g)?.length, 10);
 });
 
 const plain = (value) => JSON.parse(JSON.stringify(value)); // vm 上下文对象原型不同，比较前转普通对象
 
 // ─── PR #22 第二轮 ───────────────────────────────────────────────────────────
 
-test("page density has no mechanism behind it, so the toggle is disabled and labelled", async () => {
+test("page density has no mechanism behind it, so no density control is shown", async () => {
   const settings = await read("../src/pages/SettingsPage.tsx");
   const basic = slice(settings, "function BasicTab()", "// ─── 标签内容：Collector");
-  assert.match(basic, /页面密度（暂不支持）<\/Label>/);
-  assert.match(basic, /<SegmentedGroup options=\{\["紧凑", "标准", "宽松"\]\} value="标准" onChange=\{\(\) => \{\}\} disabled \/>/);
+  assert.doesNotMatch(basic, /页面密度/);
   assert.doesNotMatch(basic, /setDensity/);
-  const group = slice(settings, "function SegmentedGroup(", "// ─── 数据库行卡片");
-  assert.match(group, /disabled=\{disabled\}/);
+  assert.match(basic, /setTheme\(opt\.value\)/);
 });
 
 test("redis DB is validated before both save paths and the card says a restart is needed", async () => {
