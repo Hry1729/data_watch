@@ -180,3 +180,24 @@ def test_point_template_resolves_business_device_name(tmp_path, monkeypatch) -> 
             },
         )
     ]
+
+
+def test_points_resync_check_reads_and_apply_posts(monkeypatch) -> None:
+    FakeAuthorizedSession.requests = []
+    monkeypatch.setattr(common_module, "AuthorizedSession", FakeAuthorizedSession)
+
+    check = runner.invoke(main_module.app, ["points", "resync", "--device", " asc7181 ", "--check"])
+    apply = runner.invoke(main_module.app, ["points", "resync", "--device", "asc7181"])
+
+    assert check.exit_code == 0, check.output
+    assert apply.exit_code == 0, apply.output
+    assert FakeAuthorizedSession.requests == [
+        ("GET", "/api/device-monitor/point/resync", None),
+        ("POST", "/api/device-monitor/point/resync", {"deviceCode": "asc7181"}),
+    ]
+
+
+def test_points_resync_policy_requires_point_update() -> None:
+    policy = get_command_policy("points resync")
+    assert policy is not None
+    assert policy.permissions_any == frozenset({"device_monitor:point:update"})

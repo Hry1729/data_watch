@@ -149,6 +149,12 @@ python -m cli.main history query --point CraneID --start "2026-08-10 00:00:00" -
 python -m cli.main devices create --file device.json
 python -m cli.main points import --file points.xlsx
 
+# 直接改库（SQL 增删点位/改类型编码）后校准存储映射：先 --check 看报告，再执行
+# 会去空格、补 point_storage_mapping、清孤儿映射、推进列计数并递增配置版本，
+# collector 约 10 秒内热加载，writer 收到新版本数据时自动刷新映射，无需重启
+python -m cli.main points resync --device asc7181 --check
+python -m cli.main points resync --device asc7181
+
 # 节点追加设备：CLI 会合并现有分配，全量提交时不会删除旧绑定
 python -m cli.main nodes assign <node-uuid> --device AGV801 --confirm <node-uuid>
 
