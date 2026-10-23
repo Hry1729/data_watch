@@ -363,6 +363,12 @@ class CatalogService:
         ).scalar_one_or_none()
         return {"varSeq": int(max_seq or 0) + 1}
 
+    async def resync_point_storage(self, device_code: str, *, apply: bool, actor: str) -> dict[str, Any]:
+        """按 device_variable 校准一台设备的存储映射（见 point_resync 模块说明）。"""
+        from app.services.point_resync import resync_point_storage
+
+        return await resync_point_storage(self, device_code, apply=apply, actor=actor)
+
     async def get_device_summary(self, params: dict[str, Any]) -> dict[str, int]:
         rows = await self._fetch_device_rows()
         devices = [self._to_device_item(row) for row in rows]
@@ -2093,11 +2099,41 @@ class CatalogService:
             next_column_index = int(row["next_column_index"] or 1)
             used_column_count = int(row["used_column_count"] or 0)
             if used_column_count < max_point_count and next_column_index <= max_point_count:
+                candidate = f"{type_code}{next_column_index}" if type_code else f"v{next_column_index:04d}"
+                # 直接改库加的点不会推进 next_column_index；候选列名已被占用就跳过，
+                # 否则会撞 point_storage_mapping 的 (device_code, td_column_name) 唯一键而新增失败。
+                taken = (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT id FROM device_variable
+                            WHERE device_id = :device_id AND TRIM(td_column_name) = :column
+                            LIMIT 1
+                            """
+                        ),
+                        {"device_id": device_id, "column": candidate},
+                    )
+                ).scalar_one_or_none()
+                if taken is not None:
+                    await self.session.execute(
+                        text(
+                            """
+                            UPDATE device_point_group
+                            SET next_column_index = next_column_index + 1,
+                                used_column_count = used_column_count + 1,
+                                update_user = :actor,
+                                update_time = NOW()
+                            WHERE id = :group_id
+                            """
+                        ),
+                        {"group_id": int(row["id"]), "actor": actor_value},
+                    )
+                    continue
                 return {
                     "point_group_id": int(row["id"]),
                     "group_code": target_code,
                     "group_index": next_column_index,
-                    "td_column_name": f"{type_code}{next_column_index}" if type_code else f"v{next_column_index:04d}",
+                    "td_column_name": candidate,
                 }
 
             await self.session.execute(

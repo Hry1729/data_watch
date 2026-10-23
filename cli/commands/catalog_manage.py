@@ -301,6 +301,36 @@ def install_catalog_management(
             operation=operation,
         )
 
+    @points_app.command("resync")
+    def point_resync(
+        ctx: typer.Context,
+        device: str = typer.Option(..., "--device", help="设备编码，如 asc7181"),
+        check: bool = typer.Option(False, "--check", help="只检查不改库，列出需要校准的地方"),
+    ) -> None:
+        """直接改库后校准存储映射：去空格、补映射、清孤儿、推进列计数并递增配置版本。"""
+
+        def operation(session) -> Any:
+            device_code = device.strip()
+            if check:
+                return session.request(
+                    "GET",
+                    "/api/device-monitor/point/resync",
+                    params={"deviceCode": device_code},
+                )
+            return session.request(
+                "POST",
+                "/api/device-monitor/point/resync",
+                json_body={"deviceCode": device_code},
+            )
+
+        run_authorized(
+            ctx,
+            "points resync",
+            execute=execute,
+            get_context=get_context,
+            operation=operation,
+        )
+
     @points_app.command("delete-batch")
     def point_delete_batch(
         ctx: typer.Context,

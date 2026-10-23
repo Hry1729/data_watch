@@ -152,7 +152,7 @@ M3_A_COMMAND_POLICIES = (
     )
     + _permission_policies(("points create",), "device_monitor:point:create")
     + _permission_policies(
-        ("points update", "points enable", "points disable"),
+        ("points update", "points enable", "points disable", "points resync"),
         "device_monitor:point:update",
     )
     + _permission_policies(("points import",), "device_monitor:point:import")

@@ -370,6 +370,23 @@ class StreamConsumer:
         self._last_dlq_moved_log: float | None = None
         self._last_dlq_failed_log: float | None = None
         self._mapping_warnings: OrderedDict[tuple[str, str, str], tuple[float, int]] = OrderedDict()
+        self._mapping_alerts: dict[tuple[str, str, str], float] = {}
+
+    def _drop_invalid_columns(self, device_code, group_code, mapping, unmapped_var_ids):
+        """列名非法的点不阻塞同一帧的其它点：从"未知点"里剔除并告警，其余照常写入。"""
+        invalid = getattr(mapping, "invalid_columns", None)
+        if not isinstance(invalid, dict) or not invalid or not unmapped_var_ids:
+            return unmapped_var_ids
+        skipped = [var_id for var_id in unmapped_var_ids if var_id in invalid]
+        if not skipped:
+            return unmapped_var_ids
+        self._warn_mapping(device_code, group_code, "invalid_column",
+            "[consumer] skipping points with invalid td_column_name device=%s group=%s: %s",
+            device_code,
+            group_code,
+            {var_id: invalid[var_id] for var_id in skipped},
+        )
+        return [var_id for var_id in unmapped_var_ids if var_id not in invalid]
 
     def _warn_mapping(self, device_code, group_code, reason, message, *args):
         key = (device_code, group_code, reason)
@@ -382,6 +399,40 @@ class StreamConsumer:
             self._mapping_warnings.popitem(last=False)
         self._mapping_warnings[key] = (now, 0)
         logger.warning(message + " (suppressed=%d)", *args, previous[1] if previous else 0)
+        # 同一问题持续超过一个告警窗口（上一窗口内又出现过）→ 写 system_log，
+        # 让日志监控页能看到"数据没入库"，而不是只留在 writer 控制台。每 key 10 分钟至多一条。
+        if previous is not None and previous[1] > 0:
+            self._alert_mapping(device_code, group_code, reason, now)
+
+    _MAPPING_ALERT_HINTS = {
+        "missing_mapping": "point_storage_mapping 中没有该设备/分组的映射",
+        "reload_failed": "映射重载失败",
+        "unknown_var_ids": "采集到的点在 point_storage_mapping 中找不到",
+        "invalid_column": "点位列名不合法（常见为前导空格），这些点被跳过",
+    }
+
+    def _alert_mapping(self, device_code, group_code, reason, now):
+        if self._syslog is None:
+            return
+        key = (device_code, group_code, reason)
+        last = self._mapping_alerts.get(key)
+        if last is not None and now - last < 600.0:
+            return
+        if len(self._mapping_alerts) >= 256:
+            self._mapping_alerts.pop(next(iter(self._mapping_alerts)))
+        self._mapping_alerts[key] = now
+        hint = self._MAPPING_ALERT_HINTS.get(reason, reason)
+        self._syslog.emit(
+            level="ERROR",
+            log_type="storage",
+            source="writer.consumer",
+            device_code=str(device_code or ""),
+            content=(
+                f"设备 {device_code} 分组 {group_code} 数据未入库：{hint}。"
+                f"处理：执行 data-watch points resync --device {device_code}"
+            ),
+            detail_json={"reason": reason, "device_code": device_code, "group_code": group_code},
+        )
 
     def _push_dlq(self, **kwargs) -> bool:
         """按 writer 配置写入 DLQ，并按保留模式发出容量告警。"""
@@ -1386,6 +1437,28 @@ class StreamConsumer:
 
         # 缓存命中走事件循环内快路径；只有首次 MySQL 加载进入 executor。
         mapping = self._mapper.get_cached(device_code, group_code)
+        is_stale = getattr(self._mapper, "is_stale", None)
+        if mapping is not None and is_stale is not None and is_stale(device_code, group_code, config_version) is True:
+            # 采集端配置版本递增（App 保存 / points resync / 手工改库后递增版本）：
+            # 重读一次永久 mapping，让已热缓存里改过的列名、新增点立即生效。
+            logger.info(
+                "[consumer] config_version=%s newer than cached mapping for device=%s group=%s, reloading",
+                config_version, device_code, group_code,
+            )
+            refreshed = await asyncio.get_running_loop().run_in_executor(
+                None,
+                self._mapper.reload,
+                device_code,
+                group_code,
+                config_version,
+            )
+            if refreshed is not None:
+                mapping = refreshed
+            else:
+                # 重载失败沿用旧映射，并记下版本，避免同一版本每帧都查库。
+                mark_seen = getattr(self._mapper, "mark_version_seen", None)
+                if mark_seen is not None:
+                    mark_seen(device_code, group_code, config_version)
         cache_hit = mapping is not None
         if mapping is None:
             mapping = await asyncio.get_running_loop().run_in_executor(
@@ -1413,6 +1486,7 @@ class StreamConsumer:
             unmapped_var_ids = prepared.conversion_unmapped_var_ids
         else:
             unmapped_var_ids = [str(var_id) for var_id in raw_values if not mapping.var_map.get(str(var_id))]
+        unmapped_var_ids = self._drop_invalid_columns(device_code, group_code, mapping, unmapped_var_ids)
         if unmapped_var_ids and cache_hit:
             mapping = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -1437,6 +1511,7 @@ class StreamConsumer:
                 for var_id in raw_values
                 if not mapping.var_map.get(str(var_id))
             ]
+            unmapped_var_ids = self._drop_invalid_columns(device_code, group_code, mapping, unmapped_var_ids)
         if unmapped_var_ids:
             self._warn_mapping(device_code, group_code, "unknown_var_ids",
                 "[consumer] unknown var_ids after mapping load for "
