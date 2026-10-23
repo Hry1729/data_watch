@@ -209,6 +209,18 @@ async def device_types(
         return success_response(data=await service.list_device_types(_compact_params({"deviceIds": deviceIds})))
 
 
+@router.get("/api/device-monitor/device/type-options")
+async def device_type_options(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """设备类型字典（新增/编辑设备下拉用），不依赖已有设备。"""
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.list_device_type_options())
+
+
 @router.get("/api/device-monitor/device/summary")
 async def device_summary(
     keyword: str | None = None,
@@ -566,6 +578,19 @@ async def import_points_from_template(
         )
         await _invalidate_ingest_control_caches()
         return success_response(data=data)
+
+
+@router.get("/api/device-monitor/point/next-seq")
+async def point_next_seq(
+    deviceId: int,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """所选设备下一个可用点位序号（含已删除点位占用的序号）。"""
+    await require_permissions(credentials, "device_monitor:point:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.next_point_seq(deviceId))
 
 
 @router.get("/api/device-monitor/point/resync")

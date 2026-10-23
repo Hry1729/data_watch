@@ -336,6 +336,33 @@ class CatalogService:
             for device in self._filter_devices(devices, params)
         })
 
+    async def list_device_type_options(self) -> list[dict[str, str]]:
+        """设备类型字典：新增/编辑设备时下拉选择，避免手填与字典不一致。"""
+        rows = (
+            await self.session.execute(
+                text("SELECT type_code, type_name FROM device_type ORDER BY id ASC")
+            )
+        ).mappings().all()
+        options: list[dict[str, str]] = []
+        for row in rows:
+            code = str(row["type_code"] or "").strip()
+            if not code:
+                continue
+            options.append({"typeCode": code, "typeName": str(row["type_name"] or "").strip() or code})
+        return options
+
+    async def next_point_seq(self, device_id: int) -> dict[str, int]:
+        """下一个可用点位序号。逻辑删除的点位仍占用序号，所以按全部行取最大值。"""
+        if device_id <= 0:
+            raise ApiError(400, "deviceId must be a positive integer")
+        max_seq = (
+            await self.session.execute(
+                text("SELECT COALESCE(MAX(var_seq), 0) FROM device_variable WHERE device_id = :device_id"),
+                {"device_id": device_id},
+            )
+        ).scalar_one_or_none()
+        return {"varSeq": int(max_seq or 0) + 1}
+
     async def resync_point_storage(self, device_code: str, *, apply: bool, actor: str) -> dict[str, Any]:
         """按 device_variable 校准一台设备的存储映射（见 point_resync 模块说明）。"""
         from app.services.point_resync import resync_point_storage
@@ -380,6 +407,9 @@ class CatalogService:
                         COALESCE(d.status, 0) AS device_status_raw,
                         COALESCE(d.endpoint, '') AS endpoint,
                         COALESCE(d.endpoint_bkp, '') AS endpoint_bkp,
+                        d.rack AS rack,
+                        d.slot AS slot,
+                        d.scan_cycle AS scan_cycle,
                         d.create_time AS create_time,
                         d.update_time AS update_time
                     FROM device AS d
@@ -399,7 +429,11 @@ class CatalogService:
 
         device = self._to_device_item(row)
         latest_map = await self._fetch_latest_collect_times([device])
-        return self._serialize_device_item(device, latest_map.get(device.device_code))
+        data = self._serialize_device_item(device, latest_map.get(device.device_code))
+        data["rack"] = int(row["rack"]) if row["rack"] is not None else None
+        data["slot"] = int(row["slot"]) if row["slot"] is not None else None
+        data["scanCycle"] = int(row["scan_cycle"]) if row["scan_cycle"] is not None else None
+        return data
 
     async def export_devices_workbook(self, params: dict[str, Any], *, template: bool) -> bytes:
         rows = [self._build_device_instruction_row(header, detail) for header, detail in self._device_import_notes()]
@@ -486,6 +520,7 @@ class CatalogService:
         endpoint = self._optional_text(payload.get("endpoint"), max_length=20)
         endpoint_bkp = self._optional_text(payload.get("endpointBackup"), max_length=20)
         self._optional_text(payload.get("description"), max_length=255)
+        rack_override, slot_override, scan_cycle_override = self._device_link_overrides(payload)
 
         existing = (
             await self.session.execute(
@@ -517,9 +552,15 @@ class CatalogService:
             "protocol_id": int(protocol_row["id"]),
             "endpoint": endpoint or self._build_placeholder_endpoint(device_code),
             "endpoint_bkp": endpoint_bkp or None,
-            "rack": int(reference_row["rack"]) if reference_row is not None else 0,
-            "slot": int(reference_row["slot"]) if reference_row is not None else 1,
-            "scan_cycle": int(reference_row["scan_cycle"]) if reference_row is not None else 1000,
+            "rack": rack_override
+            if rack_override is not None
+            else int(reference_row["rack"]) if reference_row is not None else 0,
+            "slot": slot_override
+            if slot_override is not None
+            else int(reference_row["slot"]) if reference_row is not None else 1,
+            "scan_cycle": scan_cycle_override
+            if scan_cycle_override is not None
+            else int(reference_row["scan_cycle"]) if reference_row is not None else 1000,
             "actor": self._truncate_text(actor, 20),
         }
 
@@ -620,6 +661,7 @@ class CatalogService:
             else str(existing_row["endpoint_bkp"] or "")
         )
         self._optional_text(payload.get("description"), max_length=255)
+        rack_override, slot_override, scan_cycle_override = self._device_link_overrides(payload)
 
         if device_code != str(existing_row["device_code"] or ""):
             raise ApiError(400, "deviceCode cannot be changed after creation")
@@ -682,13 +724,19 @@ class CatalogService:
             "protocol_id": int(protocol_row["id"]),
             "endpoint": endpoint,
             "endpoint_bkp": endpoint_bkp or None,
-            "rack": int(existing_row["rack"])
+            "rack": rack_override
+            if rack_override is not None
+            else int(existing_row["rack"])
             if existing_row["rack"] is not None
             else int(reference_row["rack"]) if reference_row is not None else 0,
-            "slot": int(existing_row["slot"])
+            "slot": slot_override
+            if slot_override is not None
+            else int(existing_row["slot"])
             if existing_row["slot"] is not None
             else int(reference_row["slot"]) if reference_row is not None else 1,
-            "scan_cycle": int(existing_row["scan_cycle"])
+            "scan_cycle": scan_cycle_override
+            if scan_cycle_override is not None
+            else int(existing_row["scan_cycle"])
             if existing_row["scan_cycle"] is not None
             else int(reference_row["scan_cycle"]) if reference_row is not None else 1000,
             "actor": self._truncate_text(actor, 20),
@@ -1286,7 +1334,7 @@ class CatalogService:
                     device_id=int(device_row["device_id"]),
                     group_code="g001",
                     actor=actor,
-                    type_code=str(device_row["type_code"] or "").lower(),
+                    type_code=str(device_row["type_code"] or "").strip().lower(),
                 )
                 result = await self.session.execute(
                     insert_sql,
@@ -1312,7 +1360,7 @@ class CatalogService:
                 await self._insert_point_storage_mapping(
                     point_id=int(result.lastrowid or 0),
                     device_code=str(device_row["device_code"]),
-                    device_type_code=str(device_row["type_code"] or "").lower(),
+                    device_type_code=str(device_row["type_code"] or "").strip().lower(),
                     point_slot=point_slot,
                     var_type=var_type,
                 )
@@ -1391,13 +1439,15 @@ class CatalogService:
     async def create_point(self, payload: dict[str, Any], *, actor: str) -> dict[str, int]:
         device_id = self._to_positive_int(payload.get("deviceId"))
         device_code = self._require_text(payload.get("deviceCode"), field_name="deviceCode", max_length=20)
-        var_seq = self._to_positive_int(payload.get("varSeq"))
+        # 点位序号可不填：自动取该设备下一个可用序号（含逻辑删除行）。
+        var_seq = self._to_positive_int(payload.get("varSeq"), required=False)
         point_name = self._require_text(payload.get("pointName"), field_name="pointName", max_length=50)
         io_address = self._require_text(payload.get("ioAddress"), field_name="ioAddress", max_length=20)
         data_type = self._normalize_requested_data_type(payload.get("dataType"))
         description = self._optional_text(payload.get("description"), max_length=255)
-        is_readonly = self._to_bool(payload.get("isReadonly"), field_name="isReadonly")
-        driver_name = self._require_text(payload.get("driverName"), field_name="driverName", max_length=50)
+        is_readonly = self._to_bool(payload.get("isReadonly"), field_name="isReadonly", default=True)
+        # 驱动可不填：点位驱动由所属设备决定，填了则必须一致。
+        driver_name = self._optional_text(payload.get("driverName"), max_length=50)
         scan_rate = self._to_positive_int(payload.get("scanRate"), default=1000, required=False) or 1000
         is_storage = self._to_bool(payload.get("isStorage"), field_name="isStorage", default=True)
 
@@ -1425,8 +1475,13 @@ class CatalogService:
             raise ApiError(404, "Device not found")
         if str(device_row["device_code"]).strip().lower() != device_code.lower():
             raise ApiError(400, "deviceCode does not match selected device")
-        if self._normalize_protocol_key(device_row["driver_name"]) != self._normalize_protocol_key(driver_name):
-            raise ApiError(400, "driverName does not match selected device")
+        device_driver = str(device_row["driver_name"] or "")
+        if not device_driver:
+            raise ApiError(400, "所选设备未绑定驱动，请先在设备管理里选择驱动")
+        if driver_name and self._normalize_protocol_key(device_driver) != self._normalize_protocol_key(driver_name):
+            raise ApiError(400, f"驱动与所选设备不一致：设备驱动为 {device_driver}")
+        if var_seq is None:
+            var_seq = (await self.next_point_seq(device_id))["varSeq"]
 
         existing_address = (
             await self.session.execute(
@@ -1437,6 +1492,7 @@ class CatalogService:
                     FROM device_variable
                     WHERE device_id = :device_id
                       AND var_address = :io_address
+                      AND COALESCE(deleted, 0) = 0
                     LIMIT 1
                     """
                 ),
@@ -1444,7 +1500,7 @@ class CatalogService:
             )
         ).scalar_one_or_none()
         if existing_address is not None:
-            raise ApiError(409, "ioAddress already exists for the selected device")
+            raise ApiError(409, f"IO 地址 {io_address} 在该设备下已存在")
 
         existing_var_seq = (
             await self.session.execute(
@@ -1462,7 +1518,8 @@ class CatalogService:
             )
         ).scalar_one_or_none()
         if existing_var_seq is not None:
-            raise ApiError(409, "varSeq already exists for the selected device")
+            suggested = (await self.next_point_seq(device_id))["varSeq"]
+            raise ApiError(409, f"点位序号 {var_seq} 已被占用（含已删除点位），可用序号 {suggested}")
 
         params = {
             "device_id": device_id,
@@ -1486,7 +1543,7 @@ class CatalogService:
                 device_id=device_id,
                 group_code=params["group_code"],
                 actor=actor,
-                type_code=str(device_row["type_code"] or "").lower(),
+                type_code=str(device_row["type_code"] or "").strip().lower(),
             )
             result = await self.session.execute(
                 text(
@@ -1549,7 +1606,7 @@ class CatalogService:
             await self._insert_point_storage_mapping(
                 point_id=int(result.lastrowid or 0),
                 device_code=device_code,
-                device_type_code=str(device_row["type_code"] or "").lower(),
+                device_type_code=str(device_row["type_code"] or "").strip().lower(),
                 point_slot=point_slot,
                 var_type=data_type,
             )
@@ -1959,6 +2016,7 @@ class CatalogService:
     ) -> dict[str, Any]:
         target_code = self._normalize_point_group_code(group_code)
         actor_value = self._truncate_text(actor, 20)
+        # TDengine 列名由类型编码拼出：去掉空格等非法字符，避免生成 " asc2" 这类列名
         type_code = re.sub(r"[^0-9a-z_]", "", str(type_code or "").strip().lower())
 
         while True:
@@ -2213,6 +2271,7 @@ class CatalogService:
     ) -> None:
         if not await self._point_storage_mapping_available():
             return
+        device_type_code = re.sub(r"[^0-9a-z_]", "", str(device_type_code or "").strip().lower())
         await self.session.execute(
             text(
                 """
@@ -3283,6 +3342,26 @@ class CatalogService:
         if len(normalized) > max_length:
             raise ApiError(400, f"{field_name} length must be <= {max_length}")
         return normalized
+
+    def _optional_int_in_range(self, value: Any, *, field_label: str, minimum: int, maximum: int) -> int | None:
+        if value in (None, ""):
+            return None
+        try:
+            normalized = int(str(value).strip())
+        except (TypeError, ValueError) as exc:
+            raise ApiError(400, f"{field_label}必须是整数") from exc
+        if normalized < minimum or normalized > maximum:
+            raise ApiError(400, f"{field_label}必须在 {minimum}~{maximum} 之间")
+        return normalized
+
+    def _device_link_overrides(self, payload: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
+        """机架号/槽号/采集周期(ms)：界面填了就用，没填沿用原值或同类设备参考值。"""
+        rack = self._optional_int_in_range(payload.get("rack"), field_label="机架号", minimum=0, maximum=7)
+        slot = self._optional_int_in_range(payload.get("slot"), field_label="槽号", minimum=0, maximum=31)
+        scan_cycle = self._optional_int_in_range(
+            payload.get("scanCycle"), field_label="采集周期", minimum=10, maximum=600000
+        )
+        return rack, slot, scan_cycle
 
     def _optional_text(self, value: Any, *, max_length: int) -> str:
         normalized = str(value or "").strip()

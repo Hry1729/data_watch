@@ -39,6 +39,8 @@ import type {
   PointForm,
   PointListItem,
   PointListQuery,
+  DeviceDetail,
+  DeviceTypeOption,
 } from "@/types/device-monitor";
 import type {
   LogCleanupPayload,
@@ -158,6 +160,9 @@ export interface BackendClient {
   deviceGroupTree(token: string, signal?: AbortSignal): Promise<DeviceGroupTreeNode[]>;
   deviceList(token: string, query: DeviceListQuery, signal?: AbortSignal): Promise<PaginatedResult<DeviceListItem>>;
   deviceTypes(token: string, query?: Pick<DeviceListQuery, "deviceIds">, signal?: AbortSignal): Promise<string[]>;
+  deviceTypeOptions(token: string, signal?: AbortSignal): Promise<DeviceTypeOption[]>;
+  deviceDetail(token: string, id: number, signal?: AbortSignal): Promise<DeviceDetail>;
+  nextPointSeq(token: string, deviceId: number, signal?: AbortSignal): Promise<{ varSeq: number }>;
   deviceSummary(token: string, query: DeviceListQuery, signal?: AbortSignal): Promise<DeviceSummary>;
   createDevice(token: string, payload: DeviceForm): Promise<{ id: number }>;
   updateDevice(token: string, id: number, payload: DeviceForm): Promise<unknown>;
@@ -616,6 +621,15 @@ const realBackend: BackendClient = {
   deviceTypes(token, query = {}, signal) {
     return backendFetch("GET", `/api/device-monitor/device/types?${toQuery(query)}`, undefined, token, signal);
   },
+  deviceTypeOptions(token, signal) {
+    return backendFetch("GET", "/api/device-monitor/device/type-options", undefined, token, signal);
+  },
+  deviceDetail(token, id, signal) {
+    return backendFetch("GET", `/api/device-monitor/device/${id}`, undefined, token, signal);
+  },
+  nextPointSeq(token, deviceId, signal) {
+    return backendFetch("GET", `/api/device-monitor/point/next-seq?${toQuery({ deviceId })}`, undefined, token, signal);
+  },
   deviceSummary(token, query, signal) {
     return backendFetch("GET", `/api/device-monitor/device/summary?${toQuery(query)}`, undefined, token, signal);
   },
@@ -845,6 +859,9 @@ export const backendClient: BackendClient = {
   async deviceGroupTree(token, signal) { const c = await _implPromise; return c.deviceGroupTree(token, signal); },
   async deviceList(token, query, signal) { const c = await _implPromise; return c.deviceList(token, query, signal); },
   async deviceTypes(token, query, signal) { const c = await _implPromise; return c.deviceTypes(token, query, signal); },
+  async deviceTypeOptions(token, signal) { const c = await _implPromise; return c.deviceTypeOptions(token, signal); },
+  async deviceDetail(token, id, signal) { const c = await _implPromise; return c.deviceDetail(token, id, signal); },
+  async nextPointSeq(token, deviceId, signal) { const c = await _implPromise; return c.nextPointSeq(token, deviceId, signal); },
   async deviceSummary(token, query, signal) { const c = await _implPromise; return c.deviceSummary(token, query, signal); },
   async createDevice(token, payload) { const c = await _implPromise; return c.createDevice(token, payload); },
   async updateDevice(token, id, payload) { const c = await _implPromise; return c.updateDevice(token, id, payload); },

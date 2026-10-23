@@ -27,7 +27,22 @@ import { saveDownload } from "@/lib/save-download";
 import { POINT_DISPLAY_DATA_TYPES, type PointDataType } from "@/types/device-monitor";
 import type { ImportResult, PointForm, PointListItem } from "@/types/device-monitor";
 
-const EMPTY_FORM: PointForm = { deviceId: 0, deviceCode: "", varSeq: 1, pointName: "", ioAddress: "", dataType: "REAL", driverName: "", isReadonly: true, description: "" };
+// varSeq=0 表示"自动分配"：选中设备后取下一个可用序号，后端也会兜底分配。
+const EMPTY_FORM: PointForm = { deviceId: 0, deviceCode: "", varSeq: 0, pointName: "", ioAddress: "", dataType: "REAL", driverName: "", isReadonly: true, description: "", scanRate: 1000, isStorage: true };
+/** 按驱动给出 IO 地址示例，减少地址格式写错。 */
+export function ioAddressHint(driverName: string): string {
+  const key = driverName.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (key.includes("S7") || key.includes("SNAP7")) return "如 MD908、DB13.DBD30、DB1.DBX0.0、I106.0";
+  if (key.includes("MODBUS")) return "如 40001、30001、00001";
+  if (key.includes("OPCUA")) return "节点 ID，如 ns=2;s=Tag1";
+  if (key.includes("OPCDA")) return "项 ID，如 Channel1.Device1.Tag1";
+  if (key.includes("SRTP") || key.includes("GE")) return "如 %R100、%I1、%Q1";
+  return "按驱动要求填写地址";
+}
+function errorMessage(reason: unknown, fallback: string): string {
+  const message = (reason as { message?: string } | null)?.message;
+  return typeof message === "string" && message.trim() ? message : fallback;
+}
 // 可新建/编辑的物理类型，和后端白名单一致；类型筛选另用显示口径全集。
 const DATA_TYPES: PointDataType[] = ["BOOL", "INT", "DINT", "REAL", "STRING", "WORD", "DWORD"];
 const DATA_TYPE_COLORS: Record<string, string> = {
@@ -76,9 +91,7 @@ export default function PointManagementPage() {
     (token: string, signal: AbortSignal) => backendClient.deviceTypes(token, {}, signal),
     [],
   );
-  const loadDrivers = useCallback((token: string, signal: AbortSignal) => backendClient.driverOptions(token, signal), []);
   const deviceCatalog = useBackendQuery(loadDeviceCatalog);
-  const drivers = useBackendQuery(loadDrivers);
   const devicePicker = useDevicePicker(backendClient, deviceCodeDraft, activeType, devicePickerOpen);
   const pickerDevices = devicePicker.data?.list ?? [];
   const formDevicePicker = useDevicePicker(backendClient, formDeviceSearch, "all", dialogOpen);
@@ -136,12 +149,35 @@ export default function PointManagementPage() {
     setPage(1);
     setDevicePickerOpen(false);
   }
-  function openCreate() { setEditing(null); setFormDeviceSearch(""); setForm({ ...EMPTY_FORM, driverName: drivers.data?.[0]?.driverName ?? "" }); setDialogOpen(true); }
-  function openEdit(row: PointListItem) { setEditing(row); setFormDeviceSearch(""); setForm({ deviceId: row.deviceId, deviceCode: row.deviceCode, varSeq: row.varSeq, pointName: row.pointName, ioAddress: row.ioAddress, dataType: row.dataType, driverName: row.driverName, isReadonly: row.isReadonly, description: row.description }); setDialogOpen(true); }
+  function openCreate() { setEditing(null); setFormDeviceSearch(""); setForm({ ...EMPTY_FORM }); setDialogOpen(true); }
+  function openEdit(row: PointListItem) { setEditing(row); setFormDeviceSearch(""); setForm({ deviceId: row.deviceId, deviceCode: row.deviceCode, varSeq: row.varSeq, pointName: row.pointName, ioAddress: row.ioAddress, dataType: row.dataType, driverName: row.driverName, isReadonly: row.isReadonly, description: row.description, scanRate: row.scanRate ?? 1000, isStorage: row.isStorage ?? true }); setDialogOpen(true); }
+  // 选设备时驱动跟随设备（后端要求一致），新增时顺带取下一个可用序号。
+  function selectFormDevice(value: string) {
+    const device = devices.find((item) => String(item.id) === value);
+    const nextId = Number(value);
+    setForm((current) => ({ ...current, deviceId: nextId, deviceCode: device?.deviceCode ?? current.deviceCode, driverName: device?.driverName ?? current.driverName, varSeq: editing ? current.varSeq : 0 }));
+    if (editing || !auth?.backendToken || !nextId) return;
+    backendClient.nextPointSeq(auth.backendToken, nextId)
+      .then(({ varSeq }) => setForm((current) => (current.deviceId === nextId && !current.varSeq ? { ...current, varSeq } : current)))
+      .catch(() => undefined);
+  }
+  function validateForm(): string | null {
+    if (!form.deviceId || !form.deviceCode) return "请选择所属设备";
+    if (!form.pointName.trim()) return "请填写点位名称";
+    if (!form.ioAddress.trim()) return "请填写 IO 地址";
+    if (/\s/.test(form.ioAddress.trim())) return "IO 地址不能包含空格";
+    if (form.varSeq && (!Number.isInteger(form.varSeq) || form.varSeq <= 0)) return "点位序号必须是正整数";
+    if (form.scanRate !== undefined && (!Number.isInteger(form.scanRate) || form.scanRate < 10)) return "采集周期至少 10 ms";
+    return null;
+  }
   async function save() {
-    if (!auth?.backendToken || !form.deviceId || !form.pointName.trim() || !form.ioAddress.trim()) { toast.error("请完整填写点位信息"); return; }
+    if (!auth?.backendToken) return;
+    const invalid = validateForm();
+    if (invalid) { toast.error(invalid); return; }
+    const payload: PointForm = { ...form, pointName: form.pointName.trim(), ioAddress: form.ioAddress.trim(), description: form.description?.trim() ?? "" };
+    if (!payload.varSeq) delete (payload as Partial<PointForm>).varSeq;
     setSaving(true);
-    try { if (editing) await backendClient.updatePoint(auth.backendToken, editing.id, form); else await backendClient.createPoint(auth.backendToken, form); toast.success(editing ? "点位已更新" : "点位已新增"); setDialogOpen(false); points.refresh(); deviceCatalog.refresh(); } catch { toast.error("保存点位失败"); } finally { setSaving(false); }
+    try { if (editing) await backendClient.updatePoint(auth.backendToken, editing.id, payload); else await backendClient.createPoint(auth.backendToken, payload); toast.success(editing ? "点位已更新" : "点位已新增"); setDialogOpen(false); points.refresh(); deviceCatalog.refresh(); } catch (reason) { toast.error(errorMessage(reason, "保存点位失败")); } finally { setSaving(false); }
   }
   async function confirmDelete() { if (!auth?.backendToken || !deleting) return; try { await backendClient.deletePoint(auth.backendToken, deleting.id); toast.success("点位已删除"); points.refresh(); } catch { toast.error("删除点位失败"); } finally { setDeleting(null); } }
   async function togglePointStatus(row: PointListItem) {
@@ -310,7 +346,7 @@ export default function PointManagementPage() {
         </DialogContent>
       </Dialog>
       <Dialog open={importOpen} onOpenChange={setImportOpen}><DialogContent><DialogHeader><DialogTitle>导入点位</DialogTitle><DialogDescription>下载模板后填写点位数据，或选择目标设备后从已有设备类型模板导入。</DialogDescription></DialogHeader>{importResult && <div className="rounded-md border bg-muted/30 p-3 text-sm"><p>成功 {importResult.success} 条，失败 {importResult.fail} 条</p>{importResult.errors?.slice(0, 5).map((item) => <p key={item.rowNumber} className="mt-1 text-xs text-destructive">第 {item.rowNumber} 行：{item.reason}</p>)}</div>}<DialogFooter className="flex-wrap sm:justify-between"><Button variant="ghost" onClick={() => exportWorkbook(true)} disabled={transferring}><Download className="size-4" />下载模板</Button><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={importFromTemplate} disabled={transferring || deviceId === "all"}>从模板导入</Button><Button variant="outline" onClick={() => setImportOpen(false)}>取消</Button><Button onClick={() => fileInputRef.current?.click()} disabled={transferring}><Upload className="size-4" />{transferring ? "处理中…" : "选择文件"}</Button></div></DialogFooter></DialogContent></Dialog>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑点位" : "新增点位"}</DialogTitle></DialogHeader><div className="grid gap-4 py-2"><div className="space-y-2"><Label>所属设备</Label><Select value={form.deviceId ? String(form.deviceId) : ""} onValueChange={(value) => { const device = devices.find((item) => String(item.id) === value); setForm({ ...form, deviceId: Number(value), deviceCode: device?.deviceCode ?? "" }); }}><SelectTrigger><SelectValue placeholder="选择设备" /></SelectTrigger><SelectContent><SelectGroup>{form.deviceId > 0 && !devices.some((device) => device.id === form.deviceId) && <SelectItem value={String(form.deviceId)}>{form.deviceCode}</SelectItem>}{devices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectGroup></SelectContent></Select><Input aria-label="搜索所属设备" placeholder="搜索设备名称或编号" value={formDeviceSearch} onChange={(event) => setFormDeviceSearch(event.target.value)} /><DeviceCatalogPagination total={formDevicePicker.data?.total ?? 0} page={formDevicePicker.page} pageSize={formDevicePicker.pageSize} loading={formDevicePicker.loading} onPageChange={formDevicePicker.setPage} />{formDevicePicker.error && <p role="alert" className="text-sm text-destructive">{formDevicePicker.error}</p>}</div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>点位名称</Label><Input value={form.pointName} onChange={(event) => setForm({ ...form, pointName: event.target.value })} /></div><div className="space-y-2"><Label>点位序号</Label><Input type="number" value={form.varSeq} onChange={(event) => setForm({ ...form, varSeq: Number(event.target.value) })} /></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>IO地址</Label><Input value={form.ioAddress} onChange={(event) => setForm({ ...form, ioAddress: event.target.value })} /></div><div className="space-y-2"><Label>数据类型</Label><Select value={form.dataType} onValueChange={(value: PointForm["dataType"]) => setForm({ ...form, dataType: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[...new Set([...DATA_TYPES, form.dataType])].map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></div></div><div className="space-y-2"><Label>驱动名称</Label><Select value={form.driverName} onValueChange={(value) => setForm({ ...form, driverName: value })}><SelectTrigger><SelectValue placeholder="选择驱动" /></SelectTrigger><SelectContent>{(drivers.data ?? []).map((driver) => <SelectItem key={driver.driverName} value={driver.driverName}>{driver.driverName}</SelectItem>)}</SelectContent></Select></div><label className="flex items-center gap-2 text-sm"><Checkbox checked={form.isReadonly} onCheckedChange={(checked) => setForm({ ...form, isReadonly: checked === true })} />是否只读</label><div className="space-y-2"><Label>描述说明</Label><Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</Button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogContent><DialogHeader><DialogTitle>{editing ? "编辑点位" : "新增点位"}</DialogTitle></DialogHeader><div className="grid gap-4 py-2"><div className="space-y-2"><Label>所属设备</Label><Select value={form.deviceId ? String(form.deviceId) : ""} disabled={Boolean(editing)} onValueChange={selectFormDevice}><SelectTrigger><SelectValue placeholder="选择设备" /></SelectTrigger><SelectContent><SelectGroup>{form.deviceId > 0 && !devices.some((device) => device.id === form.deviceId) && <SelectItem value={String(form.deviceId)}>{form.deviceCode}</SelectItem>}{devices.map((device) => <SelectItem key={device.id} value={String(device.id)}>{device.deviceCode} · {device.deviceName}</SelectItem>)}</SelectGroup></SelectContent></Select><Input aria-label="搜索所属设备" placeholder="搜索设备名称或编号" value={formDeviceSearch} onChange={(event) => setFormDeviceSearch(event.target.value)} /><DeviceCatalogPagination total={formDevicePicker.data?.total ?? 0} page={formDevicePicker.page} pageSize={formDevicePicker.pageSize} loading={formDevicePicker.loading} onPageChange={formDevicePicker.setPage} />{formDevicePicker.error && <p role="alert" className="text-sm text-destructive">{formDevicePicker.error}</p>}</div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>点位名称</Label><Input value={form.pointName} maxLength={50} placeholder="如 大车位置" onChange={(event) => setForm({ ...form, pointName: event.target.value })} /></div><div className="space-y-2"><Label>点位序号</Label><Input type="number" min={1} value={form.varSeq || ""} placeholder="自动分配" disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, varSeq: Number(event.target.value) || 0 })} /></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>IO地址</Label><Input value={form.ioAddress} maxLength={20} placeholder={ioAddressHint(form.driverName)} onChange={(event) => setForm({ ...form, ioAddress: event.target.value })} /></div><div className="space-y-2"><Label>数据类型</Label><Select value={form.dataType} onValueChange={(value: PointForm["dataType"]) => setForm({ ...form, dataType: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[...new Set([...DATA_TYPES, form.dataType])].map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}</SelectContent></Select></div></div><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label>驱动名称</Label><Input value={form.driverName} readOnly disabled placeholder="跟随所属设备" title="点位驱动由所属设备决定" /></div><div className="space-y-2"><Label>采集周期 (ms)</Label><Input type="number" min={10} step={100} value={form.scanRate ?? 1000} onChange={(event) => setForm({ ...form, scanRate: Number(event.target.value) || 0 })} /></div></div><div className="flex items-center gap-6"><label className="flex items-center gap-2 text-sm"><Checkbox checked={form.isReadonly} onCheckedChange={(checked) => setForm({ ...form, isReadonly: checked === true })} />只读</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={form.isStorage ?? true} onCheckedChange={(checked) => setForm({ ...form, isStorage: checked === true })} />写入历史库</label></div><div className="space-y-2"><Label>描述说明</Label><Textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存"}</Button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && setDetail(null)}><DialogContent><DialogHeader><DialogTitle>点位详情</DialogTitle></DialogHeader>{detail && <div className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">{[["所属设备", detail.deviceCode], ["点位名称", detail.pointName], ["点位序号", detail.varSeq], ["IO地址", detail.ioAddress], ["数据类型", detail.dataType], ["驱动名称", detail.driverName], ["是否只读", detail.isReadonly ? "是" : "否"], ["更新时间", detail.updateTime ?? "--"]].map(([label, value]) => <div key={String(label)}><p className="text-xs text-muted-foreground">{label}</p><p className="mt-1">{value}</p></div>)}</div>}</DialogContent></Dialog>
       <AlertDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>批量删除点位</AlertDialogTitle><AlertDialogDescription>确认删除选中的 {selectedIds.length} 个点位吗？该操作不可撤销。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={confirmBatchDelete}>删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
       <AlertDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>删除点位</AlertDialogTitle><AlertDialogDescription>确认删除点位“{deleting?.pointName}”吗？</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction onClick={confirmDelete}>删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
