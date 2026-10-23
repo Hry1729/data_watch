@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Eye, Lock, Pencil, Plus, Power, Search, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Eye, Lock, Pencil, Plus, Power, ListFilter, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -241,28 +242,46 @@ export default function PointManagementPage() {
     } catch { toast.error("从模板导入点位失败"); } finally { setTransferring(false); }
   }
 
+  const activeFilterCount = (dataTypeFilter !== "all" ? 1 : 0) + (connectStatus !== "all" ? 1 : 0);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       <Card className="flex min-h-0 flex-1 flex-col gap-0 py-0">
         <TooltipProvider delayDuration={200}>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 px-5 pt-5">
-          <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}><div className="max-w-full overflow-x-auto overflow-y-hidden [scrollbar-width:none]"><TabsList className={TAB_LIST}><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
-          <Button type="button" variant="outline" className="h-8 w-[104px] justify-between px-2.5 text-[13px] font-normal" onClick={openDevicePicker}>
+        <div className="flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap px-5 pt-5">
+          <Tabs className="min-w-0 shrink" value={activeType} onValueChange={(value) => { setActiveType(value); setDeviceId("all"); setDeviceCodeFilter(""); setPage(1); }}><div className="max-w-full overflow-x-auto overflow-y-hidden [scrollbar-width:none]"><TabsList className={TAB_LIST}><TabsTrigger value="all">汇总</TabsTrigger>{typeTabs.map((type) => <TabsTrigger key={type.value} value={type.value}>{type.label}</TabsTrigger>)}</TabsList></div></Tabs>
+          <Button type="button" variant="outline" className="h-8 w-[104px] shrink-0 justify-between px-2.5 text-[13px] font-normal" onClick={openDevicePicker}>
             <span className={`truncate ${deviceCodeFilter ? "font-mono text-[12.5px] text-foreground" : "text-muted-foreground"}`}>{deviceCodeFilter || "设备号"}</span>
             <ChevronDown className="size-3.5 shrink-0 opacity-50" />
           </Button>
-          <Select value={dataTypeFilter} onValueChange={(value) => { setDataTypeFilter(value); setPage(1); }}>
-            <SelectTrigger className={`${CTRL} w-[108px]`} title="数据类型"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectItem value="all">数据类型</SelectItem>
-                {POINT_DISPLAY_DATA_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <div className="relative w-[168px]"><Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input className={`${CTRL} pl-8`} placeholder="点位名称 / IO地址" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div>
-          <Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className={`${CTRL} w-24`}><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="relative min-w-[140px] max-w-[240px] flex-1"><Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input className={`${CTRL} pl-8`} placeholder="点位名称 / IO地址" value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1); }} /></div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" className={`h-8 shrink-0 gap-1.5 px-2.5 text-[13px] font-normal ${activeFilterCount ? "border-primary/40 text-primary" : ""}`} aria-label="更多筛选"><ListFilter className="size-3.5" />筛选{activeFilterCount > 0 && <SelectedCount count={activeFilterCount} />}</Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[240px] space-y-3 p-3">
+              <div className="space-y-1.5"><Label className="text-xs font-normal text-muted-foreground">数据类型</Label>
+                <Select value={dataTypeFilter} onValueChange={(value) => { setDataTypeFilter(value); setPage(1); }}>
+                  <SelectTrigger className={`${CTRL} w-full`} title="数据类型"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="all">全部类型</SelectItem>
+                      {POINT_DISPLAY_DATA_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5"><Label className="text-xs font-normal text-muted-foreground">连接状态</Label>
+                <Select value={connectStatus} onValueChange={(value) => { setConnectStatus(value); setPage(1); }}><SelectTrigger className={`${CTRL} w-full`}><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">全部状态</SelectItem><SelectItem value="online">在线</SelectItem><SelectItem value="unstable">不稳定</SelectItem><SelectItem value="offline">离线</SelectItem></SelectGroup></SelectContent></Select>
+              </div>
+              {activeFilterCount > 0 && <Button type="button" variant="ghost" className="h-7 w-full text-xs" onClick={() => { setDataTypeFilter("all"); setConnectStatus("all"); setPage(1); }}>清除筛选</Button>}
+            </PopoverContent>
+          </Popover>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {selectedIds.length > 0 && <Button variant="destructive" size="sm" className={DANGER_BTN} onClick={() => setBatchDeleteOpen(true)}>
+              <Trash2 data-icon="inline-start" />删除
+              <SelectedCount count={selectedIds.length} />
+            </Button>}
             <Button className={PRIMARY_BTN} onClick={openCreate}><Plus data-icon="inline-start" />新增点位</Button>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -276,10 +295,6 @@ export default function PointManagementPage() {
               </TooltipTrigger>
               <TooltipContent>导出点位</TooltipContent>
             </Tooltip>
-            <Button variant="destructive" size="sm" className={DANGER_BTN} disabled={!selectedIds.length} onClick={() => setBatchDeleteOpen(true)}>
-              <Trash2 data-icon="inline-start" />删除
-              {selectedIds.length > 0 && <SelectedCount count={selectedIds.length} />}
-            </Button>
           </div>
         </div>
         <CardContent className="flex min-h-0 flex-1 flex-col px-5 pb-5 pt-4">
