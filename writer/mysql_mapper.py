@@ -14,6 +14,7 @@ The runtime cache can be explicitly reloaded when a new point is observed.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 import time
@@ -37,6 +38,10 @@ WHERE device_code = %s AND group_code = %s
 # 窗口取小值以保证映射补齐后**能自愈**（另提供 invalidate() 供失效事件快速失效）。
 NEGATIVE_CACHE_TTL_S = 5.0
 
+# TDengine 列名/表名必须是合法标识符。直接改库时常带进前导空格（" asc2"），
+# 先 strip，仍不合法的列单独剔除并告警，不能让一个坏列把同一帧其它点一起卡住。
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
 
 @dataclass
 class GroupMapping:
@@ -50,6 +55,8 @@ class GroupMapping:
     # 身份判断就会失效（旧转换结果会被误判为仍然有效，导致漏点或错列）。
     var_map: dict[str, str] = field(default_factory=dict)   # var_id → td_column_name
     var_type: dict[str, str] = field(default_factory=dict)  # var_id → var_type
+    # 列名非法（strip 后仍不是合法标识符）的点：writer 跳过这些点，其余点照常写入。
+    invalid_columns: dict[str, str] = field(default_factory=dict)  # var_id → 原始列名
 
 
 class MysqlMapper:
@@ -63,6 +70,27 @@ class MysqlMapper:
         self._negative_until: dict[str, float] = {}
         self._reload_until: dict[str, float] = {}
         self._negative_cache_ttl_s = NEGATIVE_CACHE_TTL_S
+        # 每个 (device, group) 已加载过的最高 stream config_version。
+        # 采集端配置版本递增（App 保存、points resync、手工 UPDATE）后，
+        # 新版本的第一帧触发一次重载，已热缓存里改过的列名才能生效。
+        self._seen_version: dict[str, int] = {}
+
+    def _remember_version(self, key: str, version: int) -> None:
+        if version > self._seen_version.get(key, 0):
+            self._seen_version[key] = version
+
+    def is_stale(self, device_code: str, group_code: str, stream_config_version: int) -> bool:
+        """已缓存，且 stream 带来的配置版本比加载时更新 → 需要重载一次。"""
+        if stream_config_version <= 0:
+            return False
+        key = f"{device_code}:{group_code}"
+        if key not in self._cache:
+            return False
+        return stream_config_version > self._seen_version.get(key, 0)
+
+    def mark_version_seen(self, device_code: str, group_code: str, stream_config_version: int) -> None:
+        """重载失败时也记下版本，避免同一版本每帧都重试。"""
+        self._remember_version(f"{device_code}:{group_code}", stream_config_version)
 
     def _negative_active(self, key: str) -> bool:
         deadline = self._negative_until.get(key)
@@ -86,11 +114,13 @@ class MysqlMapper:
             self._cache.clear()
             self._negative_until.clear()
             self._reload_until.clear()
+            self._seen_version.clear()
             return
         key = f"{device_code}:{group_code}"
         self._cache.pop(key, None)
         self._negative_until.pop(key, None)
         self._reload_until.pop(key, None)
+        self._seen_version.pop(key, None)
 
     def get_cached(self, device_code: str, group_code: str) -> GroupMapping | None:
         return self._cache.get(f"{device_code}:{group_code}")
@@ -116,6 +146,7 @@ class MysqlMapper:
         self._negative_until.pop(key, None)
         mapping.config_version = stream_config_version
         self._cache[key] = mapping
+        self._remember_version(key, stream_config_version)
         return mapping
 
     def reload(
@@ -146,6 +177,7 @@ class MysqlMapper:
         # 版本只用于日志上下文；永久 mapping 仍负责旧 entry 的解码。
         mapping.config_version = stream_config_version
         self._cache[key] = mapping
+        self._remember_version(key, stream_config_version)
         return mapping
 
     def load(self, device_code: str, group_code: str) -> GroupMapping | None:
@@ -163,19 +195,37 @@ class MysqlMapper:
                 return None
 
             first = rows[0]
-            device_type = str(first["device_type_code"] or "").lower()
-            child_table = str(first["child_table"] or device_code)
-            stable = str(first["stable_name"] or f"sd{device_type}")
+            device_type = str(first["device_type_code"] or "").strip().lower()
+            child_table = str(first["child_table"] or device_code).strip()
+            stable = str(first["stable_name"] or f"sd{device_type}").replace(" ", "")
+            if not _IDENTIFIER_RE.match(stable) or not _IDENTIFIER_RE.match(child_table):
+                logger.error(
+                    "[mapper] invalid stable=%r child_table=%r for device=%s group=%s; "
+                    "run `data-watch points resync --device %s`",
+                    stable, child_table, device_code, group_code, device_code,
+                )
+                return None
 
             var_map: dict[str, str] = {}
             var_type: dict[str, str] = {}
+            invalid_columns: dict[str, str] = {}
             for row in rows:
                 var_id = str(row["var_id"])
-                col = row["td_column_name"]
+                raw_col = row["td_column_name"]
+                col = str(raw_col).strip() if raw_col is not None else ""
                 vtype = row["var_type"] or ""
                 if col:
-                    var_map[var_id] = col
+                    if _IDENTIFIER_RE.match(col):
+                        var_map[var_id] = col
+                    else:
+                        invalid_columns[var_id] = str(raw_col)
                 var_type[var_id] = vtype
+            if invalid_columns:
+                logger.error(
+                    "[mapper] invalid td_column_name for device=%s group=%s: %s; these points "
+                    "are skipped, run `data-watch points resync --device %s`",
+                    device_code, group_code, invalid_columns, device_code,
+                )
 
             return GroupMapping(
                 config_version=0,
@@ -183,6 +233,7 @@ class MysqlMapper:
                 stable=stable,
                 var_map=var_map,
                 var_type=var_type,
+                invalid_columns=invalid_columns,
             )
         except Exception as exc:
             logger.error(

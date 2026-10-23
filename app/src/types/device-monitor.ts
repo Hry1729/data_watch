@@ -90,6 +90,22 @@ export interface DeviceForm {
   endpoint: string;
   endpointBackup?: string;
   description?: string;
+  /** S7 机架号/槽号；空串表示沿用原值或同类设备参考值。 */
+  rack?: number | "";
+  slot?: number | "";
+  /** 设备采集周期（毫秒）。 */
+  scanCycle?: number | "";
+}
+
+export interface DeviceTypeOption {
+  typeCode: string;
+  typeName: string;
+}
+
+export interface DeviceDetail extends DeviceListItem {
+  rack?: number | null;
+  slot?: number | null;
+  scanCycle?: number | null;
 }
 
 /** 可通过界面新建/编辑的物理类型（创建后不可修改，和后端白名单一致）。 */
@@ -139,6 +155,8 @@ export interface PointListItem {
   createTime?: string;
   updateTime?: string;
   pointStatus: "enabled" | "disabled";
+  scanRate?: number;
+  isStorage?: boolean;
 }
 
 export interface PointDeviceTreeNode {
@@ -176,6 +194,10 @@ export interface PointForm {
   driverName: string;
   isReadonly: boolean;
   description?: string;
+  /** 采集周期（毫秒），默认 1000。 */
+  scanRate?: number;
+  /** 是否写入历史库，默认是。 */
+  isStorage?: boolean;
 }
 
 export interface RealtimeDataItem {

@@ -9,7 +9,6 @@ import {
   Pause,
   Play,
   Search,
-  Settings2,
   Square,
   Wifi,
   WifiOff,
@@ -45,7 +44,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChartTipCard, CountChip, CTRL, DANGER_BTN, HEAD_ROW, ICON_BTN, LegendPill, OUTLINE_BTN, PRIMARY_BTN, SegTabs, SERIES_COLORS, TABLE_FRAME, TABLE_TEXT, TD, TH } from "@/components/DevicePageUi";
@@ -94,7 +92,6 @@ interface SavedMonitorState {
   refreshRate?: number;
   viewWindowMs?: number;
   chartType?: ChartType;
-  separateBoolChart?: boolean;
   wasMonitoring?: boolean;
 }
 
@@ -324,9 +321,7 @@ export default function RealtimeMonitorPage() {
   const [selectedPoints, setSelectedPoints] = useState<number[]>(savedState.selectedPoints ?? []);
   const [samples, setSamples] = useState<SampleRow[]>([]);
   const [chartType, setChartType] = useState<ChartType>(savedState.chartType ?? "line");
-  const [separateBoolChart, setSeparateBoolChart] = useState(savedState.separateBoolChart ?? true);
   const [pointDialogOpen, setPointDialogOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [pointSearch, setPointSearch] = useState("");
   const [draftPoints, setDraftPoints] = useState<number[]>([]);
   const chartCardRef = useRef<HTMLDivElement>(null);
@@ -434,10 +429,9 @@ export default function RealtimeMonitorPage() {
       refreshRate: frequency,
       viewWindowMs,
       chartType,
-      separateBoolChart,
       wasMonitoring: running,
     } satisfies SavedMonitorState));
-  }, [chartType, frequency, running, selectedDeviceId, selectedPoints, separateBoolChart, viewWindowMs]);
+  }, [chartType, frequency, running, selectedDeviceId, selectedPoints, viewWindowMs]);
 
   function resetMonitorState() {
     setRunning(false);
@@ -521,22 +515,21 @@ export default function RealtimeMonitorPage() {
   const hasData = samples.length > 0;
   const coloredPoints: ColoredPoint[] = selectedPointItems.map((point, index) => ({ ...point, color: SERIES_COLORS[index % SERIES_COLORS.length] }));
   const numericColored = coloredPoints.filter((point) => (point.dataType ?? "").toUpperCase() !== "BOOL");
+  // Bool 型点位始终走状态泳道（与历史数据一致），不再受旧的“独立图表”开关和本地缓存影响
   const boolColored = coloredPoints.filter((point) => (point.dataType ?? "").toUpperCase() === "BOOL");
   const previousSample = samples.length > 1 ? samples[samples.length - 2] : null;
   const windowSamples = samples.length ? samples.filter((sample) => Number(sample.sampleAt) >= Number(samples[samples.length - 1].sampleAt) - viewWindowMs).length : 0;
   const groupLabel = pointGroups.data?.find((group) => group.group_code === selectedGroupCode)?.group_name || selectedGroupCode;
-  const splitBool = chartType !== "status" && separateBoolChart;
   const connectionLabel = realtimeSocket.source === "local" ? "本机数据" : socketConnected ? "中心实时连接" : realtimeSocket.status === "connecting" ? "中心连接中" : "中心未连接";
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden">
       <Card className="shrink-0 gap-0 py-0">
       <div className="flex flex-wrap items-center gap-2 whitespace-nowrap border-b px-5 py-3.5">
-        <span className="text-xs text-muted-foreground">当前设备</span>
-        <Button variant="outline" className={`${OUTLINE_BTN} max-w-56 font-mono text-[12.5px]`} onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
+        <Button variant="outline" className={`${OUTLINE_BTN} max-w-44 font-mono text-[12.5px]`} onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
         <span className="ml-1 text-xs text-muted-foreground">点位组</span>
         <Select value={selectedGroupCode} onValueChange={changePointGroup} disabled={!selectedDeviceId || pointGroups.loading}>
-          <SelectTrigger className={`${CTRL} w-[132px]`} aria-label="点位组"><SelectValue /></SelectTrigger>
+          <SelectTrigger className={`${CTRL} w-[116px]`} aria-label="点位组"><SelectValue /></SelectTrigger>
           <SelectContent>
             {pointGroups.data?.length
               ? pointGroups.data.map((group) => <SelectItem key={group.group_code} value={group.group_code}>{group.group_name || group.group_code}</SelectItem>)
@@ -550,7 +543,7 @@ export default function RealtimeMonitorPage() {
             {connectionLabel}
           </span>
           <Select value={String(frequency)} onValueChange={(value) => setFrequency(Number(value))}>
-            <SelectTrigger className={`${CTRL} w-[76px]`} aria-label="时间选择" title="刷新频率"><SelectValue /></SelectTrigger>
+            <SelectTrigger className={`${CTRL} w-[64px]`} aria-label="时间选择" title="刷新频率"><SelectValue /></SelectTrigger>
             <SelectContent>{FREQUENCIES.map(([value, label]) => <SelectItem key={value} value={String(value)}>{label}</SelectItem>)}</SelectContent>
           </Select>
           <span className="mx-0.5 h-5 w-px bg-border" />
@@ -591,24 +584,23 @@ export default function RealtimeMonitorPage() {
               </Select>
               <SegTabs<ChartType> value={chartType} options={[["line", "折线图"], ["area", "面积图"], ["status", "状态图"]]} onChange={setChartType} />
               <Button size="icon" variant="ghost" className="size-8 text-muted-foreground" title="全屏" aria-label="全屏" onClick={() => void toggleFullscreen()}><Expand className="size-4" /></Button>
-              <Button size="icon" variant="ghost" className="size-8 text-muted-foreground" title="图表设置" aria-label="图表设置" onClick={() => setSettingsOpen(true)}><Settings2 className="size-4" /></Button>
             </div>
         </CardHeader>
         <CardContent className="relative flex min-h-0 flex-1 flex-col px-5 pb-4 pt-4">
           {!running && hasData && <span className="absolute left-1/2 top-2 z-10 inline-flex h-[26px] -translate-x-1/2 items-center gap-1.5 rounded-full bg-warning-soft px-2.5 text-xs font-medium text-warning"><Pause className="size-3.5" />监控已停止，保留最近采样</span>}
-          {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button className={PRIMARY_BTN} onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : chartType === "status" ? <TrendChart points={coloredPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} className="h-full" /> : (
+          {realtime.loading ? <Skeleton className="h-full min-h-40" /> : !selectedPointItems.length ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Activity className="size-9 opacity-35" /><span>请选择需要监控的点位</span><Button className={PRIMARY_BTN} onClick={openPointSelector}>添加监控点位</Button></div> : !running && !hasData ? <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"><Play className="size-9 opacity-35" /><span>点击开始监控以查看实时趋势</span></div> : !hasData ? <div className="flex h-full min-h-40 items-center justify-center text-sm text-muted-foreground">正在连接并等待数据...</div> : (
             <div className="flex min-h-0 flex-1 flex-col">
-              {(numericColored.length > 0 || !separateBoolChart) && (
+              {numericColored.length > 0 && (
                 <>
                   <div className="mb-1.5 flex flex-wrap items-center gap-3">
-                    <span className="text-xs font-medium text-muted-foreground">{splitBool ? "数值型点位" : "全部点位"}</span>
-                    <div className="flex flex-wrap gap-1.5">{(separateBoolChart ? numericColored : coloredPoints).map((point) => <LegendPill key={point.varSeq} color={point.color} label={point.pointName} off={hiddenSeries.includes(point.varSeq)} onClick={() => setHiddenSeries((current) => current.includes(point.varSeq) ? current.filter((value) => value !== point.varSeq) : [...current, point.varSeq])} />)}</div>
+                    <span className="text-xs font-medium text-muted-foreground">数值型点位</span>
+                    <div className="flex flex-wrap gap-1.5">{numericColored.map((point) => <LegendPill key={point.varSeq} color={point.color} label={point.pointName} off={hiddenSeries.includes(point.varSeq)} onClick={() => setHiddenSeries((current) => current.includes(point.varSeq) ? current.filter((value) => value !== point.varSeq) : [...current, point.varSeq])} />)}</div>
                     <span className="ml-auto flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground"><span className={`size-2 rounded-full ${running ? "bg-success" : "bg-muted-foreground"}`} />采样 {windowSamples} 条 · 窗口内 / 缓存上限 {MAX_REALTIME_SAMPLES}</span>
                   </div>
-                  <TrendChart points={separateBoolChart ? numericColored : coloredPoints} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} hidden={hiddenSeries} className="min-h-[200px] flex-1" />
+                  <TrendChart points={numericColored} samples={samples} chartType={chartType} viewWindowMs={viewWindowMs} hidden={hiddenSeries} className="min-h-[200px] flex-1" />
                 </>
               )}
-              {splitBool && boolColored.length > 0 && (
+              {boolColored.length > 0 && (
                 <div className="shrink-0">
                   <div className="mb-2 mt-3.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">Bool 型点位<span className="h-px flex-1 bg-border" /></div>
                   <BoolLanes points={boolColored} samples={samples} viewWindowMs={viewWindowMs} />
@@ -656,13 +648,6 @@ export default function RealtimeMonitorPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>图表设置</DialogTitle><DialogDescription>调整不同数据类型在趋势区域中的展示方式。</DialogDescription></DialogHeader>
-          <div className="flex items-center justify-between gap-5 rounded-md border p-4"><div><Label htmlFor="separate-bool">Bool 型变量独立图表</Label><p className="mt-1 text-xs text-muted-foreground">避免 Bool 状态值与连续数值使用同一纵轴。</p></div><Switch id="separate-bool" checked={separateBoolChart} onCheckedChange={setSeparateBoolChart} /></div>
-          <DialogFooter><Button onClick={() => setSettingsOpen(false)}>关闭</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

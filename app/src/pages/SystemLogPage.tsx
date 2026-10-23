@@ -397,6 +397,12 @@ export function SystemLogPage() {
           </div>
           <div className="ml-auto flex items-center gap-2">
             {mode === "system" && (
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input placeholder="搜索关键字，回车查询" value={draft.keyword ?? ""} onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }} className={`${fieldCls} w-56 pl-8`} />
+              </div>
+            )}
+            {mode === "system" && (
               <Button
                 variant="outline"
                 className={summary?.debugEnabled ? `${btnCls} border-warning/40 text-warning hover:text-warning` : btnCls}
@@ -415,11 +421,11 @@ export function SystemLogPage() {
             <div className="flex basis-full flex-wrap items-center gap-2">
               <div className="relative">
                 <CalendarDays className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input type="datetime-local" aria-label="开始时间" title="开始时间" value={draft.startTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))} className={`${fieldCls} w-[196px] pl-8 tabular-nums`} />
+                <Input type="datetime-local" aria-label="开始时间" title="开始时间" value={draft.startTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, startTime: event.target.value }))} className={`${fieldCls} w-[184px] pl-8 tabular-nums`} />
               </div>
               <div className="relative">
                 <CalendarDays className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input type="datetime-local" aria-label="结束时间" title="结束时间" value={draft.endTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))} className={`${fieldCls} w-[196px] pl-8 tabular-nums`} />
+                <Input type="datetime-local" aria-label="结束时间" title="结束时间" value={draft.endTime ?? ""} onChange={(event) => setDraft((value) => ({ ...value, endTime: event.target.value }))} className={`${fieldCls} w-[184px] pl-8 tabular-nums`} />
               </div>
               <Select
                 value={draft.type || "all"}
@@ -435,10 +441,6 @@ export function SystemLogPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <div className="relative">
-                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input placeholder="关键字" value={draft.keyword ?? ""} onChange={(event) => setDraft((value) => ({ ...value, keyword: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") applySearch(); }} className={`${fieldCls} w-32 pl-8`} />
-              </div>
               <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 <Button variant="outline" className={btnCls} onClick={() => setAdvancedOpen(true)}>
                   高级查询{advancedCount > 0 && <span className="inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-[5px] text-[11px] font-semibold text-brand-foreground">{advancedCount}</span>}

@@ -857,6 +857,24 @@ export const mockBackend: BackendClient = {
   async deviceTypes(token, query = {}) {
     return [...new Set((await this.deviceList(token, { ...query, pageSize: 1000 })).list.map((device) => device.deviceType))];
   },
+  async deviceTypeOptions() {
+    await delay(60);
+    return [
+      { typeCode: "QC", typeName: "桥吊" },
+      { typeCode: "ASC", typeName: "轨道吊" },
+      { typeCode: "AGV", typeName: "自动导引车" },
+      { typeCode: "PLC", typeName: "PLC" },
+    ];
+  },
+  async deviceDetail(token, id) {
+    const device = (await this.deviceList(token, { pageSize: 1000 })).list.find((item) => item.id === id);
+    if (!device) throw new Error("设备不存在");
+    return { ...device, rack: 0, slot: 2, scanCycle: 1000 };
+  },
+  async nextPointSeq(token, deviceId) {
+    const { list } = await this.pointList(token, { deviceId, pageSize: 10000 });
+    return { varSeq: list.reduce((max, point) => Math.max(max, point.varSeq), 0) + 1 };
+  },
   async deviceSummary(token, query) {
     const { list } = await this.deviceList(token, { ...query, pageSize: 1000 });
     return {

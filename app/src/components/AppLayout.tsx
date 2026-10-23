@@ -64,6 +64,8 @@ export function AppLayout() {
   } | null>(null);
   const flyoutCloseTimerRef = useRef<number | null>(null);
   const mainRef = useRef<HTMLElement>(null);
+  // 面包屑亚克力只在内容实际向下滚动后出现；一屏放得下的页面保持透明
+  const [scrolled, setScrolled] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [titlebarSlot, setTitlebarSlot] = useState<HTMLElement | null>(null);
@@ -463,7 +465,7 @@ export function AppLayout() {
       )}
 
       <section className="relative mb-1.5 mr-1.5 flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] bg-background shadow-[var(--inset-shadow)]">
-        <header className="dw-acrylic-header absolute left-0 right-2 top-0 z-20 isolate flex h-12 items-center px-4">
+        <header data-scrolled={scrolled || undefined} className="dw-acrylic-header absolute left-0 right-2 top-0 z-20 isolate flex h-12 items-center px-4">
           <div className="flex min-w-0 items-center gap-2 text-sm">
             {isSettingsRoute ? (
               <h1 className="truncate font-semibold text-foreground">设置</h1>
@@ -487,7 +489,7 @@ export function AppLayout() {
 
         <main
           ref={mainRef}
-          onScroll={(event) => setShowBackToTop(event.currentTarget.scrollTop > 320)}
+          onScroll={(event) => { const top = event.currentTarget.scrollTop; setShowBackToTop(top > 320); setScrolled(top > 0); }}
           className="min-h-0 flex-1 overflow-auto px-4 pb-4 pt-12 [scroll-padding-top:3.5rem]"
         >
           <Outlet />

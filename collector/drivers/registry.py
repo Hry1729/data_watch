@@ -416,19 +416,89 @@ def _module_digest(path: Path) -> str:
     return tree_digest(path) if path.is_dir() else file_digest(path)
 
 
+def _vendor_module_versions(package_root: Path) -> dict[str, str]:
+    """从 vendor/*.dist-info 推出 {顶层模块名: 版本}（RECORD 首段 + top_level.txt）。"""
+    vendor = package_root / "vendor"
+    result: dict[str, str] = {}
+    if not vendor.is_dir():
+        return result
+    for info in vendor.glob("*.dist-info"):
+        version = info.name[: -len(".dist-info")].partition("-")[2]
+        metadata = info / "METADATA"
+        try:
+            for line in metadata.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith("Version:"):
+                    version = line.split(":", 1)[1].strip()
+                    break
+                if not line.strip():
+                    break
+        except OSError:
+            pass
+        if not version:
+            continue
+        names: Set[str] = set()
+        try:
+            names.update(line.strip() for line in (info / "top_level.txt").read_text(encoding="utf-8").splitlines())
+        except OSError:
+            pass
+        try:
+            for line in (info / "RECORD").read_text(encoding="utf-8").splitlines():
+                first = line.split(",", 1)[0].replace("\\", "/").split("/", 1)[0]
+                if first.endswith(".dist-info") or first.endswith(".data") or first in {"..", "bin"}:
+                    continue
+                names.add(first.split(".", 1)[0])
+        except OSError:
+            pass
+        for name in names:
+            if name and name.isidentifier():
+                result.setdefault(name, version)
+    return result
+
+
+def _loaded_module_version(name: str, module: types.ModuleType) -> Optional[str]:
+    version = getattr(module, "__version__", None)
+    if isinstance(version, str) and version:
+        return version
+    try:
+        from importlib import metadata as importlib_metadata
+        for dist in importlib_metadata.packages_distributions().get(name, []):
+            return importlib_metadata.version(dist)
+    except Exception:
+        return None
+    return None
+
+
 def _verify_loaded_vendor_modules(package_root: Path) -> None:
+    vendor_versions: Optional[dict[str, str]] = None
     for name, expected in _vendor_modules(package_root).items():
         module = sys.modules.get(name)
         if module is None:
             continue
         actual_file = getattr(module, "__file__", None)
-        if not actual_file:
-            raise DriverRegistryError(f"无法核实已加载依赖来源: {name}")
-        actual = Path(actual_file)
-        if expected.is_dir():
+        actual = Path(actual_file) if actual_file else None
+        if actual is not None and expected.is_dir():
             actual = actual.parent
-        if actual.resolve() != expected.resolve() and (not actual.exists() or _module_digest(actual) != _module_digest(expected)):
-            raise DriverRegistryError(f"依赖 {name!r} 已从不同内容的来源加载；拒绝替换全局模块")
+        if actual is not None and (
+            actual.resolve() == expected.resolve()
+            or (actual.exists() and _module_digest(actual) == _module_digest(expected))
+        ):
+            continue
+        # 宿主进程（如冻结的 collector 经 PyMySQL 预先导入 cryptography/cffi）已加载同名依赖：
+        # 冻结包里的 .pyc 与 vendor 源码摘要必然不同，但版本一致即为同一份依赖，直接复用已加载模块，
+        # 不替换全局 sys.modules；仅版本不一致或无法核实版本时拒绝。
+        if vendor_versions is None:
+            vendor_versions = _vendor_module_versions(package_root)
+        wanted = vendor_versions.get(name)
+        loaded = _loaded_module_version(name, module)
+        if wanted and loaded and wanted == loaded:
+            logger.info("依赖 %s==%s 已由宿主进程加载，复用已加载模块 (%s)", name, loaded, actual_file)
+            continue
+        if not actual_file and not (wanted and loaded):
+            raise DriverRegistryError(f"无法核实已加载依赖来源: {name}")
+        raise DriverRegistryError(
+            f"依赖 {name!r} 已从不同内容的来源加载（已加载 version={loaded or '未知'}，"
+            f"本包 vendor version={wanted or '未知'}）；拒绝替换全局模块"
+        )
 
 
 def _resolve_vendor_ownership(

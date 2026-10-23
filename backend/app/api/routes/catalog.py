@@ -209,6 +209,18 @@ async def device_types(
         return success_response(data=await service.list_device_types(_compact_params({"deviceIds": deviceIds})))
 
 
+@router.get("/api/device-monitor/device/type-options")
+async def device_type_options(
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """设备类型字典（新增/编辑设备下拉用），不依赖已有设备。"""
+    await require_permissions(credentials, "device_monitor:device:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.list_device_type_options())
+
+
 @router.get("/api/device-monitor/device/summary")
 async def device_summary(
     keyword: str | None = None,
@@ -565,6 +577,51 @@ async def import_points_from_template(
             actor=principal["user_name"],
         )
         await _invalidate_ingest_control_caches()
+        return success_response(data=data)
+
+
+@router.get("/api/device-monitor/point/next-seq")
+async def point_next_seq(
+    deviceId: int,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """所选设备下一个可用点位序号（含已删除点位占用的序号）。"""
+    await require_permissions(credentials, "device_monitor:point:view")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        return success_response(data=await service.next_point_seq(deviceId))
+
+
+@router.get("/api/device-monitor/point/resync")
+async def point_resync_check(
+    deviceCode: str,
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """只检查不改库：列出这台设备存储映射需要校准的地方。"""
+    principal = await require_permissions(credentials, "device_monitor:point:update")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.resync_point_storage(deviceCode, apply=False, actor=principal["user_name"])
+        return success_response(data=data)
+
+
+@router.post("/api/device-monitor/point/resync")
+async def point_resync_apply(
+    payload: dict[str, Any],
+    credentials: HTTPAuthorizationCredentials | None = Depends(auth_scheme),
+):
+    """校准存储映射并递增配置版本（直接改库后执行）。"""
+    principal = await require_permissions(credentials, "device_monitor:point:update")
+    session_factory = get_mysql_session_factory()
+    async with session_factory() as session:
+        service = CatalogService(session=session, tdengine=get_tdengine_client())
+        data = await service.resync_point_storage(
+            str(payload.get("deviceCode") or ""), apply=True, actor=principal["user_name"]
+        )
+        if data.get("applied"):
+            await _invalidate_ingest_control_caches()
         return success_response(data=data)
 
 
