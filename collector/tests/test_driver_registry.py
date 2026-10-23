@@ -802,3 +802,52 @@ def test_conflicting_loaded_dependency_is_not_evicted(tmp_path, monkeypatch):
     with pytest.raises(DriverRegistryError, match="拒绝替换"):
         _verify_loaded_vendor_modules(root)
     assert sys.modules["shared_dependency"] is module
+
+
+def _vendor_with_dist(root, name, version, content):
+    vendor = root / "vendor"
+    (vendor / name).mkdir(parents=True)
+    (vendor / name / "__init__.py").write_text(content, encoding="utf-8")
+    info = vendor / f"{name}-{version}.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n", encoding="utf-8")
+    (info / "RECORD").write_text(f"{name}/__init__.py,,\n{name}-{version}.dist-info/METADATA,,\n", encoding="utf-8")
+
+
+def test_same_version_dependency_preloaded_by_host_is_reused(tmp_path, monkeypatch):
+    """冻结 collector 经 PyMySQL 预先导入 cryptography：同版本复用，不报"不同来源"。"""
+    import types
+    from drivers.registry import _verify_loaded_vendor_modules
+    root = tmp_path / "package"
+    _vendor_with_dist(root, "shared_dependency", "49.0.0", "VERSION='vendor copy'")
+    host = tmp_path / "_internal/shared_dependency"
+    host.mkdir(parents=True)
+    module = types.ModuleType("shared_dependency")
+    module.__file__ = str(host / "__init__.pyc")  # 冻结包：.pyc 在 PYZ 中，磁盘上不存在
+    module.__version__ = "49.0.0"
+    monkeypatch.setitem(sys.modules, "shared_dependency", module)
+    _verify_loaded_vendor_modules(root)
+    assert sys.modules["shared_dependency"] is module
+
+
+def test_different_version_dependency_preloaded_by_host_is_rejected(tmp_path, monkeypatch):
+    import types
+    from drivers.registry import _verify_loaded_vendor_modules
+    root = tmp_path / "package"
+    _vendor_with_dist(root, "shared_dependency", "49.0.0", "VERSION='vendor copy'")
+    module = types.ModuleType("shared_dependency")
+    module.__file__ = str(tmp_path / "_internal/shared_dependency/__init__.pyc")
+    module.__version__ = "48.0.0"
+    monkeypatch.setitem(sys.modules, "shared_dependency", module)
+    with pytest.raises(DriverRegistryError, match="48.0.0.*49.0.0"):
+        _verify_loaded_vendor_modules(root)
+    assert sys.modules["shared_dependency"] is module
+
+
+def test_opcua_vendor_versions_cover_preloaded_host_modules():
+    from drivers.registry import _vendor_module_versions
+    root = Path(__file__).resolve().parents[2] / "packages/opcua"
+    versions = _vendor_module_versions(root)
+    assert versions.get("cryptography") == "49.0.0"
+    assert versions.get("cffi") == "2.0.0"
+    assert versions.get("_cffi_backend") == "2.0.0"
