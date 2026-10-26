@@ -65,7 +65,8 @@ test("realtime monitor uses the requested four-section operational layout", asyn
   assert.match(source, /暂未选择监控点位/);
   assert.match(source, /max-w-44/);
   assert.doesNotMatch(source, /当前设备/);
-  assert.match(source, /ml-auto flex flex-wrap items-center justify-end gap-2/);
+  assert.match(source, /ml-auto flex shrink-0 items-center justify-end gap-2/);
+  assert.match(source, /flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap border-b/);
   // 点位数值卡：灰底圆角卡片，始终单行，多了横向滚动（细滚动条）
   assert.match(source, /<PointValueTileRow /);
   assert.match(source, /<PointValueTile key=\{point\.varSeq\}[^>]*previous=/);
@@ -88,7 +89,7 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /设备类型/);
   assert.match(source, /设备编号/);
   assert.match(source, /搜索设备名称或编号/);
-  assert.match(source, /快捷时间范围/);
+  assert.match(source, /function TimeRangePicker/);
   assert.doesNotMatch(source, /当前设备/);
   assert.match(source, /setRecentRange\(Number\(value\), setStartTime, setEndTime\)/);
   assert.match(source, /<Card className="shrink-0 gap-0 py-0">/);
@@ -103,9 +104,11 @@ test("history data uses the approved four-section operational layout", async () 
   assert.match(source, /!flex shrink-0 items-center gap-3 border-b px-5 py-3\.5/);
   assert.match(source, /折线图/);
   assert.match(source, /aria-label="时间对齐颗粒度"/);
-  assert.match(source, /w-\[100px\] !text-xs`\} aria-label="快捷时间范围"/);
+  // 快捷范围与起止时间收进同一个时间按钮的弹层，筛选栏保持单行
+  assert.match(source, /<TimeRangePicker startTime=\{startTime\} endTime=\{endTime\}/);
   assert.match(source, /aria-label="时间范围"/);
   assert.equal((source.match(/type="datetime-local" value=\{(startTime|endTime)\}/g) ?? []).length, 2);
+  assert.match(source, /flex min-w-0 flex-nowrap items-center gap-1\.5 whitespace-nowrap border-b/);
   assert.match(source, /w-\[76px\]`\} aria-label="时间对齐颗粒度"/);
   assert.match(source, /currentDevice \? currentDevice\.deviceCode \?\? currentDevice\.name : "选择设备"/);
   assert.match(source, /ml-auto flex items-center gap-2/);
@@ -258,12 +261,19 @@ test("device and point management build type tabs from current system devices", 
 });
 
 test("device and point management keep the selected-item deletion action without a batch label", async () => {
-  for (const file of ["DeviceManagementPage.tsx", "PointManagementPage.tsx"]) {
+  for (const file of ["DeviceManagementPage.tsx"]) {
     const source = await readFile(new URL(`../src/pages/${file}`, import.meta.url), "utf8");
     assert.match(source, /<Button variant="destructive" size="sm" className=\{DANGER_BTN\} disabled=\{!selectedIds\.length\} onClick=\{\(\) => setBatchDeleteOpen\(true\)\}>[\s\S]*?删除[\s\S]*?<\/Button>/);
     // 已选数量以徽标显示在删除按钮内
     assert.match(source, /删除\s*\{selectedIds\.length > 0 && <SelectedCount count=\{selectedIds\.length\} \/>\}/);
   }
+});
+test("point management toolbar stays on one row: delete appears only with a selection, type/status live in a filter popover", async () => {
+  const source = await readFile(new URL("../src/pages/PointManagementPage.tsx", import.meta.url), "utf8");
+  assert.match(source, /\{selectedIds\.length > 0 && <Button variant="destructive" size="sm" className=\{DANGER_BTN\} onClick=\{\(\) => setBatchDeleteOpen\(true\)\}>[\s\S]*?删除[\s\S]*?<SelectedCount count=\{selectedIds\.length\} \/>/);
+  assert.match(source, /aria-label="更多筛选"/);
+  assert.match(source, /activeFilterCount/);
+  assert.match(source, /flex shrink-0 flex-nowrap items-center gap-2 whitespace-nowrap px-5 pt-5/);
 });
 test("device list keeps filters inside the card and sizes pages from the table viewport", async () => {
   for (const file of ["DeviceManagementPage.tsx"]) {

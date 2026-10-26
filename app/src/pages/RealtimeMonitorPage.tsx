@@ -525,11 +525,11 @@ export default function RealtimeMonitorPage() {
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[1800px] flex-col gap-3 overflow-hidden">
       <Card className="shrink-0 gap-0 py-0">
-      <div className="flex flex-wrap items-center gap-2 whitespace-nowrap border-b px-5 py-3.5">
-        <Button variant="outline" className={`${OUTLINE_BTN} max-w-44 font-mono text-[12.5px]`} onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
+      <div className="flex min-w-0 flex-nowrap items-center gap-2 whitespace-nowrap border-b px-5 py-3.5">
+        <Button variant="outline" className={`${OUTLINE_BTN} max-w-44 shrink-0 font-mono text-[12.5px]`} onClick={openDeviceSelector}><span className="truncate">{selectedDevice ? selectedDevice.deviceCode : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
         <span className="ml-1 text-xs text-muted-foreground">点位组</span>
         <Select value={selectedGroupCode} onValueChange={changePointGroup} disabled={!selectedDeviceId || pointGroups.loading}>
-          <SelectTrigger className={`${CTRL} w-[116px]`} aria-label="点位组"><SelectValue /></SelectTrigger>
+          <SelectTrigger className={`${CTRL} w-[160px] min-w-[96px] shrink`} aria-label="点位组"><SelectValue /></SelectTrigger>
           <SelectContent>
             {pointGroups.data?.length
               ? pointGroups.data.map((group) => <SelectItem key={group.group_code} value={group.group_code}>{group.group_name || group.group_code}</SelectItem>)
@@ -537,20 +537,24 @@ export default function RealtimeMonitorPage() {
           </SelectContent>
         </Select>
         <Button variant="outline" className={OUTLINE_BTN} onClick={openPointSelector} disabled={!selectedDeviceId}><Search className="size-3.5" />选择点位{selectedPointItems.length > 0 && <CountChip count={selectedPointItems.length} />}</Button>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+        <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
           <span className={`inline-flex h-7 items-center gap-2 rounded-full border bg-card px-2.5 text-xs ${socketConnected ? "text-success" : "text-muted-foreground"}`}>
             <span className="relative flex size-2">{socketConnected && <span className="absolute inline-flex size-full animate-ping rounded-full bg-current opacity-50" />}<span className="relative inline-flex size-2 rounded-full bg-current" /></span>
             {connectionLabel}
           </span>
           <Select value={String(frequency)} onValueChange={(value) => setFrequency(Number(value))}>
-            <SelectTrigger className={`${CTRL} w-[64px]`} aria-label="时间选择" title="刷新频率"><SelectValue /></SelectTrigger>
+            <SelectTrigger className={`${CTRL} w-[84px]`} aria-label="时间选择" title="刷新频率"><SelectValue /></SelectTrigger>
             <SelectContent>{FREQUENCIES.map(([value, label]) => <SelectItem key={value} value={String(value)}>{label}</SelectItem>)}</SelectContent>
           </Select>
           <span className="mx-0.5 h-5 w-px bg-border" />
-          <Button className={PRIMARY_BTN} onClick={() => setRunning(true)} disabled={running || !selectedDeviceId || selectedPoints.length === 0}><Play className="size-3.5" />开始监控</Button>
-          <Button variant="destructive" className={DANGER_BTN} onClick={() => setRunning(false)} disabled={!running}><Square className="size-3.5" />停止监控</Button>
-          <Button variant="outline" className={OUTLINE_BTN} onClick={clearSelection} disabled={!selectedPoints.length}><X className="size-3.5" />清空选择</Button>
-          <TooltipProvider delayDuration={200}><Tooltip><TooltipTrigger asChild><Button variant="outline" className={ICON_BTN} aria-label="导出" onClick={exportRealtimeData} disabled={!hasData}><Download /></Button></TooltipTrigger><TooltipContent>导出</TooltipContent></Tooltip></TooltipProvider>
+          {/* 开始/停止互斥：同一位置切换，筛选栏保持单行 */}
+          {running
+            ? <Button variant="destructive" className={DANGER_BTN} onClick={() => setRunning(false)}><Square className="size-3.5" />停止监控</Button>
+            : <Button className={PRIMARY_BTN} onClick={() => setRunning(true)} disabled={!selectedDeviceId || selectedPoints.length === 0}><Play className="size-3.5" />开始监控</Button>}
+          <TooltipProvider delayDuration={200}>
+            <Tooltip><TooltipTrigger asChild><Button variant="outline" className={ICON_BTN} aria-label="清空选择" onClick={clearSelection} disabled={!selectedPoints.length}><X /></Button></TooltipTrigger><TooltipContent>清空选择</TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger asChild><Button variant="outline" className={ICON_BTN} aria-label="导出" onClick={exportRealtimeData} disabled={!hasData}><Download /></Button></TooltipTrigger><TooltipContent>导出</TooltipContent></Tooltip>
+          </TooltipProvider>
         </div>
       </div>
         <CardContent className="p-3">

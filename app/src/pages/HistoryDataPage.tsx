@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -95,6 +96,40 @@ function setRecentRange(hours: number, setStart: (value: string) => void, setEnd
   const end = new Date();
   setEnd(localInput(end));
   setStart(localInput(new Date(end.getTime() - hours * 60 * 60_000)));
+}
+
+const QUICK_RANGES = [["1", "近1小时"], ["6", "近6小时"], ["12", "近12小时"], ["24", "近24小时"], ["72", "近3天"], ["168", "近7天"]] as const;
+
+function shortTime(value: string): string {
+  // "2026-10-22T10:47" -> "10-22 10:47"
+  return value && value.length >= 16 ? `${value.slice(5, 10)} ${value.slice(11, 16)}` : "--";
+}
+
+function TimeRangePicker({ startTime, endTime, quickRange, onQuick, onStart, onEnd }: { startTime: string; endTime: string; quickRange: string; onQuick: (value: string) => void; onStart: (value: string) => void; onEnd: (value: string) => void }) {
+  const quickLabel = QUICK_RANGES.find(([value]) => value === quickRange)?.[1];
+  const timeInput = "h-8 w-full rounded-md border border-input bg-input/20 px-2.5 text-[12.5px] tabular-nums text-foreground outline-none focus-visible:border-ring [color-scheme:light] dark:bg-input/30 dark:[color-scheme:dark]";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" className={`${OUTLINE_BTN} min-w-0 shrink justify-start font-normal`} aria-label="时间范围" title="时间范围">
+          <CalendarDays className="size-3.5 shrink-0 text-muted-foreground" />
+          {quickLabel && <span className="shrink-0 rounded bg-brand-soft px-1.5 py-px text-[11px] font-medium text-primary">{quickLabel}</span>}
+          <span className="truncate text-[12.5px] tabular-nums">{shortTime(startTime)}<span className="mx-1.5 text-muted-foreground">→</span>{shortTime(endTime)}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[300px] p-3">
+        <p className="mb-2 text-xs text-muted-foreground">快捷范围</p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {QUICK_RANGES.map(([value, label]) => <Button key={value} type="button" variant={quickRange === value ? "default" : "outline"} className="h-7 px-2 text-xs font-normal" onClick={() => onQuick(value)}>{label}</Button>)}
+        </div>
+        <div className="mt-3 space-y-2 border-t pt-3">
+          <label className="block space-y-1"><span className="text-xs text-muted-foreground">开始时间</span><input className={timeInput} type="datetime-local" value={startTime} onChange={(event) => onStart(event.target.value)} aria-label="开始时间" /></label>
+          <label className="block space-y-1"><span className="text-xs text-muted-foreground">结束时间</span><input className={timeInput} type="datetime-local" value={endTime} onChange={(event) => onEnd(event.target.value)} aria-label="结束时间" /></label>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function parseHistoryTime(value: string): number {
@@ -661,19 +696,15 @@ export default function HistoryDataPage() {
     <div className="mx-auto flex h-full w-full max-w-[1800px] flex-col gap-3">
       <div className="flex h-full min-h-[560px] shrink-0 flex-col gap-3">
       <Card className="shrink-0 gap-0 py-0">
-        <div className="flex flex-wrap items-center gap-1.5 whitespace-nowrap border-b px-5 py-3.5">
-        <Button variant="outline" className={`${OUTLINE_BTN} max-w-44 font-mono text-[12.5px]`} onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
+        <div className="flex min-w-0 flex-nowrap items-center gap-1.5 whitespace-nowrap border-b px-5 py-3.5">
+        <Button variant="outline" className={`${OUTLINE_BTN} max-w-44 shrink-0 font-mono text-[12.5px]`} onClick={openDeviceDialog}><span className="truncate">{currentDevice ? currentDevice.deviceCode ?? currentDevice.name : "选择设备"}</span><ChevronDown className="size-3.5 text-muted-foreground" /></Button>
         <Button variant="outline" className={OUTLINE_BTN} onClick={openPointDialog} disabled={!deviceId}><Search className="size-3.5" />选择点位{selectedPoints.length > 0 && <CountChip count={selectedPoints.length} />}</Button>
         <span className="mx-0.5 h-5 w-px bg-border" />
-        <Select value={quickRange} onValueChange={(value) => { setQuickRange(value); setRecentRange(Number(value), setStartTime, setEndTime); }}>
-          <SelectTrigger className={`${CTRL} w-[100px] !text-xs`} aria-label="快捷时间范围" title="快捷时间范围"><SelectValue placeholder="快捷范围" /></SelectTrigger>
-          <SelectContent>{[["1", "最近1小时"], ["6", "最近6小时"], ["12", "最近12小时"], ["24", "最近24小时"]].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-        </Select>
-        <div className="inline-flex h-8 items-center gap-1.5 rounded-md border border-input bg-input/20 pl-2.5 pr-1 text-xs text-muted-foreground dark:bg-input/30" aria-label="时间范围"><CalendarDays className="size-3.5 shrink-0" /><input className="w-[124px] bg-transparent text-[11.5px] tabular-nums text-foreground outline-none [color-scheme:light] dark:[color-scheme:dark]" type="datetime-local" value={startTime} onChange={(event) => setStartTime(event.target.value)} aria-label="开始时间" /><span>至</span><input className="w-[124px] bg-transparent text-[11.5px] tabular-nums text-foreground outline-none [color-scheme:light] dark:[color-scheme:dark]" type="datetime-local" value={endTime} onChange={(event) => setEndTime(event.target.value)} aria-label="结束时间" /></div>
+        <TimeRangePicker startTime={startTime} endTime={endTime} quickRange={quickRange} onQuick={(value) => { setQuickRange(value); setRecentRange(Number(value), setStartTime, setEndTime); }} onStart={(value) => { setQuickRange(""); setStartTime(value); }} onEnd={(value) => { setQuickRange(""); setEndTime(value); }} />
         <Select value={interval} onValueChange={setIntervalValue}><SelectTrigger className={`${CTRL} w-[76px]`} aria-label="时间对齐颗粒度" title="时间对齐颗粒度"><SelectValue /></SelectTrigger><SelectContent>{INTERVALS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
         <Select value={aggregate} onValueChange={setAggregate}><SelectTrigger className={`${CTRL} w-[80px]`} aria-label="值统计" title="值统计"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="avg">平均值</SelectItem><SelectItem value="max">最大值</SelectItem><SelectItem value="min">最小值</SelectItem><SelectItem value="last">最新值</SelectItem></SelectContent></Select>
         {/* Matrix alignment is configured with the data table below. */}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <Button variant="outline" className={OUTLINE_BTN} onClick={openExportDialog} disabled={!chart?.series.length}><Download className="size-3.5" />导出</Button>
           <Button className={PRIMARY_BTN} onClick={() => void queryHistory()} disabled={loading || !deviceId || !selectedPoints.length}><Search className="size-3.5" />{loading ? "查询中..." : "查询"}</Button>
         </div>
