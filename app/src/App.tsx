@@ -242,7 +242,7 @@ function AgentErrorPage() {
 export default function App() {
   return (
     // 全局壳：顶部自定义标题栏(所有页面通用) + 下方内容区
-    <div className="flex flex-col h-screen overflow-hidden bg-background">
+    <div className="app-shell flex flex-col h-screen bg-background">
       <TitleBar />
       <div className="relative flex-1 min-h-0">
     <BrowserRouter>

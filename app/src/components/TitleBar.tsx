@@ -18,7 +18,14 @@ export function TitleBar() {
     let active = true;
     let unlisten: (() => void) | undefined;
     const updateMaximized = () => {
-      void currentWindow.isMaximized().then(value => { if (active) setMaximized(value); }).catch(() => undefined);
+      void currentWindow.isMaximized()
+        .then(value => {
+          if (!active) return;
+          setMaximized(value);
+          // 最大化时取消外壳圆角(见 index.css)，否则四角会露出桌面
+          document.documentElement.toggleAttribute("data-window-maximized", value);
+        })
+        .catch(() => undefined);
     };
     updateMaximized();
     currentWindow

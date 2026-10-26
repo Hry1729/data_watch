@@ -178,10 +178,13 @@
   html {
     @apply font-sans;
     min-height: 100vh;
+    /* 桌面窗口是透明的，底色只能由 .app-shell 画，否则圆角外侧会露出底色 */
+    background: transparent;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
     min-height: 100vh;
+    background: transparent;
   }
   #root {
     min-height: 100vh;
@@ -203,6 +206,16 @@
   label:has([data-slot="switch"]:not([data-disabled])) {
     cursor: pointer;
   }
+}
+
+/* 应用外壳:窗口透明后由这一层画出圆角矩形(10px,略小于主内容区的 12px) */
+.app-shell {
+  border-radius: 10px;
+  overflow: hidden;
+}
+/* 最大化时铺满屏幕,保留圆角会在四角露出桌面 */
+html[data-window-maximized] .app-shell {
+  border-radius: 0;
 }
 
 /* 主题切换:以切换按钮为圆心的圆形扩散揭示(View Transitions API;不支持/减少动态时无此动画) */
