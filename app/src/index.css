@@ -3,11 +3,28 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 
+/* 品牌字标字体：Plus Jakarta Sans（SIL OFL，见 assets/fonts/OFL-PlusJakartaSans.txt），仅基本拉丁字符子集 */
+@font-face {
+    font-family: "Plus Jakarta Sans";
+    font-style: normal;
+    font-weight: 500;
+    font-display: swap;
+    src: url("./assets/fonts/plus-jakarta-sans-latin-500.woff2") format("woff2");
+}
+@font-face {
+    font-family: "Plus Jakarta Sans";
+    font-style: normal;
+    font-weight: 800;
+    font-display: swap;
+    src: url("./assets/fonts/plus-jakarta-sans-latin-800.woff2") format("woff2");
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: 'Inter Variable', sans-serif;
+    --font-brand: 'Plus Jakarta Sans', 'Inter Variable', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -42,6 +59,7 @@
     --color-brand: var(--brand);
     --color-brand-foreground: var(--brand-foreground);
     --color-brand-soft: var(--brand-soft);
+    --color-brand-ink: var(--brand-ink);
     --color-success: var(--success);
     --color-success-foreground: var(--success-foreground);
     --color-success-soft: var(--success-soft);
@@ -87,6 +105,9 @@
     --brand: #1677FF;
     --brand-foreground: #FFFFFF;
     --brand-soft: #E8F1FF;
+    --brand-ink: #003477;
+    --brand-mark-from: #C4F1FF;
+    --brand-mark-to: #2BB3E6;
     --success: #16A05D;
     --success-foreground: #FFFFFF;
     --success-soft: #EAF8EF;
@@ -154,6 +175,9 @@
     --brand: #4793FF;
     --brand-foreground: #0B1220;
     --brand-soft: #14263C;
+    --brand-ink: #FFFFFF;
+    --brand-mark-from: #C4F1FF;
+    --brand-mark-to: #2BB3E6;
     --success: #34D399;
     --success-foreground: #052E1A;
     --success-soft: #10271C;
