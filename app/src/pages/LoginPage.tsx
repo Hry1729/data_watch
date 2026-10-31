@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { BrandMark, BrandWordmark } from "@/components/BrandMark";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronDown,
@@ -8,7 +9,6 @@ import {
   Eye,
   EyeOff,
   LoaderCircle,
-  RadioTower,
 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -173,11 +173,9 @@ export function LoginPage() {
         <CardHeader className="gap-5 px-7 pt-7">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-[0_6px_16px_-6px_var(--brand)]">
-                <RadioTower className="size-5" />
-              </span>
+              <BrandMark className="size-10" title="Data Watch" />
               <div>
-                <p className="text-sm font-semibold leading-none">Data Watch</p>
+                <p className="text-[17px] leading-none"><BrandWordmark /></p>
                 <p className="mt-[5px] text-xs text-muted-foreground">工业数据平台</p>
               </div>
             </div>

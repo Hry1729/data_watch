@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { BrandWordmark } from "@/components/BrandMark";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import {
@@ -221,8 +222,8 @@ export function AppLayout() {
         >
           {!sidebarCollapsed && (
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-sidebar-foreground">Data Watch</p>
-              <p className="truncate text-xs text-muted-foreground">工业数据平台</p>
+              <p className="truncate text-[15px]"><BrandWordmark /></p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">工业数据平台</p>
             </div>
           )}
           <div className={["flex shrink-0 items-center gap-0.5", sidebarCollapsed ? "flex-col" : "ml-auto"].join(" ")}>
