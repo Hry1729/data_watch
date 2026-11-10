@@ -102,32 +102,20 @@
             <ElButton text @click="toggleChartFullscreen">
               <ArtSvgIcon icon="ri:fullscreen-line" />
             </ElButton>
-            <ElButton text @click="chartSettingsVisible = true">
-              <ArtSvgIcon icon="ri:settings-3-line" />
-            </ElButton>
           </div>
         </div>
 
-        <!-- 单图表模式：所有点位在同一图表 -->
+        <!-- 数值型点位趋势图（Bool 型点位始终走下方状态泳道，与 App 一致） -->
         <div
-          v-show="!separateBoolChart && (isMonitoring || hasData)"
-          ref="perspectiveRef"
-          class="perspective-container perspective-single"
-        ></div>
-
-        <!-- 分离模式：数值型点位趋势图 -->
-        <div
-          v-show="separateBoolChart && (isMonitoring || hasNumericData) && hasNumericPoints"
+          v-show="(isMonitoring || hasNumericData) && hasNumericPoints"
           ref="perspectiveNumericRef"
           class="perspective-container perspective-numeric"
         ></div>
 
-        <!-- 分离模式：Bool 型点位趋势图 -->
-        <div
-          v-show="separateBoolChart && (isMonitoring || hasBoolData) && hasBoolPoints"
-          ref="perspectiveBoolRef"
-          class="perspective-container perspective-bool"
-        ></div>
+        <!-- Bool 型点位状态泳道：ON 实色胶囊，OFF 斜纹底 -->
+        <div v-if="hasBoolPoints && hasBoolData" ref="boolLanesRef">
+          <BoolLanes :points="boolLanePoints" :records="boolLaneRecords" />
+        </div>
 
         <ElEmpty v-if="!isMonitoring && !hasData" description="点击开始监控以查看实时趋势" :image-size="120" />
         <ElEmpty v-if="isMonitoring && !hasData" description="正在连接并等待数据..." :image-size="120" />
@@ -285,20 +273,6 @@
         <ElButton type="primary" :disabled="tempSelectedVarSeqs.length === 0" @click="confirmPointSelection">确认</ElButton>
       </template>
     </ElDialog>
-
-    <!-- 图表设置弹窗 -->
-    <ElDialog v-model="chartSettingsVisible" title="图表设置" width="400px">
-      <div class="settings-content">
-        <div class="settings-item">
-          <div class="settings-label">Bool 型变量独立图表</div>
-          <div class="settings-desc">开启后，Bool 型变量将显示在单独的图表中，避免与数值型变量混合</div>
-          <ElSwitch v-model="separateBoolChart" />
-        </div>
-      </div>
-      <template #footer>
-        <ElButton @click="chartSettingsVisible = false">关闭</ElButton>
-      </template>
-    </ElDialog>
   </div>
 </template>
 
@@ -322,6 +296,7 @@ import type { CheckboxValueType } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import ArtSvgIcon from '@/components/core/base/art-svg-icon/index.vue'
+import BoolLanes from './BoolLanes.vue'
 import { useSettingStore } from '@/store/modules/setting'
 import { fetchDeviceTypes, fetchHistoryDevices, fetchRealtimeInit, getRealtimeWebSocketUrl, getAccessToken, getDevicePointGroups } from '@/api/device-monitor'
 import {
@@ -398,8 +373,8 @@ const wsConnected = ref(false)
 const deviceOffline = ref(false)
 const refreshRate = ref(250)
 const chartType = ref<'line' | 'area' | 'status'>('line')
-const chartSettingsVisible = ref(false)
-const separateBoolChart = ref(true) // 默认分离 Bool 图表
+// Bool 型点位始终以状态泳道展示（与 App 一致），不再提供“Bool 独立图表”开关，旧的本地缓存不再影响
+const separateBoolChart = ref(true)
 const lastSyncTime = ref('')
 const tdengineConnected = ref<boolean | null>(null)
 const perspectiveReady = ref(false)
@@ -514,7 +489,6 @@ const loadStateFromStorage = (): boolean => {
       // Older saved refreshRate values were user-selected; keep them as chart cadence.
       refreshRate.value = state.chartRefreshRate ?? state.refreshRate ?? 250
       chartType.value = state.chartType || 'line'
-      separateBoolChart.value = state.separateBoolChart ?? true
       return state.wasMonitoring === true
     }
     return false
@@ -608,7 +582,8 @@ const pointSearchKeyword = ref('')
 // Perspective
 const perspectiveRef = ref<HTMLElement>() // 单图表模式
 const perspectiveNumericRef = ref<HTMLElement>() // 分离模式：数值型
-const perspectiveBoolRef = ref<HTMLElement>() // 分离模式：Bool 型
+const perspectiveBoolRef = ref<HTMLElement>() // 已弃用：Bool 型改为状态泳道，保留引用使旧清理逻辑无副作用
+const boolLanesRef = ref<HTMLElement>()
 const perspectiveWorker = shallowRef<PerspectiveWorkerClient | null>(null)
 const isPerspectiveCleaning = ref(false)
 const perspectiveTable = shallowRef<PerspectiveTableClient | null>(null) // 单图表模式
@@ -658,6 +633,12 @@ const hasNumericPoints = computed(() => selectedPoints.value.some((p) => p.dataT
 
 const hasBoolData = computed(() => realtimeRecords.value.some((r) => boolVarSeqs.value.has(r.varSeq)))
 const hasNumericData = computed(() => realtimeRecords.value.some((r) => !boolVarSeqs.value.has(r.varSeq)))
+const boolLanePoints = computed(() =>
+  selectedPoints.value
+    .filter((p) => boolVarSeqs.value.has(p.varSeq))
+    .map((p) => ({ varSeq: p.varSeq, pointName: p.pointName, color: getPointColor(p.varSeq) }))
+)
+const boolLaneRecords = computed(() => realtimeRecords.value.filter((r) => boolVarSeqs.value.has(r.varSeq)))
 
 // 图表重建标志，防止并发操作
 const rebuildingChart = ref(false)
@@ -1679,7 +1660,7 @@ const buildViewerConfig = (isBoolChart = false) => {
 }
 
 const toggleChartFullscreen = async () => {
-  const container = perspectiveRef.value?.parentElement
+  const container = perspectiveNumericRef.value?.parentElement
   if (!container) return
 
   try {
@@ -1719,7 +1700,7 @@ const handleExport = async () => {
       chartElements.push(perspectiveRef.value)
     } else {
       if (perspectiveNumericRef.value) chartElements.push(perspectiveNumericRef.value)
-      if (perspectiveBoolRef.value) chartElements.push(perspectiveBoolRef.value)
+      if (boolLanesRef.value) chartElements.push(boolLanesRef.value)
     }
 
     // 在 Excel 中嵌入图表截图
