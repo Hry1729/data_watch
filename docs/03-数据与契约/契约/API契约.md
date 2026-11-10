@@ -221,14 +221,29 @@ pageNo=1&pageSize=20
 | `/driver/list`、`/driver/options` | 驱动与协议选项 |
 | `/device/list`、`/device/{id}`、`/device`、`/device/batch` | 设备查询/详情/CRUD/批量操作 |
 | `/device/import`、`/device/export`、`/device/group-tree` | 设备导入导出/树 |
+| `/device/query`（POST） | 与 `/device/list` 相同的筛选与分页，参数放在请求体，桌面端按设备 ID 集合查询时使用（支持 `deviceIds` 与精确匹配筛选） |
+| `/device/types` | 设备类型列表，可按 `deviceIds` 限定 |
+| `/device/type-options` | 设备类型字典，供新增/编辑设备下拉，不依赖已有设备 |
 | `/device/summary` | 按设备基础筛选条件返回 `total`、`onlineCount`、`offlineCount`、`unstableCount`、`disabledCount` |
 | `/point/list`、`/point/{id}`、`/point`、`/point/batch` | 点位查询/详情/CRUD/批量操作 |
 | `/point/import`、`/point/import/template`、`/point/export`、`/point/device-tree` | 点位导入导出/树 |
 | `/point/latest` | 批量读取指定点位的 Redis 最新值与采集时间 |
+| `/point/next-seq?deviceId=` | 所选设备下一个可用点位序号（含已删除点位占用的序号），需 `device_monitor:point:view` |
+| `/point/resync`（GET / POST） | 直接改库后校准一台设备的存储映射，见下文 |
 
 `GET /device/list` 可传 `includeSummary=false`：此时无 `connectStatus` 筛选时先分页，再只查询当前页的采集活动时间；默认保留原有统计行为。`GET /device/summary` 使用与设备列表相同的 `keyword`、`deviceType`、`deviceCode`、`deviceName`、`deviceStatus` 基础筛选，不接收连接状态筛选，因此状态分布统计与连接状态列表筛选分开。两者均需 `device_monitor:device:view` 权限。
 
 `GET /point/list` 在 MySQL 侧执行筛选、总数统计与分页，返回点位配置；未加载实时值时 `currentValue` 为 `"--"`。`GET /point/latest` 需 `device_monitor:point:view` 权限，使用重复的 `pointIds` 查询参数传入 1～100 个点位 ID；返回以点位 ID 字符串为键的对象，存在有效最新值时字段为 `currentValue` 和可选 `updateTime`。无值的点位不出现在该对象中。ID 无效或超过 100 个返回 HTTP 400，点位不存在返回 HTTP 404，Redis 不可用或读取超时分别返回 HTTP 503/504。
+
+设备静态路径（`/device/types`、`/device/type-options`、`/device/summary`、`/device/query` 等）注册在 `/device/{id}` 之前，不会被当作数字设备 ID 解析。设备新增/编辑支持 `rack`、`slot`、`scanCycle` 并校验范围，设备详情返回这三项；点位新增时 `varSeq` 可省略（取该设备下一个可用序号，含逻辑删除行占用的序号），`driverName` 可省略（由所属设备决定，填写时必须与设备一致）。
+
+**点位存储映射校准（`/point/resync`）**：两种方法都需 `device_monitor:point:update`。
+
+- `GET /point/resync?deviceCode=<设备编码>`：只检查，返回报告，不改库。
+- `POST /point/resync`，请求体 `{"deviceCode": "<设备编码>"}`：按 `device_variable` 在一个事务内校准该设备：`device_type.type_code` 与 `device_variable.td_column_name` 去空格；缺分组/列名的有效点位补分配；删除点位已不存在的孤儿映射；补齐或更正 `point_storage_mapping`；测点组 `next_column_index` / `used_column_count` 追上已用列；有变更时递增测点组 `config_version` 与 `device.variable_config_version`，成功后失效 Ingest 控制面缓存。列名被其它点占用或去空格后仍不合法时只在 `conflicts` 中报告，不覆盖。
+- 报告字段：`deviceCode`、`applied`、`typeCodeFixed`、`trimmedColumns`、`allocated`、`inserted`、`updated`、`orphansRemoved`、`groupCountersFixed`、`conflicts`、`configVersionBumped`。`deviceCode` 为空或设备没有有效类型编码返回 HTTP 400，设备不存在返回 HTTP 404。
+
+新增点位分配列名时会跳过已被占用的列名，直接改库加点后再从 App 新增不会再撞唯一键。
 
 #### 实时监控
 
@@ -321,6 +336,8 @@ agent 是本机边缘控制面，供 app 调用。
 | admin | POST `/admin/processes/{name}/restart` | 重启进程 |
 | admin | GET/PUT `/admin/config` | 读取/修改配置 |
 | admin | POST `/admin/health/check` | 主动健康检查 |
+| local（仅 edge 角色） | GET `/local/monitor/device-scope` | 本机设备范围（`device_pk` / `device_code` / `device_type`），供设备选择器解析编码 |
+| local（仅 edge 角色） | GET `/local/monitor/devices`、`/local/monitor/points` | 本机存储的设备/点位分页；设备支持 `deviceIds`、`deviceType`、`deviceTypeExact`、`deviceCodeExact`、`connectStatus`、`deviceStatus`，点位支持 `deviceType`、`connectStatus` 等筛选 |
 
 `{name}` 当前为 `collector` 或 `writer`。
 

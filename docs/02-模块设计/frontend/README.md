@@ -97,6 +97,8 @@ flowchart TD
 - 处理 `snapshot`（全量）/ `diff`（增量合并）/ `offline`（置离线）——与 backend `ws_push` 协议一致；
 - 指数退避重连（3s→30s）、页面可见性恢复时重连、`switchGroup` 切换分组、卸载时 `unsubscribe`。
 
+实时监控页（`views/device_monitor/realtime/index.vue`）按点位类型分两种呈现：数值型点位继续用 Perspective 趋势图；Bool 型点位始终以状态泳道显示（`realtime/BoolLanes.vue`，切段逻辑在 `utils/bool-lanes.ts`，与桌面 App 一致）：值为 1 视为 ON，ON 段为实色胶囊、OFF 为斜纹底，右侧显示当前 ON/OFF，末端圆点标最新采样；缺值（null）断开 ON 段，不伪造状态。原“Bool 型变量独立图表”开关与设置弹窗已移除，旧的本地缓存不再生效。导出 Excel 时截取泳道图，全屏按钮作用于数值图容器。
+
 ### 5.4 历史查询与 Perspective
 
 `api/device-monitor.ts` 提供 `history/query|chart|raw|raw-matrix|export`。历史页大表可用 Perspective（`public/perspective` 运行时）渲染，配合 backend 的 Perspective 会话快照通道。
@@ -106,6 +108,8 @@ flowchart TD
 `views/` 按业务域组织（dashboard/device_monitor/system/auth/exception/result/outside）；`store/modules/user` 等保存用户与权限状态；i18n（`locales`）、主题（`config`/directives）。
 
 设备页的列表与统计摘要分别请求，统计首次返回前显示占位；点位页先呈现 MySQL 配置分页，再按当前页 ID 从 Redis 批量补齐实时值。实时值失败时仅提示并重试当前页，不清空已加载的点位配置。工作台总览、趋势、设备类型、通讯状态和报警模块并行加载，每个模块独立显示加载/错误状态与重试入口；趋势切换时旧请求结果不能覆盖新选择。HTTP 错误区分请求超时和网络失败，并在可用时携带请求 ID 与耗时供排查。
+
+乱序响应守卫（审查批次 3，#24）：角色授权弹窗、设备监控列表、数据库日志 tail、历史查询（图表/矩阵/加载更多）与历史点位列表都给请求加代次或绑定所属对象，被取代的旧响应与旧错误一律丢弃；历史查询冻结已提交条件的快照，后续翻页只用该快照；`useTable` 被新请求取代的旧请求不再改写 loading/data/error。实时曲线与导出不再把缺值写成 0：缺值和非数值保持 null（曲线断点）并携带质量，真实 0 仍为 0。
 
 ---
 

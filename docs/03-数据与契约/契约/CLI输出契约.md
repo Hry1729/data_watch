@@ -72,6 +72,19 @@
 | `update_signature_error` | 更新清单签名不受信任或无效 |
 | `update_integrity_error` | 更新包大小或 SHA-256 不匹配 |
 
+`plc get`（直连只读，`direct_read/`）额外使用以下类型，错误 `details` 带 `source=direct_plc`、`quality` / `qualityName`，拓扑已解析时还带 `topologySource`：
+
+| `error.type` | 语义 | 退出码 |
+|---|---|---:|
+| `unsupported_runtime` | 运行时不是 Windows + free-threaded Python 3.14t | 6 |
+| `unsupported_protocol` | 设备协议不是 S7（GE / Modbus / OPC / 外部推送在 MVP 中不支持） | 6 |
+| `rate_limited` | 同一 `host:port` 未到 0.5 秒最小间隔，或全局并发已满 | 6 |
+| `plc_read_error` | 驱动未返回该地址的值、值为空或质量码无效 | 6 |
+| `config_error` | MySQL 账号带写权限或授权无法确认（不会降级到快照）、本机快照无法解析、点位地址或类型与 S7 驱动不匹配 | 6 |
+| `timeout` | 总预算（含拓扑解析、读点和断开）耗尽 | 8 |
+
+`plc get` 的 `usage_error`、`auth_required`、`permission_denied`、`network_error` 沿用下表退出码。
+
 ## 4. 退出码
 
 | 退出码 | 常量 | 含义 |

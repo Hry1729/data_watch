@@ -65,9 +65,10 @@ OPC DA proxy             仅随包含 Collector 的角色安装
 | backend | free-threaded Python 3.14t，uvicorn，`backend/.env` 或 `deploy/backend.env` |
 | frontend | Node 22 构建，nginx 1.27-alpine 运行 |
 | CLI | Python 3.11+ 源码开发；PyInstaller Windows x64 one-folder 包用于目标机，目标机无需 Python |
-| collector / storage / uploader / ingest / writer | free-threaded Python 3.14t，PyInstaller 打包 exe，按 Windows 角色运行 |
+| collector / storage / uploader / ingest | free-threaded Python 3.14t，PyInstaller 打包 exe，按 Windows 角色运行 |
+| writer | 标准 CPython 3.14（GIL 开启），PyInstaller 打包 exe；TDengine 连接器 `taos-ws-py` 不支持 free-threaded 构建，阻塞调用已在打补丁的连接器内释放 GIL，原因见[writer 设计文档](../02-模块设计/writer/README.md) §1.1 |
 | agent | Python/FastAPI 打包 exe，NSSM Windows 服务 |
-| app | Tauri + React + Rust + WebView2 |
+| app | Tauri + React + Rust + WebView2；安装器要求 WebView2 运行时主版本 ≥ 111（Tailwind 4 需要 Chromium 111，低版本会出现样式异常） |
 | OPC DA proxy | .NET Framework 4.8 / x86，Windows COM/DCOM |
 | 数据面 | MySQL、Redis、TDengine 3.4.0.9 |
 | 打包环境 | 各模块 `.venv-pack`，Inno Setup 6，Node/pnpm，Rust，Docker |
@@ -681,6 +682,29 @@ pwsh -File installer\build.ps1 -Role distributed-center -Iscc "D:\path\to\ISCC.e
 ### 8.2 Docker 镜像
 
 `installer\build.ps1` 只构建 Windows 三角色安装包，不调用 Docker，也不读取 `deploy\images`。Backend/Frontend 镜像按第 4 节单独构建与发布，目标机部署按第 5 节执行。
+
+### 8.3 持续集成（GitHub Actions）
+
+`.github/workflows/ci.yml` 在推送 `main` 和每个 Pull Request 上运行。解释器与三角色安装包一致：Agent、Writer 用标准 3.14，Collector、Edge、Ingest、Backend 用 free-threaded 3.14t。需要真实 Redis / MySQL / TDengine 的用例由各自环境变量门控，CI 不设置这些变量，因此会自动跳过（`ingest` 作业自带 MySQL 与 Redis 服务）。
+
+| 作业 | 运行环境 | 内容 |
+|------|----------|------|
+| `frontend` | ubuntu | `pnpm --dir ./frontend test` 与 `build` |
+| `desktop` | ubuntu | `pnpm --dir ./app test` 与 `build`（不跑 Rust） |
+| `cli` | ubuntu，Python 3.12 | `cli/tests`、`direct_read/tests` |
+| `cli-windows` | windows，3.14t | 同上并输出 junit，要求跳过数为 0（含只在 Windows 执行的 CLI 更新切换用例） |
+| `backend` | ubuntu，3.14t | `backend/app/tests`（先删除 `backend/.py314t-site` 中的 Windows 扩展） |
+| `edge` | ubuntu + windows，3.14t | `edge/tests`；`.github/scripts/assert_key_tests.py` 按平台核对关键用例在 junit 中出现且未被跳过 |
+| `ingest` | ubuntu | buildx 构建 `data-watch-python314t:3.14t-3.14.4` 与 ingest 镜像（构建期断言 GIL 关闭），`INGEST_WORKERS=2` 启动后检查 schema 预热、`/healthz` 与一次 `/ingest` ACK |
+| `ingest-unit` | ubuntu，3.14t | `ingest/tests` |
+| `writer` | ubuntu，3.14 | `writer/tests`（装 fakeredis） |
+| `scripts` | ubuntu，3.14t | `scripts/test_*.py` |
+| `agent-windows` | windows，3.14（另建 3.14t 的 `collector/.venv-pack` 供驱动预检） | `agent/tests`，含官方驱动签名校验 |
+| `collector-windows` | windows，3.14t | `collector/tests` |
+| `opcda-sidecars` | windows | .NET Framework 4.x `csc` 编译 x86 的 OPC DA Proxy / Push / Probe，并运行不依赖 OPC 运行时的自检 |
+| `tauri-windows` | windows | `app/src-tauri` 下 `cargo test --locked --lib` |
+
+CLI 正式发布另由 `.github/workflows/cli-release.yml` 负责，见 [CLI 安装与更新](CLI安装与更新.md)。
 
 ---
 

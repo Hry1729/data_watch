@@ -65,7 +65,7 @@ web
 ## Evidence on Hand
 
 - 论文: `docs/论文/`（含 `Data%20Watch汇报稿.docx`、PDF 单一来源在 `frontend/public/论文/`）
-- 真实 CLI 命令族: `cli/commands/*.py`（devices / points / dashboard / diagnostics / history / realtime / infrastructure / system / contracts / update）
+- 真实 CLI 命令族: `cli/commands/*.py`（devices / points / dashboard / diagnostics / history / realtime / plc / infrastructure / system / contracts / update）；`plc get` 直连只读一个 S7 点（`direct_read/`），`points resync` 在直接改库后校准存储映射
 - CLI 主名: `data-watch`（`cli/main.py:49 name="data-watch"`）
 - 论文里强调的 4 条核心创新：5 协议统一 / 跨空洞合并 / 边-云协同 / CLI 即 AI 入口
 
