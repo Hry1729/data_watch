@@ -201,7 +201,8 @@ flowchart TD
 
 - `get_cached(device_code, group_code)` 命中时直接在事件循环内返回，不进入 executor，也不访问 MySQL。
 - 首次缺失才经 executor 调用 `get_or_load`，从永久 `point_storage_mapping` 读取 stable、child table、列名和 var_type。
-- `stream_config_version` 仅保留作接口兼容和日志上下文，不再用当前可编辑配置拒绝历史数据；旧 config version 由永久 mapping 正确解码。
+- `stream_config_version` 不用来拒绝历史数据，旧 config version 仍由永久 mapping 正确解码；但它是**热缓存刷新信号**（#35）：Mapper 记录每个 `(device, group)` 已加载过的最高版本（`_seen_version`），同一 `(device, group)` 收到更新版本的第一帧时经 executor 调 `reload` 重读一次永久 mapping（`is_stale`）。重载失败沿用旧映射并用 `mark_version_seen` 记下该版本，避免同一版本每帧查库。Stream 携带的是测点组 `device_point_group.config_version`；App 保存、`points resync` 或手工改库后递增版本，collector 热加载后新帧即带新版本。
+- 加载映射时对 `td_column_name` 与超级表名做 `strip()`；去空格后仍不合法的列单独剔除并记 error，同一帧其它点照常写入，不再整帧滞留 PEL。
 - 热缓存遇到消息中的未知 `var_id` 时经 executor 调用 `reload`，重新读取同一设备/分组的永久 mapping；缺失点位触发的重载按设备/分组设置冷却期（默认 5 秒），期间保留已有映射，避免逐条查库。重载失败或仍无映射时保留消息待重试，不能 ACK 后静默漏写；显式 `invalidate` 会清除冷却期。
 - MySQL 断线时 `ping(reconnect=True)` 后重试加载；确实没有永久映射时返回 None，由消费可靠性流程处理。
 
@@ -209,7 +210,8 @@ flowchart TD
 
 - **DLQ**（`writer/dlq.py:18`）：`rt:dlq:{device_type}:{group_code}` Redis List。默认 `dlq_max_size=0`，只 `LPUSH`、不裁剪；正数上限才启用 `LTRIM`，且会淘汰最旧死信。payload 含 entry_id、stream_key、retry_count、last_error、failed_at、原始 data；无界模式由 `dlq_warn_entries` 提供容量告警。
 - **SystemLogWriter**：独立 MySQL 连接，落库存储类系统日志（重连、降级、DLQ 事件等，均 ≥60s 限流防刷库）。
-- **WriterPerformanceMetrics**：缓冲行数、写批耗时/行数/成功率、flush 统计，周期打印。
+- **映射问题告警**（`consumer.py` `_alert_mapping`，#35）：缺映射（`missing_mapping`）、重载失败（`reload_failed`）、未知点（`unknown_var_ids`）、非法列名（`invalid_column`）在一个告警窗口后仍出现时，写 `system_log` ERROR（`log_type=storage`，`source=writer.consumer`），每个设备/分组/原因 10 分钟至多一条，内容附处理命令 `data-watch points resync --device <设备编码>`，在日志监控页可见。
+- **WriterPerformanceMetrics**（`writer/performance.py`）：缓冲行数、写批耗时/行数/成功率、flush 统计，按 `performance_report_interval_s`（默认 30s）周期打印 `[performance]` / `[performance-aggregate]`。`timings.stages_ms` 是分层阶段耗时，父子并存，只能同层相加，父子关系见 `stage_containment`；`timings.executor_ms` 把每次 `run_in_executor` 拆成排队 `queue_ms`、调用 `call_ms`（含网络与驱动等待，不是数据库执行时间）、调用期线程 CPU `call_cpu_ms` 与事件循环恢复 `resume_ms`。多 worker 共用一个事件循环，聚合报告中的 `event_loop_lag_ms` 不跨 worker 相加。
 
 ---
 
@@ -332,7 +334,7 @@ sequenceDiagram
 > 仅记录，供技术债清理阶段评估，本文不处理。
 
 - **单进程边界**：当前为一个 writer 进程内最多 `consumer_workers` 个异步分片。每个分片有独立 MySQL/TDengine 连接，但进程级故障会同时影响全部分片；消费组协议允许后续扩展为多进程/多实例。
-- **永久 mapping 缓存常驻**：mapping 契约要求物理坐标永久不变，因此命中后不按 config_version 失效；新增设备/组首次访问时加载，热缓存发现新 `var_id` 时运行期 reload。若永久 mapping 被错误修改，不在 Writer 内原地重排，需按数据治理流程处理。
+- **永久 mapping 缓存常驻**：mapping 契约要求物理坐标永久不变；新增设备/组首次访问时加载，热缓存发现新 `var_id` 或 Stream 带来更新的 `config_version` 时运行期 reload。直接用 SQL 改库会绕过配置链（不写 `point_storage_mapping`、不递增版本、列名可能带空格），需执行 `data-watch points resync` 校准，见《04-运维部署/问题排查》第 17 节。若永久 mapping 被错误修改，不在 Writer 内原地重排，需按数据治理流程处理。
 - **DLQ 只入不出**：无自动重放工具；默认不裁剪并在条目数达到阈值时告警，因此需监控 Redis 容量并制定人工归档/重放流程。若显式配置正数上限，溢出时会 `LTRIM` 淘汰最旧死信。
 - **数据列统一 DOUBLE**：非数值语义（布尔/枚举）以数值落库；STRING 在 collector 侧已被排除出 stream。
 

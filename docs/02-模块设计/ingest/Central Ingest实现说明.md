@@ -52,6 +52,14 @@ HTTP JSON 编解码使用 `msgspec`；兼容层缓存路由 handler 元数据，
 
 > 注意区分**同名但不同侧**的旋钮：collector/Writer 侧的 `redis.stream_maxlen`（`collector/config/settings.toml`）是**仍受支持**的有损应急上限，其条件性语义见《03-数据与契约/DW-01-确认语义与持久化边界》——不要与 Ingest 提交侧的 `INGEST_STREAM_MAXLEN` 混为一谈。
 
+**错误分类（2026-10 审查修复，#14、#26）**：
+
+- Redis 暂时性故障（连接/超时、OOM、LOADING、READONLY、WAITAOF 报错或未确认）归为 `TransientStoreError`，上传与会话切换都返回 HTTP 503 `store_unavailable`，边缘按 `commit_unknown` 同路径、同 session 退避重试，不计入坏数据预算。
+- `session_switch` 与上传一样在 ACK 前执行 `WAITAOF`；Redis 不认识 `WAITAOF`（< 7.2）时降级为仅 EVAL 成功即确认并告警。
+- HTTP 400 响应带 `scope`（`item` / `batch`）：只有 `scope:"item"` 消耗边缘单条预算，其余 400 由边缘退避重试并减半批次；413 同样减半批次。
+- `latest_qualities` / `latest_timestamps` 的键可以是 `latest_values` 的超集，三者都按永久映射做成员校验；只有质量变化的点生成不带 `v` 的 latest（`{t,q,e}`），不伪造值。
+- 未捕获异常返回 500 前由 `http_compat.py` 记录 `logger.exception`（含 method/path）。
+
 旧 session 的 high_watermark TTL 由 `INGEST_MAX_OFFLINE_RETENTION_DAYS` 决定，安装配置初始值 7 天，并与边缘 `max_offline_retention_days` 一致。第一阶段仅支持单实例 Redis；Redis Cluster 跨槽兼容另行设计。
 
 ## 5. 进程与容量默认

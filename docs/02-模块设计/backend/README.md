@@ -102,6 +102,7 @@ flowchart TD
 ### 5.3 鉴权与权限
 
 - **口令与令牌**（`backend/app/core/security.py`）：口令用 `pbkdf2_sha256`（600000 次迭代）哈希；令牌为自实现 JWT（HS256），签发时带 `Bearer ` 前缀，校验签名与过期。
+- **有界密码 worker**（`backend/app/core/password_worker.py`）：哈希与校验不在事件循环里直接执行，登录、新建用户、重置密码与启动账号初始化（`_seed_users`）都经 `run_password_op` 投递到固定线程数 + 排队上限的线程池；满载抛 `PasswordWorkerBusy`，接口返回 503「认证服务繁忙，请稍后重试」且不写库。`backend/app/tests/test_system_manage_password_worker.py` 用 AST 扫描保证 `async def` 中没有直接调用 `hash_password` / `verify_password`。
 - **权限校验**（`backend/app/api/permissions.py`）：`require_permissions` 经 `AuthService` 解析 principal 并取用户权限码集合，与接口所需权限码求交集，无交集抛 403（RBAC）。
 - **安全自检**：`AUTH_SECRET_KEY` 命中不安全默认/占位值时启动告警（开发态不阻断，生产须配强随机值）。
 
@@ -152,6 +153,8 @@ flowchart TD
 | `module_monitor` | collector/writer 等模块运行指标（供桌面端 `module-monitor` 接口） |
 | `log` / `tdengine_log` / `core.log_scheduler` | 系统日志查询、写入与定时清理 |
 | `dashboard` / `catalog` / `system_manage` | 仪表盘聚合、设备点位目录、用户角色菜单管理 |
+| `point_resync` | 直接改库后按 `device_variable` 校准一台设备的 `point_storage_mapping`、列名与测点组计数，并递增配置版本（`/point/resync`，见《API 契约》） |
+| `device_activity` | 设备采集活动时间：按设备编码缓存 Redis 最新采集 key 的索引并在并发调用间共享，key 超过 5 万时回退到原过滤扫描而不返回残缺索引；类型活动只查询调用方已解析的子表 |
 | `task_manager` | 异步导出任务的状态管理 |
 
 ---

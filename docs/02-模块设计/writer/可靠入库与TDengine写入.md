@@ -124,11 +124,11 @@ MysqlMapper.get_or_load(QC100, g001, 12)
 
 ### 5.1 config_version 的意义
 
-缓存键是 `(device_code, group_code)`，物理映射来自永久表 `point_storage_mapping`；`device_point_group.config_version` 只作为 Stream 消息与日志上下文，不是缓存失效依据。
+缓存键是 `(device_code, group_code)`，物理映射来自永久表 `point_storage_mapping`。Stream 消息里的 `config_version` 取自测点组 `device_point_group.config_version`，不用来拒绝消息，但作为刷新信号：Mapper 记录每个 `(device, group)` 已见的最高版本，消息版本更新时重读一次永久 mapping（`is_stale` → `reload`）；重载失败沿用旧映射并记下该版本，同一版本不再每帧查库。加载时对列名和超级表名去空格，去空格后仍不合法的列单独剔除，同帧其它点照常写入。
 
 ### 5.2 版本不一致降级
 
-历史 Stream 中的 `config_version` 即使与当前控制面版本不同，writer 仍使用永久 mapping 解码，不因版本差异拒绝历史消息。热缓存发现新 `var_id` 时运行期 reload 永久 mapping；reload 失败或仍无映射则不 ACK，保留 PEL 以避免新点静默漏写。这依赖 TDengine schema **只增不减**：旧列不会被删除，旧数据仍可落入原列。
+历史 Stream 中的 `config_version` 即使与当前控制面版本不同，writer 仍使用永久 mapping 解码，不因版本差异拒绝历史消息。热缓存发现新 `var_id` 或消息版本更新时运行期 reload 永久 mapping；reload 失败或仍无映射则不 ACK，保留 PEL 以避免新点静默漏写，问题持续时写 `system_log` ERROR 并提示执行 `data-watch points resync --device <设备编码>`。这依赖 TDengine schema **只增不减**：旧列不会被删除，旧数据仍可落入原列。
 
 ---
 

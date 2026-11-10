@@ -181,7 +181,7 @@ sequenceDiagram
 | viewer（只读） | `/viewer/status`、`/viewer/health`、`/viewer/processes/:name/status`、`/metrics` | 运行状态与指标观测 |
 | admin（写） | `/admin/processes/:name/start\|stop\|restart`、`/admin/config`、`/admin/health/check` | 进程管控与配置变更 |
 | auth | `/auth/login` | 登录获取令牌 |
-| edge local | `/local/collector`、`/local/storage`、`/local/outbox`、`/local/uploader`、`/local/logs` | 边缘本机状态、队列和日志 |
+| edge local | `/local/collector`、`/local/storage`、`/local/outbox`、`/local/uploader`、`/local/logs`、`/local/monitor/device-scope`、`/local/monitor/devices`、`/local/monitor/points` | 边缘本机状态、队列、日志与本机设备/点位监控（筛选在本机存储执行，见《边缘运行时实现说明》第 4 节） |
 
 其他契约：写 `runtime/<name>.shutdown_flag` 控制子进程停机；生成端口映射文件供 collector 只读消费；经环境变量向子进程注入解密后的 DB 连接。
 

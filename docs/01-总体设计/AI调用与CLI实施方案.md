@@ -4,7 +4,7 @@
 
 ## 1. 建设结论
 
-DataWatch CLI 已成为人工运维、自动化脚本和 AI Agent 访问系统的正式客户端。它通过 Nginx 统一入口或开发环境 Backend 直连方式调用 REST/WebSocket API，不访问前端代码，也不直接连接 MySQL、Redis、TDengine、Collector、Writer 或 Edge Agent。
+DataWatch CLI 已成为人工运维、自动化脚本和 AI Agent 访问系统的正式客户端。它通过 Nginx 统一入口或开发环境 Backend 直连方式调用 REST/WebSocket API，不访问前端代码，也不直接连接 Redis、TDengine、Collector、Writer 或 Edge Agent。唯一例外是 `plc get`（`direct_read/`）：已登录且有实时查看权限时，用只读 MySQL 账号解析拓扑（不可用时降级到本机快照），再短连接只读一个 S7 点，不写 MySQL/Redis/TDengine/PLC。
 
 CLI 与 Web/桌面端共享同一套账号、JWT 和 Backend 权限体系。CLI 的本地权限检查用于提前阻止不可用命令，Backend 仍是鉴权和业务规则的最终权威。
 
@@ -32,7 +32,7 @@ flowchart LR
 | M5 | 已完成 | 稳定机器契约、Token 刷新、重试/分页、Windows 离线包、签名自更新、回滚和 CI 发布 |
 | M4 | 延期 | MCP Server 单独评估，不影响 AI 通过 CLI 使用系统 |
 
-当前实现包含 128 个叶子命令，每个命令都具有且仅具有一条访问策略。命令和参数的机器事实源由 `data-watch commands list` 与 `data-watch commands schema` 提供。
+当前实现包含 130 个叶子命令，每个命令都具有且仅具有一条访问策略。命令和参数的机器事实源由 `data-watch commands list` 与 `data-watch commands schema` 提供。
 
 ## 3. 关键设计决策
 

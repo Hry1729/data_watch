@@ -406,6 +406,7 @@ flowchart TD
 - **HTTP 接入**（external-push）：`InterfaceIngestServer` 暴露的接入端点（host/port/path/api_key 可配）。
 - **设备状态回写**：经 `status_reporter` 回写 MySQL 设备在线状态（注入自 `config_db_manager.update_device_status`）。
 - **停机 flag**：`runtime/collector.shutdown_flag` 文件（agent → collector 停机信号）。
+- **直连只读复用驱动**：CLI `plc get` 的 `direct_read/driver_loader.py` 把采集目录放进 `sys.path` 后调用同一个 `DriverRegistry.create("s7")`，按 `create → connect → read → disconnect` 短连接读一个点，不调用驱动 `write`，不写 Redis/TDengine；连接字段与 `DeviceManager` 一致，质量码直接复用 `collector/core/quality_codes.py`。周期采集入库仍只由 collector 负责。
 - **端口映射（两种模式，勿混用）**：实现为 `collector/device/manager.py` 的 `EndpointPortMapper`。
   - **动态分配模式**（未显式指定映射文件）：从 `base_port`（默认 9090）起向上分配到 `max_port`
     （默认 9200），用真实 socket **探测端口可用性**并跳过被占用端口；若默认共享文件
@@ -476,7 +477,7 @@ MySQL 不可用且 `enable_fake_bootstrap=true` 时，回退为假拓扑（`_bui
 
 1. 在 `DATAWATCH_DATA_ROOT/drivers/<id>/` 放置 `driver.toml` + Python 包 + 可选 `vendor/` + `vendor_meta.toml`（版本/许可/哈希）。
 2. 实现 `create_driver(context: DriverContext)`；声明 `batch_contiguous` 时提供 `build_read_plan` / `decode_read_results`。
-3. collector 启动扫描注册表经 `datawatch_ext.<id>` 加载；导入期临时使用 vendor 路径，禁止永久污染 `sys.path`。
+3. collector 启动扫描注册表经 `datawatch_ext.<id>` 加载；导入期临时使用 vendor 路径，禁止永久污染 `sys.path`。宿主进程已加载同版本的同名依赖时直接复用，版本不一致才拒绝（见制作指南 §5）。
 4. 非法地址/类型 → 设备 `CONFIG_ERROR`（禁连、禁采、禁重连），并暴露 `config_error`。
 
 ### 11.2 现有驱动（S7 / GE / OPC UA / OPC DA / Modbus TCP）
@@ -490,7 +491,9 @@ collector 内部**，因此**新增协议不需要改核心调度**。
 
 1. 驱动包内的 `driver.toml`（必需）与 `vendor_meta.toml`（**可选**：版本、许可、哈希）连同包内容
    共同参与发布来源校验：改动驱动包源码后必须**重新打包并更新目录记录**，否则注册表会以"官方包
-   未通过发布来源校验"拒绝加载（这一点在本地实测过）。
+   未通过发布来源校验"拒绝加载（这一点在本地实测过）。五个官方包都必须带独立的 Ed25519
+   `signature.json`，改源码或升版本后需用 `packaging/sign-driver.py` 重签并运行
+   `packaging/regen-driver-catalog.py`，见[外置驱动包制作指南](外置驱动包制作指南.md) §7.1。
 2. 驱动类实现 `connect` / `disconnect` / `read(blocks)->{address: value}` / `write`，按需重写
    `ping`；同连接的批量读需持有 `_read_lock`；协议库只在该驱动类内部调用。
 3. 外部推送或中心采集协议需在相应协议集合中登记（`EXTERNAL_PUSH_PROTOCOLS` /

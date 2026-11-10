@@ -14,7 +14,8 @@ app 是一个 **Tauri + React + TypeScript** 桌面应用（Rust 外壳 + WebVie
 
 - **双数据源**：本机 `agent`（首装、进程管控、连接健康）+ 中心 `backend`（工作台、设备监控、系统管理、模块指标与日志）；
 - **Rust 壳转发**：HTTP 经 Tauri 命令（`agent_request` / `backend_request` / `backend_download`）在 Rust 侧发起，规避 WebView CORS；
-- **侧栏导航壳**：分组侧栏 + 顶栏标题/刷新/连接状态/设置入口；设置页进入时**侧栏切换为设置菜单**，返回后还原业务导航；
+- **侧栏导航壳**：分组侧栏 + 顶栏（面包屑、Ctrl+K 搜索、通知、主题、设置入口）；设置页进入时**侧栏切换为设置菜单**，返回后还原业务导航；
+- **请求可取消**：页面卸载、切换或被新请求取代时经 `AbortSignal` 通知 Rust 代理断开连接，而不只是丢弃结果；
 - **角色菜单过滤**：登录后拉取 `/api/user/info` 与 `/api/v3/system/menus`，按 Web 菜单映射桌面 path；桌面专有页与管理员控制台有额外规则；
 - **一包多机**：后端地址不打包写死，启动时从 agent `runtime-config` 注入。
 
@@ -62,7 +63,10 @@ app/
 │   ├── config/navigation.ts    # 侧栏分组与页面元数据
 │   ├── pages/                  # 业务页（工作台/控制台/设备/系统/采集/设置…）
 │   ├── components/
-│   │   ├── AppLayout.tsx       # 导航壳；设置态侧栏切换
+│   │   ├── AppLayout.tsx       # 导航壳；面包屑、设置态侧栏切换
+│   │   ├── TopbarTools.tsx     # 顶栏工具：Ctrl+K 搜索命令面板、通知、主题
+│   │   ├── BrandMark.tsx       # Pleat W 标志、DataWatch 字标与组合标识
+│   │   ├── TitleBar.tsx        # 无边框窗口标题栏
 │   │   ├── layout/             # sidebar-state、settings-tabs
 │   │   ├── charts/             # 工作台等图表
 │   │   └── ui/*                # shadcn 组件
@@ -70,6 +74,7 @@ app/
 │   ├── hooks/                  # 模块监控、工作台、实时 WS、后端查询等
 │   ├── lib/
 │   │   ├── agent-client.ts / backend-client.ts / mock-agent.ts
+│   │   ├── desktop-request.ts / backend-session.ts  # 可取消的 invoke、共享 token 刷新
 │   │   ├── navigation-access.ts  # 菜单→path、权限过滤
 │   │   └── agent-auth-token.ts   # Agent token 热更新隔离
 │   └── types/
@@ -100,9 +105,12 @@ flowchart TD
 
 ### 5.2 导航壳（AppLayout）
 
+- 外壳一体化：标题栏与侧栏同背景，内容区为悬浮的圆角卡片；侧栏顶部是 `BrandLockup`（Pleat W 标志 + DataWatch 字标，字体为本地打包的 Plus Jakarta Sans 500/800 拉丁子集，SIL OFL），登录卡片同样使用。任务栏/标题栏的应用图标未改。
+- 窗口为透明无边框（`tauri.conf.json`：`decorations=false`、`transparent=true`、`shadow=false`），外壳自绘 10px 圆角，最大化时圆角归零；这样去掉了系统非客户区留下的三边 1px 边线。
 - 展开宽 240px / 折叠 64px；折叠状态持久化 `localStorage`（`data-watch-sidebar-collapsed`）。
 - 分组导航来自 `navigation.ts`，再经 `filterNavigationGroups(allowedPaths)` 过滤。
-- 顶栏：面包屑/标题、刷新、连接状态、用户、设置齿轮、主题。
+- 顶栏：面包屑（内容向下滚动后才出现亚克力渐变底）、搜索、通知、主题、设置齿轮。`TopbarTools` 的搜索按 Ctrl+K（macOS 为 ⌘K）打开命令面板，可搜索有权限的页面和常用操作（如切换主题）。
+- 内容区使用自动隐藏的细滚动条，长页面右下角提供回到顶部按钮。
 - **设置页**：顶部分类 tabs **已移除**；侧栏切换为设置菜单（`SETTINGS_TABS`），「返回」退出设置后还原业务侧栏。
 
 ### 5.3 角色与菜单权限
@@ -123,6 +131,7 @@ flowchart TD
 
 - **agent-client**：bootstrap / auth / viewer / admin；密码脱敏；mock/real 动态 import。
 - **backend-client**：登录、用户信息、菜单、设备监控 CRUD、工作台、模块指标、日志、导入导出下载等；统一取 `{code,msg,data}.data`。
+- **请求生命周期**：`lib/desktop-request.ts` 的 `invokeHttp` 在传入 `AbortSignal` 时先经 Rust `register_http_request` 登记，中止时调用 `cancel_http_request` 拆掉连接；`lib/backend-session.ts` 让 token 刷新由所有调用方共享，并随会话一起取消。Agent 上传体与流式响应大小有上限。
 - Agent token 经 `agent-auth-token.ts` 与 `AuthContext` 解耦，避免 mock 热更新导致 Context 失配崩溃。
 
 ### 5.5 主要页面与数据源
@@ -134,6 +143,14 @@ flowchart TD
 | 数据采集 | 采集/存储/上行或汇聚/入库监控 | `/collection/*` | agent + 本机 Storage + backend module-monitor |
 | 设备监控 | 通讯/驱动/设备/点位/实时/历史 | `/device/*` | backend device-monitor |
 | 日志 | 系统日志 | `/logs/system` | backend log |
+
+页面要点（2026-10 UI 第二至第七轮）：
+
+- **设备目录**：设备列表在后端筛选分页（`includeSummary=false`），按设备 ID 集合查询时改用 `POST /device/query` 把参数放进请求体；设备类型筛选来自 `GET /device/types`。设备新增/编辑的类型来自 `GET /device/type-options` 下拉，并支持机架号、槽号、采集周期。
+- **点位管理**：固定每页十条、固定行高；驱动跟随所选设备，序号由 `GET /point/next-seq` 自动分配，支持采集周期与“写入历史库”，IO 地址按驱动给示例、不允许空格，保存失败显示后端原因。
+- **实时监控**：数值点位用趋势图，Bool 点位以状态泳道显示（ON 实色段、OFF 底纹，右侧显示当前 ON/OFF）；断线或重连期间只写一条缺测标记断开曲线，不用旧值续采样。
+- **系统日志**：支持“历史日志查询”与 TDengine 服务日志两种视图。
+- 点位管理、历史数据、实时监控的筛选栏保持单行。
 | 系统管理 | 用户/角色/菜单 | `/system/*` | backend system |
 | — | 设置 | `/settings?tab=` | agent admin config |
 
@@ -195,7 +212,8 @@ app 是纯消费端。消费：
 
 - **后端地址**：agent `runtime-config` 注入；开发可用 `VITE_BACKEND_URL` 作兜底说明，以运行期为准；
 - **mock 开关**：`VITE_USE_MOCK`（仅非生产）；
-- **侧栏折叠**：`localStorage` key `data-watch-sidebar-collapsed`。
+- **侧栏折叠**：`localStorage` key `data-watch-sidebar-collapsed`；
+- **WebView2**：安装器要求 WebView2 运行时主版本 ≥ 111（Tailwind 4 需要 Chromium 111，109 会出现样式异常）。
 
 ---
 

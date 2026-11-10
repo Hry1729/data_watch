@@ -112,7 +112,7 @@ Set-Location ..
 
 ## CLI
 
-CLI 只访问 Backend API，不直连数据库，也不输出模拟业务数据。
+CLI 通过 Backend API 工作，不写数据库，也不输出模拟业务数据。唯一例外是 `plc get`：登录且有实时查看权限后，用只读 MySQL 账号解析拓扑，再短连接只读现场 S7 PLC 的一个点（MVP 仅 Windows + Python 3.14t），结果标明 `source=direct_plc`。
 
 ```powershell
 python -m pip install -r .\cli\requirements.txt
@@ -121,6 +121,8 @@ python -m cli.main system health
 python -m cli.main auth login --username admin
 python -m cli.main devices status --device QC100
 ```
+
+直接用 SQL 改过点位后，用 `python -m cli.main points resync --device <设备编码> --check` 查看映射偏差，去掉 `--check` 执行校准（见[问题排查](docs/04-运维部署/问题排查.md)第 17 节）。
 
 凭据默认存入 Windows Credential Manager；自动化调用可通过 stdin 传递密码。命令组、权限、JSON / JSONL 输出、退出码与签名更新见 [`cli/README.md`](cli/README.md)。
 
@@ -151,6 +153,8 @@ cargo check --manifest-path .\app\src-tauri\Cargo.toml
 ```
 
 Collector、Edge、Ingest、Writer 与 Agent 的测试应在安装各自依赖后，从模块目录运行 `python -m pytest tests -q`。构建前还应运行对应前端测试和 Rust `cargo check`。
+
+GitHub Actions（`.github/workflows/ci.yml`）在每个 Pull Request 和 `main` 推送上运行上述各模块测试，另含 Ingest 镜像冒烟、OPC DA sidecar 的 C# 编译与 Tauri `cargo test --lib`；作业清单见[运维部署 §8.3](docs/04-运维部署/README.md)。
 
 `dist/`、`build/`、`artifacts/`、`outputs/`、日志、虚拟环境、`node_modules/` 与 Tauri `target/` 都是可再生或运行期内容，不应提交。需要本地保留的历史交付物统一移入 `docs/_archive/`；正式版本应通过发布流程保存。
 
