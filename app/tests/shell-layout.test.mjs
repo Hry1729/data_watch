@@ -4,13 +4,13 @@ import test from "node:test";
 
 const source = await readFile(new URL("../src/components/AppLayout.tsx", import.meta.url), "utf8");
 
-test("title bar uses the packaged Tauri application icon", async () => {
+test("title bar shows the Pleat W brand mark", async () => {
   const titleBarSource = await readFile(
     new URL("../src/components/TitleBar.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(titleBarSource, /src-tauri\/icons\/128x128\.png/);
-  assert.match(titleBarSource, /<img[^>]+src=\{appIconUrl\}/);
+  assert.match(titleBarSource, /import \{ BrandMark \} from "@\/components\/BrandMark"/);
+  assert.match(titleBarSource, /<BrandMark[^>]*title="Data Watch"/);
 });
 
 test("title bar and sidebar share one continuous surface with the floating content panel", async () => {
